@@ -3,6 +3,7 @@ import type {
   AgentSnapshotPayload,
   CreationSnapshot,
   WorkspaceDescriptorPayload,
+  WorkspaceCreateResponse,
 } from "@getpaseo/protocol/messages";
 import { CreationClient, type CreationResult } from "./index.js";
 
@@ -50,7 +51,10 @@ const agent: AgentSnapshotPayload = {
   labels: {},
 };
 
-function fixture(modern: boolean) {
+function fixture(
+  modern: boolean,
+  legacyWorkspaceResult?: () => Promise<WorkspaceCreateResponse["payload"]>,
+) {
   const requests: Array<{ kind: string; input: Record<string, unknown> }> = [];
   const legacy: Array<{ kind: string; input: unknown }> = [];
   let resolve!: (result: CreationResult) => void;
@@ -67,6 +71,7 @@ function fixture(modern: boolean) {
     observe: () => () => {},
     legacyWorkspace: async (input) => {
       legacy.push({ kind: "workspace", input });
+      if (legacyWorkspaceResult) return legacyWorkspaceResult();
       return { requestId: "legacy-workspace", workspace, error: null, setupTerminalId: null };
     },
     legacyAgent: async (input) => {
@@ -221,4 +226,54 @@ test.each([
     input: { workspaceId: workspace.id, config: { cwd: "/project/worktree/src" } },
   });
   f.client.close();
+});
+
+test.each(["unknown_branch", "branch_already_checked_out", "missing_checkout_target"])(
+  "legacy %s rejection publishes a conclusive failure",
+  async (errorCode) => {
+    const f = fixture(false, async () => ({
+      workspace: null,
+      error: "Rejected branch",
+      errorCode,
+      setupTerminalId: null,
+      requestId: "rejection",
+    }));
+    const events: CreationSnapshot[] = [];
+    await f.client.createWorkspace({ ...f.input, onEvent: (snapshot) => events.push(snapshot) });
+    expect(events).toEqual([
+      {
+        kind: "workspace",
+        idempotencyKey: "intent-one",
+        revision: 1,
+        phase: "failed",
+        workspaceId: null,
+        agentId: null,
+        error: "Rejected branch",
+        errorCode,
+        outcomeUnknown: false,
+      },
+    ]);
+  },
+);
+
+test("an ambiguous legacy result or transport error does not publish conclusive failure", async () => {
+  const result = fixture(false, async () => ({
+    workspace: null,
+    error: "Uncertain",
+    errorCode: "unknown",
+    setupTerminalId: null,
+    requestId: "uncertain",
+  }));
+  const lost = fixture(false, async () => {
+    throw new Error("Disconnected");
+  });
+  const events: CreationSnapshot[] = [];
+  await result.client.createWorkspace({
+    ...result.input,
+    onEvent: (snapshot) => events.push(snapshot),
+  });
+  await expect(
+    lost.client.createWorkspace({ ...lost.input, onEvent: (snapshot) => events.push(snapshot) }),
+  ).rejects.toThrow("Disconnected");
+  expect(events).toEqual([]);
 });

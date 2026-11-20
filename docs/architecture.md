@@ -365,7 +365,11 @@ it cannot duplicate an agent it never requested. A timeout or app restart cannot
 second agent in the same draft.
 Generated worktree slugs are part of that identity and must survive remounts. A confirmed
 workspace milestone survives an initial-agent failure: unchanged retries replay its receipt,
-while edited retries create the agent in that workspace. Client preflight and frame-size
+while edited retries create the agent in that workspace. Navigation does not change the operation's
+identity: after reload, the destination draft observes the workspace receipt before attempting
+standalone agent creation. Terminal completion rechecks workspace-only admission ownership under
+a short lock, because its RPC can outlive a newer agent admission. Agent admission durably claims
+the draft ID under that same lock. Client preflight and frame-size
 errors carry proof that no creation was sent, so admission can roll back. Progress checkpoint
 failures must preserve confirmed host results and remain isolated to the affected draft.
 

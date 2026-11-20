@@ -10235,3 +10235,66 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("waitForCreation observes a saved workspace receipt without submitting creation", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://example.test",
+    clientId: "saved-receipt",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, ownedSubscriptions: true } });
+  await connected;
+  const phases: string[] = [];
+  const result = client.waitForCreation("workspace", "saved-operation", (snapshot) =>
+    phases.push(snapshot.phase),
+  );
+  await expect.poll(() => transport.sent.length).toBe(1);
+  const request = parseSentFrame(transport.sent[0]);
+  expect(request).toMatchObject({
+    type: "creation.subscribe.request",
+    kind: "workspace",
+    idempotencyKey: "saved-operation",
+  });
+  const pending = {
+    kind: "workspace",
+    idempotencyKey: "saved-operation",
+    revision: 1,
+    phase: "workspace_ready",
+    workspaceId: "wks_0123456789abcdef",
+    agentId: null,
+    error: null,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "creation.subscribe.response",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: "saved-observer",
+        snapshot: pending,
+        error: null,
+      },
+    }),
+  );
+  const failed = {
+    ...pending,
+    revision: 2,
+    phase: "failed",
+    error: "Startup rejected",
+    outcomeUnknown: false,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.update",
+      payload: { ...failed, subscriptionId: "saved-observer" },
+    }),
+  );
+  expect(await result).toMatchObject(failed);
+  expect(phases).toEqual(["workspace_ready", "failed"]);
+  expect(transport.sent.map((frame) => parseSentFrame(frame).type)).not.toContain(
+    "workspace.create.request",
+  );
+});

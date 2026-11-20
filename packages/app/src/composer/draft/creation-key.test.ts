@@ -683,3 +683,257 @@ describe("draft creation retry admission", () => {
     expect(starts).toBe(0);
   });
 });
+
+const handedOffWorkspace = WorkspaceDescriptorPayloadSchema.parse({
+  id: "workspace-1",
+  projectId: "project",
+  projectDisplayName: "Project",
+  projectRootPath: "/repo",
+  workspaceDirectory: "/repo/worktree",
+  projectKind: "git",
+  workspaceKind: "worktree",
+  name: "Ready workspace",
+  status: "running",
+  statusEnteredAt: null,
+  activityAt: null,
+  archivingAt: null,
+  scripts: [],
+});
+const handedOffRequest = { source: { kind: "directory", path: "/repo" }, agent: request };
+const destinationRequest = { ...request, config: { ...request.config, cwd: "/repo/worktree" } };
+const recoveredAgent = {
+  id: "agent-1",
+  workspaceId: "workspace-1",
+  provider: "codex",
+  cwd: "/repo/worktree",
+  model: null,
+  createdAt: "2026-11-20T00:00:00Z",
+  updatedAt: "2026-11-20T00:00:00Z",
+  lastUserMessageAt: null,
+  status: "idle",
+  capabilities: {
+    supportsStreaming: true,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: true,
+    supportsRewindConversation: false,
+    supportsRewindFiles: false,
+    supportsRewindBoth: false,
+  },
+  currentModeId: null,
+  availableModes: [],
+  pendingPermissions: [],
+  persistence: null,
+  title: "Original",
+  labels: {},
+} satisfies import("@getpaseo/protocol/messages").AgentSnapshotPayload;
+
+function deferredValue<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function seedWorkspaceAttempt(disk: ReturnType<typeof storage>, initialAgent = true) {
+  await creationsFor(disk).submit({
+    ...scope,
+    kind: "workspace",
+    request: initialAgent ? handedOffRequest : { source: handedOffRequest.source },
+    send: async ({ idempotencyKey, onEvent }) => {
+      onEvent({
+        ...failure({ kind: "workspace", idempotencyKey, unknown: false }),
+        phase: "workspace_ready",
+        revision: 1,
+        error: null,
+        workspace: handedOffWorkspace,
+      });
+    },
+  });
+}
+
+describe("creation receipt reconciliation and retirement", () => {
+  it("checkpoints conclusive result receipts even when repeated legacy revisions do not advance", async () => {
+    const disk = storage();
+    const input = { source: handedOffRequest.source };
+    for (const _attempt of [1, 2]) {
+      await creationsFor(disk).submit({
+        ...scope,
+        kind: "workspace",
+        request: input,
+        send: async ({ idempotencyKey }) => ({
+          error: "Unknown branch",
+          creation: failure({ kind: "workspace", idempotencyKey, unknown: false }),
+        }),
+      });
+    }
+    expect(
+      await creationsFor(disk).submit({
+        ...scope,
+        kind: "workspace",
+        request: { source: { ...input.source, path: "/valid" } },
+        send: async () => "corrected",
+      }),
+    ).toBe("corrected");
+  });
+
+  it("recovers the original completed agent after handoff and reload without creating another", async () => {
+    const disk = storage();
+    await seedWorkspaceAttempt(disk);
+    const restored = creationsFor(disk);
+    const agent = await restored.reconcileWorkspace({
+      ...scope,
+      workspaceId: "workspace-1",
+      request: destinationRequest,
+      observe: async (kind, key, onEvent) => {
+        expect([kind, key]).toEqual([
+          "workspace",
+          draftCreationKey(scope.draftId, handedOffRequest),
+        ]);
+        const snapshot = {
+          ...failure({ kind, idempotencyKey: key, unknown: false }),
+          phase: "completed" as const,
+          error: null,
+          workspace: handedOffWorkspace,
+          agent: recoveredAgent,
+        };
+        onEvent(snapshot);
+        return snapshot;
+      },
+    });
+    expect(agent).toEqual(recoveredAgent);
+  });
+
+  it("learns a definite workspace startup failure before admitting an edited standalone agent", async () => {
+    const disk = storage();
+    await seedWorkspaceAttempt(disk);
+    const restored = creationsFor(disk);
+    expect(
+      await restored.reconcileWorkspace({
+        ...scope,
+        workspaceId: "workspace-1",
+        request: destinationRequest,
+        observe: async (kind, key, onEvent) => {
+          const snapshot = {
+            ...failure({ kind, idempotencyKey: key, unknown: false }),
+            revision: 1,
+          };
+          onEvent(snapshot);
+          return snapshot;
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      await creationsFor(disk).submit({
+        ...scope,
+        kind: "agent",
+        request: { ...destinationRequest, initialPrompt: "Edited task" },
+        send: async () => "edited-agent",
+      }),
+    ).toBe("edited-agent");
+  });
+
+  it("keeps unknown receipts and edited completed requests protected", async () => {
+    const disk = storage();
+    await seedWorkspaceAttempt(disk);
+    const restored = creationsFor(disk);
+    await expect(
+      restored.reconcileWorkspace({
+        ...scope,
+        workspaceId: "workspace-1",
+        request: destinationRequest,
+        observe: async () => null,
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    await expect(
+      restored.reconcileWorkspace({
+        ...scope,
+        workspaceId: "workspace-1",
+        request: { ...destinationRequest, initialPrompt: "Changed" },
+        observe: async (kind, key, onEvent) => {
+          const snapshot = {
+            ...failure({ kind, idempotencyKey: key, unknown: false }),
+            phase: "completed" as const,
+            error: null,
+            workspace: handedOffWorkspace,
+            agent: recoveredAgent,
+          };
+          onEvent(snapshot);
+          return snapshot;
+        },
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+  });
+
+  it("rechecks retirement after a newer agent admission finishes its durable write, without waiting for its network result", async () => {
+    const disk = storage();
+    await seedWorkspaceAttempt(disk, false);
+    const writing = deferredValue<void>();
+    const persist = deferredValue<void>();
+    const network = deferredValue<string>();
+    const creations = creationsFor({
+      getItem: disk.getItem,
+      setItem: async (key, value) => {
+        if ((JSON.parse(value) as { attempt?: { kind: string } }).attempt?.kind === "agent") {
+          writing.resolve();
+          await persist.promise;
+        }
+        await disk.setItem(key, value);
+      },
+    });
+    const retire = {
+      ...scope,
+      workspaceId: "workspace-1",
+      retire: () => {
+        retirements++;
+      },
+    };
+    let retirements = 0;
+    expect(await creations.retireWorkspace(retire)).toBe(true);
+    const pending = creations.submit({
+      ...scope,
+      kind: "agent",
+      request: destinationRequest,
+      send: async () => network.promise,
+    });
+    await writing.promise;
+    const delayedRetirement = creations.retireWorkspace(retire);
+    persist.resolve();
+    expect(await delayedRetirement).toBe(false);
+    expect(retirements).toBe(1);
+    network.resolve("original-agent");
+    expect(await pending).toBe("original-agent");
+  });
+});
+
+it("agent admission reclaims an identity retired before it acquired the lock", async () => {
+  const disk = storage();
+  await seedWorkspaceAttempt(disk, false);
+  const creations = creationsFor(disk);
+  let owner: string | undefined = scope.draftId;
+  expect(
+    await creations.retireWorkspace({
+      ...scope,
+      workspaceId: "workspace-1",
+      retire: () => {
+        owner = undefined;
+      },
+    }),
+  ).toBe(true);
+  expect(
+    await creations.submit({
+      ...scope,
+      kind: "agent",
+      request: destinationRequest,
+      onAdmitted: async () => {
+        owner = scope.draftId;
+      },
+      send: async () => {
+        expect(owner).toBe(scope.draftId);
+        return "claimed-agent";
+      },
+    }),
+  ).toBe("claimed-agent");
+});

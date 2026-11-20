@@ -4,6 +4,7 @@ import { draftCreations } from "@/composer/draft/creation-attempts";
 import {
   flushDraftPersistStorage,
   prepareDraftCreation,
+  claimDraftCreation,
   useDraftStore,
 } from "@/stores/draft-store";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
@@ -310,6 +311,7 @@ async function createMultiplicityWorkspace(input: {
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
   ) => void;
   serverId: string;
+  claimIdentity: () => Promise<void>;
   createFailedMessage: string;
 }): Promise<WorkspaceCreationResult> {
   const projectId = getHostProjectId(input.project, input.serverId);
@@ -371,6 +373,7 @@ async function createMultiplicityWorkspace(input: {
       serverId: input.serverId,
       draftId: input.idempotencyKey,
       kind: "agent",
+      onAdmitted: input.claimIdentity,
       request: agentRequest,
       onEvent: (snapshot) => input.onEvent?.({ ...snapshot, workspace: ready }),
       send: (options) => input.client.createAgent({ ...agentRequest, ...options }),
@@ -381,6 +384,7 @@ async function createMultiplicityWorkspace(input: {
     serverId: input.serverId,
     draftId: input.idempotencyKey,
     kind: "workspace",
+    onAdmitted: input.claimIdentity,
     request,
     onEvent: input.onEvent,
     send: (options) => input.client.createWorkspace({ ...request, ...options }),
@@ -442,16 +446,15 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
   workspaceDirectory: string;
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
-}): WorkspaceDraftTabSetup | undefined {
-  if (!input.forkDraftSetup) {
-    return undefined;
-  }
+}): WorkspaceDraftTabSetup {
   return buildWorkspaceDraftSetupFromComposer({
-    cwd: remapDraftCwdToWorkspace({
-      cwd: input.forkDraftSetup.setup.cwd,
-      sourceDirectory: input.forkDraftSetup.sourceDirectory,
-      workspaceDirectory: input.workspaceDirectory,
-    }),
+    cwd: input.forkDraftSetup
+      ? remapDraftCwdToWorkspace({
+          cwd: input.forkDraftSetup.setup.cwd,
+          sourceDirectory: input.forkDraftSetup.sourceDirectory,
+          workspaceDirectory: input.workspaceDirectory,
+        })
+      : input.workspaceDirectory,
     provider: input.provider,
     composerState: input.composerState,
   });
@@ -1312,6 +1315,7 @@ export function NewWorkspaceScreen({
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationDraftId,
+        claimIdentity: () => claimDraftCreation({ draftKey, expectedId: creationDraftId }),
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1455,12 +1459,18 @@ export function NewWorkspaceScreen({
       await updateFormPreferences({ launchTarget });
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
+      let terminalIdentity: { draftId: string; workspaceId: string } | undefined;
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
-        ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
+        ensureWorkspace: async (request) => {
+          const { workspace: readyWorkspace } = await ensureWorkspace(request);
+          const id = useDraftStore.getState().creationIdByDraftKey[draftKey];
+          if (id) terminalIdentity = { draftId: id, workspaceId: readyWorkspace.id };
+          return readyWorkspace;
+        },
         createTerminal: async (input) => {
           const connectedClient = withConnectedClient();
           const createdTerminal = await connectedClient.createTerminal(
@@ -1500,7 +1510,17 @@ export function NewWorkspaceScreen({
           navigateToWorkspace({ serverId: targetServerId, workspaceId, target });
         },
       });
-      useDraftStore.getState().clearDraftCreationId({ draftKey });
+      const owner = terminalIdentity;
+      if (owner)
+        await draftCreations.retireWorkspace({
+          ...owner,
+          serverId: selectedServerId,
+          retire: () => {
+            const store = useDraftStore.getState();
+            if (store.creationIdByDraftKey[draftKey] === owner.draftId)
+              store.clearDraftCreationId({ draftKey });
+          },
+        });
       await flushDraftPersistStorage();
       setCreationResult({ workspace: null });
       setCreationIdentity({ worktreeSlug: createNameId() });

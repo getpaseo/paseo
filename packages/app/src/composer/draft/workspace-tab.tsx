@@ -17,7 +17,7 @@ import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/dra
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
-import { prepareDraftCreation, useDraftStore } from "@/stores/draft-store";
+import { prepareDraftCreation, claimDraftCreation, useDraftStore } from "@/stores/draft-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -32,7 +32,10 @@ import {
 } from "@/composer/draft/workspace-tab-core";
 import { DRAFT_CAPABILITIES } from "@/composer/draft/timeline";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  DaemonClient,
+  CreateAgentRequestOptions,
+} from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useDraftWorkspaceAttachmentScopeKey,
@@ -182,18 +185,48 @@ async function submitDraftCreateRequest(input: {
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
-  const result = await draftCreations.submit({
+  const result = await submitAgentWithWorkspaceReceipt({
     serverId: input.serverId,
     draftId: creationDraftId,
-    kind: "agent",
+    workspaceId,
     request,
-    send: (options) => client.createAgent({ ...request, ...options }),
+    client,
+    draftStoreKey: input.draftStoreKey,
   });
 
   return {
     agentId: result.id,
     result,
   };
+}
+
+async function submitAgentWithWorkspaceReceipt(input: {
+  draftStoreKey: string;
+  serverId: string;
+  draftId: string;
+  workspaceId: string;
+  request: CreateAgentRequestOptions;
+  client: DaemonClient;
+}): Promise<AgentSnapshotPayload> {
+  const reconciled = await draftCreations.reconcileWorkspace({
+    serverId: input.serverId,
+    draftId: input.draftId,
+    workspaceId: input.workspaceId,
+    request: input.request,
+    observe: (kind, key, onEvent) => input.client.waitForCreation(kind, key, onEvent),
+  });
+  return (
+    reconciled ??
+    (await draftCreations.submit({
+      serverId: input.serverId,
+      draftId: input.draftId,
+      kind: "agent",
+      onAdmitted: () =>
+        claimDraftCreation({ draftKey: input.draftStoreKey, expectedId: input.draftId }),
+      request: input.request,
+      send: (options) => input.client.createAgent({ ...input.request, ...options }),
+    }))
+  );
 }
 
 function buildDraftAgentSnapshot(input: {

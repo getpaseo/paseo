@@ -118,6 +118,21 @@ export async function prepareDraftCreation(input: {
   return id;
 }
 
+/** Called under the creation admission lock, so a late terminal cannot detach this start. */
+export async function claimDraftCreation(input: {
+  draftKey: string;
+  expectedId: string;
+}): Promise<void> {
+  const actual = await prepareDraftCreation({
+    draftKey: input.draftKey,
+    proposedId: input.expectedId,
+  });
+  if (actual !== input.expectedId)
+    throw new Error(
+      "The draft now belongs to another start. Submit it again from the current draft.",
+    );
+}
+
 function persistedDraftState({
   drafts,
   createModalDraft,

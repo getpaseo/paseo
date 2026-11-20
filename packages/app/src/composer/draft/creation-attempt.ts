@@ -1,7 +1,13 @@
+import type {
+  CreateAgentRequestOptions,
+  CreateWorkspaceRequestOptions,
+} from "@getpaseo/client/internal/daemon-client";
 import { z } from "zod";
 import {
   WorkspaceDescriptorPayloadSchema,
+  CreationSnapshotSchema,
   type CreationSnapshot,
+  type AgentSnapshotPayload,
   type WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import { draftCreationKey } from "./creation-key";
@@ -25,6 +31,7 @@ const RecordSchema = z.object({
   worktreeSlug: z.string().optional(),
   workspace: WorkspaceDescriptorPayloadSchema.optional(),
   workspacePlacementKey: z.string().optional(),
+  agentIntentKey: z.string().optional(),
 });
 type Record = z.infer<typeof RecordSchema>;
 
@@ -38,6 +45,7 @@ interface Scope {
   key: string;
   record: Record;
   operation: Promise<void>;
+  admission: Promise<void>;
   writes: Promise<void>;
 }
 
@@ -68,6 +76,7 @@ interface Submission<Result> extends Identity {
   request: object;
   onEvent?: (snapshot: CreationSnapshot) => void;
   send: (options: CreationOptions) => Promise<Result>;
+  onAdmitted?: () => Promise<void>;
 }
 
 function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): boolean {
@@ -86,6 +95,29 @@ function canStartFirstAgent(
     "workspaceId" in input.request &&
     input.request.workspaceId === previous.workspace.id
   );
+}
+
+function agentIntent(request: object, root: string): string | undefined {
+  const { workspaceId: _workspaceId, ...agent } = request as CreateAgentRequestOptions;
+  if (!agent.config?.cwd) return undefined;
+  const cwd = agent.config.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (cwd !== base && !cwd.startsWith(`${base}/`)) return undefined;
+  return draftCreationKey("agent-intent", {
+    ...agent,
+    config: {
+      ...agent.config,
+      cwd: cwd.slice(base.length),
+      providerOptions: agent.config.providerOptions ?? {},
+    },
+  });
+}
+
+function workspaceAgentIntent(request: object): string | undefined {
+  const input = request as CreateWorkspaceRequestOptions;
+  if (!input.agent || !input.source) return undefined;
+  const root = input.source.kind === "directory" ? input.source.path : input.source.cwd;
+  return root ? agentIntent(input.agent, root) : undefined;
 }
 
 export class DraftCreationOutcomeUnknownError extends Error {
@@ -111,6 +143,7 @@ export function createDraftCreations(deps: Dependencies) {
         key,
         record: stored === null ? { attempt: null } : RecordSchema.parse(JSON.parse(stored)),
         operation: Promise.resolve(),
+        admission: Promise.resolve(),
         writes: Promise.resolve(),
       }),
     );
@@ -119,9 +152,13 @@ export function createDraftCreations(deps: Dependencies) {
     return loaded;
   }
 
-  function serialize<Result>(scope: Scope, run: () => Promise<Result>): Promise<Result> {
-    const result = scope.operation.then(run);
-    scope.operation = result.then(
+  function serialize<Result>(
+    scope: Scope,
+    run: () => Promise<Result>,
+    lock: "operation" | "admission" = "operation",
+  ): Promise<Result> {
+    const result = scope[lock].then(run);
+    scope[lock] = result.then(
       () => undefined,
       () => undefined,
     );
@@ -139,6 +176,45 @@ export function createDraftCreations(deps: Dependencies) {
   async function restore(scope: Scope, record: Record): Promise<void> {
     checkpoint(scope, record);
     await scope.writes;
+  }
+
+  function acceptSnapshot(
+    scope: Scope,
+    snapshot: CreationSnapshot,
+    authoritative = false,
+  ): boolean {
+    const current = scope.record.attempt;
+    if (!current) return false;
+    const matches = snapshot.kind === current.kind && snapshot.idempotencyKey === current.key;
+    const replayedFailure =
+      current.outcome === "pending" &&
+      snapshot.phase === "failed" &&
+      snapshot.outcomeUnknown === false &&
+      snapshot.revision === current.revision;
+    if (
+      !matches ||
+      (!authoritative && snapshot.revision < current.revision) ||
+      (!authoritative && replayedFailure)
+    )
+      return false;
+    let outcome: Attempt["outcome"] = "pending";
+    if (snapshot.phase === "completed") outcome = "completed";
+    if (snapshot.phase === "failed") {
+      outcome = snapshot.outcomeUnknown === false ? "failed" : "unknown";
+    }
+    checkpoint(scope, {
+      ...scope.record,
+      workspace: snapshot.workspace ?? scope.record.workspace,
+      attempt: {
+        kind: snapshot.kind,
+        key: snapshot.idempotencyKey,
+        outcome,
+        revision: snapshot.revision,
+        error: snapshot.error,
+        agentRequested: current.agentRequested,
+      },
+    });
+    return true;
   }
 
   async function worktreeSlug(input: Identity & { proposed: string }): Promise<string> {
@@ -178,80 +254,142 @@ export function createDraftCreations(deps: Dependencies) {
     return { kind: "reuse", workspace: scope.record.workspace };
   }
 
-  async function submit<Result>(input: Submission<Result>): Promise<Result> {
+  async function reconcileWorkspace(
+    input: Identity & {
+      workspaceId: string;
+      request: object;
+      observe: (
+        kind: "workspace",
+        key: string,
+        onEvent: (snapshot: CreationSnapshot) => void,
+      ) => Promise<CreationSnapshot | null>;
+    },
+  ): Promise<AgentSnapshotPayload | undefined> {
     const scope = await scopeFor(input);
     return serialize(scope, async () => {
       await scope.writes;
-      const previous = scope.record;
-      const key = draftCreationKey(input.draftId, input.request);
-      const prior = previous.attempt;
-      const sameRequest = prior?.key === key && prior.kind === input.kind;
-      const firstAgentInReadyWorkspace = canStartFirstAgent(previous, input);
-      if (prior && prior.outcome !== "failed" && !sameRequest && !firstAgentInReadyWorkspace) {
+      const prior = scope.record.attempt;
+      if (
+        prior?.kind !== "workspace" ||
+        prior.agentRequested === false ||
+        prior.outcome === "failed"
+      )
+        return undefined;
+      const ready = scope.record.workspace;
+      if (!ready || ready.id !== input.workspaceId)
         throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
-      }
-      const revision = sameRequest ? prior.revision : 0;
-      const attempt: Attempt = {
-        kind: input.kind,
-        key,
-        outcome: "pending",
-        revision,
-        error: null,
-        agentRequested: requestsAgent(input),
-      };
-      const pending = {
-        ...previous,
-        attempt,
-        ...(input.kind === "workspace"
-          ? { workspacePlacementKey: workspacePlacementKey(input.request) }
-          : {}),
-      };
-      try {
-        await deps.storage.setItem(scope.key, JSON.stringify(pending));
-      } catch (error) {
-        // A rejected storage write may have committed. Undo it before allowing an edited retry.
-        await restore(scope, previous);
-        throw error;
-      }
-      scope.record = pending;
+      const snapshot = await input.observe("workspace", prior.key, (update) =>
+        acceptSnapshot(scope, update, true),
+      );
+      await scope.writes;
+      if (snapshot?.kind !== prior.kind || snapshot.idempotencyKey !== prior.key)
+        throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+      if (snapshot.phase === "failed" && snapshot.outcomeUnknown === false) return undefined;
+      if (
+        snapshot.phase === "completed" &&
+        snapshot.agent &&
+        scope.record.agentIntentKey !== undefined &&
+        scope.record.agentIntentKey === agentIntent(input.request, ready.workspaceDirectory)
+      )
+        return snapshot.agent;
+      throw new DraftCreationOutcomeUnknownError(
+        scope.record.attempt ?? prior,
+        deps.outcomeUnknownMessage(),
+      );
+    });
+  }
 
-      function onEvent(snapshot: CreationSnapshot): void {
-        const current = scope.record.attempt!;
-        const matches = snapshot.kind === current.kind && snapshot.idempotencyKey === current.key;
-        const replayedFailure =
-          current.outcome === "pending" &&
-          snapshot.phase === "failed" &&
-          snapshot.outcomeUnknown === false &&
-          snapshot.revision === current.revision;
-        if (!matches || snapshot.revision < current.revision || replayedFailure) return;
-        let outcome: Attempt["outcome"] = "pending";
-        if (snapshot.phase === "completed") outcome = "completed";
-        if (snapshot.phase === "failed") {
-          outcome = snapshot.outcomeUnknown === false ? "failed" : "unknown";
+  async function retireWorkspace(
+    input: Identity & { workspaceId: string; retire: () => void },
+  ): Promise<boolean> {
+    const scope = await scopeFor(input);
+    return serialize(
+      scope,
+      async () => {
+        await scope.writes;
+        const prior = scope.record.attempt;
+        if (
+          prior?.kind !== "workspace" ||
+          prior.agentRequested !== false ||
+          scope.record.workspace?.id !== input.workspaceId
+        )
+          return false;
+        input.retire();
+        return true;
+      },
+      "admission",
+    );
+  }
+
+  async function submit<Result>(input: Submission<Result>): Promise<Result> {
+    const scope = await scopeFor(input);
+    return serialize(scope, async () => {
+      const admitted = await serialize(
+        scope,
+        async () => {
+          await scope.writes;
+          const previous = scope.record;
+          const key = draftCreationKey(input.draftId, input.request);
+          const prior = previous.attempt;
+          const sameRequest = prior?.key === key && prior.kind === input.kind;
+          const firstAgentInReadyWorkspace = canStartFirstAgent(previous, input);
+          if (prior && prior.outcome !== "failed" && !sameRequest && !firstAgentInReadyWorkspace) {
+            throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+          }
+          await input.onAdmitted?.();
+          const revision = sameRequest ? prior.revision : 0;
+          const attempt: Attempt = {
+            kind: input.kind,
+            key,
+            outcome: "pending",
+            revision,
+            error: null,
+            agentRequested: requestsAgent(input),
+          };
+          const pending = {
+            ...previous,
+            attempt,
+            ...(input.kind === "workspace"
+              ? {
+                  workspacePlacementKey: workspacePlacementKey(input.request),
+                  agentIntentKey: workspaceAgentIntent(input.request),
+                }
+              : {}),
+          };
+          try {
+            await deps.storage.setItem(scope.key, JSON.stringify(pending));
+          } catch (error) {
+            // A rejected storage write may have committed. Undo it before allowing an edited retry.
+            await restore(scope, previous);
+            throw error;
+          }
+          scope.record = pending;
+
+          return { previous, key };
+        },
+        "admission",
+      );
+
+      const onEvent = (snapshot: CreationSnapshot) => {
+        if (acceptSnapshot(scope, snapshot)) input.onEvent?.(snapshot);
+      };
+
+      try {
+        const result = await input.send({ idempotencyKey: admitted.key, onEvent });
+        if (result && typeof result === "object" && "creation" in result) {
+          const snapshot = CreationSnapshotSchema.safeParse(result.creation);
+          if (snapshot.success) acceptSnapshot(scope, snapshot.data, true);
         }
-        checkpoint(scope, {
-          ...scope.record,
-          workspace: snapshot.workspace ?? scope.record.workspace,
-          attempt: {
-            kind: snapshot.kind,
-            key: snapshot.idempotencyKey,
-            outcome,
-            revision: snapshot.revision,
-            error: snapshot.error,
-            agentRequested: current.agentRequested,
-          },
-        });
-        input.onEvent?.(snapshot);
-      }
-
-      try {
-        return await input.send({ idempotencyKey: key, onEvent });
+        return result;
       } catch (error) {
         if (deps.isNotSent(error)) {
           // Legacy workspace creation sends the agent separately. Its local rejection cannot
           // undo a confirmed workspace, and the next retry must skip provisioning entirely.
-          const stagedWorkspace = scope.record.workspace && !previous.workspace;
-          await restore(scope, stagedWorkspace ? { ...scope.record, attempt: null } : previous);
+          const stagedWorkspace = scope.record.workspace && !admitted.previous.workspace;
+          await restore(
+            scope,
+            stagedWorkspace ? { ...scope.record, attempt: null } : admitted.previous,
+          );
         }
         throw error;
       } finally {
@@ -260,5 +398,5 @@ export function createDraftCreations(deps: Dependencies) {
     });
   }
 
-  return { submit, worktreeSlug, workspaceRetry };
+  return { submit, worktreeSlug, workspaceRetry, reconcileWorkspace, retireWorkspace };
 }

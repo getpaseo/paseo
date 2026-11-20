@@ -5,6 +5,7 @@ import {
   delayBrowserWorkspaceCreatedResponse,
   selectWorkspaceIsolation,
   connectNewWorkspaceDaemonClient,
+  loadSessionMessageReaders,
 } from "../support/helpers/new-workspace";
 import { selectLaunchOption, submitTerminalLaunch } from "../support/helpers/new-workspace-launch";
 
@@ -375,5 +376,51 @@ for (const entry of [
     await creation.expectAssistantReply();
     await creation.expectAgentCount(1);
     await expect(page.getByText("agent_request_key_conflict", { exact: true })).toHaveCount(0);
+  });
+}
+
+for (const outcome of ["completed", "failed"] as const) {
+  test(`a handed-off workspace receipt reconciles after reload when startup ${outcome}`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const frames = await loadSessionMessageReaders();
+    const receipts: string[] = [];
+    page.on("websocket", (socket) =>
+      socket.on("framesent", ({ payload }) => {
+        const request = frames.client(payload);
+        if (request?.type === "creation.subscribe.request" && request.kind === "workspace")
+          receipts.push(request.idempotencyKey);
+      }),
+    );
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await creation.openWorkspaceForm("local");
+      const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+      await creation.submitPrompt("Original handed-off task", "Create");
+      await creation.expectAgentStillStarting();
+      await page.reload();
+      if (outcome === "failed") await startup.fail();
+      else await startup.release();
+      const prompt =
+        outcome === "failed" ? "Corrected handed-off task" : "Original handed-off task";
+      await creation.submitPrompt(prompt);
+      await creation.expectPromptVisible(prompt);
+      expect(receipts).toHaveLength(1);
+      const created = (await client.fetchWorkspaces()).entries.filter(
+        (entry) => !before.has(entry.id),
+      );
+      expect(created).toHaveLength(1);
+      expect(
+        (await client.fetchAgents()).entries.filter(
+          (entry) => entry.agent.workspaceId === created[0]!.id,
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await startup.release();
+      await client.close();
+    }
   });
 }

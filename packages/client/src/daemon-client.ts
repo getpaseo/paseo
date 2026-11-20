@@ -3457,6 +3457,41 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  /** Observe a saved operation without retrying its side effects. Legacy hosts cannot reconcile it. */
+  async waitForCreation(
+    kind: CreationSnapshot["kind"],
+    idempotencyKey: string,
+    onEvent: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot | null> {
+    if (this.lastServerInfoMessage?.features?.creationLifecycle !== true) return null;
+    const observation = this.observe("creation.subscribe.response", {
+      type: "creation.subscribe.request",
+      kind,
+      idempotencyKey,
+    });
+    const result = new Promise<CreationSnapshot | null>((resolve, reject) => {
+      const accept = (snapshot: CreationSnapshot | null) => {
+        if (!snapshot) {
+          resolve(null);
+          return;
+        }
+        onEvent(snapshot);
+        if (snapshot.phase === "failed" || snapshot.phase === "completed") resolve(snapshot);
+      };
+      observation.subscribe({
+        snapshot: (payload) => accept(payload.snapshot),
+        update: (message) => {
+          if (message.type === "workspace.create.update" || message.type === "agent.create.update")
+            accept(message.payload);
+        },
+        error: reject,
+      });
+    });
+    return result.finally(() => {
+      void observation.release().catch(() => undefined);
+    });
+  }
+
   // Entity metadata is gated once at the transport boundary.
   private requireEntityMetadata(): void {
     if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
