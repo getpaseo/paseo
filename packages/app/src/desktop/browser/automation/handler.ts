@@ -1,6 +1,9 @@
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import { selectWorkspace } from "@/stores/session-store-hooks/selectors";
+import { useSessionStore } from "@/stores/session-store";
+import { profilePartition, workspaceProfile } from "../profiles";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
 import {
   ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault,
@@ -8,6 +11,7 @@ import {
   resizeResidentBrowserWebview,
 } from "@/desktop/browser/resident-webviews";
 import {
+  waitForBrowserHydration,
   createFixedBrowserViewport,
   createWorkspaceBrowser,
   getBrowserRecord,
@@ -359,8 +363,26 @@ async function openBrowserTabForRequest(params: {
     });
   }
 
-  const url = command.args.url ?? "https://example.com";
+  const workspace = selectWorkspace(useSessionStore.getState(), serverId, workspaceId);
+  if (!workspace?.projectId) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unsupported",
+      message: "Cannot resolve the workspace or project for this browser tab.",
+    });
+  }
+  await waitForBrowserHydration();
+  await browserHost?.listProfiles?.();
+  const profile = await workspaceProfile(
+    serverId,
+    workspace.projectId,
+    workspaceId,
+    workspace.title || workspace.name,
+  );
+  const partition = await profilePartition(profile);
+  const url = command.args.url ?? "about:blank";
   const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
+  useBrowserStore.getState().updateBrowser(browserId, { profile });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {
     return browserAutomationFailure({
@@ -376,7 +398,7 @@ async function openBrowserTabForRequest(params: {
   });
 
   if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
+    ensureResidentBrowserWebview({ browserId, workspaceId, partition, url: normalizedUrl });
     const registered = await waitForBrowserRegistration({
       request,
       browserId,

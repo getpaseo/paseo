@@ -625,6 +625,13 @@ export const es: TranslationResources = {
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",
       },
       session: "Sesión de navegador{{browserId}}",
+      profiles: {
+        shared: "Compartidos",
+        label: "Perfil del navegador {{profile}}",
+        createShared: "Crear perfil compartido…",
+        createWorkspace: "Crear perfil de espacio de trabajo…",
+        create: "Crear",
+      },
       controls: {
         back: "Atrás",
         forward: "Adelante",
@@ -2531,8 +2538,7 @@ export const es: TranslationResources = {
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",
-        description:
-          "Las pestañas del navegador comparten inicios de sesión y datos de sitios en Paseo.",
+        description: "Las pestañas con el mismo perfil comparten sesiones y datos de sitios.",
         clear: "Borrar datos del navegador",
         clearing: "Borrando...",
         confirmTitle: "¿Borrar los datos del navegador?",

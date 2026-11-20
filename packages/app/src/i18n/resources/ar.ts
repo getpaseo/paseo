@@ -619,6 +619,13 @@ export const ar: TranslationResources = {
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
       session: "جلسة المتصفح{{browserId}}",
+      profiles: {
+        shared: "مشتركة",
+        label: "ملف المتصفح {{profile}}",
+        createShared: "إنشاء ملف مشترك جديد…",
+        createWorkspace: "إنشاء ملف مساحة عمل جديد…",
+        create: "إنشاء",
+      },
       controls: {
         back: "خلف",
         forward: "إلى الأمام",
@@ -2517,7 +2524,7 @@ export const ar: TranslationResources = {
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
-        description: "تتشارك علامات تبويب المتصفح تسجيلات الدخول وبيانات المواقع عبر Paseo.",
+        description: "تتشارك علامات التبويب التي تستخدم الملف نفسه تسجيلات الدخول وبيانات المواقع.",
         clear: "مسح بيانات المتصفح",
         clearing: "جارٍ المسح...",
         confirmTitle: "هل تريد مسح بيانات المتصفح؟",

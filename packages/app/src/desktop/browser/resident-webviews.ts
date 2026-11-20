@@ -3,7 +3,7 @@ import {
   type DesktopAttachedBrowserRegistration,
   type DesktopBrowserBridge,
 } from "@/desktop/host";
-import type { BrowserViewport } from "@/desktop/browser/store";
+import { useBrowserStore, type BrowserViewport } from "@/desktop/browser/store";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
@@ -22,24 +22,19 @@ interface BrowserWebviewElement extends HTMLElement {
 }
 
 interface BrowserWebviewIdentity {
+  partition: string;
   browserId: string;
   workspaceId: string;
 }
 
 export interface BrowserWebviewProfileHost {
-  profilePartition: string;
   registerAttachedBrowser(input: DesktopAttachedBrowserRegistration): Promise<void>;
 }
 
 function isAttachedBrowserBridge(
   browser: DesktopBrowserBridge | undefined,
 ): browser is BrowserWebviewProfileHost {
-  return (
-    browser !== undefined &&
-    typeof browser.profilePartition === "string" &&
-    browser.profilePartition.startsWith("persist:") &&
-    typeof browser.registerAttachedBrowser === "function"
-  );
+  return browser !== undefined && typeof browser.registerAttachedBrowser === "function";
 }
 
 function getBrowserBridge(override?: BrowserWebviewProfileHost): BrowserWebviewProfileHost {
@@ -60,18 +55,27 @@ function registerBrowserWhenAttached(
 ): void {
   // Reparenting a webview can replace its guest WebContents without replacing
   // this DOM element, so every attachment needs a fresh main-process registration.
-  webview.addEventListener("did-attach", () => {
+  const register = () => {
     const webContentsId = webview.getWebContentsId();
     void browser
       .registerAttachedBrowser({
-        partition: browser.profilePartition,
+        partition: identity.partition,
         browserId: identity.browserId,
         workspaceId: identity.workspaceId,
         webContentsId,
       })
+      .then(() => {
+        webview.dataset.registeredPartition = identity.partition;
+        return webview.dispatchEvent(new Event("paseo-profile-registered"));
+      })
       .catch((error) => {
+        useBrowserStore.getState().updateBrowser(identity.browserId, { lastError: String(error) });
         console.error("[browser-webview] attached registration failed", error);
       });
+  };
+  webview.addEventListener("did-attach", () => {
+    // Electron may dispatch did-attach before getWebContentsId() is available.
+    webview.addEventListener("dom-ready", register, { once: true });
   });
 }
 
@@ -297,6 +301,7 @@ export function presentBrowserWebview(
 export function prepareBrowserWebview(
   webview: HTMLElement,
   input: {
+    partition: string;
     browserId: string;
     workspaceId: string;
     initialUrl?: string | null;
@@ -305,10 +310,37 @@ export function prepareBrowserWebview(
 ): void {
   const browser = getBrowserBridge(input.profileHost);
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", browser.profilePartition);
+  webview.setAttribute("partition", input.partition);
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
+  const update = (
+    patch: Parameters<ReturnType<typeof useBrowserStore.getState>["updateBrowser"]>[1],
+  ) => {
+    if (webview.isConnected) useBrowserStore.getState().updateBrowser(input.browserId, patch);
+  };
+  webview.addEventListener("did-start-navigation", (raw) => {
+    const event = raw as Event & { isMainFrame: boolean; url: string };
+    if (event.isMainFrame && /^https?:/i.test(event.url))
+      update({ phase: "in-flight", url: event.url });
+  });
+  webview.addEventListener("did-navigate", (raw) => {
+    const { url } = raw as Event & { url: string };
+    if (url) update(url === "about:blank" ? { url } : { url, phase: "locked" });
+  });
+  webview.addEventListener("did-fail-load", (raw) => {
+    const event = raw as Event & { isMainFrame: boolean };
+    const current = webview as BrowserWebviewElement & {
+      getURL?: () => string;
+      isLoadingMainFrame?: () => boolean;
+    };
+    if (
+      event.isMainFrame &&
+      current.getURL?.() === "about:blank" &&
+      !current.isLoadingMainFrame?.()
+    )
+      update({ phase: "pristine", url: "about:blank" });
+  });
   if (input.initialUrl) {
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
@@ -316,6 +348,7 @@ export function prepareBrowserWebview(
 }
 
 export function ensureResidentBrowserWebview(input: {
+  partition: string;
   browserId: string;
   workspaceId: string;
   url: string;
@@ -349,6 +382,7 @@ export function ensureResidentBrowserWebview(input: {
     browserId,
     workspaceId: input.workspaceId,
     initialUrl: input.url,
+    partition: input.partition,
     profileHost: input.profileHost,
   });
   releaseResidentBrowserWebview(browserId, webview);

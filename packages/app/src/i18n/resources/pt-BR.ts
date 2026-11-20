@@ -624,6 +624,13 @@ export const ptBR: TranslationResources = {
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
       },
       session: "Sessão do navegador {{browserId}}",
+      profiles: {
+        shared: "Compartilhados",
+        label: "Perfil do navegador {{profile}}",
+        createShared: "Criar perfil compartilhado…",
+        createWorkspace: "Criar perfil do espaço de trabalho…",
+        create: "Criar",
+      },
       controls: {
         back: "Voltar",
         forward: "Avançar",
@@ -2515,7 +2522,7 @@ export const ptBR: TranslationResources = {
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",
-        description: "As abas do navegador compartilham logins e dados de sites no Paseo.",
+        description: "Abas com o mesmo perfil compartilham logins e dados dos sites.",
         clear: "Limpar dados do navegador",
         clearing: "Limpando...",
         confirmTitle: "Limpar dados do navegador?",

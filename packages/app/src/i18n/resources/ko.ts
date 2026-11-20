@@ -620,6 +620,13 @@ export const ko: TranslationResources = {
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
       },
       session: "브라우저 세션 {{browserId}}",
+      profiles: {
+        shared: "공유",
+        label: "브라우저 프로필 {{profile}}",
+        createShared: "새 공유 프로필 만들기…",
+        createWorkspace: "새 작업 공간 프로필 만들기…",
+        create: "만들기",
+      },
       controls: {
         back: "뒤로",
         forward: "앞으로",
@@ -2492,7 +2499,7 @@ export const ko: TranslationResources = {
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
-        description: "브라우저 탭은 Paseo 전체에서 로그인 및 사이트 데이터를 공유합니다.",
+        description: "같은 프로필을 사용하는 탭은 로그인 정보와 사이트 데이터를 공유합니다.",
         clear: "브라우저 데이터 지우기",
         clearing: "삭제 중...",
         confirmTitle: "브라우저 데이터를 삭제하시겠습니까?",

@@ -625,6 +625,13 @@ export const fr: TranslationResources = {
         subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
       session: "Session de navigateur {{browserId}}",
+      profiles: {
+        shared: "Partagés",
+        label: "Profil du navigateur {{profile}}",
+        createShared: "Créer un profil partagé…",
+        createWorkspace: "Créer un profil d’espace de travail…",
+        create: "Créer",
+      },
       controls: {
         back: "Retour",
         forward: "Suivant",
@@ -2533,7 +2540,7 @@ export const fr: TranslationResources = {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
         description:
-          "Les onglets du navigateur partagent les connexions et les données des sites dans Paseo.",
+          "Les onglets du même profil partagent les connexions et les données des sites.",
         clear: "Effacer les données du navigateur",
         clearing: "Effacement…",
         confirmTitle: "Effacer les données du navigateur ?",

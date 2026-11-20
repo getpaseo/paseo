@@ -53,6 +53,8 @@ describe("createBrowserRecord", () => {
     expect(record).toEqual({
       browserId: "b1",
       url: "http://localhost:8081",
+      profile: "pending",
+      phase: "in-flight",
       title: "",
       isLoading: false,
       canGoBack: false,
@@ -188,4 +190,39 @@ describe("normalizeBrowserIndexState", () => {
       normalizeBrowserIndexState({ browsersById: { b1: legacy } }).browsersById.b1?.viewport,
     ).toEqual({ mode: "responsive" });
   });
+});
+
+it("retains tab phase across persistence and rejects profile changes after navigation begins", () => {
+  const record = createBrowserRecord({ browserId: "blank", initialUrl: undefined, now: 0 });
+  const chosen = { group: null, name: "Work", slug: "work" };
+  let state = applyBrowserPatch(withRecords([record]), "blank", { profile: chosen });
+  for (const phase of ["pristine", "in-flight", "locked"] as const) {
+    state = applyBrowserPatch(state, "blank", { phase });
+    state = normalizeBrowserIndexState(sanitizeBrowsersForPersist(state));
+    expect(state.browsersById.blank).toMatchObject({ url: "about:blank", profile: chosen, phase });
+    if (phase !== "pristine")
+      expect(applyBrowserPatch(state, "blank", { profile: { ...chosen, slug: "other" } })).toBe(
+        state,
+      );
+  }
+  expect(applyBrowserPatch(state, "blank", { phase: "pristine" })).toBe(state);
+});
+
+it("restores legacy blank records locked and isolates a corrupt explicit profile", () => {
+  const {
+    profile: _profile,
+    phase: _phase,
+    ...legacy
+  } = createBrowserRecord({ browserId: "a", initialUrl: undefined, now: 0 });
+  const work = { group: null, name: "Work", slug: "work" };
+  const { browsersById } = normalizeBrowserIndexState({
+    browsersById: {
+      a: legacy,
+      b: { ...legacy, browserId: "b", profile: work },
+      c: { ...legacy, browserId: "c", profile: { wrong: true } },
+    },
+  });
+  expect(browsersById.a).toMatchObject({ phase: "locked", profile: { slug: "default" } });
+  expect(browsersById.b).toMatchObject({ phase: "locked", profile: work });
+  expect(browsersById.c.profile).toBe("invalid");
 });

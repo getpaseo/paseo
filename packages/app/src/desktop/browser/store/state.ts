@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { BrowserProfileEntry } from "@/desktop/host";
+import { sharedDefault } from "../profiles";
 
 export type BrowserViewport =
   | { mode: "responsive" }
@@ -6,7 +8,12 @@ export type BrowserViewport =
 
 export const RESPONSIVE_BROWSER_VIEWPORT: BrowserViewport = { mode: "responsive" };
 
+type StoredProfile = BrowserProfileEntry | "pending" | "invalid";
+export type NavigationPhase = "pristine" | "in-flight" | "locked";
+
 export interface BrowserRecord {
+  profile: StoredProfile;
+  phase: NavigationPhase;
   browserId: string;
   url: string;
   title: string;
@@ -35,6 +42,21 @@ const BrowserViewportSchema = z.discriminatedUnion("mode", [
 ]);
 
 const BrowserRecordSchema = z.strictObject({
+  profile: z
+    .union([
+      z.literal("pending"),
+      z.literal("invalid"),
+      z.strictObject({
+        group: z
+          .strictObject({ serverId: z.string().min(1), projectId: z.string().min(1) })
+          .nullable(),
+        slug: z.string().min(1),
+        name: z.string().min(1),
+      }),
+    ])
+    .default(sharedDefault)
+    .catch("invalid"),
+  phase: z.enum(["pristine", "in-flight", "locked"]).default("locked").catch("locked"),
   browserId: z.string(),
   url: z.string(),
   title: z.string(),
@@ -111,7 +133,9 @@ export function createBrowserRecord(input: {
 }): BrowserRecord {
   return {
     browserId: input.browserId,
-    url: normalizeBrowserUrl(input.initialUrl),
+    profile: "pending",
+    phase: !input.initialUrl || input.initialUrl === "about:blank" ? "pristine" : "in-flight",
+    url: input.initialUrl == null ? "about:blank" : normalizeBrowserUrl(input.initialUrl),
     title: "",
     isLoading: false,
     canGoBack: false,
@@ -143,12 +167,19 @@ export function applyBrowserPatch<S extends BrowserIndexState>(
   const nextRecord: BrowserRecord = {
     ...existing,
     ...patch,
+    profile:
+      existing.profile === "pending" || existing.phase === "pristine"
+        ? (patch.profile ?? existing.profile)
+        : existing.profile,
+    phase: existing.phase === "locked" ? "locked" : (patch.phase ?? existing.phase),
     viewport: nextViewport,
     url: normalizeBrowserUrl(patch.url ?? existing.url),
   };
 
   if (
     nextRecord.url === existing.url &&
+    nextRecord.phase === existing.phase &&
+    nextRecord.profile === existing.profile &&
     nextRecord.title === existing.title &&
     nextRecord.isLoading === existing.isLoading &&
     nextRecord.canGoBack === existing.canGoBack &&
