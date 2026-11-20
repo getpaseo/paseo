@@ -109,10 +109,6 @@ function HubHero() {
   );
 }
 
-const SOURCE_CODE_COMPONENTS = {
-  code: <code className="font-mono text-[11px] text-white/75" />,
-};
-
 function AutomationsSection() {
   const { t } = useTranslation();
   return (
@@ -137,10 +133,7 @@ function AutomationsSection() {
             <div className="min-w-0 space-y-1">
               <h3 className="text-sm font-medium text-white/90">{t(`hub.sources.${id}.name`)}</h3>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                <Trans
-                  i18nKey={`hub.sources.${id}.description`}
-                  components={SOURCE_CODE_COMPONENTS}
-                />
+                {t(`hub.sources.${id}.description`)}
               </p>
             </div>
           </div>

@@ -598,7 +598,7 @@
   },
   "hub": {
     "metaTitle": "Paseo Hub - 在你的机器上自动化运行 Agent",
-    "metaDescription": "通过 GitHub、Linear、Slack、Discord、定时任务、webhook 和 HTTP API，在你自己的机器上自动化运行 Claude Code、Codex 和 OpenCode。支持自托管或托管服务。",
+    "metaDescription": "通过 GitHub、Linear、Slack、Discord、定时任务和 webhook，在你自己的机器上自动化运行 Claude Code、Codex 和 OpenCode。支持自托管或托管服务。",
     "title": "Paseo Hub",
     "intro": "自动化运行编程 Agent，并与团队共享 daemon。每次运行都在你自己的机器上执行。",
     "runIt": "可基于 Apache 2.0 自托管运行，也可以使用托管服务。",
@@ -613,27 +613,27 @@
     "sources": {
       "github": {
         "name": "GitHub",
-        "description": "Issue、PR、提交、评论和标签。"
+        "description": "Issue、PR 和评论。"
       },
       "linear": {
         "name": "Linear",
-        "description": "Issue 分配、项目/状态/标签筛选以及评论。"
+        "description": "Issue、分配和评论。"
       },
       "slack": {
         "name": "Slack",
-        "description": "在频道和讨论串中提及机器人。"
+        "description": "频道和讨论串中的提及。"
       },
       "discord": {
         "name": "Discord",
-        "description": "在频道和讨论串中提及机器人。"
+        "description": "频道和讨论串中的提及。"
       },
       "schedules": {
         "name": "定时任务",
-        "description": "支持时区、预设或日历规则的周期运行。"
+        "description": "按你的时区定时运行。"
       },
       "webhooks": {
-        "name": "Webhook 与 API",
-        "description": "入站 webhook 与带作用域密钥和类型化输入的 <code>POST /api/v1/manual-runs</code>。"
+        "name": "Webhook",
+        "description": "来自任意服务或脚本的事件。"
       }
     },
     "demo": {
@@ -664,7 +664,7 @@
       "title": "与团队共享，锁定在你的机器上",
       "description": "Hub 连接到你已在运行的 daemon。团队共享触发器与运行历史，你的代码留在你自己的机器上。",
       "triggersRow": "自动化来源",
-      "webhooks": "webhook、提及、定时任务与 API",
+      "webhooks": "webhook、提及与定时任务",
       "hub": "Hub",
       "hubHosting": "自托管或托管",
       "sameRpcs": "与应用和 CLI 相同的 RPC",
@@ -682,7 +682,7 @@
       "scopedTitle": "受控触发范围",
       "scopedDescription": "每个触发器都需要发送者白名单、资源过滤条件，以及按步骤显式声明的 GitHub 权限。",
       "visibilityTitle": "团队可见性",
-      "visibilityDescription": "所有者、管理员和成员共享 daemon、触发器、运行历史、路由结果与审计日志。"
+      "visibilityDescription": "所有者、管理员和成员共享 daemon、触发器、运行历史和路由结果。"
     },
     "agents": {
       "title": "运行你已有的 Agent",
@@ -698,8 +698,8 @@
       "openSource": "/ Apache 2.0",
       "getStarted": "开始使用",
       "operateHub": "通过 <code>npx @getpaseo/hub</code> 或 Docker Compose 运行",
-      "allSources": "GitHub、Linear、Slack、Discord、定时任务、webhook 与 API",
-      "managedSources": "GitHub、Linear、Slack、Discord、定时任务、webhook 与 API",
+      "allSources": "GitHub、Linear、Slack、Discord、定时任务与 webhook",
+      "managedSources": "GitHub、Linear、Slack、Discord、定时任务与 webhook",
       "ownApps": "由你创建和控制的 Provider 应用",
       "openSourceFeature": "Apache 2.0 开源",
       "unlimitedRuns": "无限次 Agent 运行",
@@ -716,7 +716,7 @@
     "faq": {
       "title": "常见问题",
       "whatQuestion": "Paseo Hub 是什么？",
-      "whatAnswer": "Paseo Hub 是位于你的 Paseo daemon 之上的独立服务。连接一个或多个 daemon 后，可以通过 GitHub、Linear、Slack、Discord、定时任务、webhook 和 HTTP API 自动化运行 Agent，并与团队共享。没有 Hub，Paseo 也能独立工作。",
+      "whatAnswer": "Paseo Hub 是位于你的 Paseo daemon 之上的独立服务。连接一个或多个 daemon 后，可以通过 GitHub、Linear、Slack、Discord、定时任务和 webhook 自动化运行 Agent，并与团队共享。没有 Hub，Paseo 也能独立工作。",
       "separateQuestion": "为什么 Hub 是独立服务，而不是 daemon 的一部分？",
       "separateAnswer1": "daemon 保持为单台机器上的单一进程。Hub 通过与应用和 CLI 相同的 RPC 与 daemon 通信，所以任何人都可以基于 Paseo 构建自己的服务。",
       "separateAnswer2": "Hub 的职责也不同。它接收公网 webhook、管理团队访问并以多租户方式运行，这些都不属于单机 daemon。",

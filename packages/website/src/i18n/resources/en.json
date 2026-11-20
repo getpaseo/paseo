@@ -598,7 +598,7 @@
   },
   "hub": {
     "metaTitle": "Paseo Hub - Agent automations on your machines",
-    "metaDescription": "Automate Claude Code, Codex, and OpenCode on your own machines from GitHub, Linear, Slack, Discord, schedules, webhooks, and the HTTP API. Self-hosted or hosted.",
+    "metaDescription": "Automate Claude Code, Codex, and OpenCode on your own machines from GitHub, Linear, Slack, Discord, schedules, and webhooks. Self-hosted or hosted.",
     "title": "Paseo Hub",
     "intro": "Automate coding agents and share daemons across your team. Every run executes on your own machines.",
     "runIt": "Run it yourself under Apache 2.0 or use the hosted service.",
@@ -613,27 +613,27 @@
     "sources": {
       "github": {
         "name": "GitHub",
-        "description": "Issues, pull requests, commits, comments, and labels."
+        "description": "Issues, pull requests, and comments."
       },
       "linear": {
         "name": "Linear",
-        "description": "Issue assignments, project, state, and label filters, and comments."
+        "description": "Issues, assignments, and comments."
       },
       "slack": {
         "name": "Slack",
-        "description": "Bot mentions in channels and threads."
+        "description": "Mentions in channels and threads."
       },
       "discord": {
         "name": "Discord",
-        "description": "Bot mentions in channels and threads."
+        "description": "Mentions in channels and threads."
       },
       "schedules": {
         "name": "Schedules",
-        "description": "Recurring runs with timezones, presets, or calendar rules."
+        "description": "Recurring runs in your timezone."
       },
       "webhooks": {
-        "name": "Webhooks & API",
-        "description": "Inbound webhooks and <code>POST /api/v1/manual-runs</code> with scoped keys and typed inputs."
+        "name": "Webhooks",
+        "description": "Events from any service or script."
       }
     },
     "demo": {
@@ -664,7 +664,7 @@
       "title": "Shared with your team, locked to your machines",
       "description": "Hub connects to the daemons you already run. Your team shares triggers and history while your code stays on your machines.",
       "triggersRow": "Automation sources",
-      "webhooks": "webhooks, mentions, schedules, and API",
+      "webhooks": "webhooks, mentions, and schedules",
       "hub": "Hub",
       "hubHosting": "Self-hosted or hosted",
       "sameRpcs": "the same RPCs the app and CLI use",
@@ -682,7 +682,7 @@
       "scopedTitle": "Scoped triggers",
       "scopedDescription": "Every trigger requires sender allowlists, resource filters, and explicit per-step GitHub permissions.",
       "visibilityTitle": "Team visibility",
-      "visibilityDescription": "Owners, admins, and members share daemons, triggers, run history, routing outcomes, and audit logs."
+      "visibilityDescription": "Owners, admins, and members share daemons, triggers, run history, and routing outcomes."
     },
     "agents": {
       "title": "Runs the agents you already have",
@@ -698,8 +698,8 @@
       "openSource": "/ Apache 2.0",
       "getStarted": "Get started",
       "operateHub": "Run with <code>npx @getpaseo/hub</code> or Docker Compose",
-      "allSources": "GitHub, Linear, Slack, Discord, schedules, webhooks, and API",
-      "managedSources": "GitHub, Linear, Slack, Discord, schedules, webhooks, and API",
+      "allSources": "GitHub, Linear, Slack, Discord, schedules, and webhooks",
+      "managedSources": "GitHub, Linear, Slack, Discord, schedules, and webhooks",
       "ownApps": "Provider apps you create and control",
       "openSourceFeature": "Apache 2.0 open source",
       "unlimitedRuns": "Unlimited agent runs",
@@ -716,7 +716,7 @@
     "faq": {
       "title": "FAQ",
       "whatQuestion": "What is Paseo Hub?",
-      "whatAnswer": "Paseo Hub is a separate service that sits above your Paseo daemons. Connect one or more daemons to automate agent runs from GitHub, Linear, Slack, Discord, schedules, webhooks, and the HTTP API, and share them with your team. Paseo works on its own without Hub.",
+      "whatAnswer": "Paseo Hub is a separate service that sits above your Paseo daemons. Connect one or more daemons to automate agent runs from GitHub, Linear, Slack, Discord, schedules, and webhooks, and share them with your team. Paseo works on its own without Hub.",
       "separateQuestion": "Why is Hub a separate service instead of part of the daemon?",
       "separateAnswer1": "The daemon stays a single process on one machine. Hub talks to daemons over the same RPCs that the app and CLI use, so anyone can build another service on top of Paseo.",
       "separateAnswer2": "Hub also has a different job. It receives public webhooks, handles team access, and runs multi-tenant. None of that belongs inside a single-machine daemon.",
