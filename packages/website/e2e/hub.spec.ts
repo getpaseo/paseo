@@ -33,12 +33,16 @@ async function expectSourceLabelFits(page: Page, name: string) {
   expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 }
 
-async function expectPreviewRowFits(page: Page, source: string, row: string) {
+async function expectPreviewRowsFit(page: Page, source: string, ...rows: string[]) {
   const name = new RegExp(`^${source}`);
   await page.getByRole("tab", { name }).click();
   const preview = page.getByRole("tabpanel", { name });
   await preview.scrollIntoViewIfNeeded();
-  await expect(preview.getByText(row, { exact: true })).toBeInViewport({ ratio: 1 });
+  for (const row of rows) {
+    const text = preview.getByText(row, { exact: true }).filter({ visible: true });
+    await expect(text).toBeInViewport({ ratio: 1 });
+    expect(await text.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
 }
 
 async function focusProSeatHelp(page: Page) {
@@ -107,8 +111,8 @@ test("Hub previews have room for their final rows with larger text", async ({ pa
   await openHub(page, 1280);
   await page.addStyleTag({ content: "html { font-size: 125%; }" });
   await waitForHydration(page);
-  await expectPreviewRowFits(page, "GitHub", "Open in Paseo");
-  await expectPreviewRowFits(page, "Discord", "Message #engineering");
+  await expectPreviewRowsFit(page, "GitHub", "Open in Paseo");
+  await expectPreviewRowsFit(page, "Discord", "Message #engineering");
 });
 
 test("preview results fit on a narrow phone with larger text", async ({ page }) => {
@@ -116,6 +120,6 @@ test("preview results fit on a narrow phone with larger text", async ({ page }) 
   await openHub(page, 320);
   await page.addStyleTag({ content: "html { font-size: 125%; }" });
   await waitForHydration(page);
-  await expectPreviewRowFits(page, "Discord", "getpaseo/paseo#2825");
-  await expectPreviewRowFits(page, "Schedules", "tests passed");
+  await expectPreviewRowsFit(page, "Discord", "Fix stale worktrees", "getpaseo/paseo#2825");
+  await expectPreviewRowsFit(page, "Schedules", "tests passed");
 });

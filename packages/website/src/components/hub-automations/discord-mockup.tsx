@@ -70,14 +70,14 @@ function DiscordMessageFeed() {
 
       <MockupStep
         delay={STEP_DELAYS.threadStart}
-        className="flex items-center gap-2 pl-2 text-[11.5px] text-[#949BA4]"
+        className="flex items-start gap-2 pl-2 text-[11.5px] text-[#949BA4]"
       >
         <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-[#949BA4]" aria-hidden="true" />
-        <span className="font-medium text-[#F2F3F5]">paseo-bot</span>
-        <span>{t("hub.demo.discord.startedThread")}</span>
-        <span className="truncate font-semibold text-[#F2F3F5]">
-          {t("hub.demo.discord.threadTitle")}
-        </span>
+        <p>
+          <span className="font-medium text-[#F2F3F5]">paseo-bot</span>{" "}
+          {t("hub.demo.discord.startedThread")}{" "}
+          <span className="font-semibold text-[#F2F3F5]">{t("hub.demo.discord.threadTitle")}</span>
+        </p>
       </MockupStep>
 
       <div className="ml-3 space-y-3 border-l-2 border-[#4E5058] pl-3.5">
