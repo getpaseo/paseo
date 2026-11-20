@@ -53,12 +53,15 @@ test.each(["existing", "new"])(
     );
     try {
       await backend.start();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       if (population === "new") {
         await Promise.all(removed.map((path) => writeFile(path, "before")));
         for (const path of removed) notifications.emit("change", "change", path);
+        await expect
+          .poll(() => backend.getDiagnostics().nativeTrackedFileCount)
+          .toBe(removed.length);
       }
       await Promise.all(removed.map((path) => rm(path)));
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       for (const path of removed) notifications.emit("change", "change", path);
       // The file-only event uses the eight-second optional audit debounce.
       await vi.advanceTimersByTimeAsync(8_000);
