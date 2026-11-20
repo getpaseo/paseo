@@ -193,7 +193,7 @@ function SourceTabButton({
 
       <span className="min-w-0 flex-1">
         <span
-          className={`block truncate text-xs leading-5 font-medium lg:text-sm ${
+          className={`block text-xs leading-5 font-medium [overflow-wrap:anywhere] lg:text-sm ${
             isSelected ? "text-white" : "text-white/80 group-hover:text-white"
           }`}
         >
