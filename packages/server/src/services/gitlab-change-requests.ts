@@ -380,11 +380,6 @@ function resolvePipelineProjectId(
   return encodedProject;
 }
 
-function isApprovalsEndpointUnavailable(status: number | null, text: string): boolean {
-  if (status === 403 || status === 404 || status === 501) return true;
-  return /\b(403|404|501|not found|forbidden)\b/i.test(text);
-}
-
 function pipelineFailureCheck(
   pipeline: z.infer<typeof gitLabWatchPipelineSchema>,
 ): ChangeRequestSnapshot["checks"][number] {
@@ -447,17 +442,26 @@ export function createGitLabChangeRequestSource(
   options: CreateGitLabChangeRequestSourceOptions,
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
-  const authenticatedWatchHosts = new Set<string>();
+  const apiPrefixByHost = new Map<string, string>();
 
-  async function ensureHostAuthenticated(host: string): Promise<void> {
-    if (host === GITLAB_CLOUD_HOST || authenticatedWatchHosts.has(host)) {
-      return;
-    }
-    await options.runCommand(["auth", "status", "--hostname", host], {
-      cwd: process.cwd(),
-      envOverlay: { GITLAB_HOST: host },
-    });
-    authenticatedWatchHosts.add(host);
+  async function resolveApiPrefix(host: string): Promise<string> {
+    if (host === GITLAB_CLOUD_HOST) return "";
+    const cached = apiPrefixByHost.get(host);
+    if (cached !== undefined) return cached;
+
+    const commandOptions = { cwd: process.cwd(), envOverlay: { GITLAB_HOST: host } };
+    await options.runCommand(["auth", "status", "--hostname", host], commandOptions);
+    const config = await options.runCommand(
+      ["config", "get", "api_host", "--host", host],
+      commandOptions,
+    );
+    const apiHost = config.stdout.trim();
+    const apiUrl = apiHost
+      ? new URL(apiHost.includes("://") ? apiHost : `https://${apiHost}`)
+      : null;
+    const prefix = apiUrl ? decodeURI(apiUrl.pathname).replace(/^\/+|\/+$/g, "") : "";
+    apiPrefixByHost.set(host, prefix);
+    return prefix;
   }
 
   function parseJsonResponseBody<T>(params: {
@@ -498,13 +502,16 @@ export function createGitLabChangeRequestSource(
     body: string;
     rawStdout: string;
     rawStderr: string;
+    pauseHost(untilMs: number): void;
   }): void {
     // Only decide rate limits from the HTTP status code on parsed responses so
     // ordinary MR titles, comments, or IIDs mentioning "429" or "rate limit"
     // never trip a false rate-limit pause.
     if (params.status === null) return;
     if (params.status === 429) {
-      throw createRateLimitError(params.host, now(), params.headers);
+      const error = createRateLimitError(params.host, now(), params.headers);
+      params.pauseHost(error.resetAtMs);
+      throw error;
     }
     if (params.status === 401) {
       throw options.createAuthError(params.body || params.rawStderr || "401 Unauthorized");
@@ -544,7 +551,10 @@ export function createGitLabChangeRequestSource(
           parsedError?.headers ?? new Map(),
           `${error.stderr}\n${error.stdout ?? ""}`,
         );
-        if (rateLimit) throw rateLimit;
+        if (rateLimit) {
+          params.pauseHost(rateLimit.resetAtMs);
+          throw rateLimit;
+        }
       }
       throw error;
     }
@@ -559,6 +569,7 @@ export function createGitLabChangeRequestSource(
       body: parsed.body,
       rawStdout: result.stdout,
       rawStderr: result.stderr,
+      pauseHost: params.pauseHost,
     });
 
     const proactivePause = parseRetryAfterMs(parsed.headers, now());
@@ -617,35 +628,46 @@ export function createGitLabChangeRequestSource(
     return { items, pagesRead };
   }
 
-  function extractCommandErrorStatus(error: unknown): { status: number | null; stderr: string } {
-    if (!options.isCommandError(error)) return { status: null, stderr: "" };
-    const status = error.stdout ? parseCliHttpResponse(error.stdout).status : null;
-    return { status, stderr: error.stderr };
+  function commandErrorStatus(error: unknown): number | null {
+    return options.isCommandError(error) && error.stdout
+      ? parseCliHttpResponse(error.stdout).status
+      : null;
   }
 
   async function readMergeRequestMetadata(params: {
-    url: string;
-    host: string;
+    identity: GitLabMergeRequestIdentity;
     endpoint: string;
     pauseHost(untilMs: number): void;
   }): Promise<GitLabWatchMr> {
-    const { data: mr } = await apiGet({ ...params, schema: gitLabWatchMrSchema });
-    if (new URL(mr.web_url).origin !== new URL(params.url).origin) {
+    const { data: mr } = await apiGet({
+      host: params.identity.host,
+      endpoint: params.endpoint,
+      schema: gitLabWatchMrSchema,
+      pauseHost: params.pauseHost,
+    });
+    const address = parseGitLabMergeRequestUrl(mr.web_url);
+    const expected = params.identity;
+    if (address.protocol !== expected.protocol || address.hostWithPort !== expected.hostWithPort) {
       throw new Error(
-        `GitLab returned a merge request from a different web origin: ${new URL(mr.web_url).origin}`,
+        `GitLab returned a merge request from a different web origin: ${address.protocol}//${address.hostWithPort}`,
       );
+    }
+    if (address.projectPath.toLowerCase() !== expected.projectPath.toLowerCase()) {
+      throw new Error("GitLab returned a merge request from a different project.");
+    }
+    if (address.iid !== expected.iid || mr.iid !== expected.iid) {
+      throw new Error("GitLab returned a different merge request number.");
     }
     return mr;
   }
 
   function pipelineDetailsUnavailable(error: unknown): boolean {
-    const { status } = extractCommandErrorStatus(error);
+    const status = commandErrorStatus(error);
     return status === 403 || status === 404;
   }
 
   async function readPipelineChecks(params: {
-    url: string;
-    host: string;
+    identity: GitLabMergeRequestIdentity;
     mrEndpoint: string;
     encodedProject: string;
     mr: GitLabWatchMr;
@@ -660,7 +682,7 @@ export function createGitLabChangeRequestSource(
     let jobsResult: { items: GitLabWatchJob[]; pagesRead: number };
     try {
       jobsResult = await apiGetAllPages({
-        host: params.host,
+        host: params.identity.host,
         endpoint: `projects/${pipelineProject}/pipelines/${pipeline.id}/jobs`,
         itemSchema: gitLabWatchJobSchema,
         isObserved: params.isObserved,
@@ -685,7 +707,7 @@ export function createGitLabChangeRequestSource(
     ) {
       fetchedBridges = true;
       await appendFailedBridgeOrPipelineChecks({
-        host: params.host,
+        host: params.identity.host,
         pipelineProject,
         pipeline,
         checks,
@@ -697,8 +719,7 @@ export function createGitLabChangeRequestSource(
     // Guard against headSha or head_pipeline shifting while paginating check pages.
     if (jobsResult.pagesRead > 1 || fetchedBridges) {
       const recheck = await readMergeRequestMetadata({
-        url: params.url,
-        host: params.host,
+        identity: params.identity,
         endpoint: params.mrEndpoint,
         pauseHost: params.pauseHost,
       });
@@ -754,15 +775,9 @@ export function createGitLabChangeRequestSource(
         pauseHost: params.pauseHost,
       });
       return summarizeApprovalCount(approvals);
-    } catch (error) {
-      if (options.isAuthError(error) || error instanceof ChangeRequestRateLimitError) {
-        throw error;
-      }
-      const { status, stderr } = extractCommandErrorStatus(error);
-      if (isApprovalsEndpointUnavailable(status, stderr)) {
-        return null;
-      }
-      throw error;
+    } catch {
+      // The approval system note is complete without an API count.
+      return null;
     }
   }
 
@@ -773,14 +788,20 @@ export function createGitLabChangeRequestSource(
     isObserved(): boolean;
     pauseHost(untilMs: number): void;
   }): Promise<ChangeRequestSnapshot> {
-    const { host, projectPath, iid } = parseGitLabMergeRequestUrl(context.url);
-    await ensureHostAuthenticated(host);
-    const encodedProject = encodeURIComponent(projectPath);
+    const identity = parseGitLabMergeRequestUrl(context.url);
+    const { host, projectPath, iid } = identity;
+    const prefix = await resolveApiPrefix(host);
+    const relativePath =
+      prefix && projectPath.startsWith(`${prefix}/`)
+        ? projectPath.slice(prefix.length + 1)
+        : projectPath;
+    const encodedProject = encodeURIComponent(
+      relativePath.includes("/") ? relativePath : projectPath,
+    );
     const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
 
     const mr = await readMergeRequestMetadata({
-      url: context.url,
-      host,
+      identity,
       endpoint: mrEndpoint,
       pauseHost: context.pauseHost,
     });
@@ -790,8 +811,7 @@ export function createGitLabChangeRequestSource(
     }
 
     const checks = await readPipelineChecks({
-      url: context.url,
-      host,
+      identity,
       mrEndpoint,
       encodedProject,
       mr,
@@ -856,7 +876,7 @@ export function createGitLabChangeRequestSource(
     initialDelayMs: options.initialDelayMs,
     onError(error, host) {
       if (options.isAuthError(error)) {
-        authenticatedWatchHosts.delete(host);
+        apiPrefixByHost.delete(host);
       }
     },
   });
@@ -868,7 +888,7 @@ export function createGitLabChangeRequestSource(
       return poller.observe(url, callbacks);
     },
     dispose() {
-      authenticatedWatchHosts.clear();
+      apiPrefixByHost.clear();
       poller.dispose();
     },
   };

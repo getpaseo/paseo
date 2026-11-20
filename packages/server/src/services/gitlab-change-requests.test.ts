@@ -537,6 +537,7 @@ describe("GitLab ChangeRequestSource polling", () => {
         authChecks += 1;
         return { stdout: "Logged in", stderr: "" };
       }
+      if (args[0] === "config") return { stdout: "", stderr: "" };
       const endpoint = args.at(-1) ?? "";
       if (endpoint === `projects/${encoded}/merge_requests/3`) {
         mrCalls += 1;
@@ -716,10 +717,170 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
+  it("looks up the project relative to the configured GitLab API prefix", async () => {
+    vi.useFakeTimers();
+    const url = "https://gitlab.example.org/gitlab/team/app/-/merge_requests/1";
+    const { runner } = createFakeGlabRunner((args) => {
+      if (args[0] === "auth") return { stdout: "Logged in", stderr: "" };
+      if (args[0] === "config") {
+        expect(args).toEqual(["config", "get", "api_host", "--host", "gitlab.example.org"]);
+        return { stdout: "gitlab.example.org/gitlab\n", stderr: "" };
+      }
+      if (args.at(-1) === "projects/team%2Fapp/merge_requests/1") {
+        return httpJson({ iid: 1, state: "opened", web_url: url, sha: "intended-project" });
+      }
+      if (args.at(-1)?.startsWith("projects/team%2Fapp/merge_requests/1/discussions?")) {
+        return httpJson([]);
+      }
+      return httpJson({ message: "404 Project Not Found" }, {}, "404 Not Found");
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests!.observe(url, {
+        async snapshot(snapshot) {
+          snapshots.push(snapshot);
+        },
+        error: (error) => errors.push(error),
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([]);
+      expect(snapshots).toEqual([expect.objectContaining({ headSha: "intended-project" })]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it("rejects a different GitLab project on the same origin", async () => {
+    vi.useFakeTimers();
+    const { runner, calls } = createFakeGlabRunner((args) => {
+      if (args[0] === "auth" || args[0] === "config") return { stdout: "", stderr: "" };
+      return httpJson({
+        iid: 1,
+        state: "merged",
+        sha: "other-project-head",
+        web_url: "https://gitlab.example.org/gitlab/gitlab/team/app/-/merge_requests/1",
+      });
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests!.observe(
+        "https://gitlab.example.org/gitlab/team/app/-/merge_requests/1",
+        {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error: (error) => errors.push(error),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([
+        expect.objectContaining({ message: expect.stringContaining("different project") }),
+      ]);
+      expect(snapshots).toEqual([]);
+      expect(calls.filter(({ args }) => args[0] === "api")).toHaveLength(1);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it.each(["500 Internal Server Error", "429 Too Many Requests"])(
+    "reports the merge and new notes if approval enrichment returns %s",
+    async (status) => {
+      vi.useFakeTimers();
+      const url = "https://gitlab.com/team/app/-/merge_requests/1";
+      let polls = 0;
+      const { runner, calls } = createFakeGlabRunner((args) => {
+        const endpoint = args.at(-1)!;
+        if (endpoint.endsWith("/merge_requests/1")) {
+          polls += 1;
+          return httpJson({
+            iid: 1,
+            state: polls === 1 ? "opened" : "merged",
+            sha: "head",
+            web_url: url,
+          });
+        }
+        if (endpoint.includes("/discussions?")) {
+          return httpJson(
+            polls === 1
+              ? []
+              : [
+                  {
+                    id: "d",
+                    notes: [
+                      { id: 10, body: "Done" },
+                      {
+                        id: 11,
+                        system: true,
+                        body: "approved this merge request",
+                        author: { username: "alice" },
+                      },
+                    ],
+                  },
+                ],
+          );
+        }
+        if (endpoint.endsWith("/approvals")) {
+          return httpJson({ message: status }, { "Retry-After": "60" }, status);
+        }
+        throw new Error(`Unexpected GitLab endpoint: ${endpoint}`);
+      });
+      const service = createGitLabService({
+        runner,
+        resolveGlabPath: async () => "glab",
+        watchPollMs: 10_000,
+      });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      const errors: unknown[] = [];
+      const observer = {
+        knownActivity: () => new Set<string>(),
+        async snapshot(snapshot: ChangeRequestSnapshot) {
+          snapshots.push(snapshot);
+        },
+        error: (error: unknown) => errors.push(error),
+      };
+      try {
+        const release = service.changeRequests!.observe(url, observer);
+        await vi.advanceTimersByTimeAsync(25);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(errors).toEqual([]);
+        expect(snapshots.at(-1)).toMatchObject({
+          state: "merged",
+          activity: [
+            { id: "comment:10", kind: "comment" },
+            {
+              id: "approval-note:11",
+              kind: "approval",
+              message: `Merge request approved by @alice: ${url}#note_11`,
+            },
+          ],
+        });
+        release();
+        if (status.startsWith("429")) {
+          service.changeRequests!.observe(url, observer);
+          await vi.advanceTimersByTimeAsync(59_999);
+          expect(
+            calls.filter(({ args }) => args.at(-1)?.endsWith("/merge_requests/1")),
+          ).toHaveLength(2);
+          await vi.advanceTimersByTimeAsync(1);
+          expect(
+            calls.filter(({ args }) => args.at(-1)?.endsWith("/merge_requests/1")),
+          ).toHaveLength(3);
+        }
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
+
   it("rejects a merge request served by a different GitLab web origin", async () => {
     vi.useFakeTimers();
     const { runner, calls } = createFakeGlabRunner((args) => {
-      if (args[0] === "auth") return { stdout: "Logged in", stderr: "" };
+      if (args[0] === "auth" || args[0] === "config") return { stdout: "", stderr: "" };
       return httpJson({
         iid: 1,
         state: "merged",
@@ -745,7 +906,7 @@ describe("GitLab ChangeRequestSource polling", () => {
         expect.objectContaining({ message: expect.stringContaining("web origin") }),
       ]);
       expect(snapshots).toEqual([]);
-      expect(calls.map(({ args }) => args[0])).toEqual(["auth", "api"]);
+      expect(calls.map(({ args }) => args[0])).toEqual(["auth", "config", "api"]);
     } finally {
       service.dispose?.();
     }
@@ -821,6 +982,7 @@ describe("GitLab ChangeRequestSource polling", () => {
         expect(args).toEqual(["auth", "status", "--hostname", "gitlab.example.org"]);
         return { stdout: "Logged in", stderr: "" };
       }
+      if (args[0] === "config") return { stdout: "gitlab.example.org:3443", stderr: "" };
       expect(args.slice(0, 4)).toEqual(["api", "--hostname", "gitlab.example.org", "-i"]);
       const endpoint = args.at(-1) ?? "";
       if (endpoint === `projects/${encoded}/merge_requests/1`) {
