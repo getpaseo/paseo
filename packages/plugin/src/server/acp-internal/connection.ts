@@ -449,7 +449,7 @@ class AcpRuntime {
   private processFailed = false;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
-  private readonly closeConnector: () => Promise<void>;
+  private readonly closeConnector: (options?: { force?: boolean }) => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
   private incomingWireSeq = 0;
   private readonly sessionUpdateWireSeqs: number[] = [];
@@ -461,7 +461,7 @@ class AcpRuntime {
     let child: ChildProcessWithoutNullStreams | null = null;
     let spawnFailure: Promise<never> | null = null;
     let stream: Stream;
-    let closeConnector = async () => {};
+    let closeConnector: (options?: { force?: boolean }) => Promise<void> = async () => {};
     if (options.options.command) {
       // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
       // Standalone callers and older hosts do not send a daemon-resolved launch.
@@ -512,7 +512,7 @@ class AcpRuntime {
   private constructor(
     stream: Stream,
     child: ChildProcessWithoutNullStreams | null,
-    closeConnector: () => Promise<void>,
+    closeConnector: (options?: { force?: boolean }) => Promise<void>,
     private readonly options: StartRuntimeOptions,
   ) {
     this.child = child;
@@ -799,12 +799,15 @@ class AcpRuntime {
     // Record open tools owned by Stop before writing session/cancel so any failure
     // update arriving during cancel preserves their canceled state.
     for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
+    let cancelTimedOut = false;
     try {
       await withTimeout(
         this.call(this.connection.cancel({ sessionId: this.nativeSessionId })),
         1_000,
         `ACP session ${this.nativeSessionId} did not accept cancel`,
-      ).catch(() => undefined);
+      );
+    } catch {
+      cancelTimedOut = true;
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       this.finishTurnPermissions(active.turnId);
@@ -813,7 +816,7 @@ class AcpRuntime {
     // already returned. Close the process first while the turn still appears running,
     // then emit the canceled turn synchronously before request.completed and session.closed
     // so queued work and config changes immediately observe the retired session.
-    await this.close();
+    await this.close({ force: cancelTimedOut });
     this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
       suppressTrailingToolEcho: true,
     });
@@ -946,16 +949,16 @@ class AcpRuntime {
     await this.close();
   }
 
-  close(): Promise<void> {
+  close(options?: { force?: boolean }): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
-    this.closePromise = this.closeInternal();
+    this.closePromise = this.closeInternal(options);
     return this.closePromise;
   }
 
-  private async closeInternal(): Promise<void> {
+  private async closeInternal(options?: { force?: boolean }): Promise<void> {
     this.settlePendingWork();
-    await this.closeConnector();
+    await this.closeConnector(options);
     const child = this.child;
     if (!child || this.processFailed) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -1932,7 +1935,7 @@ function permissionOptionBehavior(
 
 function ownConnectorStream(source: Stream): {
   stream: Stream;
-  close(): Promise<void>;
+  close(options?: { force?: boolean }): Promise<void>;
 } {
   const reader = source.readable.getReader();
   const writer = source.writable.getWriter();
@@ -1958,12 +1961,18 @@ function ownConnectorStream(source: Stream): {
   };
   return {
     stream,
-    async close() {
+    async close(options?: { force?: boolean }) {
       if (closed) return;
       closed = true;
+      const closeWrite = options?.force
+        ? settlesWithin(
+            writer.abort(new Error("Paseo aborted the ACP connector")).catch(() => undefined),
+            250,
+          )
+        : writer.close();
       await Promise.allSettled([
         reader.cancel(new Error("Paseo closed the ACP connector")),
-        writer.close(),
+        closeWrite,
       ]);
     },
   };

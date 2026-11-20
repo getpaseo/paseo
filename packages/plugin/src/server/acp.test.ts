@@ -6033,4 +6033,100 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("retires a connector-backed deferred session even when the cancel write stalls", async () => {
+    let releaseStalledWrite: (() => void) | null = null;
+    const base = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "stalled-conn-bg",
+            name: "run_command",
+            title: "Job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const connector = async () => {
+      const inner = await base.connector();
+      const writer = inner.writable.getWriter();
+      const writable = new WritableStream<AcpStreamMessage>({
+        async write(message) {
+          if ("method" in message && message.method === "session/cancel") {
+            await new Promise<void>((resolve) => {
+              releaseStalledWrite = resolve;
+            });
+          }
+          await writer.write(message);
+        },
+        close: () => writer.close(),
+        abort: (reason) => writer.abort(reason),
+      });
+      return { readable: inner.readable, writable };
+    };
+    const registration = runAcpProvider({
+      id: "deferred-stalled-connector",
+      label: "Deferred Stalled Connector",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 5_000 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "stalled-conn-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "stalled-conn-bg",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stalled-conn-int",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stalled-conn-int",
+        2_500,
+      );
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:stalled-conn-turn" &&
+            event.state === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
+    } finally {
+      releaseStalledWrite?.();
+      await connection.close();
+    }
+  });
 });

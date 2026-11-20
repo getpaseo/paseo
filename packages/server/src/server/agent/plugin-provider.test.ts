@@ -3174,3 +3174,107 @@ test("reopens cleanly for mode changes and follow-up sends initiated while Stop 
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("does not block mode changes after a plugin refuses Stop by ignoring session.interrupt", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  const harness = createProviderHarness({
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: ["prompt.message", "session.interrupt", "session.configure"],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "hung-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "hung-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        // Intentionally never acknowledge session.interrupt.
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    const cancelResult = await manager.cancelAgentRun(agent.id);
+    expect(cancelResult.status).toBe("refused");
+
+    // Settings change must not hang behind the unacknowledged session.interrupt.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});

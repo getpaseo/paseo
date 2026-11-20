@@ -881,6 +881,7 @@ export class AgentManager {
   >();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly pendingCancellations = new Map<string, Promise<unknown>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -3278,6 +3279,7 @@ export class AgentManager {
     agentId: string,
     operation: (agent: ActiveManagedAgent) => Promise<T>,
   ): Promise<T> {
+    await this.pendingCancellations.get(agentId)?.catch(() => undefined);
     const agent = await this.ensureInteractiveSessionUnlocked(agentId);
     try {
       return await operation(agent);
@@ -3948,10 +3950,18 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => {
+    const cancellation = this.runForegroundMutation(agentId, () => {
       this.requireSessionAgent(agentId).pendingReplacement = false;
       return this.cancelAgentRunNow(agentId);
     });
+    this.pendingCancellations.set(agentId, cancellation);
+    try {
+      return await cancellation;
+    } finally {
+      if (this.pendingCancellations.get(agentId) === cancellation) {
+        this.pendingCancellations.delete(agentId);
+      }
+    }
   }
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {

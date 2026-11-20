@@ -662,7 +662,6 @@ class ProviderRuntimeSession {
   // The provider ended this session with session.closed, so it has nothing left to close.
   private closedByProvider = false;
   private closePromise: Promise<void> | null = null;
-  private pendingInterrupt: Promise<unknown> | null = null;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
   persistence: ProviderPersistence | null = null;
@@ -740,7 +739,6 @@ class ProviderRuntimeSession {
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
-    if (this.pendingInterrupt) await this.pendingInterrupt.catch(() => undefined);
     if (this.terminal) throw new StaleProviderSessionError(this.id);
     const input: Extract<ProviderInput, { type: "session.configure" }> = {
       type: "session.configure",
@@ -773,17 +771,11 @@ class ProviderRuntimeSession {
   }
 
   async interrupt(): Promise<void> {
-    const run = this.runtime.complete({
+    await this.runtime.complete({
       type: "session.interrupt",
       requestId: randomUUID(),
       sessionId: this.providerSessionId,
     });
-    this.pendingInterrupt = run;
-    try {
-      await run;
-    } finally {
-      if (this.pendingInterrupt === run) this.pendingInterrupt = null;
-    }
   }
 
   async close(): Promise<void> {
