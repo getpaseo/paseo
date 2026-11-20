@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPluginHostNavigation } from "./host-navigation-model";
+import { resolveNavigateToAgent } from "@/utils/navigate-to-agent/resolve";
 
 describe("plugin host navigation", () => {
   function setup(electron = true) {
@@ -19,6 +20,62 @@ describe("plugin host navigation", () => {
     });
     return { navigation, destinations, browsers, workspaces };
   }
+
+  it("opens an uncached archived agent directly in its known workspace", () => {
+    const workspaces: unknown[] = [];
+    const legacyRoutes: string[] = [];
+    const navigation = createPluginHostNavigation("selected", {
+      browserAvailable: false,
+      openAgent: (input) => {
+        resolveNavigateToAgent(input, {
+          readAgentNavTarget: () => ({ agentWorkspaceId: undefined }),
+          navigateToHostAgent: (route) => legacyRoutes.push(route),
+          navigateToWorkspace: (target) => {
+            workspaces.push(target);
+            return "workspace-route";
+          },
+        });
+      },
+      openWorkspace: (input) => workspaces.push(input),
+      resolveWorkspace: () => null,
+      createBrowser: () => ({ browserId: "unused" }),
+    });
+
+    navigation.openAgent({ agentId: "archived", workspaceId: "one", pin: true });
+
+    expect(legacyRoutes).toEqual([]);
+    expect(workspaces).toEqual([
+      {
+        serverId: "selected",
+        workspaceId: "one",
+        target: { kind: "agent", agentId: "archived" },
+        pin: true,
+      },
+    ]);
+  });
+
+  it("preserves explicit host, workspace, and false pin values", () => {
+    const { navigation, destinations } = setup();
+    navigation.openAgent({
+      serverId: "remote",
+      agentId: "archived",
+      workspaceId: "two",
+      pin: false,
+    });
+    expect(destinations).toEqual([
+      { serverId: "remote", agentId: "archived", workspaceId: "two", pin: false },
+    ]);
+  });
+
+  it("keeps existing agent navigation calls unchanged", () => {
+    const { navigation, destinations } = setup();
+    navigation.openAgent({ agentId: "local-agent" });
+    navigation.openAgent({ serverId: "remote", agentId: "remote-agent" });
+    expect(destinations).toEqual([
+      { serverId: "selected", agentId: "local-agent" },
+      { serverId: "remote", agentId: "remote-agent" },
+    ]);
+  });
 
   it("creates and focuses a local browser in the selected or explicit host workspace", () => {
     const { navigation, destinations, browsers } = setup();
