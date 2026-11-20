@@ -766,10 +766,10 @@ class AcpRuntime {
 
   async interrupt(): Promise<boolean> {
     const active = this.activePrompt;
-    const isDeferred = Boolean(active?.deferred);
+    const deferredTurnId = active?.deferred ? active.turnId : null;
     if (active) {
       active.cancelling = true;
-      if (isDeferred) {
+      if (deferredTurnId) {
         // Record open tools owned by Stop before writing session/cancel so any failure
         // update arriving during cancel preserves their canceled state.
         for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
@@ -781,16 +781,17 @@ class AcpRuntime {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) {
         this.finishTurnPermissions(active.turnId);
-        if (active.deferred) {
-          this.finishDeferredTurn(active, { type: "cancel" });
-          await active.settled;
-        }
       }
     }
-    if (isDeferred && !this.closing) {
+    if (deferredTurnId) {
       // ACP v1 has no response or end boundary for session/cancel once session/prompt
-      // already returned, so retire the process to prevent late updates overlapping the next turn.
+      // already returned. Close the process first while the turn still appears running,
+      // then emit the canceled turn synchronously before request.completed and session.closed
+      // so queued work and config changes immediately observe the retired session.
       await this.close();
+      this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
+        suppressTrailingToolEcho: true,
+      });
       return true;
     }
     return false;

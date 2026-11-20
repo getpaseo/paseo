@@ -3072,3 +3072,105 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("reopens cleanly for mode changes and follow-up sends initiated while Stop is closing a slow ACP process", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-slow-stop-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const script = join(home, "slow-stop-agent.cjs");
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    script,
+    `
+    const { createInterface } = require("node:readline");
+    const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+    let mode = "default";
+    const configOptions = () => [{
+      id: "mode", name: "Mode", category: "mode", type: "select", currentValue: mode,
+      options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }],
+    }];
+    process.on("SIGTERM", () => {
+      setTimeout(() => process.exit(0), 250);
+    });
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      if (msg.method === "initialize") {
+        send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+      } else if (msg.method === "session/new") {
+        send({ id: msg.id, result: { sessionId: "slow-s1", configOptions: configOptions() } });
+      } else if (msg.method === "session/load") {
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/set_config_option") {
+        if (msg.params && typeof msg.params.value === "string") mode = msg.params.value;
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/prompt") {
+        const text = msg.params?.prompt?.[0]?.text ?? "";
+        if (text.includes("start bg")) {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "tool_call", toolCallId: "slow-bg-1", name: "run_command",
+            title: "Slow bg job", status: "in_progress",
+          } } });
+        } else {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "After stop reply" },
+          } } });
+        }
+        send({ id: msg.id, result: { stopReason: "end_turn" } });
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+    `,
+  );
+  const registration = runAcpProvider({
+    id: "slow-stop-acp",
+    label: "Slow Stop ACP",
+    command: [process.execPath, script],
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start bg",
+      logger,
+    });
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Start Stop (takes 250ms to terminate the child on SIGTERM) and trigger a mode change mid-shutdown.
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const modePromise = manager.setAgentMode(agent.id, "plan");
+    await Promise.all([stopPromise, modePromise]);
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    // A follow-up prompt immediately after Stop + mode change succeeds cleanly.
+    const next = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "fresh prompt",
+      logger,
+    });
+    expect(next.disposition).toBe("turn_started");
+    if (next.disposition === "turn_started") await next.started;
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});

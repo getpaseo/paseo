@@ -3282,7 +3282,9 @@ export class AgentManager {
     try {
       return await operation(agent);
     } catch (error) {
-      if (!isStaleProviderSessionError(error) || this.hasInFlightRun(agentId)) throw error;
+      if (!isStaleProviderSessionError(error)) throw error;
+      await this.runs.getPendingRun(agentId)?.settledPromise.catch(() => undefined);
+      if (this.hasInFlightRun(agentId)) throw error;
       await this.trackAgentRegistrationOperation(this.reloadAgentSessionInternal(agentId));
       return await operation(this.requireSessionAgent(agentId));
     }
