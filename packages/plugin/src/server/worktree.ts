@@ -4,7 +4,10 @@ import type { PluginHookContext, PluginWorktreeCreateRequest } from "./lifecycle
 export type PluginWorktreeContext = PluginHookContext;
 
 /** Resolved creation request handed to a worktree manager after `worktree.create.before`. */
-export type PluginWorktreeCreateInput = PluginWorktreeCreateRequest;
+export type PluginWorktreeCreateInput = PluginWorktreeCreateRequest & {
+  /** True when the worktree comes from an untrusted source such as a fork change request; skip repository-defined hooks. */
+  readonly untrusted: boolean;
+};
 
 /** Return `{ type: "created", path }` to claim creation, or `undefined` to decline. */
 export interface PluginWorktreeCreateResult {

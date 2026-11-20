@@ -7,9 +7,11 @@ import { runGitCommand } from "../../../utils/run-git-command.js";
 import {
   adoptPluginWorktree,
   cleanupFailedPluginWorktree,
+  cleanupOrphanedPluginWorktreeOnReject,
   createWorktree,
   isPaseoOwnedWorktreeCwd,
   listGitWorktreePaths,
+  localBranchExists,
   mapWorkspaceCwdToWorktree,
   rollbackCreatedPaseoWorktree,
   type WorktreeSource,
@@ -277,16 +279,35 @@ export function createWorkspaceRecoveryService(deps: {
     const untrusted = Boolean(workspace.untrustedSource);
     if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
       const existingWorktreePaths = await listGitWorktreePaths(sourceRepoRoot);
-      const managed = await deps.worktreeManagers.restoreWorktree(
-        {
-          repoRoot: sourceRepoRoot,
-          path: previousWorktreePath,
-          target: restoreTargetFromWorktreeSource(source),
-          baseRef: workspace.baseBranch,
-          untrusted,
-        },
-        { preferredPluginId: managerPluginId },
-      );
+      const restoreBranch = source.kind === "restore-commit" ? null : source.branchName;
+      const branchExistedBefore =
+        source.kind === "restore-from-base"
+          ? await localBranchExists(sourceRepoRoot, source.branchName)
+          : true;
+      let managed: { pluginId: string; path: string } | null;
+      try {
+        managed = await deps.worktreeManagers.restoreWorktree(
+          {
+            repoRoot: sourceRepoRoot,
+            path: previousWorktreePath,
+            target: restoreTargetFromWorktreeSource(source),
+            baseRef: workspace.baseBranch,
+            untrusted,
+          },
+          { preferredPluginId: managerPluginId },
+        );
+      } catch (error) {
+        await cleanupOrphanedPluginWorktreeOnReject({
+          cwd: sourceRepoRoot,
+          existingWorktreePaths,
+          expectedPath: previousWorktreePath,
+          expectedBranch: restoreBranch,
+          branchExistedBefore,
+          paseoHome: deps.paseoHome,
+          worktreesBaseRoot: deps.worktreesRoot,
+        }).catch(() => {});
+        throw error;
+      }
       if (managed) {
         try {
           const validatedPath = await validateWorktreePath({

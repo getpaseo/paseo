@@ -1672,6 +1672,64 @@ export interface AdoptPluginWorktreeOptions {
 }
 
 /**
+ * Roll back a newly created worktree when a worktree manager's `create` or
+ * `restore` call rejects (timeout, abort, crash, or thrown error) without
+ * returning a path. Only removes worktrees absent from `existingWorktreePaths`
+ * whose path matches `expectedPath` or whose checked-out branch matches
+ * `expectedBranch`, so concurrent worktree creations are never touched.
+ */
+export async function cleanupOrphanedPluginWorktreeOnReject(options: {
+  cwd: string;
+  existingWorktreePaths: ReadonlySet<string>;
+  expectedPath?: string;
+  expectedBranch?: string | null;
+  branchExistedBefore?: boolean;
+  paseoHome?: string;
+  worktreesBaseRoot?: string;
+}): Promise<void> {
+  const {
+    cwd,
+    existingWorktreePaths,
+    expectedPath,
+    expectedBranch,
+    branchExistedBefore = true,
+    paseoHome,
+    worktreesBaseRoot,
+  } = options;
+  const normalizedExpectedPath = expectedPath
+    ? await normalizePathForOwnership(expectedPath)
+    : null;
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  }).catch(() => ({ stdout: "" }));
+  let removedWorktree = false;
+  for (const entry of parseWorktreeList(stdout)) {
+    const entryPath = await normalizePathForOwnership(entry.path);
+    if (existingWorktreePaths.has(entryPath)) continue;
+    const matchesPath = normalizedExpectedPath !== null && entryPath === normalizedExpectedPath;
+    const matchesBranch = Boolean(expectedBranch && entry.branchName === expectedBranch);
+    if (!matchesPath && !matchesBranch) continue;
+    await deletePaseoWorktree({
+      cwd,
+      worktreePath: entryPath,
+      teardownCwds: [],
+      paseoHome,
+      worktreesBaseRoot,
+      registryProven: true,
+    }).catch(() => {});
+    removedWorktree = true;
+  }
+  if (
+    expectedBranch &&
+    !branchExistedBefore &&
+    (removedWorktree || (await localBranchExists(cwd, expectedBranch)))
+  ) {
+    await runGitCommand(["branch", "-D", expectedBranch], { cwd }).catch(() => {});
+  }
+}
+
+/**
  * Roll back a newly created worktree that failed adoption or path verification.
  * Only touches a directory that was absent from `existingWorktreePaths` and
  * shares the source repository's Git common dir.
@@ -2431,7 +2489,7 @@ async function uniqueRemoteTrackingBranch(cwd: string, branchName: string): Prom
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
+export async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
   try {
     await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
       cwd,

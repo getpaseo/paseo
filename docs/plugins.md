@@ -478,8 +478,8 @@ worktree commands. Paseo snapshots existing worktree paths before calling `creat
 cannot adopt a pre-existing directory as Paseo-owned, verifies Git worktree postconditions, records
 `worktreeManagerPluginId` in `paseo/worktree.json` and on the workspace record,
 and skips first-agent branch auto-rename. Removal saves `refs/paseo/kept-commits/<sha>` before
-calling the owning plugin's `remove`, and both `remove` and `restore` carry `untrusted` for fork
-change requests and fall back to built-in Git when the plugin declines or is disabled. See the
+calling the owning plugin's `remove`, and `create`, `remove`, and `restore` carry `untrusted` for fork
+change requests; `remove` and `restore` fall back to built-in Git when the plugin declines or is disabled. See the
 [worktree managers reference](../public-docs/plugins/reference.md#worktree-managers) and
 `plugin-examples/worktrunk`.
 

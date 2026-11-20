@@ -92,10 +92,6 @@ function parseSwitchOutput(stdout: string): SwitchJsonOutput {
   return parsed;
 }
 
-function isUntrustedCreate(request: PluginWorktreeCreateInput): boolean {
-  return request.kind === "checkout-change-request" && Boolean(request.headRepository);
-}
-
 function hookFlags(untrusted: boolean): string[] {
   // Never approve repository-defined hooks on untrusted checkouts such as fork PRs.
   return untrusted ? ["--no-hooks"] : ["--yes"];
@@ -107,7 +103,7 @@ export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | 
     request.repoRoot,
     "switch",
     "--no-cd",
-    ...hookFlags(isUntrustedCreate(request)),
+    ...hookFlags(request.untrusted),
     "--format=json",
   ];
   switch (request.kind) {

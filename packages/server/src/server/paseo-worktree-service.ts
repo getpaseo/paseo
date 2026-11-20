@@ -10,6 +10,7 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
+  isUntrustedWorktreeCreationIntent,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
@@ -158,9 +159,7 @@ async function createPaseoWorktreeWithPriority(
         worktreeManagers: deps.worktreeManagers,
         worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
         removeReason: "rollback",
-        untrusted:
-          createdWorktree.intent.kind === "checkout-change-request" &&
-          Boolean(createdWorktree.intent.headRepository),
+        untrusted: isUntrustedWorktreeCreationIntent(createdWorktree.intent),
       },
       error,
     );

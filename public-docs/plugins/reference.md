@@ -717,7 +717,7 @@ export default function contribute(server: PluginServerContext) {
           "--base",
           request.startPoint ?? request.baseRef,
           "--no-cd",
-          "--yes",
+          request.untrusted ? "--no-hooks" : "--yes",
           "--format=json",
         ],
         { signal },
@@ -725,16 +725,17 @@ export default function contribute(server: PluginServerContext) {
       const { path } = JSON.parse(stdout) as { path: string };
       return { type: "created", path };
     },
-    async remove({ path, force }, { signal }) {
+    async remove({ repoRoot, path, force, untrusted }, { signal }) {
+      const skipHooks = untrusted || repoRoot === null;
       await execCommand(
         "wt",
         [
           "-C",
-          path,
+          repoRoot ?? path,
           "remove",
           "--foreground",
           "--no-delete-branch",
-          "--yes",
+          skipHooks ? "--no-hooks" : "--yes",
           ...(force ? ["--force"] : []),
           path,
         ],
@@ -742,7 +743,7 @@ export default function contribute(server: PluginServerContext) {
       );
       return { type: "removed" };
     },
-    async restore({ repoRoot, path, target }, { signal }) {
+    async restore({ repoRoot, path, target, untrusted }, { signal }) {
       if (target.type !== "branch") return;
       const { stdout } = await execCommand(
         "wt",
@@ -754,7 +755,7 @@ export default function contribute(server: PluginServerContext) {
           "--path",
           path,
           "--no-cd",
-          "--yes",
+          untrusted ? "--no-hooks" : "--yes",
           "--format=json",
         ],
         { signal },
@@ -768,19 +769,21 @@ export default function contribute(server: PluginServerContext) {
 
 - **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`, with a
   120-second timeout. Return `{ type: "created", path }` to claim creation, or `undefined` to decline
-  so the next manager or Paseo's built-in Git checkout runs. Paseo verifies that `path` is a safe,
-  newly created Git worktree of the same repository on a named branch, then records the checked-out
-  `HEAD` branch (managers may normalize or uniquely name the branch, and should create a new branch
-  for `branch-off`), writes comparison-base metadata, and seeds `paseo.json`. If adoption or a later
-  creation step fails after a new worktree was created in the repository, Paseo rolls it back; if
-  `create` throws before returning, the plugin is responsible for cleaning up any partial worktree it
-  created. First-agent branch auto-rename is skipped for manager-created worktrees.
+  so the next manager or Paseo's built-in Git checkout runs. When `request.untrusted` is `true` (for
+  example, a fork change request), skip repository-defined hooks. Paseo verifies that `path` is a
+  safe, newly created Git worktree of the same repository on a named branch, then records the
+  checked-out `HEAD` branch (managers may normalize or uniquely name the branch, and should create a
+  new branch for `branch-off`), writes comparison-base metadata, and seeds `paseo.json`. If
+  adoption, a later creation step, or `create` itself fails (including timeout or abort) after a new
+  worktree was created at the requested path or branch, Paseo rolls it back; managers should still
+  clean up any custom-named partial worktree when throwing or when `signal` aborts. First-agent
+  branch auto-rename is skipped for manager-created worktrees.
 - **Remove** is optional and runs on workspace archive and creation rollback, after Paseo runs
   `paseo.json` teardown and saves `refs/paseo/kept-commits/<sha>` for restore. Return
   `{ type: "removed" }` after removing the directory, or `undefined` to fall back to Git. When
-  `untrusted` is `true` (for example, a fork change request), skip repository-defined hooks. Paseo
-  routes removal to the plugin that created the worktree, falling back to Git when that plugin is
-  disabled or uninstalled.
+  `untrusted` is `true` (for example, a fork change request) or `repoRoot` is `null`, skip
+  repository-defined hooks and run against `repoRoot` when available. Paseo routes removal to the
+  plugin that created the worktree, falling back to Git when that plugin is disabled or uninstalled.
 - **Restore** is optional and runs when unarchiving a workspace whose worktree directory was deleted.
   It receives the recorded `path` that the recreated worktree must occupy, `target` (`branch`,
   `commit`, or `from-base`), and `untrusted`. Return `{ type: "restored", path }` or `undefined` to

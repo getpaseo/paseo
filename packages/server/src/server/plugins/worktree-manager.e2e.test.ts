@@ -485,7 +485,21 @@ export default function contribute(server) {
         });
         return { type: "created", path: target };
       }
-      return { type: "created", path: "relative/path" };
+      if (request.branch === "throw-after-create") {
+        if (request.untrusted !== false) {
+          throw new Error("expected untrusted=false on branch-off create");
+        }
+        const target = path.join(${JSON.stringify(root)}, "orphan-wt");
+        execFileSync("git", ["worktree", "add", "-b", request.branch, target, "main"], {
+          cwd: request.repoRoot,
+          stdio: "pipe",
+        });
+        throw new Error("timed out before returning path");
+      }
+      if (request.branch === "relative") {
+        return { type: "created", path: "relative/path" };
+      }
+      return;
     },
   });
 }
@@ -504,6 +518,7 @@ export default function contribute(server) {
       ["plain-dir", "did not create a Git worktree"],
       ["other-repo", "outside the repository"],
       ["detached", "detached HEAD"],
+      ["throw-after-create", "timed out before returning path"],
       ["relative", "relative path"],
     ];
     for (const [branchName, expectedError] of cases) {
@@ -520,6 +535,10 @@ export default function contribute(server) {
     // The newly created detached worktree failed adoption and must be rolled back cleanly.
     await expect(stat(path.join(root, "detached-wt"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain("detached-wt");
+    // The worktree and new branch left behind when create threw before returning must be cleaned up.
+    await expect(stat(path.join(root, "orphan-wt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain("orphan-wt");
+    expect(git(repository, ["branch", "--list", "throw-after-create"])).toBe("");
   } finally {
     await client.close();
     await daemon.close();

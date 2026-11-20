@@ -608,11 +608,14 @@ describe("worktree manager SDK boundary", () => {
       export default function contribute(server: PluginServerContext) {
         const manager: WorktreeManagerRegistration = {
           async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
+            const untrusted: boolean = request.untrusted;
+            // @ts-expect-error untrusted is read-only
+            request.untrusted = true;
             if (request.kind === "branch-off") {
               const start: string = request.startPoint ?? request.baseRef;
               // @ts-expect-error startPoint is read-only
               request.startPoint = "other";
-              if (!start) return;
+              if (!start || untrusted) return;
             }
             if (signal.aborted) return;
             void paseo;

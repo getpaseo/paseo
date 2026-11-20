@@ -1,4 +1,7 @@
-import type { PluginWorktreeCreateRequest } from "@getpaseo/plugin/server";
+import type {
+  PluginWorktreeCreateInput,
+  PluginWorktreeCreateRequest,
+} from "@getpaseo/plugin/server";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
 import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import { createNameId } from "mnemonic-id";
@@ -7,9 +10,11 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   adoptPluginWorktree,
   cleanupFailedPluginWorktree,
+  cleanupOrphanedPluginWorktreeOnReject,
   createWorktree,
   fetchFirstAvailableRef,
   listGitWorktreePaths,
+  localBranchExists,
   resolveDefaultWorktreePath,
   slugify,
   validateBranchSlug,
@@ -186,6 +191,10 @@ async function createWorktreeCoreWithPriority(
   };
 }
 
+export function isUntrustedWorktreeCreationIntent(intent: WorktreeCreationIntent): boolean {
+  return intent.kind === "checkout-change-request" && Boolean(intent.headRepository);
+}
+
 async function tryCreateWithWorktreeManager(options: {
   repoRoot: string;
   transformed: PluginWorktreeCreateRequest;
@@ -196,9 +205,26 @@ async function tryCreateWithWorktreeManager(options: {
   const { repoRoot, transformed, intent, input, deps } = options;
   if (!deps.worktreeManagers) return null;
   const existingWorktreePaths = await listGitWorktreePaths(repoRoot);
-  const managed = await deps.worktreeManagers.createWorktree(transformed);
+  const untrusted = isUntrustedWorktreeCreationIntent(intent);
+  const branchExistedBefore =
+    intent.kind === "branch-off" ? await localBranchExists(repoRoot, transformed.branch) : true;
+  const createRequest: PluginWorktreeCreateInput = { ...transformed, untrusted };
+  let managed: { pluginId: string; path: string } | null;
+  try {
+    managed = await deps.worktreeManagers.createWorktree(createRequest);
+  } catch (error) {
+    await cleanupOrphanedPluginWorktreeOnReject({
+      cwd: repoRoot,
+      existingWorktreePaths,
+      expectedPath: transformed.path,
+      expectedBranch: transformed.branch,
+      branchExistedBefore,
+      paseoHome: input.paseoHome,
+      worktreesBaseRoot: input.worktreesRoot,
+    }).catch(() => {});
+    throw error;
+  }
   if (!managed) return null;
-  const untrusted = intent.kind === "checkout-change-request" && Boolean(intent.headRepository);
   try {
     const validatedPath = await validateWorktreePath({
       candidate: managed.path,
