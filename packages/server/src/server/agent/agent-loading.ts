@@ -20,7 +20,7 @@ export class AgentNotFoundError extends Error {
 
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
+  options: { broadcastTimeline: boolean; broadcastSubagents: boolean };
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -39,7 +39,15 @@ export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
+  /** Re-broadcast replayed timeline rows as live stream events. */
   broadcastTimeline?: boolean;
+  /**
+   * Re-broadcast replayed provider_subagent events. Defaults to
+   * `broadcastTimeline`; callers that replace the timeline with a replacement
+   * signal still need subagent events, because clients refetch the timeline on
+   * replacement but not the subagent list.
+   */
+  broadcastSubagents?: boolean;
   purpose?: "history" | "interactive";
   logger: Logger;
 }
@@ -76,6 +84,7 @@ export async function ensureAgentLoaded(
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    inflight.options.broadcastSubagents ||= deps.broadcastSubagents === true;
     return inflight.promise;
   }
 
@@ -92,11 +101,13 @@ export async function ensureAgentLoaded(
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    laterInflight.options.broadcastSubagents ||= deps.broadcastSubagents === true;
     return laterInflight.promise;
   }
 
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,
+    broadcastSubagents: deps.broadcastSubagents ?? deps.broadcastTimeline === true,
   };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
@@ -131,7 +142,8 @@ export async function ensureAgentLoaded(
     }
 
     await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
+      broadcast: () => pendingOptions.broadcastSubagents,
+      broadcastTimeline: () => pendingOptions.broadcastTimeline,
     });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();

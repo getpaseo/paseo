@@ -2,9 +2,12 @@ import { selectProjectedTimelinePage } from "./test-utils/timeline-page-referenc
 import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineRow } from "./agent-manager.js";
+import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import {
   projectTimelineRows,
   selectTimelineWindowByProjectedLimit,
+  TimelineProjection,
+  wholeTurnPageIsFinal,
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
@@ -924,5 +927,109 @@ describe("selectProjectedTimelinePage", () => {
 
     expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
     expect(page.endSeq).toBe(501);
+  });
+});
+
+describe("TimelineProjection.evictBefore", () => {
+  function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
+    return { seq, timestamp: new Date(1000 + seq).toISOString(), item };
+  }
+
+  function toolItem(
+    callId: string,
+    status: "running" | "completed",
+  ): Extract<AgentTimelineItem, { type: "tool_call" }> {
+    return {
+      type: "tool_call",
+      callId,
+      name: "shell",
+      status,
+      error: null,
+      detail: { type: "plain_text", label: "work" },
+    };
+  }
+
+  test("removes rows that end before the cutoff and keeps spanning rows whole", () => {
+    const projection = new TimelineProjection();
+    projection.append(row(1, { type: "assistant_message", text: "A", messageId: "m" }));
+    projection.append(row(2, { type: "assistant_message", text: "B", messageId: "m" }));
+    projection.append(row(3, { type: "assistant_message", text: "C", messageId: "m" }));
+    projection.append(row(4, { type: "user_message", text: "next", clientMessageId: "u1" }));
+
+    expect(projection.evictBefore(2)).toBe(1);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([
+      [1, 3],
+      [4, 4],
+    ]);
+
+    expect(projection.evictBefore(4)).toBe(4);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([[4, 4]]);
+
+    expect(projection.evictBefore(99)).toBeNull();
+    expect(projection.getRows()).toEqual([]);
+  });
+
+  test("keeps identity merging working for surviving rows after eviction", () => {
+    const projection = new TimelineProjection();
+    projection.append(row(1, toolItem("t1", "running")));
+    projection.append(row(2, toolItem("t2", "running")));
+    projection.append(row(3, toolItem("t1", "completed")));
+
+    // The completed update extends t1 to seqEnd 3, so only the standalone t2 row is evictable.
+    expect(projection.evictBefore(3)).toBe(1);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([[1, 3]]);
+
+    // t2's identity was evicted, so its completion becomes a standalone row; t1's
+    // identity must keep resolving to the surviving row.
+    projection.append(row(4, toolItem("t2", "completed")));
+    projection.append(row(5, toolItem("t1", "completed")));
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([
+      [1, 5],
+      [4, 4],
+    ]);
+    expect(projection.getRows()[0]?.item).toEqual(
+      expect.objectContaining({ type: "tool_call", callId: "t1", status: "completed" }),
+    );
+  });
+});
+
+describe("wholeTurnPageIsFinal", () => {
+  function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
+    return { seq, timestamp: "2026-02-13T00:00:00.000Z", item };
+  }
+
+  test("final once the page's oldest item starts inside the collected rows", () => {
+    // Turn 1 (rows 1-6) then turn 2 (rows 7-12); a 4-item page expands to
+    // turn 2's prompt at row 7, strictly inside the collection, so older
+    // rows cannot re-group the page.
+    const rows: AgentTimelineRow[] = [
+      row(1, { type: "user_message", text: "p1" }),
+      ...Array.from({ length: 5 }, (_, i) =>
+        row(i + 2, { type: "todo", items: [{ text: `a${i}`, completed: false }] }),
+      ),
+      row(7, { type: "user_message", text: "p2" }),
+      ...Array.from({ length: 5 }, (_, i) =>
+        row(i + 8, { type: "todo", items: [{ text: `b${i}`, completed: false }] }),
+      ),
+    ];
+    expect(wholeTurnPageIsFinal(rows, { minSeq: 1, maxSeq: 12, limit: 4 })).toBe(true);
+  });
+
+  test("not final when the page reaches the collection's oldest row", () => {
+    // The collection starts mid-turn (row 4) and holds fewer items than the
+    // limit, so the page includes the truncated turn: the scan must extend.
+    const rows: AgentTimelineRow[] = [
+      row(4, { type: "todo", items: [{ text: "a3", completed: false }] }),
+      row(5, { type: "todo", items: [{ text: "a4", completed: false }] }),
+      row(6, { type: "user_message", text: "p2" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        row(i + 7, { type: "todo", items: [{ text: `b${i}`, completed: false }] }),
+      ),
+    ];
+    expect(wholeTurnPageIsFinal(rows, { minSeq: 4, maxSeq: 10, limit: 40 })).toBe(false);
+  });
+
+  test("not final for an empty collection", () => {
+    expect(wholeTurnPageIsFinal([], { minSeq: 1, maxSeq: 1, limit: 40 })).toBe(false);
   });
 });
