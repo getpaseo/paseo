@@ -808,6 +808,10 @@ describe("Gitea-family ChangeRequestSource polling", () => {
       expect(calls.some(({ args }) => args.at(-1)?.endsWith("/pulls/2"))).toBe(false);
       expect(snapshots).toEqual([]);
       await vi.advanceTimersByTimeAsync(1);
+      // The first recovery poll hits another 429. The next window must
+      // let the waiting watch start even though that first poll failed.
+      expect(calls.some(({ args }) => args.at(-1)?.endsWith("/pulls/2"))).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_050);
       expect(calls.some(({ args }) => args.at(-1)?.endsWith("/pulls/2"))).toBe(true);
     } finally {
       service.dispose?.();
