@@ -897,7 +897,7 @@ class ProviderRuntimeSession {
       else this.activeTurnIds.delete(event.turnId);
     }
     if (event.type === "session.config") this.config = event.config;
-    if (event.type === "session.commands") this.commands = [...event.commands];
+    if (event.type === "session.commands") this.commands = dedupeCommandsByName(event.commands);
     if (event.type === "session.persistence" && this.restoration === "core") {
       this.persistence = event.persistence;
     }
@@ -2071,6 +2071,17 @@ function combineSystemPrompts(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+function dedupeCommandsByName<T extends { name: string }>(commands: readonly T[]): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const command of commands) {
+    if (seen.has(command.name)) continue;
+    seen.add(command.name);
+    unique.push(command);
+  }
+  return unique;
 }
 
 function mapPromptInput(

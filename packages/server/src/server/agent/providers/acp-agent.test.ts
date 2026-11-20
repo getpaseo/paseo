@@ -3016,6 +3016,44 @@ describe("ACPAgentSession slash commands", () => {
     ]);
   });
 
+  test("deduplicates available_commands_update entries by name, keeping the first occurrence", async () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "claude-acp",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "claude-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["claude", "--acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        waitForInitialCommands: false,
+      },
+    );
+
+    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [
+        { name: "plan", description: "Built-in plan" },
+        { name: "plan", description: "Skill plan" },
+        { name: "review", description: "Review changes" },
+      ],
+    });
+
+    await expect(session.listCommands()).resolves.toEqual([
+      { name: "plan", description: "Built-in plan", argumentHint: "", kind: "command" },
+      { name: "review", description: "Review changes", argumentHint: "", kind: "command" },
+    ]);
+  });
+
   test("lists late command batches through the public ACP client", async () => {
     const artifacts = path.resolve(".artifacts");
     await mkdir(artifacts, { recursive: true });

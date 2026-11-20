@@ -184,4 +184,14 @@ describe("filterInlineSkillCommandEntries", () => {
       "taste",
     ]);
   });
+
+  it("deduplicates duplicate inline skill names, keeping the first occurrence", () => {
+    const entries = [
+      { source: "provider" as const, command: { name: "plan", kind: "skill", tag: "first" } },
+      { source: "provider" as const, command: { name: "plan", kind: "skill", tag: "second" } },
+      { source: "provider" as const, command: { name: "taste", kind: "skill", tag: "only" } },
+    ];
+
+    expect(filterInlineSkillCommandEntries(entries)).toEqual([entries[0], entries[2]]);
+  });
 });

@@ -3795,6 +3795,21 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("deduplicates Codex skills that collide with built-in slash commands", async () => {
+    const commands = await listCommandsFromFakeCodex([
+      {
+        name: "compact",
+        description: "Custom compact skill.",
+        path: "/tmp/skills/compact/SKILL.md",
+        enabled: true,
+      },
+    ]);
+
+    const compactCommands = commands.filter((command) => command.name === "compact");
+    expect(compactCommands).toHaveLength(1);
+    expect(compactCommands[0]?.kind).toBe("command");
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [

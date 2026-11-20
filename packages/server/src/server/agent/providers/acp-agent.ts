@@ -2988,7 +2988,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     if (commands.length > 0) {
       this.commandsUpdatedAt = Date.now();
-      this.cachedCommands = commands;
+      this.cachedCommands = dedupeSlashCommands(commands);
       // A non-empty batch may be followed by more. Let the quiet window decide
       // when the inventory is complete rather than settling here; an empty
       // batch is the provider saying it has nothing, which must still unblock
@@ -3379,12 +3379,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return pendingUserEvents;
       case "available_commands_update":
         this.commandsUpdatedAt = Date.now();
-        this.cachedCommands = update.availableCommands.map((command) => ({
-          name: command.name,
-          description: command.description,
-          argumentHint: command.input?.hint ?? "",
-          kind: "command",
-        }));
+        this.cachedCommands = dedupeSlashCommands(
+          update.availableCommands.map((command) => ({
+            name: command.name,
+            description: command.description,
+            argumentHint: command.input?.hint ?? "",
+            kind: "command",
+          })),
+        );
         // An empty batch means the agent has no commands and would otherwise
         // wait out the whole quiet window. A non-empty batch may be one of
         // several, so completion belongs to the quiet window.
@@ -4481,4 +4483,15 @@ async function terminateChildProcess(
     child.stdout.destroy();
     child.stderr.destroy();
   }
+}
+
+function dedupeSlashCommands(commands: readonly AgentSlashCommand[]): AgentSlashCommand[] {
+  const seen = new Set<string>();
+  const unique: AgentSlashCommand[] = [];
+  for (const command of commands) {
+    if (seen.has(command.name)) continue;
+    seen.add(command.name);
+    unique.push(command);
+  }
+  return unique;
 }

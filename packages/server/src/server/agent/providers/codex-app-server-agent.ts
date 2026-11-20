@@ -5824,9 +5824,13 @@ export class CodexAppServerAgentSession implements AgentSession {
         kind: "command",
       });
     }
-    return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    const commandsByName = new Map<string, AgentSlashCommand>();
+    for (const command of [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts]) {
+      if (!commandsByName.has(command.name)) {
+        commandsByName.set(command.name, command);
+      }
+    }
+    return Array.from(commandsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   tryHandleOutOfBand(

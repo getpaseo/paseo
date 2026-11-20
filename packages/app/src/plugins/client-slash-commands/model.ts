@@ -39,8 +39,11 @@ export function mergeSlashCommandSources<
     claimed.set(command.name, "plugin");
     commands.push({ source: "plugin", command });
   }
+  const seenProvider = new Set<string>();
   for (const command of input.provider) {
-    if (!claimed.has(command.name)) commands.push({ source: "provider", command });
+    if (claimed.has(command.name) || seenProvider.has(command.name)) continue;
+    seenProvider.add(command.name);
+    commands.push({ source: "provider", command });
   }
   return commands;
 }
