@@ -433,7 +433,14 @@ Paseo refreshes an agent by closing its current provider session and opening it 
 configuration and persistence. Providers re-read external state during `session.open`.
 
 Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
-hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
+hooks for vendor behavior. See [Adapt an ACP agent](/docs/plugins/providers#adapt-an-acp-agent).
+
+In `discover` and `configure`, call `context.request(method, params)` to send an ACP extension
+request. The promise returns a JSON value or rejects with the agent's JSON-RPC error.
+
+Use `config(state, context)` to return the configuration snapshot that Paseo displays.
+Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
+Use `configure` to send changes to the agent.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular file that follows the

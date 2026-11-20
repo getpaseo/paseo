@@ -2788,3 +2788,29 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await registry.shutdown();
   }
 });
+
+test("resumes a goose session saved by the generic ACP provider", async () => {
+  const logger = createTestLogger();
+  const harness = createProviderHarness();
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([{ ...harness.registration, id: "goose" }]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const client = registry.goose.createClient(logger);
+
+  try {
+    const session = await client.resumeSession(
+      {
+        provider: "goose",
+        sessionId: "native-goose-session",
+        nativeHandle: "native-goose-session",
+      },
+      { provider: "goose", cwd: "/tmp" },
+    );
+    expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+      persistence: { version: 1, data: { sessionId: "native-goose-session" } },
+    });
+    await session.close();
+  } finally {
+    await plugins.shutdown();
+  }
+});
