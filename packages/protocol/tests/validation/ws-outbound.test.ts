@@ -20,7 +20,9 @@ const generatedWSOutboundPath = resolve(
 const require = createRequire(import.meta.url);
 
 async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchema> {
-  const scratchRoot = resolve(protocolRoot, "../../.tmp");
+  // Inside the package so the generated source resolves zod-aot even when npm nests it under
+  // packages/protocol/node_modules instead of hoisting it to the repo root.
+  const scratchRoot = resolve(protocolRoot, ".tmp");
   await mkdir(scratchRoot, { recursive: true });
   const tempDir = await mkdtemp(join(scratchRoot, "paseo-zod-aot-"));
 

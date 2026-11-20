@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,66 +15,6 @@ const output = resolve(packageRoot, "src/generated/validation/ws-outbound.aot.ts
 const require = createRequire(import.meta.url);
 const zodAotEntry = require.resolve("zod-aot");
 const zodAotRoot = resolve(dirname(zodAotEntry), "..");
-const emitterPath = resolve(zodAotRoot, "dist/cli/emitter.js");
-const discriminatedUnionPath = resolve(
-  zodAotRoot,
-  "dist/core/codegen/schemas/discriminated-union.js",
-);
-
-async function ensureZodAotRuntimeImportExtensionPatch() {
-  const emitter = await readFile(emitterPath, "utf8");
-  if (emitter.includes('sourceRelPath.endsWith(".js")')) {
-    return;
-  }
-
-  const before = 'let importPath = sourceRelPath.replace(/\\.[cm]?[jt]sx?$/, "");';
-  const after =
-    'let importPath = sourceRelPath.endsWith(".js")\n        ? sourceRelPath\n        : sourceRelPath.replace(/\\.[cm]?[jt]sx?$/, "");';
-  if (!emitter.includes(before)) {
-    throw new Error("zod-aot emitter shape changed; update the runtime import extension patch");
-  }
-  await writeFile(emitterPath, emitter.replace(before, after));
-}
-
-async function ensureZodAotDiscriminatedUnionOutputPatch() {
-  let discriminatedUnionEmitter = await readFile(discriminatedUnionPath, "utf8");
-  if (
-    discriminatedUnionEmitter.includes(
-      "const needsOutputPropagation = ir.options.some(hasMutation);",
-    )
-  ) {
-    return;
-  }
-
-  const importBefore = 'import { escapeString } from "../context.js";';
-  const importAfter = 'import { escapeString, hasMutation } from "../context.js";';
-  const outputFlagBefore = "const discKey = escapeString(ir.discriminator);\n    let code = emit `";
-  const outputFlagAfter =
-    "const discKey = escapeString(ir.discriminator);\n    const needsOutputPropagation = ir.options.some(hasMutation);\n    let code = emit `";
-  const propagationBefore =
-    "        ${g.visit(option, { input: objVar, output: objVar })}\n        break;`;";
-  const propagationAfter =
-    '        ${g.visit(option, { input: objVar, output: objVar })}\n        ${needsOutputPropagation ? `${g.output}=${objVar};` : ""}\n        break;`;';
-
-  if (
-    !discriminatedUnionEmitter.includes(importBefore) ||
-    !discriminatedUnionEmitter.includes(outputFlagBefore) ||
-    !discriminatedUnionEmitter.includes(propagationBefore)
-  ) {
-    throw new Error("zod-aot discriminated-union emitter shape changed; update the output patch");
-  }
-
-  discriminatedUnionEmitter = discriminatedUnionEmitter
-    .replace(importBefore, importAfter)
-    .replace(outputFlagBefore, outputFlagAfter)
-    .replace(propagationBefore, propagationAfter);
-  await writeFile(discriminatedUnionPath, discriminatedUnionEmitter);
-}
-
-await Promise.all([
-  ensureZodAotRuntimeImportExtensionPatch(),
-  ensureZodAotDiscriminatedUnionOutputPatch(),
-]);
 
 const [
   { loadSourceFile },

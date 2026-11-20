@@ -7,8 +7,11 @@ import {
 
 export const sessionOutboundMessageOptions = SessionOutboundMessageSchema.options;
 
+// Loose so the envelope passes the message body through; a stripping object would reduce every
+// session message to its tag, and validateWSOutboundMessage returns the envelope's data as-is
+// when the message validator applies no defaults.
 const [firstSessionTag, ...otherSessionTags] = sessionOutboundMessageOptions.map((option) =>
-  z.object({ type: option.shape.type }),
+  z.looseObject({ type: option.shape.type }),
 );
 
 // WSOutboundMessageSchema with every session message reduced to its tag. It reports the same
