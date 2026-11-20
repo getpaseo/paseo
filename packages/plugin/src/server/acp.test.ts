@@ -5311,4 +5311,141 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("preserves a settled background reply across a second queued steer with no new background work", async () => {
+    let promptCount = 0;
+    let releaseSteer1: (() => void) | null = null;
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-two-steers",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          releaseSteer1 = () => {
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("Steer 1 ACK"),
+            });
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: { sessionUpdate: "usage_update", used: 100, size: 1000 },
+            });
+            instance.respond(request, { stopReason: "end_turn" });
+            // Background job finishes and replies immediately after Steer 1 returns end_turn.
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "bg-two-steers",
+                status: "completed",
+              },
+            });
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("Background finished."),
+            });
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: { sessionUpdate: "usage_update", used: 250, size: 1000 },
+            });
+          };
+          return true;
+        }
+        // Steer 2 returns end_turn with no new background work.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Steer 2 ACK"),
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-two-steers-settled",
+      label: "Deferred Two Steers Settled",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 40,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "two-steers-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run bg" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-two-steers",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Queue two steers back-to-back.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-one",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "first steer" }] },
+        },
+      });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-two",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "second steer" }] },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const startedAt = Date.now();
+      releaseSteer1!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:two-steers-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+      expect(promptCount).toBe(3);
+    } finally {
+      await connection.close();
+    }
+  });
 });

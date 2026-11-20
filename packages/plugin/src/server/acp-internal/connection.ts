@@ -1614,8 +1614,6 @@ class AcpRuntime {
     }
     const prompt = toAcpPrompt(input.prompt);
     active.wirePromptsInFlight += 1;
-    active.replyOpen = false;
-    active.replySettled = false;
     this.scheduleDeferredSettle();
     this.replayWindow = null;
     this.fallbackChunkIds.clear();
@@ -1650,8 +1648,6 @@ class AcpRuntime {
         }
         this.fallbackChunkIds.clear();
         active.lastPromptResponseWireSeq = null;
-        active.replyOpen = false;
-        active.replySettled = false;
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
@@ -1778,13 +1774,8 @@ class AcpRuntime {
     wireSeq: number,
   ): void {
     const active = this.activePrompt;
-    if (
-      !active ||
-      !this.isPostWirePrompt(active, wireSeq) ||
-      wasOpenQualifying === isOpenQualifying
-    ) {
-      return;
-    }
+    if (!active || wasOpenQualifying === isOpenQualifying) return;
+    if (!active.deferred && !this.isPostWirePrompt(active, wireSeq)) return;
     if (!active.deferred && wasOpenQualifying && !isOpen && this.toolKeepsTurnOpen(snapshot)) {
       active.crossedEndTurn = true;
     }
