@@ -653,7 +653,7 @@ export function themeContentMaxWidth(
     : (width ?? "100%");
 }
 
-export type ThemeFontWeight =
+type ThemeFontWeight =
   | "normal"
   | "bold"
   | "100"

@@ -8,6 +8,7 @@ import { openSettingsSection } from "../support/helpers/settings";
 import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { contrastRatio } from "../../src/utils/color";
+import { qaScreenshot } from "../support/helpers/context-window";
 import type { Locator, Page } from "@playwright/test";
 
 const PLUGIN_ID = "plugin-theme-e2e";
@@ -282,6 +283,90 @@ test("reaches the last theme when a plugin contributes more themes than fit", as
       .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
       .catch(() => undefined);
     await client.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const TOKENS_PLUGIN_ID = "plugin-theme-tokens-e2e";
+
+// Two themes with the same palette; the second also sets design tokens, so any difference
+// between them comes from the tokens.
+const TOKENS_SOURCE = `export default function contribute(plugin) {
+  const colors = {
+    background: "#1e1e2e", foreground: "#cdd6f4", raised: "#313244", control: "#45475a",
+    border: "#45475a", accent: "#cba6f7", mutedForeground: "#a6adc8", ring: "#6c7086",
+  };
+  plugin.addTheme({ id: "colors", name: "QA Colors", appearance: "dark", colors });
+  plugin.addTheme({
+    id: "tokens", name: "QA Tokens", appearance: "dark", colors,
+    radius: { sm: 0, base: 0, md: 0, lg: 0, xl: 0, "2xl": 0 },
+    spacing: { 1: 8, 2: 12, 3: 16 },
+    fontSize: { sm: 13, base: 16 },
+    fontWeight: { normal: "300" },
+    borderWidth: { 2: 1 },
+    opacity: { 50: 0.3 },
+    iconStrokeWidth: 1,
+  });
+  return () => {};
+}`;
+
+test("applies a plugin theme's design tokens and leaves a color-only theme on Paseo's", async ({
+  page,
+}) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-theme-tokens-e2e-"));
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+  const workspace = await seedMockAgentWorkspace({
+    repoPrefix: "theme-tokens-",
+    title: "Theme tokens workspace",
+  });
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: TOKENS_PLUGIN_ID, requirements: pluginRequirements }),
+  );
+  await writeFile(path.join(directory, "index.client.ts"), TOKENS_SOURCE);
+
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    // The theme picker tile reads borderRadius.lg and borderWidth[2]; its label reads fontSize.sm.
+    const expectTile = async (name: string, radius: string, border: string, font: string) => {
+      const tile = page.getByRole("radio", { name, exact: true });
+      await expect(tile).toBeChecked();
+      await page.mouse.move(0, 0);
+      await expect(tile).toHaveCSS("border-top-left-radius", radius);
+      await expect(tile).toHaveCSS("border-top-width", border);
+      await expect(tile.getByText(name, { exact: true })).toHaveCSS("font-size", font);
+    };
+
+    await selectTheme(page, "QA Colors");
+    await expectTile("QA Colors", "8px", "2px", "12px");
+    await qaScreenshot(page, "theme-tokens-before-appearance");
+    await openAgentRoute(page, workspace);
+    await expect(page.locator('svg[stroke-width="1.5"]').first()).toBeAttached();
+    await qaScreenshot(page, "theme-tokens-before-workspace");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await qaScreenshot(page, "theme-tokens-before-compact");
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    await selectTheme(page, "QA Tokens");
+    await expectTile("QA Tokens", "0px", "1px", "13px");
+    await qaScreenshot(page, "theme-tokens-after-appearance");
+    await openAgentRoute(page, workspace);
+    await expect(page.locator('svg[stroke-width="1"]').first()).toBeAttached({ timeout: 30_000 });
+    await qaScreenshot(page, "theme-tokens-after-workspace");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('svg[stroke-width="1"]').first()).toBeAttached({ timeout: 30_000 });
+    await qaScreenshot(page, "theme-tokens-after-compact");
+  } finally {
+    await client.removePlugin(TOKENS_PLUGIN_ID).catch(() => undefined);
+    await client
+      .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
+      .catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await workspace.cleanup();
     await rm(directory, { recursive: true, force: true });
   }
 });
