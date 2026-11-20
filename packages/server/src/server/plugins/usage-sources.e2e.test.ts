@@ -392,6 +392,8 @@ dns.lookup = function(host, ...args) {
             HOME: root,
             USERPROFILE: root,
             CODEX_HOME: path.join(root, ".codex"),
+            OPENROUTER_API_KEY: "fixture-openrouter",
+            OPENROUTER_MANAGEMENT_KEY: "fixture-openrouter-management",
             CLAUDE_CONFIG_DIR: path.join(root, ".claude"),
             NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
             https_proxy: `http://127.0.0.1:${address.port}`,
@@ -402,6 +404,7 @@ dns.lookup = function(host, ...args) {
       );
       expect(tunnels).toContain("api.anthropic.com:443");
       expect(tunnels).toContain("chatgpt.com:443");
+      expect(tunnels.filter((target) => target === "openrouter.ai:443")).toHaveLength(2);
     } finally {
       proxy.closeAllConnections();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
