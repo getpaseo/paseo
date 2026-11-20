@@ -5751,4 +5751,165 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("lets deferred retirement be the sole emitter of cancellation when a steer returns cancelled during a slow cancel write", async () => {
+    let promptCount = 0;
+    let respondSteerCancelled: (() => void) | null = null;
+    let releaseCancelWrite: (() => void) | null = null;
+    let closedConnector = false;
+    const base = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-slow-cancel",
+              name: "run_command",
+              title: "Job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        respondSteerCancelled = () => instance.respond(request, { stopReason: "cancelled" });
+        return true;
+      },
+    });
+    const connector = async () => {
+      const inner = await base.connector();
+      closedConnector = false;
+      const writer = inner.writable.getWriter();
+      const writable = new WritableStream<AcpStreamMessage>({
+        async write(message) {
+          if ("method" in message && message.method === "session/cancel") {
+            respondSteerCancelled?.();
+            await new Promise<void>((resolve) => {
+              releaseCancelWrite = resolve;
+            });
+          }
+          await writer.write(message);
+        },
+        async close() {
+          closedConnector = true;
+          await writer.close();
+        },
+        async abort(reason) {
+          closedConnector = true;
+          await writer.abort(reason);
+        },
+      });
+      return { readable: inner.readable, writable };
+    };
+    const registration = runAcpProvider({
+      id: "deferred-slow-cancel-steer",
+      label: "Deferred Slow Cancel Steer",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 1_500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "slow-cancel-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-slow-cancel",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Start an in-flight steer, then initiate Stop while session/cancel write is held open.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "slow-cancel-steer",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "steer" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" && event.clientMessageId === "slow-cancel-steer",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const interruptPromise = connection.send({
+        type: "session.interrupt",
+        requestId: "slow-cancel-int",
+        sessionId: "session-1",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // Even though steer returned stopReason: "cancelled", retirement has not closed yet:
+      // no canceled turn should be emitted yet, and a replacement prompt must be rejected.
+      expect(closedConnector).toBe(false);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:slow-cancel-turn" &&
+            event.state === "canceled",
+        ),
+      ).toBe(false);
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "replacement-during-retire",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "too early" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "replacement-during-retire" &&
+          event.result.type === "failed",
+      );
+
+      // Release the cancel write: retirement closes the transport and emits cancellation once.
+      releaseCancelWrite!();
+      await interruptPromise;
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "slow-cancel-int",
+      );
+      expect(closedConnector).toBe(true);
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:slow-cancel-turn" &&
+            event.state === "canceled",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      releaseCancelWrite?.();
+      await connection.close();
+    }
+  });
 });

@@ -665,7 +665,7 @@ class AcpRuntime {
   }
 
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
-    if (this.closing || this.processFailed) {
+    if (this.closing || this.processFailed || this.deferredRetirement) {
       throw new Error("ACP session is closed");
     }
     if (input.prompt.delivery === "steer") {
@@ -687,7 +687,7 @@ class AcpRuntime {
         }
       }
       await active.settled;
-      if (this.closing || this.processFailed) {
+      if (this.closing || this.processFailed || this.deferredRetirement) {
         throw new Error("ACP session is closed");
       }
     }
@@ -1669,7 +1669,7 @@ class AcpRuntime {
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
         await this.drainNotifications();
-        if (this.closing || active.deferred !== deferred) return;
+        if (this.closing || this.deferredRetirement || active.deferred !== deferred) return;
         if (response.usage) {
           this.lastUsage = {
             ...this.lastUsage,
@@ -1684,7 +1684,7 @@ class AcpRuntime {
             usage: this.lastUsage,
           });
         }
-        if (response.stopReason === "cancelled" || active.cancelling) {
+        if (response.stopReason === "cancelled") {
           this.finishDeferredTurn(active, { type: "cancel" });
           return;
         }
@@ -1693,10 +1693,8 @@ class AcpRuntime {
         }
       } catch (error) {
         await this.drainNotifications();
-        if (this.closing || active.deferred !== deferred) return;
-        if (active.cancelling) {
-          this.finishDeferredTurn(active, { type: "cancel" });
-        } else if (this.processFailed) {
+        if (this.closing || this.deferredRetirement || active.deferred !== deferred) return;
+        if (this.processFailed) {
           this.finishDeferredTurn(active, {
             type: "fail",
             error: { message: describeError(error) },
@@ -1730,7 +1728,7 @@ class AcpRuntime {
       active.deferred = { timer: null, resolve };
       this.scheduleDeferredSettle();
     });
-    if (this.closing) return;
+    if (this.closing || this.deferredRetirement) return;
     if (outcome.type === "fail") {
       this.finishPromptTurn(active.turnId, "failed", outcome.error);
       return;
