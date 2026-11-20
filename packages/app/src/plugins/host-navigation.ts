@@ -4,6 +4,7 @@ import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser } from "@/desktop/browser/store";
@@ -17,6 +18,10 @@ export function usePluginHostNavigation(
     () =>
       createPluginHostNavigation(serverId, {
         browserAvailable: getIsElectron(),
+        isHostRegistered: (targetServerId) =>
+          getHostRuntimeStore()
+            .getHosts()
+            .some((host) => host.serverId === targetServerId),
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,
         createBrowser: createWorkspaceBrowser,

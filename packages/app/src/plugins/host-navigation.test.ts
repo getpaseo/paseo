@@ -10,6 +10,7 @@ describe("plugin host navigation", () => {
     const workspaces = new Set(["selected:one", "remote:two"]);
     const navigation = createPluginHostNavigation("selected", {
       browserAvailable: electron,
+      isHostRegistered: (serverId: string) => serverId === "selected" || serverId === "remote",
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
       openAgent: (input) => destinations.push(input),
@@ -113,6 +114,24 @@ describe("plugin host navigation", () => {
     expect(navigation.supportsFocusHost).toBe(true);
   });
 
+  it("preserves sidebar filters when the destination host has been removed", () => {
+    const filters = {
+      hostFilters: ["selected"],
+      projectFilters: ["pinned-project"],
+      labelFilter: { labels: ["urgent"] },
+    };
+    useSidebarViewStore.setState(filters);
+    const { navigation, destinations } = setup();
+    navigation.openAgent({ serverId: "removed", agentId: "agent-2", focusHost: true });
+    navigation.openWorkspace({ serverId: "removed", workspaceId: "two", focusHost: true });
+
+    expect(useSidebarViewStore.getState()).toMatchObject(filters);
+    expect(destinations).toEqual([
+      { serverId: "removed", agentId: "agent-2" },
+      { serverId: "removed", workspaceId: "two" },
+    ]);
+  });
+
   it("does not change the filter when navigation rejects the target", () => {
     const focusedHosts: string[] = [];
     const unavailable = () => {
@@ -120,6 +139,7 @@ describe("plugin host navigation", () => {
     };
     const navigation = createPluginHostNavigation("selected", {
       browserAvailable: false,
+      isHostRegistered: () => true,
       resolveWorkspace: () => null,
       openAgent: unavailable,
       openWorkspace: unavailable,
