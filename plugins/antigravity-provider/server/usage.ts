@@ -56,6 +56,17 @@ function shortWindow(window: string): string {
   return trimmed;
 }
 
+function windowDurationSeconds(window: string): number | undefined {
+  switch (window.trim().toLowerCase()) {
+    case "5h":
+      return 5 * 3600;
+    case "weekly":
+      return 7 * 86400;
+    default:
+      return undefined;
+  }
+}
+
 function shortGroupName(name: string): string {
   return name
     .trim()
@@ -129,6 +140,7 @@ export class Usage {
                 shortLabel: formatShortLabel(group.name, bucket.window, includeGroup),
                 summary: !bucket.disabled && bucket.window === "weekly",
                 utilizationPct: used,
+                durationSeconds: windowDurationSeconds(bucket.window),
                 resetsAt: bucket.disabled ? null : bucket.reset_time,
                 tone: used === null ? "default" : toneFromUsedPct(used),
               }),

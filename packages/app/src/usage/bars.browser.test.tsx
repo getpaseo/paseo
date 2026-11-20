@@ -32,6 +32,7 @@ it("translates mounted usage rows when the language changes", async () => {
       <>
         <UsageWindowBar
           window={window}
+          successfulAt={null}
           displayAs="used"
           pinnable={false}
           pinned={false}

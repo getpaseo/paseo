@@ -194,6 +194,7 @@ function UsageCardBody({
               entry={entry}
               window={window}
               retained={retained}
+              successfulAt={successfulAt}
               display={display}
               pinnable={pinnable}
             />
@@ -267,8 +268,10 @@ function CardWindowBar({
   display,
   pinnable,
   retained,
+  successfulAt,
 }: {
   retained: boolean;
+  successfulAt: string | null;
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
@@ -285,6 +288,7 @@ function CardWindowBar({
     <UsageWindowBar
       window={window}
       retained={retained}
+      successfulAt={successfulAt}
       displayAs={display.displayAs}
       pinnable={pinnable}
       pinned={display.isPinned(pin)}
