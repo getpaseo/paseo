@@ -11,7 +11,7 @@ import {
 const mode = process.argv[2];
 if (mode !== "builtin" && mode !== "directory") throw new Error("Expected builtin or directory");
 const sources = builtinPlugins.filter((id) =>
-  ["claude-usage-source", "codex-usage-source", "openrouter-usage-source"].includes(id),
+  ["claude-usage-source", "codex-usage-source", "openrouter-host-usage-source"].includes(id),
 );
 // Built-ins run inside the daemon; directory plugins initialize their own subprocess network.
 if (mode === "builtin") initializeEnvironmentProxy();
