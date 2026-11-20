@@ -112,7 +112,11 @@ import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
-import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import {
+  buildDraftAgentSetup,
+  resolveDraftAgentSetup,
+  type ClientSlashCommand,
+} from "@/client-slash-commands";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1680,6 +1684,13 @@ function ActiveAgentComposer({
         throw new Error("Agent not found");
       }
 
+      const client = useSessionStore.getState().sessions[serverId]?.client;
+      if (!client) throw new Error("Host is disconnected; reconnect before creating a fresh draft");
+      const draftSetup =
+        command.kind === "replace-agent-with-draft"
+          ? await resolveDraftAgentSetup(client, agentId, buildDraftAgentSetup(agent))
+          : undefined;
+
       const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
       if (workspaceKey) {
         unpinWorkspaceAgent(workspaceKey, agentId);
@@ -1690,7 +1701,7 @@ function ActiveAgentComposer({
         retargetCurrentTab({
           kind: "draft",
           draftId: generateDraftId(),
-          setup: buildDraftAgentSetup(agent),
+          setup: draftSetup,
         });
       } else if (workspaceKey) {
         closeWorkspaceTab(workspaceKey, tabId);

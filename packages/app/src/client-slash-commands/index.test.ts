@@ -3,6 +3,7 @@ import {
   CLIENT_SLASH_COMMANDS,
   buildDraftAgentSetup,
   resolveClientSlashCommand,
+  resolveDraftAgentSetup,
 } from "@/client-slash-commands";
 import type { Agent } from "@/stores/session-store";
 
@@ -98,6 +99,47 @@ describe("resolveClientSlashCommand", () => {
 });
 
 describe("buildDraftAgentSetup", () => {
+  it("uses fresh required options on a capable host instead of runtime snapshot values", async () => {
+    const legacy = buildDraftAgentSetup(createAgent());
+    const setup = await resolveDraftAgentSetup(
+      {
+        getLastServerInfoMessage: () => ({ features: { adaptiveAgentFeatures: true } }) as never,
+        getAgentTemplate: async () => ({
+          provider: "codex",
+          cwd: "/repo",
+          providerOptions: { caller: true },
+        }),
+      },
+      "agent-1",
+      legacy,
+    );
+    expect(setup).toMatchObject({ providerOptions: { caller: true } });
+    expect(legacy.providerOptions).toEqual({ "web-search": true, effort: "high" });
+  });
+
+  it("keeps the established draft seed on older hosts and propagates capable-host failures", async () => {
+    const legacy = buildDraftAgentSetup(createAgent());
+    const old = {
+      getLastServerInfoMessage: () => null,
+      getAgentTemplate: async () => {
+        throw new Error("must not request on old host");
+      },
+    };
+    expect(await resolveDraftAgentSetup(old, "agent-1", legacy)).toBe(legacy);
+    await expect(
+      resolveDraftAgentSetup(
+        {
+          getLastServerInfoMessage: () => ({ features: { adaptiveAgentFeatures: true } }) as never,
+          getAgentTemplate: async () => {
+            throw new Error("Template read failed; reconnect and retry");
+          },
+        },
+        "agent-1",
+        legacy,
+      ),
+    ).rejects.toThrow("Template read failed; reconnect and retry");
+  });
+
   it("builds draft setup from the active agent snapshot", () => {
     expect(buildDraftAgentSetup(createAgent())).toEqual({
       provider: "codex",

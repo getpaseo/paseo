@@ -64,6 +64,32 @@ describe("V2Runtime against an external server", () => {
     server = undefined;
   });
 
+  test("explicit target restrictions are described without contacting or starting a service", async () => {
+    let starts = 0;
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      selection: { kind: "explicit", server: { url: "http://127.0.0.1:1" } },
+      startup: {
+        select: async () => {
+          throw new Error("explicit selection must win");
+        },
+        start: async () => {
+          starts += 1;
+          throw new Error("service must not start");
+        },
+      },
+    });
+    try {
+      expect(await runtime.describeRestrictions()).toEqual({
+        mcpConfiguration: "none",
+        processEnvironment: "none",
+      });
+      expect(starts).toBe(0);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   test("shutdown cancels shared readiness without waiting for its deadline or stopping the service", async () => {
     let received!: () => void;
     const requested = new Promise<void>((resolve) => {

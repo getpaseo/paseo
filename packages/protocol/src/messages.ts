@@ -44,6 +44,16 @@ export {
 import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
 import { z } from "zod";
+import {
+  AgentPluginConfigPreviewRequestSchema,
+  AgentPluginConfigApplyRequestSchema,
+  AgentPluginConfigResetRequestSchema,
+  AgentPluginConfigPreviewResponseSchema,
+  AgentPluginConfigApplyResponseSchema,
+  AgentPluginConfigResetResponseSchema,
+  AgentTemplateGetRequestSchema,
+  AgentTemplateGetResponseSchema,
+} from "./plugin-agent-config.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -3636,6 +3646,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
+  AgentTemplateGetRequestSchema,
+  AgentPluginConfigPreviewRequestSchema,
+  AgentPluginConfigApplyRequestSchema,
+  AgentPluginConfigResetRequestSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -3939,6 +3953,7 @@ export const ServerInfoStatusPayloadSchema = z
         backgroundWorkspaces: z.boolean().optional(),
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: z.boolean().optional(),
+        adaptiveAgentFeatures: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
@@ -7556,6 +7571,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentTemplateGetResponseSchema,
+  AgentPluginConfigPreviewResponseSchema,
+  AgentPluginConfigApplyResponseSchema,
+  AgentPluginConfigResetResponseSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,

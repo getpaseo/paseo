@@ -14,6 +14,7 @@ import {
 } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
+import { selectLegacyAdoptions } from "./agent/plugin-config-adoption.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
@@ -1119,6 +1120,363 @@ test.each([
     expect(provider.resumeOverrides).toHaveLength(1);
     expect(provider.resumeOverrides[0]?.toolPolicySource).toBe(expected);
     expect(provider.resumeOverrides[0]?.toolPolicy).toEqual(toolPolicy);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent copies adopted required intent into a new ID without source receipts and honors explicit overrides", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({ agentClients: { codex: provider } });
+  const docs = { type: "http" as const, url: "http://127.0.0.1:1/docs" };
+  const requiredPolicy = {
+    preapproved: [{ kind: "mcp" as const, server: "docs", tool: "read" }],
+  };
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        modeId: "default",
+        systemPrompt: "Caller instructions\n\nLegacy plugin instructions",
+        providerOptions: { caller_option: true, legacy_option: "dummy-legacy-option" },
+        mcpServers: {
+          docs,
+          legacy: {
+            type: "http",
+            url: "http://127.0.0.1:1/legacy",
+            headers: { Authorization: "Bearer dummy-legacy-credential" },
+          },
+        },
+        toolPolicy: requiredPolicy,
+      },
+    });
+    await localCtx.client.archiveAgent(created.id);
+    const storage = localCtx.daemon.daemon.agentStorage;
+    const original = (await storage.get(created.id))!;
+    const receipts = selectLegacyAdoptions({
+      pluginId: "notes",
+      config: { ...original.config, provider: "codex", cwd },
+      env: original.launchEnv ?? {},
+      recipe: {
+        version: 1,
+        selectors: [
+          {
+            id: "prompt",
+            group: "notes",
+            label: "Instructions",
+            kind: "prompt-suffix",
+            text: "\n\nLegacy plugin instructions",
+          },
+          { id: "endpoint", group: "notes", label: "Endpoint", kind: "mcp", name: "legacy" },
+          {
+            id: "option",
+            group: "notes",
+            label: "Option",
+            kind: "option",
+            key: "legacy_option",
+            baselines: [{ id: "inherit", label: "Inherit", kind: "absent" }],
+          },
+        ],
+      },
+      selections: [{ id: "prompt" }, { id: "endpoint" }, { id: "option", baselineId: "inherit" }],
+    });
+    await storage.mutatePluginConfigAdoptions(created.id, () => ({ version: 1, receipts }));
+    const sourceBefore = (await storage.get(created.id))!;
+    const sourceIntent = JSON.stringify({
+      config: sourceBefore.config,
+      launchEnv: sourceBefore.launchEnv,
+      receipts: sourceBefore.pluginConfigAdoptions,
+    });
+    const handle = (await localCtx.client.fetchAgent(created.id))!.agent.persistence!;
+    expect(handle).toBeTruthy();
+    expect(handle.metadata).not.toHaveProperty("mcpServers");
+    expect(handle.metadata).not.toHaveProperty("pluginConfigAdoptions");
+    expect(JSON.stringify(handle)).not.toContain("dummy-legacy-credential");
+
+    const resumed = await localCtx.client.resumeAgent(handle, {
+      modeId: "full-access",
+    });
+
+    expect(resumed.id).not.toBe(created.id);
+    expect(provider.resumeOverrides).toHaveLength(1);
+    expect(provider.resumeOverrides[0]).toMatchObject({
+      systemPrompt: "Caller instructions",
+      providerOptions: { caller_option: true },
+      modeId: "full-access",
+      toolPolicy: requiredPolicy,
+    });
+    expect(provider.resumeOverrides[0]?.mcpServers).toMatchObject({ docs });
+    expect(provider.resumeOverrides[0]?.mcpServers).not.toHaveProperty("legacy");
+    expect(provider.resumeOverrides[0]?.providerOptions).toEqual({ caller_option: true });
+    expect(provider.resumeOverrides[0]?.toolPolicySource).toBeUndefined();
+    expect(provider.resumeOverrides[0]?.pluginAppendSystemPrompt).toBeUndefined();
+    expect(provider.resumeOverrides[0]?.pluginToolPolicy).toBeUndefined();
+    const copied = (await storage.get(resumed.id))!;
+    expect(copied.config).toMatchObject({
+      systemPrompt: "Caller instructions",
+      modeId: "full-access",
+      toolPolicy: requiredPolicy,
+    });
+    expect(copied.config?.mcpServers).toEqual({ docs });
+    expect(copied.config?.providerOptions).toEqual({ caller_option: true });
+    expect(copied.pluginConfigAdoptions).toBeUndefined();
+    expect(JSON.stringify(resumed)).not.toContain("dummy-legacy");
+    expect(JSON.stringify(resumed)).not.toContain(receipts[0]!.id);
+    const sourceAfter = (await storage.get(created.id))!;
+    expect(
+      JSON.stringify({
+        config: sourceAfter.config,
+        launchEnv: sourceAfter.launchEnv,
+        receipts: sourceAfter.pluginConfigAdoptions,
+      }),
+    ).toBe(sourceIntent);
+    expect(sourceAfter.config?.toolPolicy).toEqual(requiredPolicy);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent restores the archived source when prompt adoption receipts are stale", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({ agentClients: { codex: provider } });
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        systemPrompt: "Caller instructions\n\nLegacy plugin instructions",
+        providerOptions: { caller_option: true },
+      },
+    });
+    const handle = created.persistence!;
+    const archived = await localCtx.client.archiveAgent(created.id);
+    const storage = localCtx.daemon.daemon.agentStorage;
+    const original = (await storage.get(created.id))!;
+    const receipts = selectLegacyAdoptions({
+      pluginId: "notes",
+      config: { ...original.config, provider: "codex", cwd },
+      env: original.launchEnv ?? {},
+      recipe: {
+        version: 1,
+        selectors: [
+          {
+            id: "prompt",
+            group: "notes",
+            label: "Instructions",
+            kind: "prompt-suffix",
+            text: "\n\nLegacy plugin instructions",
+          },
+        ],
+      },
+      selections: [{ id: "prompt" }],
+    });
+    await storage.mutatePluginConfigAdoptions(created.id, () => ({ version: 1, receipts }));
+    await storage.upsert({
+      ...original,
+      config: {
+        ...original.config,
+        systemPrompt: "Edited caller instructions\n\nLegacy plugin instructions",
+      },
+    });
+    const sourceBefore = structuredClone((await storage.get(created.id))!);
+
+    await expect(localCtx.client.resumeAgent(handle)).rejects.toMatchObject({
+      name: "DaemonRpcError",
+      code: "agent_resume_failed",
+      requestType: "resume_agent_request",
+      userMessage:
+        "Adopted plugin configuration is stale; reset the affected selection before editing it",
+    });
+
+    expect(provider.resumeOverrides).toHaveLength(0);
+    expect((await storage.listAll()).map((record) => record.id)).toEqual([created.id]);
+    const sourceAfter = (await storage.get(created.id))!;
+    expect(sourceAfter.config).toEqual(sourceBefore.config);
+    expect(sourceAfter.launchEnv).toEqual(sourceBefore.launchEnv);
+    expect(sourceAfter.pluginConfigAdoptions).toEqual({ version: 1, receipts });
+    expect(sourceAfter.persistence).toEqual(sourceBefore.persistence);
+    expect(sourceAfter.archivedAt).toBe(archived.archivedAt);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("createAgentFromRecord projects adoption receipts without native persistence and preserves saved intent through archived history", async () => {
+  const cwd = tmpCwd();
+  const launches: AgentSessionConfig[] = [];
+  const historyHandles: AgentPersistenceHandle[] = [];
+  const clients = createTestAgentClients({
+    supportsMcpServers: true,
+    beforeCreateSession: async (config) => {
+      launches.push(structuredClone(config));
+    },
+    beforeResumeSession: async (handle) => {
+      historyHandles.push(structuredClone(handle));
+    },
+  });
+  const localCtx = await createDaemonTestContext({ agentClients: clients });
+  const id = randomUUID();
+  const docs = { type: "http" as const, url: "http://127.0.0.1:1/docs" };
+  const requiredPolicy = {
+    preapproved: [{ kind: "mcp" as const, server: "docs", tool: "read" }],
+  };
+  const config: AgentSessionConfig = {
+    provider: "codex",
+    cwd,
+    model: "gpt-5.4-mini",
+    modeId: "default",
+    systemPrompt: "Caller instructions\n\nLegacy plugin instructions",
+    mcpServers: {
+      docs,
+      legacy: {
+        type: "http",
+        url: "http://127.0.0.1:1/legacy",
+        headers: { Authorization: "Bearer dummy-record-credential" },
+      },
+    },
+    toolPolicy: requiredPolicy,
+  };
+  try {
+    const storage = localCtx.daemon.daemon.agentStorage;
+    const now = new Date().toISOString();
+    await storage.upsert({
+      id,
+      provider: "codex",
+      cwd,
+      labels: {},
+      createdAt: now,
+      updatedAt: now,
+      lastStatus: "closed",
+      config: {
+        model: config.model,
+        modeId: config.modeId,
+        systemPrompt: config.systemPrompt,
+        mcpServers: config.mcpServers,
+        toolPolicy: config.toolPolicy,
+      },
+    });
+    const receipts = selectLegacyAdoptions({
+      pluginId: "notes",
+      config,
+      env: {},
+      recipe: {
+        version: 1,
+        selectors: [
+          {
+            id: "prompt",
+            group: "notes",
+            label: "Instructions",
+            kind: "prompt-suffix",
+            text: "\n\nLegacy plugin instructions",
+          },
+          { id: "endpoint", group: "notes", label: "Endpoint", kind: "mcp", name: "legacy" },
+        ],
+      },
+      selections: [{ id: "prompt" }, { id: "endpoint" }],
+    });
+    await storage.mutatePluginConfigAdoptions(id, () => ({ version: 1, receipts }));
+    const before = (await storage.get(id))!;
+    const originalConfig = structuredClone(before.config);
+    expect(before.persistence).toBeUndefined();
+
+    const opened = await localCtx.daemon.daemon.agentManager.createAgentFromRecord(id);
+
+    expect(opened.id).toBe(id);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.systemPrompt).toBe("Caller instructions");
+    expect(launches[0]?.mcpServers).toMatchObject({ docs });
+    expect(launches[0]?.mcpServers).not.toHaveProperty("legacy");
+    expect(launches[0]?.toolPolicy).toEqual(requiredPolicy);
+    const after = (await storage.get(id))!;
+    expect(after.config).toEqual(originalConfig);
+    expect(after.pluginConfigAdoptions).toEqual({ version: 1, receipts });
+    const publicAgent = (await localCtx.client.fetchAgent(id))!.agent;
+    expect(publicAgent).not.toHaveProperty("pluginConfigAdoptions");
+    expect(publicAgent.persistence?.metadata).not.toHaveProperty("mcpServers");
+    expect(publicAgent.persistence?.metadata).not.toHaveProperty("pluginConfigAdoptions");
+    expect(JSON.stringify(publicAgent)).not.toContain("dummy-record-credential");
+    expect(JSON.stringify(publicAgent)).not.toContain(receipts[0]!.id);
+    const archived = await localCtx.client.archiveAgent(id);
+    const history = await localCtx.client.fetchAgentTimeline(id);
+    expect(history.agentId).toBe(id);
+    expect(history.agent?.archivedAt).toBe(archived.archivedAt);
+    expect(historyHandles).toHaveLength(1);
+    expect(launches).toHaveLength(1);
+    const afterHistory = (await storage.get(id))!;
+    expect(afterHistory.config).toEqual(originalConfig);
+    expect(afterHistory.pluginConfigAdoptions).toEqual({ version: 1, receipts });
+    expect(afterHistory.archivedAt).toBe(archived.archivedAt);
+    expect(JSON.stringify(history)).not.toContain("dummy-record-credential");
+    expect(JSON.stringify(history)).not.toContain(receipts[0]!.id);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent treats unmatched handle config as required caller intent without accepting metadata adoption authority", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({ agentClients: { codex: provider } });
+  const config: AgentSessionConfig = {
+    provider: "codex",
+    cwd,
+    systemPrompt: "Imported caller instructions",
+    mcpServers: { imported: { type: "http", url: "http://127.0.0.1:1/imported" } },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "imported", tool: "read" }],
+    },
+  };
+  const receipts = selectLegacyAdoptions({
+    pluginId: "notes",
+    config,
+    env: {},
+    recipe: {
+      version: 1,
+      selectors: [
+        {
+          id: "prompt",
+          group: "notes",
+          label: "Instructions",
+          kind: "prompt-suffix",
+          text: "Imported caller instructions",
+        },
+      ],
+    },
+    selections: [{ id: "prompt" }],
+  });
+  try {
+    const resumed = await localCtx.client.resumeAgent({
+      provider: "codex",
+      sessionId: "unmatched-imported-session",
+      metadata: {
+        cwd,
+        systemPrompt: config.systemPrompt,
+        mcpServers: config.mcpServers,
+        toolPolicy: config.toolPolicy,
+        toolPolicySource: "plugin",
+        pluginConfigAdoptions: { version: 1, receipts },
+      },
+    });
+    expect(provider.resumeOverrides).toHaveLength(1);
+    expect(provider.resumeOverrides[0]?.systemPrompt).toBe("Imported caller instructions");
+    expect(provider.resumeOverrides[0]?.mcpServers).toMatchObject(config.mcpServers!);
+    expect(provider.resumeOverrides[0]?.toolPolicy).toEqual(config.toolPolicy);
+    expect(provider.resumeOverrides[0]?.toolPolicySource).toBeUndefined();
+    const saved = (await localCtx.daemon.daemon.agentStorage.get(resumed.id))!;
+    expect(saved.config?.systemPrompt).toBe("Imported caller instructions");
+    expect(saved.config?.mcpServers).toEqual(config.mcpServers);
+    expect(saved.config?.toolPolicy).toEqual(config.toolPolicy);
+    expect(saved.config?.toolPolicySource).toBeUndefined();
+    expect(saved.pluginConfigAdoptions).toBeUndefined();
+    expect(resumed.persistence?.metadata).not.toHaveProperty("pluginConfigAdoptions");
+    expect(JSON.stringify(resumed)).not.toContain(receipts[0]!.id);
   } finally {
     await localCtx.cleanup();
     rmSync(cwd, { recursive: true, force: true });

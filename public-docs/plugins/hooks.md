@@ -14,10 +14,10 @@ Use `server.addHook(name, handler)` in `index.server.ts`. Hooks run while the pl
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
-  const remove = server.addHook("agent.open.before", async ({ request }) => ({
-    ...request,
-    env: { ...request.env, REGION: "eu" },
-  }));
+  const remove = server.addHook("agent.open.before", async ({ request }) => {
+    if (Object.hasOwn(request.env, "REGION")) return;
+    return { ...request, env: { ...request.env, REGION: "eu" } };
+  });
   return remove;
 }
 ```
@@ -31,7 +31,7 @@ Names follow `subject.operation.position`: the subject, the operation, then `bef
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider runtime: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, MCP servers, optional exact grants, and provider options each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -49,22 +49,22 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                   | Handler may change                                             |
-| ------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                          |
-| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                |
-| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                               |
-| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
-| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
-| `agent.create.after`      | no    | `{ agent }`                               |                                                                |
-| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
-| `agent.close.after`       | no    | `{ agent }`                               |                                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                |
+| Hook                      | Waits | Payload                                   | Handler may change                                                                              |
+| ------------------------- | ----- | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                                                           |
+| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                                                 |
+| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                                                 |
+| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                                                                |
+| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                                                  |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                                                    |
+| `agent.create.after`      | no    | `{ agent }`                               |                                                                                                 |
+| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, `toolPolicy`, `providerOptions` |
+| `agent.close.after`       | no    | `{ agent }`                               |                                                                                                 |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                                                 |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                                                 |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                                                 |
+| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                                                 |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                                                 |
 
 ## Shared payloads
 
@@ -285,7 +285,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before
 
-Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, `toolPolicy`, and `providerOptions` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open. The adaptive fields below describe the current source contract, not an assigned released SDK minimum. Follow the [adaptive migration gate](./migration.md#adaptive-session-contributions-source-contract) before using them.
 
 Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
 
@@ -318,29 +318,147 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 }
 ```
 
-| Field         | Values                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | String or `null`                                                                                                        |
-| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
-| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                       |
-| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
-| `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                      |
-| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
-| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                   |
-| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
-| `purpose`     | `interactive`, `history`                                                                                                |
-| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+| Field                  | Values                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workspaceId`          | String or `null`                                                                                                                                                   |
+| `title`                | Read-only string or `null`; creation title on create, stored title on resume.                                                                                      |
+| `background`           | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                                                                  |
+| `labels`               | Read-only string map; creation labels on create, stored labels on resume.                                                                                          |
+| `metadata`             | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                                                                 |
+| `openSupport`          | Optional read-only support description for this opening. See below.                                                                                                |
+| `baseConfig`           | Read-only projected required configuration, before optional open contributions; effective provider defaults are included.                                          |
+| `legacyConfigState`    | Read-only selector matches: `present`, `absent`, or `ambiguous`. A match is not ownership proof. See [migration](./migration.md#coexist-with-saved-contributions). |
+| `launchId`             | Host-owned opening identity. Resource callbacks live on `context.launch`, not in the returned request.                                                             |
+| `previousContribution` | Read-only snapshot of this exact plugin instance's own prior contribution, when available. See [launch lifetime](#launch-resource-lifetime).                       |
+| `tools`                | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).                                                     |
+| `mcpServers`           | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                                                              |
+| `toolPolicy`           | Optional exact MCP grants for this plugin's own contributed servers; not required caller policy.                                                                   |
+| `providerOptions`      | Launch-only top-level option candidates, local to this plugin. Explicit caller and configured provider defaults win.                                               |
+| `reason`               | `create`, `resume`, `refresh`, `import`                                                                                                                            |
+| `purpose`              | `interactive`, `history`                                                                                                                                           |
+| `env`                  | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides.                                            |
+
+### Resolve optional features for this opening
+
+`request.provider` stays the selected provider ID, including a configured alias. Use it for helper
+execution and credential scope. `request.openSupport.adapter` separately identifies the resolved
+adapter as `{ kind: "builtin", id }`, `{ kind: "acp" }`, or `{ kind: "plugin", id }`.
+Use adapter identity only for adapter-specific formatting or option rules, never to replace the
+actual provider ID. Do not infer support from an alias or model name. Helpers have their own
+admission and support checks; the foreground descriptor does not admit or reroute a helper.
+
+The host resolves `instructions`, `mcpHttp`, and `exactMcpPreapproval` independently:
+
+| Status        | Meaning for optional contributions                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `supported`   | The owning adapter has established that route; user policy and final validation still apply.                 |
+| `unsupported` | Omit the optional feature that needs this route.                                                             |
+| `unknown`     | Support has not been established; omit the dependent optional feature rather than probing with a model turn. |
+
+`reasons` uses bounded `not-established` or `adapter-unsupported` codes, not configuration or
+provider error text. Missing positive flags on an older plugin provider remain unknown. Actual
+connection/selection errors fail visibly rather than masquerading as unknown support. Required
+caller configuration keeps its existing strict validation.
+
+`attachedTools` describes delivery (`native`, `mcp`, `none`, or `unknown`) separately from daemon
+enablement and disabled tool names. Transport support does not override those choices.
+`providerOptions` lists keys eligible for plugin contributions, not arbitrary configuration access.
+These facts do not promise model support for image results or permission-free tool execution.
+
+`restrictions.mcpConfiguration` and `.processEnvironment` are `mutable`, `fixed`, `none`, or `unknown`.
+An explicit external OpenCode target cannot accept process-level additions. A retained OpenCode
+binding is fixed; describing it does not rotate credentials or move a session. Final launch
+validation still applies. Plugin-provider support discovery reuses its owned connection without a
+catalog, session, or model request.
+
+The descriptor and base snapshots are immutable inside hooks. An older hook may omit these
+host-owned fields from its return; the host restores them. Returning changed values fails the open.
+Hosts predating this contract omit `openSupport`.
+
+### Read the required base without changing it
+
+`baseConfig` contains the caller prompt, saved MCP bindings, required policy, mode/model selections,
+and effective provider options after explicitly adopted legacy fragments have been projected out.
+It excludes host adoption receipts and earlier plugins' optional launch additions. Use it to respect
+occupied server names and explicit option choices. Do not mutate it or log it: MCP URLs, headers,
+and option values can contain credentials. `background`, `purpose`, and the other request fields
+still decide whether this plugin should contribute to this opening.
+
+### Contribute optional grants and provider options
+
+`toolPolicy` and `providerOptions` start empty for each plugin and accumulate only across that
+plugin's callbacks. They are not saved as caller intent. The host keeps optional grants separate
+from required `toolPolicy` through provider mapping.
+
+- Name exact `{ kind: "mcp", server, tool }` grants only for servers in this plugin's returned
+  `mcpServers`. A saved/caller binding, another plugin's server, or the internal `paseo` server cannot
+  receive these grants.
+- Add optional grants only when `exactMcpPreapproval === "supported"`. Without exact approval,
+  compatible tools can remain available with ordinary provider prompts. Do not emulate support by
+  answering those prompts automatically. Required caller policy remains strict.
+- Use only option keys listed by `openSupport.providerOptions`. Options merge by top-level key;
+  nested values are opaque. Explicit caller options and configured provider defaults win. Different
+  plugin candidates for the same otherwise-unset key fail; identical values can coalesce.
+- Check `baseConfig.providerOptions` before describing a newly granted folder or permission in the
+  prompt. If the caller owns the key, the plugin candidate does not take effect.
+- Preserve caller-owned environment keys. Existing environment-map replacement semantics are
+  unchanged; process restrictions still apply.
+
+The provider contract for additive approvals is in [provider capabilities](./providers.md#advertise-optional-integration-support).
+
+### Launch resource lifetime
+
+Only `agent.open.before` receives `PluginSessionOpenContext`, with a separate `context.launch`.
+`context.signal` still covers the hook invocation timeout or stop; it is not the session lifetime.
+
+| Launch member                       | Contract                                                                                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                | Identity for this opening, not an agent ID or an authentication token.                                                                   |
+| `signal`                            | Remains live after the hook returns; aborts before this launch's disposal callbacks run.                                                 |
+| `onInstalled(callback)`             | Register during the hook. Runs when the host installs this launch, not when a model turn succeeds. Async callbacks are awaited.          |
+| `onDispose(({ installed }) => ...)` | Register cleanup for this launch. `installed: false` means it never reached installation; `true` means it did. Async cleanup is awaited. |
+| `retainPrevious()`                  | Retain and return this exact plugin instance's still-live prior contribution, or throw with full-close/reopen guidance.                  |
+
+Register cleanup as soon as a provisional token, seat, or other resource is allocated. Use
+`onInstalled` to publish effective availability only after installation. On failure or cancellation,
+release newly allocated provisional resources; do not delete durable settings or a seat borrowed
+from a prior session. Return early for `purpose: "history"` before allocating resources.
+
+`previousContribution` contains only this plugin instance's prior MCP map, changed environment
+keys, appended instructions, exact grants, and option candidates. It is not the current cumulative
+request, a different plugin's values, or a saved-name ownership claim. For a fixed binding, call
+`retainPrevious()` before reusing that exact contribution. Retention keeps its original lifetime
+alive until its actual users release it; copying its token string alone does not retain it.
+
+A failed replacement disposes only its provisional lifetime. An uncertain old-session close keeps
+the old resources valid and surfaces failure. Confirmed close releases that session's reference;
+retained users can delay final disposal. Plugin replacement cannot vouch for the dead instance's
+credentials. If current settings cannot reuse a fixed binding exactly, fail with explicit guidance
+to fully close the agent and retained children, then reopen. Do not silently rotate credentials,
+switch servers, or claim a limited refresh succeeded. Cleanup failures surface; there is no silent retry.
 
 ### Append instructions on every session opening
 
 ```ts
-server.addHook("agent.open.before", async ({ request }) => ({
-  ...request,
-  appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Follow the team engineering guide."],
-}));
+server.addHook("agent.open.before", async ({ request }) => {
+  if (request.purpose === "history" || request.openSupport?.instructions !== "supported") return;
+  return {
+    ...request,
+    appendSystemPrompt: [
+      ...(request.appendSystemPrompt ?? []),
+      "Follow the team engineering guide.",
+    ],
+  };
+});
 ```
 
-Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. Internal agents also receive these instructions. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
+Instructions follow the saved agent prompt and daemon instructions, in plugin order. Append only
+your plugin's instructions; preserve earlier plugins' prefix. They are not saved in the agent
+configuration and are ignored for history opens. Reload the plugin after changing its data to apply
+new instructions on the next reopen. Running turns continue; removing an instruction does not
+remove conversation history. Background agents also receive these instructions unless the hook
+excludes them. Generic ACP does not promise system-instruction delivery. Plugin providers receive
+the composed prompt, but must advertise and implement its application.
 
 Codex instruction updates require Codex 0.121.0 or newer with a recognizable version reported by the app server. Source builds reporting `0.0.0` must use a versioned build. Paseo adds a current instruction snapshot to existing threads; earlier snapshots remain in the conversation. A crash during an update or rewinding a thread can repeat a snapshot.
 
@@ -348,6 +466,7 @@ Codex instruction updates require Codex 0.121.0 or newer with a recognizable ver
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
+  if (Object.hasOwn(request.env, "COMPANY_ENV")) return;
   return {
     ...request,
     env: {
@@ -369,7 +488,9 @@ the placeholder URL with your MCP endpoint:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex" || request.background) return;
+  if (request.purpose === "history" || request.background) return;
+  if (request.openSupport?.mcpHttp !== "supported") return;
+  if (request.baseConfig?.mcpServers?.company) return;
 
   return {
     ...request,
@@ -484,7 +605,9 @@ metadata and call inputs/results cross the process boundary. Paseo validates inp
 `execute`. Invalid input returns schema issues to the agent. A thrown error becomes
 `{ isError: true, text: message }` and the plugin keeps running. Canceling the call or closing its
 transport aborts `signal` and discards the result. Tool calls have a 10 minute ceiling, separate
-from the 30 second hook timeout. Closing or reopening an agent session drops its old definitions.
+from the 30 second hook timeout. Definitions and in-flight calls belong to their launch, not the
+newest same-name tool. Preparing a replacement does not retarget old calls; confirmed close and
+final lifetime release dispose the old definitions.
 
 Return model-visible text in `text`. `structuredContent` must be JSON-serializable; when `text` is
 omitted, Paseo formats that value as text for the model. Set `isError: true` to report a tool error.
@@ -661,11 +784,12 @@ server.addHook("agent.turn.after", async ({ agent }) => {
 ```text
 Creation request
   → agent.create.before hooks (plugin-ID order; registration order within each plugin)
-  → resolve defaults and validate provider configuration
-  → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.open.before hooks (same ordering; env and plugin-local tools and MCP servers)
+  → project explicitly adopted legacy fragments; validate required provider configuration
+  → resolve per-opening support and derive Paseo runtime tools and daemon prompt
+  → agent.open.before hooks (same ordering; plugin-local launch contributions)
+  → validate final bindings and grants; stage this launch's tool catalog
   → set PASEO_AGENT_ID, PASEO_AGENT_CWD, and PASEO_WORKSPACE_ID when the agent has a workspace
-  → open provider session and save agent configuration
+  → open and install provider session; save original intent, not optional launch values
 ```
 
 | Callback returns                                        | Next callback receives                              |
@@ -675,24 +799,26 @@ Creation request
 | `undefined`                                             | Unchanged request                                   |
 | Throws or returns invalid data                          | Operation fails; later callbacks do not run         |
 
-There is no automatic deep merge. `env` accumulates across plugins; `tools` and `mcpServers`
-accumulate only across callbacks within the same plugin. Returning a replacement map or array
-replaces that scope's prior value.
+There is no automatic deep merge. `env` accumulates across plugins; `tools`, `mcpServers`,
+`toolPolicy`, and `providerOptions` accumulate only across callbacks within the same plugin.
+Returning a replacement map or array replaces that scope's prior value. Appended instructions
+preserve earlier plugins' prefix. Final merge rules are described above.
 
 ## Context and cleanup
 
-| Contract                           | Behavior                                                                                                         |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `context.paseo`                    | Existing SDK connected to this daemon                                                                            |
-| `context.signal`                   | Aborted on invocation timeout or plugin stop; pass to external requests                                          |
-| Input data                         | Detached snapshot; change state through returned requests or SDK commands                                        |
-| Registration result                | Idempotent remover, e.g. `const remove = server.addHook(...); remove();`                                         |
-| Reload, disable, removal, shutdown | Remaining registrations removed                                                                                  |
-| Unknown hook name                  | Registration fails                                                                                               |
-| Hook timeout                       | 30 seconds; aborts the signal. A waiting hook fails the pending operation; a notification handler logs an error. |
-| Event-handler error                | Logged against plugin; original operation continues                                                              |
-| Event delivery                     | Live, best effort; no replay, persistence, or automatic retry                                                    |
-| Event concurrency                  | Different events may overlap; callback completion order is not guaranteed                                        |
+| Contract                           | Behavior                                                                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `context.paseo`                    | Existing SDK connected to this daemon                                                                                      |
+| `context.signal`                   | Aborted on invocation timeout or plugin stop; pass to external requests                                                    |
+| `context.launch`                   | Open hooks only; separate [launch resource lifetime](#launch-resource-lifetime), including install and disposal callbacks. |
+| Input data                         | Detached snapshot; change state through returned requests or SDK commands                                                  |
+| Registration result                | Idempotent remover, e.g. `const remove = server.addHook(...); remove();`                                                   |
+| Reload, disable, removal, shutdown | Remaining registrations removed                                                                                            |
+| Unknown hook name                  | Registration fails                                                                                                         |
+| Hook timeout                       | 30 seconds; aborts the signal. A waiting hook fails the pending operation; a notification handler logs an error.           |
+| Event-handler error                | Logged against plugin; original operation continues                                                                        |
+| Event delivery                     | Live, best effort; no replay, persistence, or automatic retry                                                              |
+| Event concurrency                  | Different events may overlap; callback completion order is not guaranteed                                                  |
 
 ## Complete examples
 

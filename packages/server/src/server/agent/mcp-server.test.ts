@@ -26,6 +26,9 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import { selectLegacyAdoptions } from "./plugin-config-adoption.js";
+import { buildProviderRegistry } from "./provider-registry.js";
+import { createAgentCommand } from "./create-agent/create.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
@@ -37,6 +40,7 @@ import type {
   AgentProvider,
   AgentRunResult,
   AgentSession,
+  AgentSessionConfig,
   AgentStreamEvent,
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
@@ -60,7 +64,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
-import type { ScheduleService } from "../schedule/service.js";
+import { ScheduleService } from "../schedule/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
@@ -249,6 +253,7 @@ interface TestDeps {
 }
 
 function buildAgentManagerSpies() {
+  const getAgent = vi.fn();
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
@@ -265,7 +270,9 @@ function buildAgentManagerSpies() {
     updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
-    getAgent: vi.fn(),
+    getAgent,
+    getAgentTemplateConfig: async (agentId: string) =>
+      structuredClone(getAgent(agentId)?.config ?? {}),
     getAgentBackgroundWorkSummary: vi.fn().mockReturnValue(undefined),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
@@ -4987,6 +4994,286 @@ describe("rename_workspace MCP tool", () => {
 
 describe("create_schedule MCP tool", () => {
   const logger = createTestLogger();
+
+  it("copies only projected required intent into caller-created children and schedule templates", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-projected-templates-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const launchedConfigs: AgentSessionConfig[] = [];
+    const clients = createTestAgentClients({
+      supportsMcpServers: true,
+      beforeCreateSession: async (config) => {
+        launchedConfigs.push(structuredClone(config));
+      },
+    });
+    const claude = clients.claude!;
+    const manager = new AgentManager({
+      logger,
+      registry: storage,
+      providerDefinitions: buildProviderRegistry(logger),
+      clients: {
+        ...clients,
+        claude: {
+          provider: claude.provider,
+          capabilities: claude.capabilities,
+          isAvailable: () => claude.isAvailable(),
+          fetchCatalog: (...args) => claude.fetchCatalog(...args),
+          createSession: (...args) => claude.createSession(...args),
+          resumeSession: async (...args) =>
+            Object.assign(await claude.resumeSession(...args), {
+              openOptionsPatch: { live_option: "dummy-reported-live-option" },
+            }),
+        },
+      },
+      pluginLifecycle: {
+        wait: async () => {},
+        emit: () => {},
+        before: async (name, request) => {
+          if (name !== "agent.open.before") return request;
+          if (request.labels["paseo.schedule-id"]) {
+            return {
+              ...request,
+              providerOptions: { scheduled_option: "dummy-fresh-schedule-option" },
+              appendSystemPrompt: ["Fresh scheduled instructions"],
+              mcpServers: {
+                live: {
+                  type: "http",
+                  url: "http://127.0.0.1:1/scheduled",
+                  headers: { Authorization: "dummy-fresh-schedule-credential" },
+                },
+              },
+            };
+          }
+          if (request.labels["fixture.role"] !== "parent") return request;
+          return {
+            ...request,
+            providerOptions: { live_option: "dummy-live-option" },
+            appendSystemPrompt: ["Live plugin instructions"],
+            mcpServers: {
+              live: {
+                type: "http",
+                url: "http://127.0.0.1:1/live",
+                headers: { Authorization: "dummy-live-credential" },
+              },
+            },
+          };
+        },
+      },
+    });
+    let server: Awaited<ReturnType<typeof createAgentMcpServer>> | undefined;
+    try {
+      const parent = await manager.createAgent(
+        {
+          provider: "claude",
+          cwd: workdir,
+          model: "sonnet",
+          systemPrompt: "Caller instructions\n\nLegacy plugin instructions",
+          providerOptions: { caller_option: true, legacy_option: "dummy-legacy-option" },
+          mcpServers: {
+            docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+            legacy: {
+              type: "http",
+              url: "http://127.0.0.1:1/legacy",
+              headers: { Authorization: "dummy-legacy-credential" },
+            },
+          },
+          toolPolicy: {
+            preapproved: [
+              { kind: "mcp", server: "docs", tool: "read" },
+              { kind: "mcp", server: "docs", tool: "search" },
+            ],
+          },
+        },
+        undefined,
+        { workspaceId: "wks_parent", labels: { "fixture.role": "parent" } },
+      );
+      const originalConfig = structuredClone((await storage.get(parent.id))!.config);
+      const receipts = selectLegacyAdoptions({
+        pluginId: "notes",
+        config: parent.config,
+        env: {},
+        recipe: {
+          version: 1,
+          selectors: [
+            {
+              id: "prompt",
+              group: "notes",
+              label: "Instructions",
+              kind: "prompt-suffix",
+              text: "\n\nLegacy plugin instructions",
+            },
+            { id: "endpoint", group: "notes", label: "Endpoint", kind: "mcp", name: "legacy" },
+            {
+              id: "option",
+              group: "notes",
+              label: "Option",
+              kind: "option",
+              key: "legacy_option",
+              baselines: [{ id: "inherit", label: "Inherit", kind: "absent" }],
+            },
+          ],
+        },
+        selections: [{ id: "prompt" }, { id: "endpoint" }, { id: "option", baselineId: "inherit" }],
+      });
+      await storage.mutatePluginConfigAdoptions(parent.id, () => ({ version: 1, receipts }));
+      await manager.reloadAgentSession(parent.id);
+      expect(manager.getAgent(parent.id)?.effectiveOptions).toMatchObject({
+        caller_option: true,
+        live_option: "dummy-reported-live-option",
+      });
+      const scheduleService = new ScheduleService({
+        paseoHome: workdir,
+        logger,
+        agentManager: manager,
+        agentStorage: storage,
+        now: () => new Date("2026-01-01T00:00:00.000Z"),
+        createAgent: (input) =>
+          createAgentCommand(
+            {
+              agentManager: manager,
+              agentStorage: storage,
+              logger,
+              providerSnapshotManager: createOpenCodeManager().manager,
+            },
+            input,
+          ),
+        createDirectoryWorkspace: async (input) =>
+          createPersistedWorkspaceRecord({
+            workspaceId: "wks_schedule_projection",
+            projectId: "prj_schedule_projection",
+            cwd: input.cwd,
+            kind: "directory",
+            displayName: "Scheduled projection",
+            title: input.firstAgentContext.prompt,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }),
+        createPaseoWorktreeWorkspace: async () => {
+          throw new Error("Template creation must not create a worktree");
+        },
+        archiveWorkspace: async (workspaceId) => {
+          await Promise.all(
+            manager
+              .listAgents()
+              .filter((agent) => agent.workspaceId === workspaceId)
+              .map((agent) => manager.archiveAgent(agent.id)),
+          );
+        },
+      });
+      server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        scheduleService,
+        callerAgentId: parent.id,
+        logger,
+      });
+      const childResponse = await invokeToolWithParsedInput(
+        registeredTool(server, "create_agent"),
+        {
+          title: "Projected child",
+          provider: "claude/sonnet",
+          initialPrompt: "Respond with exactly: child ready",
+          relationship: { kind: "subagent" },
+          workspace: { kind: "current" },
+          notifyOnFinish: false,
+        },
+      );
+      const childId = z
+        .object({ agentId: z.string() })
+        .parse(childResponse.structuredContent).agentId;
+      await manager.waitForAgentEvent(childId);
+      const storedChild = await storage.get(childId);
+      expect(storedChild).not.toBeNull();
+      expect(storedChild!.config!.providerOptions).toEqual({
+        caller_option: true,
+      });
+      expect(storedChild!.pluginConfigAdoptions).toBeUndefined();
+      expect(launchedConfigs).toHaveLength(2);
+      const childLaunch = launchedConfigs[1]!;
+      expect(childLaunch.providerOptions).toEqual({ caller_option: true });
+      expect(childLaunch.mcpServers).toBeUndefined();
+      expect(childLaunch.pluginAppendSystemPrompt).toBeUndefined();
+
+      await invokeToolWithParsedInput(registeredTool(server, "create_schedule"), {
+        prompt: "Respond with exactly: scheduled ready",
+        cron: "*/5 * * * *",
+      });
+      const schedules = await scheduleService.list();
+      expect(schedules).toHaveLength(1);
+      expect(schedules[0]!.target).toEqual({
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: workdir,
+          model: "sonnet",
+          providerOptions: { caller_option: true },
+          systemPrompt: "Caller instructions",
+          mcpServers: { docs: { type: "http", url: "http://127.0.0.1:1/docs" } },
+          toolPolicy: {
+            preapproved: [
+              { kind: "mcp", server: "docs", tool: "read" },
+              { kind: "mcp", server: "docs", tool: "search" },
+            ],
+          },
+        },
+      });
+      await expect(
+        invokeToolWithParsedInput(registeredTool(server, "create_schedule"), {
+          prompt: "Must retain required policy",
+          cron: "*/5 * * * *",
+          provider: "codex/gpt-5.4",
+        }),
+      ).rejects.toThrow("Cannot change providers while inheriting a required MCP tool policy");
+      expect(await scheduleService.list()).toHaveLength(1);
+      const executed = await scheduleService.runOnce(schedules[0]!.id);
+      expect(executed.target).toEqual(schedules[0]!.target);
+      expect(executed.runs).toHaveLength(1);
+      expect(executed.runs[0]).toMatchObject({
+        status: "succeeded",
+        output: "scheduled ready",
+        error: null,
+      });
+      expect(launchedConfigs).toHaveLength(3);
+      const scheduledLaunch = launchedConfigs[2]!;
+      expect(scheduledLaunch.systemPrompt).toBe("Caller instructions");
+      expect(scheduledLaunch.providerOptions).toEqual({
+        caller_option: true,
+        scheduled_option: "dummy-fresh-schedule-option",
+      });
+      expect(scheduledLaunch.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+        live: {
+          type: "http",
+          url: "http://127.0.0.1:1/scheduled",
+          headers: { Authorization: "dummy-fresh-schedule-credential" },
+        },
+      });
+      expect(scheduledLaunch.toolPolicy).toEqual({
+        preapproved: [
+          { kind: "mcp", server: "docs", tool: "read" },
+          { kind: "mcp", server: "docs", tool: "search" },
+        ],
+      });
+      expect(scheduledLaunch.pluginAppendSystemPrompt).toEqual(["Fresh scheduled instructions"]);
+      const scheduledAgent = await storage.get(executed.runs[0]!.agentId!);
+      expect(scheduledAgent).not.toBeNull();
+      expect(scheduledAgent!.config!.providerOptions).toEqual({ caller_option: true });
+      expect(scheduledAgent!.config!.systemPrompt).toBe("Caller instructions");
+      expect(scheduledAgent!.config!.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+      });
+      expect(scheduledAgent!.pluginConfigAdoptions).toBeUndefined();
+      expect((await storage.get(parent.id))?.config).toEqual(originalConfig);
+      expect((await storage.get(parent.id))?.pluginConfigAdoptions).toEqual({
+        version: 1,
+        receipts,
+      });
+    } finally {
+      await server?.close();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
 
   it("requires provider for schedules", async () => {
     const { agentManager, agentStorage } = createTestDeps();

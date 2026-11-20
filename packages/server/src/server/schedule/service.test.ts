@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
+import { buildProviderRegistry } from "../agent/provider-registry.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
 import type {
   AgentCapabilityFlags,
@@ -873,6 +874,204 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.agentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  test("runs stored required MCP policy with fresh launch-only plugin contributions on every schedule execution", async () => {
+    const createdConfigs: AgentSessionConfig[] = [];
+    let opening = 0;
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients({
+        supportsMcpServers: true,
+        beforeCreateSession: async (config) => {
+          createdConfigs.push(structuredClone(config));
+        },
+      }),
+      providerDefinitions: buildProviderRegistry(createTestLogger()),
+      registry: agentStorage,
+      pluginLifecycle: {
+        wait: async () => {},
+        emit: () => {},
+        before: async (name, request) => {
+          if (name !== "agent.open.before") return request;
+          opening += 1;
+          return {
+            ...request,
+            appendSystemPrompt: [`Fresh launch ${opening}`],
+            providerOptions: { live_option: `launch-${opening}` },
+            mcpServers: {
+              live: {
+                type: "http",
+                url: "http://127.0.0.1:1/live",
+                headers: { Authorization: `dummy-launch-${opening}` },
+              },
+            },
+          };
+        },
+      },
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    try {
+      const created = await service.create({
+        prompt: "Respond with exactly: scheduled ready",
+        cadence: { type: "every", everyMs: 60_000 },
+        runOnCreate: false,
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: tempDir,
+            model: "sonnet",
+            archiveOnFinish: false,
+            providerOptions: { caller_option: true },
+            systemPrompt: "Caller instructions",
+            mcpServers: { docs: { type: "http", url: "http://127.0.0.1:1/docs" } },
+            toolPolicy: {
+              preapproved: [
+                { kind: "mcp", server: "docs", tool: "read" },
+                { kind: "mcp", server: "docs", tool: "search" },
+              ],
+            },
+          },
+        },
+      });
+      const template = structuredClone(created.target);
+      await service.runOnce(created.id);
+      await service.runOnce(created.id);
+
+      const inspected = await service.inspect(created.id);
+      expect(inspected.runs).toMatchObject([
+        { status: "succeeded", output: "scheduled ready", error: null },
+        { status: "succeeded", output: "scheduled ready", error: null },
+      ]);
+      expect(createdConfigs).toHaveLength(2);
+      const firstLaunch = createdConfigs[0]!;
+      const secondLaunch = createdConfigs[1]!;
+      expect(firstLaunch.toolPolicy).toEqual({
+        preapproved: [
+          { kind: "mcp", server: "docs", tool: "read" },
+          { kind: "mcp", server: "docs", tool: "search" },
+        ],
+      });
+      expect(secondLaunch.toolPolicy).toEqual({
+        preapproved: [
+          { kind: "mcp", server: "docs", tool: "read" },
+          { kind: "mcp", server: "docs", tool: "search" },
+        ],
+      });
+      expect(firstLaunch.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+        live: {
+          type: "http",
+          url: "http://127.0.0.1:1/live",
+          headers: { Authorization: "dummy-launch-1" },
+        },
+      });
+      expect(secondLaunch.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+        live: {
+          type: "http",
+          url: "http://127.0.0.1:1/live",
+          headers: { Authorization: "dummy-launch-2" },
+        },
+      });
+      expect(firstLaunch.pluginAppendSystemPrompt).toEqual(["Fresh launch 1"]);
+      expect(secondLaunch.pluginAppendSystemPrompt).toEqual(["Fresh launch 2"]);
+      expect(firstLaunch.providerOptions).toEqual({
+        caller_option: true,
+        live_option: "launch-1",
+      });
+      expect(secondLaunch.providerOptions).toEqual({
+        caller_option: true,
+        live_option: "launch-2",
+      });
+      const firstAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
+      const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
+      expect(firstAgent).not.toBeNull();
+      expect(secondAgent).not.toBeNull();
+      expect(firstAgent!.config!.providerOptions).toEqual({ caller_option: true });
+      expect(secondAgent!.config!.providerOptions).toEqual({ caller_option: true });
+      expect(firstAgent!.config!.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+      });
+      expect(secondAgent!.config!.mcpServers).toEqual({
+        docs: { type: "http", url: "http://127.0.0.1:1/docs" },
+      });
+      expect(firstAgent!.pluginConfigAdoptions).toBeUndefined();
+      expect(secondAgent!.pluginConfigAdoptions).toBeUndefined();
+      expect(firstAgent!.id).not.toBe(secondAgent!.id);
+      expect(inspected.target).toEqual(template);
+    } finally {
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flush();
+    }
+  });
+
+  test("old-client schedule updates preserve required MCP policy and reject incompatible provider changes without changing storage", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const created = await service.create({
+      prompt: "Keep required tools",
+      cadence: { type: "every", everyMs: 60_000 },
+      runOnCreate: false,
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          mcpServers: { docs: { type: "http", url: "http://127.0.0.1:1/docs" } },
+          toolPolicy: {
+            preapproved: [
+              { kind: "mcp", server: "docs", tool: "read" },
+              { kind: "mcp", server: "docs", tool: "search" },
+            ],
+          },
+        },
+      },
+    });
+    now = new Date("2026-01-01T00:00:10.000Z");
+    await service.update({ id: created.id, newAgentConfig: { model: "sonnet" } });
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
+    const updated = await store.get(created.id);
+    expect(updated?.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: tempDir,
+        model: "sonnet",
+        mcpServers: { docs: { type: "http", url: "http://127.0.0.1:1/docs" } },
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "docs", tool: "read" },
+            { kind: "mcp", server: "docs", tool: "search" },
+          ],
+        },
+      },
+    });
+    now = new Date("2026-01-01T00:00:20.000Z");
+    await expect(
+      service.update({
+        id: created.id,
+        prompt: "Must not be partially saved",
+        newAgentConfig: { provider: "codex" },
+      }),
+    ).rejects.toThrow(
+      "Cannot change providers while the schedule carries a required MCP tool policy",
+    );
+    expect(await store.get(created.id)).toEqual(updated);
   });
 
   test("delivers agent-target schedules through the steer-or-interrupt path", async () => {

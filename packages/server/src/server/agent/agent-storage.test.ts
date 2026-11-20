@@ -224,6 +224,35 @@ describe("AgentStorage", () => {
     expect(await reloaded.lastUserMessageAtByWorkspace(["two"])).toEqual(new Map());
   });
 
+  test("host-only adoption receipts survive snapshots and ordinary record writes until explicit reset", async () => {
+    const agent = createManagedAgent({ id: "adopted-agent" });
+    await storage.applySnapshot(agent);
+    const receipts = {
+      version: 1 as const,
+      receipts: [
+        {
+          id: "receipt",
+          pluginId: "notes",
+          recipeDigest: "recipe",
+          selectorId: "endpoint",
+          fragmentDigest: "fragment",
+          fragment: { kind: "mcp" as const, name: "notes" },
+        },
+      ],
+    };
+    await storage.mutatePluginConfigAdoptions(agent.id, () => receipts);
+    await storage.applySnapshot(agent);
+    await storage.upsert({
+      ...(await storage.get(agent.id))!,
+      pluginConfigAdoptions: undefined,
+      title: "Unrelated title",
+    });
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    expect((await reloaded.get(agent.id))?.pluginConfigAdoptions).toEqual(receipts);
+    await reloaded.mutatePluginConfigAdoptions(agent.id, () => undefined);
+    expect((await reloaded.get(agent.id))?.pluginConfigAdoptions).toBeUndefined();
+  });
+
   test("single-agent lookups keep allocations bounded with a large stored history", async () => {
     await fs.mkdir(storagePath, { recursive: true });
     const record = {

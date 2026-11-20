@@ -136,6 +136,42 @@ async function settle(): Promise<void> {
 }
 
 describe("VoiceSession streaming transcription", () => {
+  test("voice toggles use runtime overlays instead of rewriting saved caller instructions", async () => {
+    const { voiceSession, host } = createVoiceSession();
+    const reloads: unknown[] = [];
+    host.loadAgent = async (agentId) =>
+      ({
+        id: agentId,
+        config: { systemPrompt: "Original adopted instructions" },
+      }) as unknown as ManagedAgent;
+    host.reloadAgentSession = async (agentId, overrides, options) => {
+      reloads.push({ overrides, options });
+      return { id: agentId } as unknown as ManagedAgent;
+    };
+    try {
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      await voiceSession.handleSetVoiceMode(false, VOICE_AGENT_ID);
+      expect(reloads).toEqual([
+        {
+          overrides: undefined,
+          options: {
+            runtimeAppendSystemPrompt: expect.stringContaining("Paseo voice mode is now on."),
+          },
+        },
+        {
+          overrides: undefined,
+          options: {
+            runtimeAppendSystemPrompt: expect.stringContaining(
+              "Ignore any earlier Paseo voice mode instructions",
+            ),
+          },
+        },
+      ]);
+      expect(JSON.stringify(reloads)).not.toContain("Original adopted instructions");
+    } finally {
+      await voiceSession.cleanup();
+    }
+  });
   test("interrupts playback and the agent on speech detection without partial transcripts", async () => {
     const tts: TextToSpeechProvider = {
       async synthesizeSpeech() {

@@ -1,5 +1,6 @@
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
 export type ClientSlashCommandKind = "archive-agent" | "replace-agent-with-draft";
 export type ClientSlashCommandExecution = "immediate" | "insert";
@@ -72,5 +73,24 @@ export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
     model: agent.model ?? agent.runtimeInfo?.model ?? null,
     thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,
     providerOptions: { ...agent.options },
+  };
+}
+
+export async function resolveDraftAgentSetup(
+  client: Pick<DaemonClient, "getLastServerInfoMessage" | "getAgentTemplate">,
+  agentId: string,
+  legacySetup: WorkspaceDraftTabSetup | undefined,
+): Promise<WorkspaceDraftTabSetup | undefined> {
+  // COMPAT(agentTemplateProjection): added after v0.16.2, remove after 2027-11-19 once minimum daemon supplies adaptiveAgentFeatures.
+  if (client.getLastServerInfoMessage()?.features?.adaptiveAgentFeatures !== true)
+    return legacySetup;
+  const template = await client.getAgentTemplate(agentId);
+  return {
+    provider: template.provider,
+    cwd: template.cwd,
+    modeId: template.modeId ?? null,
+    model: template.model ?? null,
+    thinkingOptionId: template.thinkingOptionId ?? null,
+    providerOptions: { ...template.providerOptions },
   };
 }

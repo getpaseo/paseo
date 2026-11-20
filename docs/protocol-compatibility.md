@@ -44,9 +44,14 @@ Existing functionality keeps working across versions. Never gate an established 
 
 The client package advertises the protocol behavior it implements. Add each new capability to
 its exhaustive defaults and implement the associated subscription or decoding behavior there.
-The app, CLI, and plugins inherit those defaults; they supply only host resources such as browser
-automation, or explicit overrides. A schema accepting a message does not establish support for
-its delivery semantics.
+The app, CLI, and plugins inherit those defaults. Caller-owned exceptions are browser automation
+resources and `agent_template_projection`: that assertion means the consuming application uses the
+fresh template API for execution copies rather than copying effective runtime options. SDK upgrades
+never enable it automatically. Unopted-in consumers receive copy-safe options and legacy features;
+the updated app opts in explicitly on direct, routed and probe connections. A schema accepting a
+message does not establish support for its delivery semantics.
+Closed updates carry a detached internal copy-safe view through projection and enrichment; delivery
+must not recover option ownership from live-session residency after closure. This view is not a wire field.
 
 On capable daemons, connecting creates no timeline or event demand. Client subscriptions own their network membership,
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic

@@ -14,7 +14,7 @@ import {
   type DictationStreamOutboundMessage,
 } from "../../dictation/dictation-stream-manager.js";
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
-import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
+import { buildVoiceModeSystemPrompt } from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
@@ -33,10 +33,6 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
 const AgentIdSchema = z.guid();
 
 type ProcessingPhase = "idle" | "transcribing";
-
-interface VoiceModeBaseConfig {
-  systemPrompt?: string;
-}
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -124,7 +120,8 @@ export interface VoiceSessionHost {
   loadAgent(agentId: string): Promise<ManagedAgent>;
   reloadAgentSession(
     agentId: string,
-    overrides: Partial<AgentSessionConfig>,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    options?: { runtimeAppendSystemPrompt: string },
   ): Promise<ManagedAgent>;
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -208,7 +205,7 @@ export class VoiceSession {
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
 
   private voiceModeAgentId: string | null = null;
-  private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
+  private voiceModeBaseConfig: { enabled: true } | null = null;
 
   constructor(options: VoiceSessionOptions) {
     const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge, dictation } =
@@ -491,7 +488,7 @@ export class VoiceSession {
   private async enableVoiceModeForAgent(agentId: string): Promise<string> {
     const startedAt = Date.now();
     this.sessionLogger.info({ agentId }, "enableVoiceModeForAgent.ensureAgentLoaded.start");
-    const existing = await this.host.loadAgent(agentId);
+    await this.host.loadAgent(agentId);
     if (this.closed) throw new Error("Voice source is closed");
     this.sessionLogger.info(
       { agentId, elapsedMs: Date.now() - startedAt },
@@ -500,20 +497,16 @@ export class VoiceSession {
 
     this.registerVoiceBridgeForAgent(agentId);
 
-    const baseConfig: VoiceModeBaseConfig = {
-      systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-    };
-    this.voiceModeBaseConfig = baseConfig;
-    const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-    };
+    this.voiceModeBaseConfig = { enabled: true };
 
     try {
       this.sessionLogger.info(
         { agentId, elapsedMs: Date.now() - startedAt },
         "enableVoiceModeForAgent.reloadAgentSession.start",
       );
-      const refreshed = await this.host.reloadAgentSession(agentId, refreshOverrides);
+      const refreshed = await this.host.reloadAgentSession(agentId, undefined, {
+        runtimeAppendSystemPrompt: buildVoiceModeSystemPrompt(undefined, true),
+      });
       this.sessionLogger.info(
         { agentId, refreshedAgentId: refreshed.id, elapsedMs: Date.now() - startedAt },
         "enableVoiceModeForAgent.reloadAgentSession.done",
@@ -537,10 +530,9 @@ export class VoiceSession {
     }
 
     if (restoreAgentConfig && this.voiceModeBaseConfig) {
-      const baseConfig = this.voiceModeBaseConfig;
       try {
-        await this.host.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
+        await this.host.reloadAgentSession(agentId, undefined, {
+          runtimeAppendSystemPrompt: buildVoiceModeSystemPrompt(undefined, false),
         });
       } catch (error) {
         this.sessionLogger.warn(

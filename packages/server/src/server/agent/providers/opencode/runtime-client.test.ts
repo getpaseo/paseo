@@ -1,6 +1,28 @@
 import { expect, test } from "vitest";
 import { openCodeMajorVersion } from "./runtime-client.js";
 
+test("runtime selection forwards explicit-target restrictions without provider access", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:1" },
+  });
+  try {
+    expect(
+      await client.resolveOpenSupport({
+        config: { provider: "opencode", cwd: "/workspace" },
+        purpose: "interactive",
+      }),
+    ).toMatchObject({
+      instructions: "supported",
+      mcpHttp: "supported",
+      restrictions: { mcpConfiguration: "none", processEnvironment: "none" },
+    });
+  } finally {
+    await client.shutdown();
+  }
+});
+
 test.each([
   ["1.14.46", 1],
   ["unexpected wrapper output", 1],

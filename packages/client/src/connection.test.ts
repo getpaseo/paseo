@@ -7,6 +7,8 @@ function connection(
     acknowledgeSubscriptions?: boolean;
     ownedSubscriptions?: boolean;
     ownedCapability?: boolean;
+    agentTemplateProjection?: boolean;
+    adaptiveAgentFeatures?: boolean;
     workspaceMultiplicity?: boolean;
     broadcasts?: boolean;
     browserHost?: { hostKind: string; supportedCommands: string[] };
@@ -45,6 +47,9 @@ function connection(
                 version: null,
                 features: {
                   ...(options.ownedSubscriptions === false ? {} : { ownedSubscriptions: true }),
+                  ...(options.adaptiveAgentFeatures === undefined
+                    ? {}
+                    : { adaptiveAgentFeatures: options.adaptiveAgentFeatures }),
                   workspaceMultiplicity: options.workspaceMultiplicity ?? true,
                   selectiveAgentTimeline: !options.broadcasts,
                   explicitEventSubscriptions: !options.broadcasts,
@@ -124,6 +129,9 @@ function connection(
       ...(options.ownedCapability === undefined
         ? {}
         : { [CLIENT_CAPS.ownedSubscriptions]: options.ownedCapability }),
+      ...(options.agentTemplateProjection === undefined
+        ? {}
+        : { [CLIENT_CAPS.agentTemplateProjection]: options.agentTemplateProjection }),
     },
     transportFactory: () => transport,
     reconnect: { enabled: false },
@@ -137,18 +145,171 @@ function connection(
   };
 }
 
-test("a plain client advertises every protocol capability and no browser host", async () => {
+test("a plain client advertises SDK capabilities without caller-owned projection or browser hosting", async () => {
   const h = connection();
   try {
     const ready = h.client.connect();
     h.open();
     await ready;
-    const { browserHost: _browser, ...protocolCapabilities } = CLIENT_CAPS;
+    const {
+      browserHost: _browser,
+      agentTemplateProjection: _copying,
+      ...protocolCapabilities
+    } = CLIENT_CAPS;
     // Every new capability needs a deliberate default or a host-owned exception.
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0].capabilities).toEqual(
       Object.fromEntries(Object.values(protocolCapabilities).map((key) => [key, true])),
     );
+    expect(h.sent[0].capabilities.agent_template_projection).toBeUndefined();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("explicit agent template projection opt-in survives reconnect", async () => {
+  const h = connection({ agentTemplateProjection: true });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    h.disconnect();
+    const reconnected = h.client.connect();
+    h.open();
+    await reconnected;
+    expect(
+      h.sent
+        .filter((frame) => frame.type === "hello")
+        .map((frame) => frame.capabilities?.agent_template_projection),
+    ).toEqual([true, true]);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test.each([
+  {
+    operation: "getAgentTemplate",
+    request: (client: DaemonClient) => client.getAgentTemplate("agent"),
+  },
+  {
+    operation: "previewLegacyPluginConfig",
+    request: (client: DaemonClient) =>
+      client.previewLegacyPluginConfig("agent", { pluginId: "plugin", operation: "adopt" }),
+  },
+  {
+    operation: "applyLegacyPluginConfig",
+    request: (client: DaemonClient) =>
+      client.applyLegacyPluginConfig("agent", {
+        pluginId: "plugin",
+        expectedFingerprint: "preview-fingerprint",
+        selections: [{ id: "tool-policy" }],
+      }),
+  },
+  {
+    operation: "resetLegacyPluginConfig",
+    request: (client: DaemonClient) =>
+      client.resetLegacyPluginConfig("agent", {
+        pluginId: "plugin",
+        expectedFingerprint: "preview-fingerprint",
+        receiptIds: ["receipt"],
+      }),
+  },
+])("$operation rejects on an old host without sending a request", async ({ request }) => {
+  const h = connection();
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    await expect(request(h.client)).rejects.toThrow(
+      "Update the host to use adaptive agent configuration.",
+    );
+    expect(h.sent.filter((frame) => frame.type === "session")).toEqual([]);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("scheduled new agents with a required tool policy reject on old hosts before sending", async () => {
+  const h = connection();
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    await expect(
+      h.client.scheduleCreate({
+        prompt: "Run the task",
+        cadence: { type: "cron", expression: "0 9 * * *" },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: "/repo",
+            toolPolicy: {
+              preapproved: [{ kind: "mcp", server: "plugin-tools", tool: "read_status" }],
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("Update the host to use adaptive agent configuration.");
+    expect(h.sent.filter((frame) => frame.type === "session")).toEqual([]);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("scheduled new agents preserve the exact tool policy on adaptive hosts", async () => {
+  const h = connection({ adaptiveAgentFeatures: true });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const creating = h.client.scheduleCreate({
+      requestId: "create-with-policy",
+      prompt: "Run the task",
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: "/repo",
+          toolPolicy: {
+            preapproved: [
+              { kind: "mcp", server: "plugin-tools", tool: "read_status" },
+              { kind: "mcp", server: "other-plugin", tool: "list_tasks" },
+            ],
+          },
+        },
+      },
+    });
+    expect(h.sent.at(-1)?.message).toEqual({
+      type: "schedule/create",
+      requestId: "create-with-policy",
+      prompt: "Run the task",
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: "/repo",
+          toolPolicy: {
+            preapproved: [
+              { kind: "mcp", server: "plugin-tools", tool: "read_status" },
+              { kind: "mcp", server: "other-plugin", tool: "list_tasks" },
+            ],
+          },
+        },
+      },
+    });
+    h.receive({
+      type: "schedule/create/response",
+      payload: { requestId: "create-with-policy", schedule: null, error: null },
+    });
+    await expect(creating).resolves.toEqual({
+      requestId: "create-with-policy",
+      schedule: null,
+      error: null,
+    });
   } finally {
     await h.client.close();
   }

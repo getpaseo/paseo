@@ -51,6 +51,309 @@ const CAPABILITIES = [
   "permission",
 ] as const;
 
+test("cold concurrent support reads share negotiation without opening a session or catalog", async () => {
+  const harness = createProviderHarness({
+    capabilities: [
+      ...CAPABILITIES,
+      "mcp.http",
+      "session.system_prompt",
+      "permission.optional_tool_policy",
+    ],
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  try {
+    const input = {
+      config: { provider: client.provider, cwd: "/workspace" },
+      purpose: "interactive" as const,
+    };
+    const [first, second] = await Promise.all([
+      client.resolveOpenSupport!(input),
+      client.resolveOpenSupport!(input),
+    ]);
+    expect(first).toEqual({
+      instructions: "supported",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "supported",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: [],
+    });
+    expect(second).toEqual(first);
+    expect(harness.connectCount()).toBe(1);
+    expect(harness.inputs).toEqual([]);
+    expect(await client.resolveOpenSupport!(input)).toEqual(first);
+    expect(harness.connectCount()).toBe(1);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("missing positive support flags remain unknown even when required policies are supported", async () => {
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "permission.tool_policy"],
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  try {
+    expect(
+      await client.resolveOpenSupport!({
+        config: { provider: client.provider, cwd: "/workspace" },
+        purpose: "interactive",
+      }),
+    ).toMatchObject({
+      instructions: "unknown",
+      mcpHttp: "unknown",
+      exactMcpPreapproval: "unknown",
+    });
+    expect(harness.inputs).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("configured plugin clients forward support resolution and retain actual provider identity", async () => {
+  const harness = createProviderHarness({ capabilities: [...CAPABILITIES, "mcp.http"] });
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const definitions = buildProviderRegistry(logger, { pluginProviders: registry.definitions() });
+  const client = definitions[harness.registration.id]!.createClient(logger);
+  try {
+    expect(client.adapter).toEqual({ kind: "plugin", id: "plugin-direct" });
+    expect(client.provider).toBe("plugin-direct");
+    expect(
+      await client.resolveOpenSupport!({
+        config: { provider: client.provider, cwd: "/workspace" },
+        purpose: "interactive",
+      }),
+    ).toMatchObject({ mcpHttp: "supported", instructions: "unknown" });
+    expect(harness.connectCount()).toBe(1);
+    expect(harness.inputs).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("registry aliases keep execution IDs separate from builtin and generic ACP adapters", () => {
+  const logger = createTestLogger();
+  const definitions = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "work-claude": ProviderOverrideSchema.parse({ extends: "claude", label: "Work Claude" }),
+      "work-acp": ProviderOverrideSchema.parse({
+        extends: "acp",
+        label: "Work ACP",
+        command: ["dummy-acp"],
+      }),
+    },
+  });
+  const claude = definitions["work-claude"]!.createClient(logger);
+  const acp = definitions["work-acp"]!.createClient(logger);
+  expect(claude.provider).toBe("work-claude");
+  expect(claude.adapter).toEqual({ kind: "builtin", id: "claude" });
+  expect(acp.provider).toBe("work-acp");
+  expect(acp.adapter).toEqual({ kind: "acp" });
+});
+
+test("Claude aliases describe their implemented launch routes without executing the provider", async () => {
+  const logger = createTestLogger();
+  const definitions = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "work-claude": ProviderOverrideSchema.parse({
+        extends: "claude",
+        label: "Work Claude",
+        options: { additionalDirectories: ["/default"] },
+      }),
+    },
+  });
+  const client = definitions["work-claude"]!.createClient(logger);
+  expect(
+    await client.resolveOpenSupport!({
+      config: { provider: client.provider, cwd: "/workspace" },
+      purpose: "interactive",
+    }),
+  ).toEqual({
+    instructions: "supported",
+    mcpHttp: "supported",
+    exactMcpPreapproval: "supported",
+    restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+    providerOptions: ["additionalDirectories"],
+  });
+});
+
+test("OMP reports implemented instructions and HTTP without launching a discovery session", async () => {
+  const logger = createTestLogger();
+  const client = buildProviderRegistry(logger).omp!.createClient(logger);
+  expect(
+    await client.resolveOpenSupport!({
+      config: { provider: "omp", cwd: "/workspace" },
+      purpose: "interactive",
+    }),
+  ).toMatchObject({
+    instructions: "supported",
+    mcpHttp: "supported",
+    exactMcpPreapproval: "unknown",
+  });
+});
+
+test("Pi keeps optional HTTP unknown without starting an MCP probe session", async () => {
+  const logger = createTestLogger();
+  const client = buildProviderRegistry(logger).pi!.createClient(logger);
+  expect(
+    await client.resolveOpenSupport!({
+      config: { provider: "pi", cwd: "/workspace" },
+      purpose: "interactive",
+    }),
+  ).toMatchObject({
+    instructions: "supported",
+    mcpHttp: "unknown",
+    exactMcpPreapproval: "unknown",
+  });
+});
+
+test("core ACP respects explicit MCP disablement without inventing instruction support", async () => {
+  const logger = createTestLogger();
+  const definitions = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "work-acp": ProviderOverrideSchema.parse({
+        extends: "acp",
+        label: "Work ACP",
+        command: ["dummy-acp"],
+        options: { supportsMcpServers: false },
+      }),
+    },
+  });
+  const client = definitions["work-acp"]!.createClient(logger);
+  expect(
+    await client.resolveOpenSupport!({
+      config: { provider: client.provider, cwd: "/workspace" },
+      purpose: "interactive",
+    }),
+  ).toMatchObject({
+    instructions: "unsupported",
+    mcpHttp: "unsupported",
+    exactMcpPreapproval: "unsupported",
+  });
+});
+
+test("Codex reports HTTP while leaving unproven optional approvals and instruction refresh unknown", async () => {
+  const logger = createTestLogger();
+  const client = buildProviderRegistry(logger).codex!.createClient(logger);
+  expect(
+    await client.resolveOpenSupport!({
+      config: { provider: "codex", cwd: "/workspace" },
+      purpose: "interactive",
+    }),
+  ).toEqual({
+    instructions: "unknown",
+    mcpHttp: "supported",
+    exactMcpPreapproval: "unknown",
+    restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+    providerOptions: ["sandbox_workspace_write"],
+  });
+});
+
+test("launch-owned options reach the provider without becoming saved intent through opening reports", async () => {
+  const logger = createTestLogger();
+  const harness = createProviderHarness();
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const definitions = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: plugins.clients(),
+    providerDefinitions: definitions,
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.open.before"
+          ? {
+              ...request,
+              providerOptions: { voice: "plugin-value" },
+            }
+          : request,
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+      config: { providerOptions: { voice: "plugin-value" } },
+    });
+    expect(toStoredAgentRecord(agent).config?.providerOptions ?? {}).toEqual({});
+    expect(agent.effectiveOptions).toEqual({ voice: "direct" });
+    const opened = harness.inputs.find((input) => input.type === "session.open")!;
+    harness.emit({
+      type: "session.config",
+      sessionId: opened.sessionId,
+      config: {
+        models: [],
+        modes: [],
+        thinkingOptions: [],
+        controls: [
+          {
+            type: "select",
+            key: "voice",
+            label: "Voice",
+            choices: [{ label: "Reported", value: "reported" }],
+          },
+        ],
+        providerOptions: { voice: "reported" },
+      },
+    });
+    await manager.setAgentOptions(agent.id, {});
+    expect(toStoredAgentRecord(manager.getAgent(agent.id)!).config?.providerOptions ?? {}).toEqual(
+      {},
+    );
+    expect(manager.getAgent(agent.id)!.effectiveOptions).toEqual({ voice: "reported" });
+    await manager.closeAgent(agent.id);
+  } finally {
+    await plugins.shutdown();
+  }
+});
+
+test("open hooks receive negotiated support and daemon tool restrictions before provider opening", async () => {
+  const harness = createProviderHarness({ capabilities: [...CAPABILITIES, "mcp.http"] });
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  let support: unknown;
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    resolvePaseoToolPolicy: () => ({ enabled: false, disabledTools: ["project_attach"] }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) => {
+        if (name === "agent.open.before") support = request.openSupport;
+        return request;
+      },
+    },
+  });
+  try {
+    await manager.createAgent({ provider: harness.registration.id, cwd: tmpdir() }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(support).toMatchObject({
+      adapter: { kind: "plugin", id: "plugin-direct" },
+      instructions: "unknown",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "unknown",
+      attachedTools: { delivery: "mcp", enabled: false, disabledTools: ["project_attach"] },
+      reasons: { instructions: "not-established", exactMcpPreapproval: "not-established" },
+    });
+    expect(harness.connectCount()).toBe(1);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await registry.shutdown();
+  }
+});
+
 test("plugin-only preapprovals keep unsupported providers opening with ordinary permissions", async () => {
   const harness = createProviderHarness({ completeTurn: false });
   const logger = createTestLogger();
@@ -596,6 +899,7 @@ function lastConfigure(inputs: ProviderInput[]): ProviderInput | undefined {
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
   let listener: ((event: ProviderEvent) => void) | null = null;
+  let connectCount = 0;
   let closeCount = 0;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -767,6 +1071,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     id: "plugin-direct",
     label: "Plugin direct",
     async connect() {
+      connectCount += 1;
       return connection;
     },
   };
@@ -775,6 +1080,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     registration,
     emit,
     inputs,
+    connectCount: () => connectCount,
     closeCount: () => closeCount,
     waitForClose: () => closed,
   };

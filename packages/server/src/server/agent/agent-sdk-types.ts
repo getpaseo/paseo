@@ -11,6 +11,7 @@ import type {
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { PluginOpenSupport } from "@getpaseo/plugin/server";
 
 export type {
   AgentOptionControl,
@@ -637,6 +638,8 @@ export interface AgentSessionConfig {
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
+  /** Launch-only convenience grants; never narrow the available catalog. */
+  pluginToolPolicy?: ToolPolicy;
   /** Daemon-owned provenance; absent means the caller requires the complete policy. */
   toolPolicySource?: "plugin";
   mcpServers?: Record<string, McpServerConfig>;
@@ -648,11 +651,16 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  launchId?: string;
+  /** Provider-owned retained sessions hold this reference until their actual release. */
+  retainPluginResources?(): () => Promise<void>;
   /** Launch-only instructions contributed by plugins. */
   appendSystemPrompt?: string[];
   /** Launch-only plugin MCP servers and their owners; never persisted. */
   mcpServers?: Record<string, McpServerConfig>;
   mcpServerOwners?: Record<string, string>;
+  toolPolicy?: ToolPolicy;
+  providerOptions?: ProviderOptions;
   agentId?: string;
   env?: Record<string, string>;
   /**
@@ -820,9 +828,22 @@ export interface AgentDraftControls {
   options: ProviderOptions;
 }
 
+export interface ResolveAgentOpenSupportInput {
+  config: AgentSessionConfig;
+  env?: Record<string, string>;
+  persistence?: AgentPersistenceHandle | null;
+  purpose: "interactive" | "history";
+  signal?: AbortSignal;
+}
+
+export type AgentOpenSupport = Omit<PluginOpenSupport, "adapter" | "attachedTools">;
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /** Adapter identity is separate from the selected provider used for execution. */
+  readonly adapter?: PluginOpenSupport["adapter"];
+  resolveOpenSupport?(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport>;
   /**
    * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
    * about options while creating. If the agent ended up different from the options, say so in the

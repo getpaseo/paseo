@@ -1410,6 +1410,19 @@ export class OpenCodeAgentClient implements AgentClient {
   readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
   readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;
 
+  async resolveOpenSupport(
+    input: import("../agent-sdk-types.js").ResolveAgentOpenSupportInput,
+  ): Promise<import("../agent-sdk-types.js").AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    return {
+      instructions: "supported",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "supported",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: ["permission"],
+    };
+  }
+
   private readonly serverManager: OpenCodeServerManagerLike;
   private readonly createOpenCodeClient: OpenCodeClientFactory;
   private readonly resolveHomeDir: () => string;
@@ -1466,6 +1479,7 @@ export class OpenCodeAgentClient implements AgentClient {
     const permission = buildOpenCodePermissionRules(
       openCodeConfig.providerOptions,
       openCodeConfig.toolPolicy,
+      openCodeConfig.pluginToolPolicy,
     );
 
     try {
@@ -1580,7 +1594,11 @@ export class OpenCodeAgentClient implements AgentClient {
     config: OpenCodeAgentConfig,
     sessionId: string,
   ): Promise<void> {
-    const permission = buildOpenCodePermissionRules(config.providerOptions, config.toolPolicy);
+    const permission = buildOpenCodePermissionRules(
+      config.providerOptions,
+      config.toolPolicy,
+      config.pluginToolPolicy,
+    );
     if (!permission) return;
     const response = readOpenCodeRecord(
       await client.session.update({ sessionID: sessionId, directory: config.cwd, permission }),

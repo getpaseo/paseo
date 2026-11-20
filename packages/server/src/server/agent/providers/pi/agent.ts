@@ -10,6 +10,8 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentOpenSupport,
+  type ResolveAgentOpenSupportInput,
   type AgentDraftControls,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -2572,6 +2574,17 @@ export class PiRpcAgentSession implements AgentSession {
 export class PiRpcAgentClient implements AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    return {
+      instructions: "supported",
+      mcpHttp: "unknown",
+      exactMcpPreapproval: "unknown",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: [],
+    };
+  }
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;

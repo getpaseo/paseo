@@ -1,10 +1,17 @@
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { WebSocket } from "ws";
+import {
+  DaemonClient as PublicDaemonClient,
+  type WebSocketLike,
+} from "@getpaseo/client/internal/daemon-client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import {
   createTestAgentClient,
@@ -66,6 +73,397 @@ function recordingProvider(native: boolean, callbacks: TestAgentClientOptions = 
   return { provider, launches, turns, steers, events };
 }
 
+test("failed replacement preparation preserves the live HTTP tool catalog", async () => {
+  const fixture = await setup();
+  try {
+    const agent = await fixture.create({ x: "y" });
+    const mcp = await fixture.mcp();
+    const before = await mcp.callTool({ name: "plugin_echo", arguments: { text: "before" } });
+    expect(before, JSON.stringify(before)).toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining('"text":"before"') }],
+    });
+    await fixture.install(
+      "later-rejection",
+      `export default function contribute(server) {
+      server.addHook("agent.open.before", async () => { throw new Error("replacement preparation failed"); });
+      return () => {};
+    }`,
+    );
+    await expect(fixture.daemon.daemon.agentManager.reloadAgentSession(agent.id)).rejects.toThrow(
+      "replacement preparation failed",
+    );
+    const after = await mcp.callTool({ name: "plugin_echo", arguments: { text: "after" } });
+    expect(after.isError).not.toBe(true);
+    expect(after.content).toEqual([
+      { type: "text", text: expect.stringContaining('"text":"after"') },
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("unopted SDK consumers receive copy-safe snapshots before and after reconnect without changing a capable client's effective view", async () => {
+  const fixture = await setup(
+    false,
+    pluginSource.replace(
+      "tools: [...request.tools, tool]",
+      "providerOptions: { test_feature: true }, tools: [...request.tools, tool]",
+    ),
+  );
+  function observer(clientId: string, projection: boolean) {
+    const sockets: WebSocket[] = [];
+    const client = new PublicDaemonClient({
+      url: `ws://127.0.0.1:${fixture.daemon.port}/ws`,
+      clientId,
+      capabilities: { agent_template_projection: projection },
+      reconnect: { enabled: false },
+      webSocketFactory: (url) => {
+        const socket = new WebSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocketLike;
+      },
+    });
+    return { client, sockets };
+  }
+  const legacyObserver = observer("copy-safe-legacy", false);
+  const capableObserver = observer("copy-safe-capable", true);
+  const legacyClient = legacyObserver.client;
+  const capable = capableObserver.client;
+  try {
+    await legacyClient.connect();
+    await capable.connect();
+    const legacyListing = await legacyClient.fetchAgents({ subscribe: {} });
+    const capableListing = await capable.fetchAgents({ subscribe: {} });
+    const workspace = await fixture.client.createWorkspace({
+      source: { kind: "directory", path: fixture.directory },
+    });
+    const created = await fixture.daemon.daemon.agentManager.createAgent(
+      { provider: "codex", cwd: fixture.directory },
+      undefined,
+      { labels: { x: "y" }, workspaceId: workspace.workspace!.id },
+    );
+    expect(created.effectiveOptions).toMatchObject({ test_feature: true });
+    const legacy = await legacyClient.fetchAgent({ agentId: created.id });
+    const modern = await capable.fetchAgent({ agentId: created.id });
+    expect(legacy).not.toBeNull();
+    expect(modern).toMatchObject({ agent: { options: { test_feature: true } } });
+    expect(legacy!.agent.options?.test_feature).toBeUndefined();
+    const legacyDirectoryEntry = (await legacyClient.fetchAgents()).entries.find(
+      (entry) => entry.agent.id === created.id,
+    );
+    expect(legacyDirectoryEntry).toBeDefined();
+    expect(legacyDirectoryEntry!.agent.options?.test_feature).toBeUndefined();
+    const capableDirectory = await capable.fetchAgents();
+    expect(capableDirectory.entries, JSON.stringify(capableDirectory)).toContainEqual(
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          id: created.id,
+          options: expect.objectContaining({ test_feature: true }),
+        }),
+      }),
+    );
+    expect(
+      (await capable.getAgentTemplate(created.id)).providerOptions?.test_feature,
+    ).toBeUndefined();
+    const legacySnapshots: Array<{ present: boolean; option: unknown }> = [];
+    const capableSnapshots: Array<{ present: boolean; option: unknown }> = [];
+    const legacyUpdates: Array<NonNullable<typeof legacy>["agent"]> = [];
+    const capableUpdates: Array<NonNullable<typeof modern>["agent"]> = [];
+    legacyListing.subscription.subscribe({
+      snapshot(value) {
+        const entry = value.entries.find((candidate) => candidate.agent.id === created.id);
+        legacySnapshots.push({
+          present: entry !== undefined,
+          option: entry?.agent.options?.test_feature,
+        });
+      },
+      update(message) {
+        if (message.type === "agent_update" && message.payload.kind === "upsert") {
+          legacyUpdates.push(message.payload.agent);
+        }
+      },
+    });
+    capableListing.subscription.subscribe({
+      snapshot(value) {
+        const entry = value.entries.find((candidate) => candidate.agent.id === created.id);
+        capableSnapshots.push({
+          present: entry !== undefined,
+          option: entry?.agent.options?.test_feature,
+        });
+      },
+      update(message) {
+        if (message.type === "agent_update" && message.payload.kind === "upsert") {
+          capableUpdates.push(message.payload.agent);
+        }
+      },
+    });
+    legacySnapshots.length = 0;
+    capableSnapshots.length = 0;
+    legacyObserver.sockets[0]!.terminate();
+    capableObserver.sockets[0]!.terminate();
+    await expect.poll(() => legacyClient.getConnectionState().status).toBe("disconnected");
+    await expect.poll(() => capable.getConnectionState().status).toBe("disconnected");
+    await legacyClient.connect();
+    await capable.connect();
+    await expect.poll(() => legacySnapshots).toContainEqual({ present: true, option: undefined });
+    await expect.poll(() => capableSnapshots).toContainEqual({ present: true, option: true });
+    const legacyReconnected = await legacyClient.fetchAgents();
+    const capableReconnected = await capable.fetchAgents();
+    expect(legacyObserver.sockets).toHaveLength(2);
+    expect(capableObserver.sockets).toHaveLength(2);
+    expect(legacyReconnected.entries).toContainEqual(
+      expect.objectContaining({ agent: expect.objectContaining({ id: created.id }) }),
+    );
+    expect(
+      legacyReconnected.entries.find((entry) => entry.agent.id === created.id)!.agent.options
+        ?.test_feature,
+    ).toBeUndefined();
+    expect(capableReconnected.entries).toContainEqual(
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          id: created.id,
+          options: expect.objectContaining({ test_feature: true }),
+        }),
+      }),
+    );
+    const legacyAfterReconnect = await legacyClient.fetchAgent(created.id);
+    expect(legacyAfterReconnect).not.toBeNull();
+    expect(legacyAfterReconnect!.agent.options?.test_feature).toBeUndefined();
+    expect(await capable.fetchAgent(created.id)).toMatchObject({
+      agent: { options: { test_feature: true } },
+    });
+    expect(modern!.agent.options).toMatchObject({ test_feature: true });
+    expect(
+      fixture.daemon.daemon.agentManager.getAgent(created.id)!.effectiveOptions.test_feature,
+    ).toBe(true);
+    const sourceRecord = await fixture.daemon.daemon.agentStorage.get(created.id);
+    expect(sourceRecord).not.toBeNull();
+    expect(sourceRecord!.config?.providerOptions?.test_feature).toBeUndefined();
+    const legacySeed = (await legacyClient.fetchAgent(created.id))!.agent;
+    const copied = await legacyClient.createAgent({
+      provider: legacySeed.provider,
+      cwd: legacySeed.cwd,
+      workspaceId: workspace.workspace!.id,
+      providerOptions: legacySeed.options,
+      labels: { x: "y" },
+    });
+    expect(copied.id).not.toBe(created.id);
+    expect(copied.options?.test_feature).toBeUndefined();
+    expect(
+      (await fixture.daemon.daemon.agentStorage.get(copied.id))?.config?.providerOptions
+        ?.test_feature,
+    ).toBeUndefined();
+    expect(
+      fixture.daemon.daemon.agentManager.getAgent(copied.id)!.effectiveOptions.test_feature,
+    ).toBe(true);
+    expect(await capable.fetchAgent(copied.id)).toMatchObject({
+      agent: { options: { test_feature: true } },
+    });
+    expect(await capable.fetchAgent(created.id)).toMatchObject({
+      agent: { options: { test_feature: true } },
+    });
+    await fixture.daemon.daemon.agentManager.closeAgent(created.id);
+    await expect
+      .poll(() =>
+        legacyUpdates.find((agent) => agent.id === created.id && agent.status === "closed"),
+      )
+      .toMatchObject({ id: created.id, status: "closed" });
+    await expect
+      .poll(() =>
+        capableUpdates.find((agent) => agent.id === created.id && agent.status === "closed"),
+      )
+      .toMatchObject({ id: created.id, status: "closed" });
+    const legacyClosed = legacyUpdates.find(
+      (agent) => agent.id === created.id && agent.status === "closed",
+    )!;
+    const capableClosed = capableUpdates.find(
+      (agent) => agent.id === created.id && agent.status === "closed",
+    )!;
+    expect(
+      legacyClosed.options?.test_feature,
+      "An unopted client's queued closed update must not expose the temporary plugin option",
+    ).toBeUndefined();
+    expect(legacyClosed.features).toContainEqual(
+      expect.objectContaining({ id: "test_feature", value: false }),
+    );
+    expect(capableClosed.options).toMatchObject({ test_feature: true });
+    expect(capableClosed.features).toContainEqual(
+      expect.objectContaining({ id: "test_feature", value: true }),
+    );
+    const copiedClosed = await legacyClient.createAgent({
+      provider: legacyClosed.provider,
+      cwd: legacyClosed.cwd,
+      workspaceId: workspace.workspace!.id,
+      providerOptions: legacyClosed.options,
+      labels: { x: "y" },
+    });
+    expect(copiedClosed.id).not.toBe(created.id);
+    expect(copiedClosed.options?.test_feature).toBeUndefined();
+    expect(
+      (await fixture.daemon.daemon.agentStorage.get(copiedClosed.id))?.config?.providerOptions
+        ?.test_feature,
+    ).toBeUndefined();
+    expect(await capable.fetchAgent(copiedClosed.id)).toMatchObject({
+      agent: { options: { test_feature: true } },
+    });
+  } finally {
+    await legacyClient.close();
+    await capable.close();
+    await fixture.close();
+  }
+});
+
+test("built CLI legacy preview lists candidates without exposing saved secrets or raw receipts", async () => {
+  const fixture = await setup(
+    false,
+    `export default function contribute(server) {
+    server.registerLegacyAgentConfig({ version: 1, selectors: [
+      { id: "saved-prompt", group: "instructions", label: "Saved instructions", kind: "prompt-suffix", text: "\\n\\ndummy-cli-prompt-secret" },
+      { id: "saved-endpoint", group: "tools", label: "Saved endpoint", kind: "mcp", name: "legacy" },
+      { id: "saved-env", group: "environment", label: "Saved environment", kind: "env", key: "LEGACY_TOKEN", baselines: [{ id: "inherit", label: "Inherit environment", kind: "absent" }] },
+      { id: "saved-option", group: "options", label: "Saved option", kind: "option", key: "legacy_option", baselines: [{ id: "inherit", label: "Inherit option", kind: "absent" }] },
+    ] });
+    return () => {};
+  }`,
+  );
+  try {
+    const agent = await fixture.daemon.daemon.agentManager.createAgent(
+      {
+        provider: "codex",
+        cwd: fixture.directory,
+        systemPrompt: "Caller instructions\n\ndummy-cli-prompt-secret",
+        mcpServers: {
+          legacy: {
+            type: "http",
+            url: "http://127.0.0.1:1/dummy-cli-url-secret",
+            headers: { Authorization: "Bearer dummy-cli-header-secret" },
+          },
+        },
+        providerOptions: { legacy_option: "dummy-cli-option-secret" },
+      },
+      undefined,
+      { env: { LEGACY_TOKEN: "dummy-cli-env-secret" } },
+    );
+    const { stdout, stderr } = await promisify(execFile)(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../../../../cli/bin/paseo", import.meta.url)),
+        "agent",
+        "plugin-config",
+        "preview",
+        agent.id,
+        "--plugin",
+        "tools-test",
+        "--host",
+        `127.0.0.1:${fixture.daemon.port}`,
+        "--json",
+      ],
+      {
+        cwd: fixture.directory,
+        env: {
+          HOME: fixture.directory,
+          USERPROFILE: fixture.directory,
+          PASEO_HOME: fixture.directory,
+          CI: "1",
+        },
+        timeout: 15_000,
+      },
+    );
+    const output = JSON.parse(stdout);
+    expect(output).toMatchObject({
+      agentId: agent.id,
+      pluginId: "tools-test",
+      operation: "preview",
+    });
+    const preview = JSON.parse(output.details);
+    expect(preview).toMatchObject({
+      expectedFingerprint: expect.any(String),
+      candidates: [
+        { id: "saved-prompt", group: "instructions", label: "Saved instructions" },
+        { id: "saved-endpoint", group: "tools", label: "Saved endpoint" },
+        { id: "saved-env", group: "environment", label: "Saved environment" },
+        { id: "saved-option", group: "options", label: "Saved option" },
+      ],
+      receiptIds: [],
+    });
+    expect(stdout + stderr).not.toContain("dummy-cli-prompt-secret");
+    expect(stdout + stderr).not.toContain("dummy-cli-url-secret");
+    expect(stdout + stderr).not.toContain("dummy-cli-header-secret");
+    expect(stdout + stderr).not.toContain("dummy-cli-env-secret");
+    expect(stdout + stderr).not.toContain("dummy-cli-option-secret");
+    expect(stdout + stderr).not.toMatch(
+      /pluginConfigAdoptions|recipeDigest|fragmentDigest|"fragment"/,
+    );
+    expect(fixture.turns).toEqual([]);
+    expect(fixture.launches).toHaveLength(1);
+  } finally {
+    await fixture.close();
+  }
+}, 60_000);
+
+test("legacy preview apply reset keeps original records and projects only explicitly adopted fragments", async () => {
+  const fixture = await setup(
+    false,
+    `export default function contribute(server) {
+    server.registerLegacyAgentConfig({ version: 1, selectors: [
+      { id: "saved-prompt", group: "notes", label: "Saved note instructions", kind: "prompt-suffix", text: "\\n\\nLegacy notes" },
+    ] });
+    return () => {};
+  }`,
+  );
+  try {
+    const agent = await fixture.daemon.daemon.agentManager.createAgent(
+      {
+        provider: "codex",
+        cwd: fixture.directory,
+        systemPrompt: "Caller instructions\n\nLegacy notes",
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const original = (await fixture.daemon.daemon.agentStorage.get(agent.id))!.config;
+    const preview = await fixture.client.previewLegacyPluginConfig(agent.id, {
+      pluginId: "tools-test",
+      operation: "adopt",
+    });
+    expect(preview.candidates).toEqual([
+      expect.objectContaining({ id: "saved-prompt", field: "prompt-suffix" }),
+    ]);
+    const applied = await fixture.client.applyLegacyPluginConfig(agent.id, {
+      pluginId: "tools-test",
+      expectedFingerprint: preview.expectedFingerprint,
+      selections: [{ id: "saved-prompt" }],
+    });
+    expect(applied.appliesOn).toBe("next-open");
+    expect((await fixture.client.getAgentTemplate(agent.id)).providerOptions ?? {}).toEqual({});
+    expect(
+      (await fixture.daemon.daemon.agentManager.getAgentTemplateConfig(agent.id)).systemPrompt,
+    ).toBe("Caller instructions");
+    expect((await fixture.daemon.daemon.agentStorage.get(agent.id))!.config).toEqual(original);
+    await expect(
+      fixture.client.applyLegacyPluginConfig(agent.id, {
+        pluginId: "tools-test",
+        expectedFingerprint: preview.expectedFingerprint,
+        selections: [{ id: "saved-prompt" }],
+      }),
+    ).rejects.toThrow("stale");
+    const reset = await fixture.client.previewLegacyPluginConfig(agent.id, {
+      pluginId: "tools-test",
+      operation: "reset",
+    });
+    await fixture.client.resetLegacyPluginConfig(agent.id, {
+      pluginId: "tools-test",
+      expectedFingerprint: reset.expectedFingerprint,
+      receiptIds: applied.receiptIds,
+    });
+    expect(
+      (await fixture.daemon.daemon.agentManager.getAgentTemplateConfig(agent.id)).systemPrompt,
+    ).toBe("Caller instructions\n\nLegacy notes");
+  } finally {
+    await fixture.close();
+  }
+});
+
 const pluginSource = `
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";
@@ -87,6 +485,324 @@ export default function contribute(server) {
   return () => {};
 }
 `;
+
+const launchLifetimeSource = `
+import { appendFile } from "node:fs/promises";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }, { launch }) => {
+    const reason = request.reason;
+    launch.onInstalled(async () => {
+      await appendFile(request.cwd + "/launch-events", "installed:" + reason + "\\n");
+    });
+    launch.onDispose(async ({ installed }) => {
+      await appendFile(request.cwd + "/launch-events", "disposed:" + reason + ":" + installed + ":" + launch.signal.aborted + "\\n");
+    });
+    const tool = defineAgentTool({ name: "plugin_echo", description: "Opening-bound handler",
+      input: z.object({}), execute: () => ({ text: reason + ":" + launch.signal.aborted }) });
+    return { ...request, tools: [tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a timed-out old close preserves the original HTTP tool catalog and launch resources", async () => {
+  let finishClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => {
+    finishClose = resolve;
+  });
+  const h = await setup(false, launchLifetimeSource, undefined, { closeSession: () => closeGate });
+  try {
+    const agent = await h.create();
+    const mcp = await h.mcp();
+    await expect(h.daemon.daemon.agentManager.reloadAgentSession(agent.id)).rejects.toThrow(
+      "Timed out closing previous session during refresh",
+    );
+    expect(h.launches).toHaveLength(1);
+    expect(h.daemon.daemon.agentManager.getAgent(agent.id)?.lifecycle).toBe("error");
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    expect(await mcp.callTool({ name: "plugin_echo", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "create:false" }],
+    });
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:refresh:false:true\n",
+    );
+  } finally {
+    finishClose();
+    await h.close();
+  }
+}, 60_000);
+
+test("a confirmed old close followed by provider failure leaves no active tool catalog", async () => {
+  const h = await setup(false, launchLifetimeSource, undefined, {
+    beforeResumeSession: async () => {
+      throw new Error("replacement provider failed");
+    },
+  });
+  try {
+    const agent = await h.create();
+    const mcp = await h.mcp();
+    await expect(h.daemon.daemon.agentManager.reloadAgentSession(agent.id)).rejects.toThrow(
+      "replacement provider failed",
+    );
+    expect(h.daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    expect(h.daemon.daemon.agentManager.getPluginTools(agent.id)).toEqual([]);
+    expect(await h.daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
+      lastStatus: "closed",
+    });
+    await expect(mcp.listTools()).rejects.toThrow("Error POSTing to endpoint");
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\ndisposed:refresh:false:true\n",
+    );
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const failedDisposalSource = launchLifetimeSource.replace(
+  '"disposed:" + reason + ":" + installed + ":" + launch.signal.aborted + "\\n");',
+  '"disposed:" + reason + ":" + installed + ":" + launch.signal.aborted + "\\n");\n      if (reason === "create") throw new Error("original launch cleanup failed");',
+);
+
+test("confirmed provider close publishes closed state even when plugin disposal fails", async () => {
+  let closes = 0;
+  const h = await setup(true, failedDisposalSource, undefined, {
+    closeSession: async () => {
+      closes++;
+    },
+  });
+  try {
+    const agent = await h.create();
+    const manager = h.daemon.daemon.agentManager;
+    const catalog = h.launches[0]!.context!.paseoTools!;
+    const mcp = await h.mcp(agent.id);
+    await expect(manager.closeAgent(agent.id)).rejects.toThrow(/plugin launch disposal failed/i);
+    expect(closes).toBe(1);
+    expect(
+      manager.getAgent(agent.id),
+      "Confirmed provider close must remove active ownership even when cleanup fails",
+    ).toBeNull();
+    expect(await h.daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
+      lastStatus: "closed",
+    });
+    expect(manager.getPluginTools(agent.id)).toEqual([]);
+    await expect(catalog.executeTool("plugin_echo", {})).rejects.toThrow("disposed");
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).not.toContain("plugin_echo");
+    await expect(manager.closeAgent(agent.id)).resolves.toBeUndefined();
+    expect(closes).toBe(1);
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\n",
+    );
+    await expect(h.daemon.daemon.stop()).rejects.toThrow(/plugin launch disposal failed/i);
+    await expect(fetch(`http://127.0.0.1:${h.daemon.port}/api/health`)).rejects.toThrow();
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("refresh cleanup failure leaves the confirmed-closed provider inactive without opening a replacement", async () => {
+  let closes = 0;
+  const h = await setup(true, failedDisposalSource, undefined, {
+    closeSession: async () => {
+      closes++;
+    },
+  });
+  try {
+    const agent = await h.create();
+    const manager = h.daemon.daemon.agentManager;
+    const catalog = h.launches[0]!.context!.paseoTools!;
+    const mcp = await h.mcp(agent.id);
+    await expect(manager.reloadAgentSession(agent.id)).rejects.toThrow(
+      /plugin launch disposal failed/i,
+    );
+    expect(closes).toBe(1);
+    expect(h.launches).toHaveLength(1);
+    expect(
+      manager.getAgent(agent.id),
+      "Refresh cleanup failure must not retain a confirmed-closed provider as active",
+    ).toBeNull();
+    expect(await h.daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
+      lastStatus: "closed",
+    });
+    expect(manager.getPluginTools(agent.id)).toEqual([]);
+    await expect(catalog.executeTool("plugin_echo", {})).rejects.toThrow("disposed");
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).not.toContain("plugin_echo");
+    await expect(manager.closeAgent(agent.id)).resolves.toBeUndefined();
+    expect(closes).toBe(1);
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\ndisposed:refresh:false:true\n",
+    );
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a provisional same-named handler cannot retarget live native or HTTP tool dispatch", async () => {
+  const h = await setup(true, launchLifetimeSource);
+  let releasePreparation: (() => Promise<unknown>) | undefined;
+  let reloading: Promise<unknown> | undefined;
+  try {
+    await h.install(
+      "zz-hold-opening",
+      `
+import { writeFile } from "node:fs/promises";
+import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+export default function contribute(server) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  server.handle(defineRpc({ name: "release", input: z.object({}), output: z.object({}) }), async () => {
+    release();
+    return {};
+  });
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.reason === "refresh") {
+      await writeFile(request.cwd + "/replacement-prepared", "ready");
+      await gate;
+    }
+    return request;
+  });
+  return () => {};
+}`,
+    );
+    releasePreparation = () => h.client.invokePluginRpc("zz-hold-opening", "release", {});
+    const agent = await h.create();
+    const original = h.launches[0]!.context!.paseoTools!;
+    const mcp = await h.mcp(agent.id);
+    reloading = h.daemon.daemon.agentManager.reloadAgentSession(agent.id).then(
+      (replacement) => ({ replacement }),
+      (error: unknown) => ({ error }),
+    );
+    await expect
+      .poll(() => readFile(path.join(h.directory, "replacement-prepared"), "utf8"))
+      .toBe("ready");
+    expect(await original.executeTool("plugin_echo", {})).toMatchObject({
+      content: [{ type: "text", text: "create:false" }],
+    });
+    expect(await mcp.callTool({ name: "plugin_echo", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "create:false" }],
+    });
+    await releasePreparation();
+    expect(await reloading).toMatchObject({ replacement: { id: agent.id } });
+    expect(await h.launches[1]!.context!.paseoTools!.executeTool("plugin_echo", {})).toMatchObject({
+      content: [{ type: "text", text: "refresh:false" }],
+    });
+    expect(await mcp.callTool({ name: "plugin_echo", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "refresh:false" }],
+    });
+    await expect(original.executeTool("plugin_echo", {})).rejects.toThrow("disposed");
+  } finally {
+    await releasePreparation?.();
+    await reloading;
+    await h.close();
+  }
+}, 60_000);
+
+test("an installation callback failure closes the replacement once before disposing its installed launch", async () => {
+  let closes = 0;
+  let finishClose!: () => void;
+  let startedClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => {
+    finishClose = resolve;
+  });
+  const closeStarted = new Promise<void>((resolve) => {
+    startedClose = resolve;
+  });
+  let reloading: Promise<unknown> | undefined;
+  const h = await setup(
+    true,
+    launchLifetimeSource.replace(
+      '"installed:" + reason + "\\n");',
+      '"installed:" + reason + "\\n");\n      if (reason === "refresh") throw new Error("installation callback failed");',
+    ),
+    undefined,
+    {
+      closeSession: async () => {
+        closes++;
+        if (closes === 1) return;
+        startedClose();
+        await closeGate;
+      },
+    },
+  );
+  try {
+    const agent = await h.create();
+    reloading = h.daemon.daemon.agentManager.reloadAgentSession(agent.id).then(
+      (replacement) => ({ replacement }),
+      (error: unknown) => ({ error }),
+    );
+    await closeStarted;
+    expect(h.daemon.daemon.agentManager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(await h.launches[1]!.context!.paseoTools!.executeTool("plugin_echo", {})).toMatchObject({
+      content: [{ type: "text", text: "refresh:false" }],
+    });
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\ninstalled:refresh\n",
+    );
+    finishClose();
+    expect(await reloading).toMatchObject({ error: { message: "installation callback failed" } });
+    expect(closes).toBe(2);
+    expect(h.daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    expect(h.daemon.daemon.agentManager.getPluginTools(agent.id)).toEqual([]);
+    expect(await h.daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
+      lastStatus: "closed",
+      lastError: "installation callback failed",
+    });
+    await expect(
+      h.launches[1]!.context!.paseoTools!.executeTool("plugin_echo", {}),
+    ).rejects.toThrow("Agent is not live");
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\ninstalled:refresh\ndisposed:refresh:true:true\n",
+    );
+  } finally {
+    finishClose();
+    await reloading;
+    await h.close();
+  }
+}, 60_000);
+
+test("an installation callback failure with rejected close keeps the live session and tools until confirmed close", async () => {
+  let rejectClose = true;
+  let closes = 0;
+  const h = await setup(
+    true,
+    launchLifetimeSource.replace(
+      '"installed:" + reason + "\\n");',
+      '"installed:" + reason + "\\n");\n      throw new Error("installation callback failed");',
+    ),
+    undefined,
+    {
+      closeSession: async () => {
+        closes++;
+        if (rejectClose) throw new Error("provider close rejected");
+      },
+    },
+  );
+  try {
+    await expect(h.create()).rejects.toThrow("provider close rejected");
+    expect(closes).toBe(1);
+    const agentId = h.launches[0]!.context!.agentId!;
+    expect(h.daemon.daemon.agentManager.getAgent(agentId)?.lifecycle).toBe("idle");
+    expect(await h.daemon.daemon.agentStorage.get(agentId)).toMatchObject({ lastStatus: "idle" });
+    expect(await h.launches[0]!.context!.paseoTools!.executeTool("plugin_echo", {})).toMatchObject({
+      content: [{ type: "text", text: "create:false" }],
+    });
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\n",
+    );
+    rejectClose = false;
+    await h.daemon.daemon.agentManager.closeAgent(agentId);
+    expect(h.daemon.daemon.agentManager.getAgent(agentId)).toBeNull();
+    expect(await h.daemon.daemon.agentStorage.get(agentId)).toMatchObject({ lastStatus: "closed" });
+    expect(await readFile(path.join(h.directory, "launch-events"), "utf8")).toBe(
+      "installed:create\ndisposed:create:true:true\n",
+    );
+  } finally {
+    rejectClose = false;
+    await h.close();
+  }
+}, 60_000);
 
 async function setup(
   native = false,
@@ -565,7 +1281,13 @@ test("an idle agent reopens once before its next prompt after a session-hook plu
     await sendAndFinish(h, b.id, "first prompt");
     expect(h.launches).toHaveLength(2);
     expect(h.turns.map((turn) => turn.launchCount)).toEqual([2]);
-    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    await expect(mcp.listTools()).rejects.toThrow("Error POSTing to endpoint");
+    const replacementMcp = await h.mcp();
+    expect((await replacementMcp.listTools()).tools.map((tool) => tool.name)).toContain(
+      "plugin_echo",
+    );
+    const legacyMcp = await h.mcp(b.id);
+    expect((await legacyMcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
     await sendAndFinish(h, b.id, "second prompt");
     expect(h.launches).toHaveLength(2);
     expect(h.turns.map((turn) => turn.launchCount)).toEqual([2, 2]);

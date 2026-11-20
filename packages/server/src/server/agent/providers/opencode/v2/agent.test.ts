@@ -7,6 +7,10 @@ import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
 import { V2Runtime } from "./runtime.js";
+import {
+  projectAgentRequiredConfig,
+  selectLegacyAdoptions,
+} from "../../../plugin-config-adoption.js";
 
 function terminalEvents(events: AgentStreamEvent[]) {
   return events.filter(
@@ -18,6 +22,33 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("support resolution describes retained bindings without a provider request", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const config = { provider: "opencode", cwd: "/tmp/project" };
+    const session = await client.createSession(config);
+    try {
+      expect(
+        await client.resolveOpenSupport({
+          config,
+          persistence: session.describePersistence(),
+          purpose: "interactive",
+        }),
+      ).toMatchObject({
+        instructions: "supported",
+        mcpHttp: "supported",
+        restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" },
+      });
+      expect(harness.retains).toEqual([]);
+      expect(harness.creates).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a failed child read releases its pending location before a different child opens", async () => {
     const harness = new V2Harness();
     const child = {
@@ -344,6 +375,107 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("optional exact grants preserve selected auto-accept without becoming a required policy", async () => {
+    const harness = new V2Harness();
+    const replies: string[] = [];
+    harness.api.permission.list = async () => [
+      { id: "shell-approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    expect(
+      (
+        await client.resolveOpenSupport({
+          config: { provider: "opencode", cwd: "/tmp/project" },
+          purpose: "interactive",
+        })
+      ).exactMcpPreapproval,
+    ).toBe("supported");
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { auto_accept: true },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+    });
+    try {
+      expect(replies).toEqual(["shell-approval"]);
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(harness.creates[0]!.permissions).toContainEqual({
+        action: "notes_read",
+        resource: "*",
+        effect: "allow",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fully adopted plugin-only policy preserves auto-accept for ordinary pending permissions", async () => {
+    const harness = new V2Harness();
+    const replies: string[] = [];
+    harness.api.permission.list = async () => [
+      { id: "shell-approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+    };
+    const config = {
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { auto_accept: true },
+      toolPolicySource: "plugin" as const,
+      mcpServers: { notes: { type: "http" as const, url: "http://127.0.0.1:1/notes" } },
+      toolPolicy: { preapproved: [{ kind: "mcp" as const, server: "notes", tool: "read" }] },
+    };
+    const receipts = selectLegacyAdoptions({
+      pluginId: "notes",
+      config,
+      env: {},
+      recipe: {
+        version: 1,
+        selectors: [
+          { id: "endpoint", group: "notes", label: "Notes", kind: "mcp", name: "notes" },
+          {
+            id: "read",
+            group: "notes",
+            label: "Read notes",
+            kind: "grant",
+            server: "notes",
+            tool: "read",
+          },
+        ],
+      },
+      selections: [{ id: "endpoint" }, { id: "read" }],
+    });
+    const projected = projectAgentRequiredConfig({
+      config,
+      env: {},
+      receipts: { version: 1, receipts },
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      ...projected.config,
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+    });
+    try {
+      expect(replies).toEqual(["shell-approval"]);
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(config.toolPolicy.preapproved).toEqual([
+        { kind: "mcp", server: "notes", tool: "read" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test.each([
     {
       name: "credentials",
@@ -395,6 +527,281 @@ describe("OpenCode v2 session lifecycle", () => {
       }
     },
   );
+
+  test("interactive resume replaces exact grants and folder permissions with the complete current rules", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "required", tool: "read" }] },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "old" }] },
+      providerOptions: { permission: { read: { "/old/*": "allow" }, bash: "ask" } },
+    });
+    const handle = created.describePersistence();
+    await created.close();
+    const resumed = await client.resumeSession(handle, {
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "current" }] },
+      providerOptions: { permission: { read: { "/current/*": "allow" }, bash: "deny" } },
+    });
+    try {
+      expect(harness.updates).toEqual([
+        {
+          sessionID: "session",
+          permissions: [
+            { action: "required_read", resource: "*", effect: "allow" },
+            { action: "notes_current", resource: "*", effect: "allow" },
+            { action: "read", resource: "/current/*", effect: "allow" },
+            { action: "shell", resource: "*", effect: "deny" },
+          ],
+        },
+      ]);
+      expect(harness.info.permissions).toEqual([
+        { action: "required_read", resource: "*", effect: "allow" },
+        { action: "notes_current", resource: "*", effect: "allow" },
+        { action: "read", resource: "/current/*", effect: "allow" },
+        { action: "shell", resource: "*", effect: "deny" },
+      ]);
+      expect(harness.prompts).toEqual([]);
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("interactive resume removes stale grants with an empty permission replacement", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "required", tool: "read" }] },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+      providerOptions: { permission: { read: { "/old/*": "allow" } } },
+    });
+    expect(harness.info.permissions).toEqual([
+      { action: "required_read", resource: "*", effect: "allow" },
+      { action: "notes_read", resource: "*", effect: "allow" },
+      { action: "read", resource: "/old/*", effect: "allow" },
+    ]);
+    const handle = created.describePersistence();
+    await created.close();
+    const resumed = await client.resumeSession(handle, {
+      toolPolicy: undefined,
+      pluginToolPolicy: undefined,
+      providerOptions: undefined,
+    });
+    try {
+      expect(harness.updates).toEqual([{ sessionID: "session", permissions: [] }]);
+      expect(harness.info.permissions).toEqual([]);
+      expect(harness.prompts).toEqual([]);
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("interactive resume keeps authored ask and deny rules after exact grants", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const resumed = await client.resumeSession(
+      { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } },
+      {
+        toolPolicy: { preapproved: [{ kind: "mcp", server: "required", tool: "read" }] },
+        pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+        providerOptions: {
+          permission: { read: { "*": "ask", "/private/*": "deny" }, bash: "deny" },
+        },
+      },
+    );
+    try {
+      expect(harness.updates).toEqual([
+        {
+          sessionID: "session",
+          permissions: [
+            { action: "required_read", resource: "*", effect: "allow" },
+            { action: "notes_read", resource: "*", effect: "allow" },
+            { action: "read", resource: "*", effect: "ask" },
+            { action: "read", resource: "/private/*", effect: "deny" },
+            { action: "shell", resource: "*", effect: "deny" },
+          ],
+        },
+      ]);
+      expect(harness.info.permissions).toEqual([
+        { action: "required_read", resource: "*", effect: "allow" },
+        { action: "notes_read", resource: "*", effect: "allow" },
+        { action: "read", resource: "*", effect: "ask" },
+        { action: "read", resource: "/private/*", effect: "deny" },
+        { action: "shell", resource: "*", effect: "deny" },
+      ]);
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("retained initialized sessions accept changed permission rules", async () => {
+    const harness = new V2Harness();
+    harness.api.event.subscribe = async function* (options) {
+      yield { id: "connected", created: 1, type: "server.connected", data: {} };
+      await new Promise<void>((resolve) =>
+        options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      mcpServers: { notes: { type: "http", url: "https://notes.test" } },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "old" }] },
+      providerOptions: { permission: "ask" },
+    });
+    try {
+      const resumed = await client.resumeSession(created.describePersistence(), {
+        pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "current" }] },
+        providerOptions: { permission: "deny" },
+      });
+      try {
+        expect(harness.retains).toEqual([{ env: undefined, dedicated: true }]);
+        expect(harness.updates).toEqual([
+          {
+            sessionID: "session",
+            permissions: [
+              { action: "notes_current", resource: "*", effect: "allow" },
+              { action: "*", resource: "*", effect: "deny" },
+            ],
+          },
+        ]);
+        expect(harness.info.permissions).toEqual([
+          { action: "notes_current", resource: "*", effect: "allow" },
+          { action: "*", resource: "*", effect: "deny" },
+        ]);
+        expect(harness.prompts).toEqual([]);
+      } finally {
+        await resumed.close();
+      }
+    } finally {
+      await created.close();
+    }
+  });
+
+  test("history resume leaves native permissions unchanged", async () => {
+    const harness = new V2Harness();
+    harness.info.permissions = [{ action: "notes_old", resource: "*", effect: "allow" }];
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.resumeSession(
+      { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } },
+      {
+        pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "current" }] },
+        providerOptions: { permission: "deny" },
+      },
+      undefined,
+      { purpose: "history" },
+    );
+    try {
+      expect(harness.updates).toEqual([]);
+      expect(harness.info.permissions).toEqual([
+        { action: "notes_old", resource: "*", effect: "allow" },
+      ]);
+      expect(harness.prompts).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("interactive resume preserves an empty required policy while replacing native rules", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      toolPolicy: { preapproved: [] },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "old" }] },
+      providerOptions: { auto_accept: true },
+    });
+    const handle = created.describePersistence();
+    await created.close();
+    const replies: string[] = [];
+    harness.api.permission.list = async () => [
+      { id: "shell-approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+    };
+    const resumed = await client.resumeSession(handle, { pluginToolPolicy: undefined });
+    try {
+      expect(harness.updates).toEqual([{ sessionID: "session", permissions: [] }]);
+      expect(harness.info.permissions).toEqual([]);
+      expect(resumed.describePersistence().metadata?.toolPolicy).toEqual({ preapproved: [] });
+      expect(resumed.getPendingPermissions().map(({ id }) => id)).toEqual(["shell-approval"]);
+      expect(replies).toEqual([]);
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("a rejected resume permission update releases its connection before attaching a session", async () => {
+    const harness = new V2Harness();
+    harness.info.permissions = [{ action: "notes_old", resource: "*", effect: "allow" }];
+    harness.api.session.update = async (input) => {
+      harness.updates.push(input);
+      throw new Error("permission update rejected");
+    };
+    const bindings: string[] = [];
+    harness.connection.bindSession = async (id) => {
+      bindings.push(id);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "session",
+      metadata: { cwd: "/tmp/project" },
+    };
+    await expect(
+      client.resumeSession(handle, {
+        pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "current" }] },
+      }),
+    ).rejects.toThrow("permission update rejected");
+    expect(harness.updates).toEqual([
+      {
+        sessionID: "session",
+        permissions: [{ action: "notes_current", resource: "*", effect: "allow" }],
+      },
+    ]);
+    expect(harness.info.permissions).toEqual([
+      { action: "notes_old", resource: "*", effect: "allow" },
+    ]);
+    expect(harness.releases).toBe(1);
+    expect(bindings).toEqual([]);
+    expect(harness.prompts).toEqual([]);
+    expect(
+      (
+        await client.resolveOpenSupport({
+          config: { provider: "opencode", cwd: "/tmp/project" },
+          persistence: handle,
+          purpose: "interactive",
+        })
+      ).restrictions,
+    ).toEqual({ mcpConfiguration: "unknown", processEnvironment: "unknown" });
+  });
 
   test("reopening replaces and removes plugin instructions", async () => {
     const harness = new V2Harness();

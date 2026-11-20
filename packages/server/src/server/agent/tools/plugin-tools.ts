@@ -8,6 +8,7 @@ import { addModelVisibleStructuredContent } from "./paseo-tool-serialization.js"
 export function registerPluginTools(options: {
   agentManager: AgentManager;
   callerAgentId?: string;
+  launchId?: string;
   scope: "agent" | "top-level";
   tools: Map<string, PaseoToolDefinition>;
   builtinNames: Set<string>;
@@ -15,7 +16,7 @@ export function registerPluginTools(options: {
 }): void {
   const { agentManager, callerAgentId, scope, tools, builtinNames, policy } = options;
   if (scope !== "agent" || !callerAgentId) return;
-  for (const tool of agentManager.getPluginTools(callerAgentId)) {
+  for (const tool of agentManager.getPluginTools(callerAgentId, options.launchId)) {
     if (builtinNames.has(tool.name)) {
       throw new Error(
         `Agent tool ${tool.name} from plugin ${tool.pluginId} collides with Paseo tool ${tool.name}`,

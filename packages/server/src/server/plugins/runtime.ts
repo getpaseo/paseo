@@ -41,6 +41,11 @@ import {
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
+import { mergePluginLaunchContributions } from "../agent/plugin-launch-config.js";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { LegacyAgentConfigRecipe } from "@getpaseo/protocol/plugin-agent-config";
+import { inspectLegacyAgentConfig } from "../agent/plugin-config-adoption.js";
+import { isDeepStrictEqual } from "node:util";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
@@ -82,6 +87,7 @@ interface LoadedPlugin {
   subscriptionMethods: ReadonlySet<string>;
   subscriptions: Map<string, BufferedPluginSubscription>;
   hooks: string[];
+  legacyAgentConfig?: LegacyAgentConfigRecipe;
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
   child: PluginChild | null;
@@ -91,6 +97,11 @@ interface LoadedPlugin {
   providerConnectionTombstones: Set<string>;
   sessionSocket: PluginSessionSocket | null;
   sessionClosed: Promise<void> | null;
+}
+
+interface PluginLaunchLifetime {
+  owners: Set<LoadedPlugin>;
+  disposal?: Promise<void>;
 }
 
 /** The session socket a loaded plugin currently speaks through. */
@@ -281,6 +292,12 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
 
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
+  private readonly launchPlugins = new Map<string, PluginLaunchLifetime>();
+  private readonly launchContributions = new Map<
+    string,
+    Map<LoadedPlugin, SessionOpenWireRequest>
+  >();
+  private readonly previousLaunchByAgent = new Map<string, string>();
   private readonly pendingEvents = new Set<Promise<void>>();
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
@@ -613,18 +630,28 @@ export class PluginRuntime {
     const attached: AttachedAgentTool[] = [];
     const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
     const mcpServerOwners: Record<string, string> = {};
+    const grants: ToolPolicy["preapproved"] = [];
+    const providerOptions: ProviderOptions = {};
     for (const loaded of plugins) {
       if (!loaded.hooks.includes(name)) {
         continue;
       }
       try {
+        if (name === "agent.open.before") {
+          const launchId = (request as SessionOpenWireRequest).launchId;
+          this.trackLaunchPlugin(launchId, loaded);
+        }
+        const localInput =
+          name === "agent.open.before"
+            ? this.localOpenRequest(loaded, request as SessionOpenWireRequest)
+            : request;
         const output = await this.request(loaded, {
           type: "hook",
           requestId: randomUUID(),
           name,
-          input: name === "agent.open.before" ? { ...request, tools: [], mcpServers: {} } : request,
+          input: localInput,
         });
-        request = await validateBeforeResult(name, request, output);
+        request = await validateBeforeResult(name, validateBeforeRequest(name, localInput), output);
         if (name === "worktree.create.before") {
           const worktree = request as PluginWireBeforeRequests["worktree.create.before"];
           worktree.path = await validateWorktreePath({
@@ -634,12 +661,32 @@ export class PluginRuntime {
         }
         if (name === "agent.open.before") {
           const opened = request as SessionOpenWireRequest;
+          if (opened.launchId) {
+            const contributions =
+              this.launchContributions.get(opened.launchId) ??
+              new Map<LoadedPlugin, SessionOpenWireRequest>();
+            contributions.set(
+              loaded,
+              this.ownContribution(opened, localInput as SessionOpenWireRequest),
+            );
+            this.launchContributions.set(opened.launchId, contributions);
+          }
+          mergePluginLaunchContributions({
+            pluginId: loaded.id,
+            servers: mcpServers,
+            grants,
+            options: providerOptions,
+            contribution: opened,
+          });
           this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);
-          this.collectAgentTools(attached, loaded, opened.tools);
+          this.collectAgentTools(attached, loaded, opened.tools, opened.launchId);
         }
       } catch (error) {
-        if (name === "agent.open.before")
-          this.detachTools((request as SessionOpenWireRequest).agentId);
+        if (name === "agent.open.before") {
+          const opened = request as SessionOpenWireRequest;
+          if (opened.launchId) await this.disposeLaunch(opened.launchId);
+          else this.detachTools(opened.agentId);
+        }
         throw new Error(`Plugin ${loaded.id} ${name} failed: ${describeError(error)}`, {
           cause: error,
         });
@@ -651,6 +698,8 @@ export class PluginRuntime {
         tools: attached,
         mcpServers,
         mcpServerOwners,
+        toolPolicy: grants.length ? { preapproved: grants } : undefined,
+        providerOptions: Object.keys(providerOptions).length ? providerOptions : undefined,
       } as PluginBeforeResults[Name];
     }
     return request;
@@ -695,6 +744,7 @@ export class PluginRuntime {
     attached: AttachedAgentTool[],
     loaded: LoadedPlugin,
     tools: SessionOpenWireRequest["tools"],
+    launchId?: string,
   ): void {
     for (const tool of tools) {
       const collision = attached.find((entry) => entry.name === tool.name);
@@ -702,7 +752,12 @@ export class PluginRuntime {
         throw new Error(
           `Agent tool ${tool.name} from plugin ${loaded.id} collides with plugin ${collision.pluginId}`,
         );
-      attached.push({ ...tool, pluginId: loaded.id, pluginInstanceId: loaded.instanceId });
+      attached.push({
+        ...tool,
+        pluginId: loaded.id,
+        pluginInstanceId: loaded.instanceId,
+        launchId,
+      });
     }
   }
 
@@ -716,6 +771,115 @@ export class PluginRuntime {
     }
   }
 
+  disposeLaunch(launchId: string): Promise<void> {
+    const launch = this.launchPlugins.get(launchId);
+    if (!launch) return Promise.resolve();
+    if (launch.disposal) return launch.disposal;
+    this.launchContributions.delete(launchId);
+    for (const [agentId, previous] of this.previousLaunchByAgent) {
+      if (previous === launchId) this.previousLaunchByAgent.delete(agentId);
+    }
+    launch.disposal = Promise.allSettled(
+      [...launch.owners].map(async (loaded) => {
+        if (this.plugins.get(loaded.id) !== loaded || !loaded.child) return;
+        await this.request(loaded, { type: "launch.dispose", requestId: randomUUID(), launchId });
+      }),
+    ).then((results) => {
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length) throw new AggregateError(errors, "Plugin launch disposal failed");
+      this.launchPlugins.delete(launchId);
+      return undefined;
+    });
+    return launch.disposal;
+  }
+
+  private trackLaunchPlugin(launchId: string | undefined, loaded: LoadedPlugin): void {
+    if (!launchId) return;
+    const launch: PluginLaunchLifetime = this.launchPlugins.get(launchId) ?? { owners: new Set() };
+    if (launch.disposal) throw new Error("Cannot attach a disposed plugin launch");
+    launch.owners.add(loaded);
+    this.launchPlugins.set(launchId, launch);
+  }
+
+  async installLaunch(launchId: string): Promise<void> {
+    const launch = this.launchPlugins.get(launchId);
+    if (!launch) return;
+    if (launch.disposal) throw new Error("Cannot install a disposed plugin launch");
+    for (const loaded of launch.owners) {
+      if (this.plugins.get(loaded.id) !== loaded)
+        throw new Error(`Plugin instance changed before launch installation: ${loaded.id}`);
+      await this.request(loaded, { type: "launch.install", requestId: randomUUID(), launchId });
+    }
+    const contribution = this.launchContributions.get(launchId)?.values().next().value;
+    if (contribution) this.previousLaunchByAgent.set(contribution.agentId, launchId);
+  }
+
+  getLegacyAgentConfigRecipes(): ReadonlyMap<string, LegacyAgentConfigRecipe> {
+    return new Map(
+      [...this.plugins.values()].flatMap((loaded) =>
+        loaded.legacyAgentConfig ? [[loaded.id, loaded.legacyAgentConfig] as const] : [],
+      ),
+    );
+  }
+
+  private localOpenRequest(
+    loaded: LoadedPlugin,
+    request: SessionOpenWireRequest,
+  ): SessionOpenWireRequest {
+    const legacyConfigState =
+      loaded.legacyAgentConfig && request.baseConfig
+        ? inspectLegacyAgentConfig({
+            pluginId: loaded.id,
+            recipe: loaded.legacyAgentConfig,
+            config: request.baseConfig,
+            env: request.env,
+          }).state
+        : undefined;
+    const priorId = this.previousLaunchByAgent.get(request.agentId);
+    const prior = priorId ? this.launchContributions.get(priorId)?.get(loaded) : undefined;
+    const previousContribution = prior?.launchId
+      ? {
+          launchId: prior.launchId,
+          mcpServers: prior.mcpServers,
+          env: prior.env,
+          appendSystemPrompt: prior.appendSystemPrompt,
+          toolPolicy: prior.toolPolicy,
+          providerOptions: prior.providerOptions,
+        }
+      : undefined;
+    return {
+      ...request,
+      tools: [],
+      mcpServers: {},
+      toolPolicy: undefined,
+      providerOptions: undefined,
+      legacyConfigState,
+      previousContribution,
+    };
+  }
+
+  private ownContribution(
+    output: SessionOpenWireRequest,
+    input: SessionOpenWireRequest,
+  ): SessionOpenWireRequest {
+    const before = input.appendSystemPrompt ?? [];
+    const after = output.appendSystemPrompt ?? [];
+    if (!isDeepStrictEqual(after.slice(0, before.length), before))
+      throw new Error(
+        "Open hooks may append instructions but cannot replace another plugin's instructions",
+      );
+    return structuredClone({
+      ...output,
+      env: Object.fromEntries(
+        Object.entries(output.env).filter(([key, value]) => input.env[key] !== value),
+      ),
+      appendSystemPrompt: after.slice(before.length),
+      previousContribution: undefined,
+    });
+  }
+
   async callTool(
     pluginId: string,
     pluginInstanceId: string,
@@ -723,6 +887,7 @@ export class PluginRuntime {
     name: string,
     input: unknown,
     signal?: AbortSignal,
+    launchId?: string,
   ): Promise<AgentToolResult> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded || loaded.instanceId !== pluginInstanceId)
@@ -731,7 +896,7 @@ export class PluginRuntime {
     try {
       return (await this.request(
         loaded,
-        { type: "tool.call", requestId, agent, name, input },
+        { type: "tool.call", requestId, agent, name, input, launchId },
         signal,
       )) as AgentToolResult;
     } catch (error) {
@@ -805,7 +970,16 @@ export class PluginRuntime {
       this.notifySessionOpenChange(plugin);
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
-    await Promise.all(loaded.map((plugin) => this.stopPlugin(plugin)));
+    const results = await Promise.allSettled([
+      ...loaded.map((plugin) => this.stopPlugin(plugin)),
+      ...[...this.launchPlugins.values()].flatMap((launch) =>
+        launch.disposal ? [launch.disposal] : [],
+      ),
+    ]);
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Plugin launch disposal failed");
   }
 
   private async loadDirectoryPlugin(
@@ -962,6 +1136,7 @@ export class PluginRuntime {
       subscriptionMethods: new Set(ready.subscriptions ?? []),
       subscriptions: new Map(),
       hooks: ready.hooks ?? [],
+      legacyAgentConfig: ready.legacyAgentConfig,
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
       child,

@@ -12,6 +12,10 @@ import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
 import { foldFeatureValues } from "./option-controls.js";
+import {
+  PluginConfigAdoptionsSchema,
+  type PluginConfigAdoptions,
+} from "@getpaseo/protocol/plugin-agent-config";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -64,6 +68,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
   launchEnv: z.record(z.string(), z.string()).optional(),
+  pluginConfigAdoptions: PluginConfigAdoptionsSchema.optional(),
   runtimeInfo: z
     .object({
       provider: z.string(),
@@ -269,6 +274,10 @@ export class AgentStorage {
     return this.cache.get(agentId) ?? null;
   }
 
+  peekLoaded(agentId: string): StoredAgentRecord | null {
+    return this.cache.get(agentId) ?? null;
+  }
+
   async listByProviderSession(
     provider: string,
     providerHandleId: string,
@@ -297,8 +306,27 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async mutatePluginConfigAdoptions(
+    agentId: string,
+    mutate: (record: StoredAgentRecord) => PluginConfigAdoptions | undefined,
+  ): Promise<StoredAgentRecord> {
+    await this.load();
+    let updated: StoredAgentRecord | undefined;
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      updated = { ...existing, pluginConfigAdoptions: mutate(structuredClone(existing)) };
+      return updated;
+    });
+    if (!updated)
+      throw new Error(`Agent ${agentId} was deleted during plugin configuration update`);
+    return structuredClone(updated);
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    return this.queueRecordMutation(record.id, () => record);
+    return this.queueRecordMutation(record.id, (existing) => ({
+      ...record,
+      pluginConfigAdoptions: existing?.pluginConfigAdoptions ?? record.pluginConfigAdoptions,
+    }));
   }
 
   private queueRecordMutation(
@@ -411,6 +439,8 @@ export class AgentStorage {
       }
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
+      if (existing?.pluginConfigAdoptions)
+        record.pluginConfigAdoptions = existing.pluginConfigAdoptions;
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
       return record;

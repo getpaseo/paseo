@@ -2,8 +2,10 @@ import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import {
   createLifecycleRegistration,
   pluginHookRegistry,
+  PluginOpenSupportSchema,
 } from "@getpaseo/plugin/internal/lifecycle";
 import { isDeepStrictEqual } from "node:util";
+import { randomUUID } from "node:crypto";
 import {
   serializeAgentTool,
   agentToolMetadataSchema,
@@ -19,6 +21,7 @@ import type {
   PluginHookAgent,
   PluginHookPayload,
   PluginHookContext,
+  PluginSessionOpenContext,
   PluginLifecycleRegistration,
 } from "@getpaseo/plugin/server";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -97,6 +100,7 @@ const beforeSchemas = {
   "agent.open.before": z
     .object({
       agentId: z.string(),
+      launchId: z.string().min(1).optional(),
       workspaceId: z.string().nullable(),
       provider: z.string(),
       cwd: z.string(),
@@ -108,7 +112,27 @@ const beforeSchemas = {
       labels: z.record(z.string(), z.string()),
       // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
       metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
+      openSupport: PluginOpenSupportSchema.optional(),
+      baseConfig: CreateAgentRequestMessageSchema.shape.config.optional(),
+      legacyConfigState: z
+        .object({ selectors: z.record(z.string(), z.enum(["present", "absent", "ambiguous"])) })
+        .strict()
+        .optional(),
+      previousContribution: z
+        .object({
+          launchId: z.string().min(1),
+          mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
+          env: z.record(z.string(), z.string()),
+          appendSystemPrompt: z.array(z.string()).optional(),
+          toolPolicy: CreateAgentRequestMessageSchema.shape.config.shape.toolPolicy,
+          providerOptions: CreateAgentRequestMessageSchema.shape.config.shape.providerOptions,
+        })
+        .strict()
+        .optional(),
+      retainedLaunchId: z.string().min(1).optional(),
       appendSystemPrompt: z.array(z.string()).optional(),
+      toolPolicy: CreateAgentRequestMessageSchema.shape.config.shape.toolPolicy,
+      providerOptions: CreateAgentRequestMessageSchema.shape.config.shape.providerOptions,
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
@@ -132,6 +156,14 @@ const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
     ),
   ),
 });
+
+function freezeHookConfig<Value>(value: Value): Value {
+  if (value !== null && typeof value === "object") {
+    for (const nested of Object.values(value)) freezeHookConfig(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 export interface PluginLifecycle {
   wait(
@@ -227,6 +259,7 @@ type SessionOpenRequest = z.infer<(typeof beforeSchemas)["agent.open.before"]>;
 function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpenRequest): boolean {
   return (
     previous.agentId !== next.agentId ||
+    (next.launchId !== undefined && previous.launchId !== next.launchId) ||
     previous.workspaceId !== next.workspaceId ||
     previous.provider !== next.provider ||
     previous.cwd !== next.cwd ||
@@ -248,6 +281,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   if (name === "agent.open.before") {
     const previous = beforeSchemas["agent.open.before"].parse(input);
     const next = beforeSchemas["agent.open.before"].parse(result);
+    assertHostOwnedOpenFields(previous, next);
     if (changesSessionOpenTarget(previous, next)) {
       throw new Error(
         "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
@@ -256,7 +290,12 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     return {
       ...result,
       background: previous.background,
+      launchId: previous.launchId,
       metadata: previous.metadata,
+      openSupport: previous.openSupport,
+      baseConfig: previous.baseConfig,
+      legacyConfigState: previous.legacyConfigState,
+      previousContribution: previous.previousContribution,
       ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined
         ? { appendSystemPrompt: previous.appendSystemPrompt }
         : {}),
@@ -289,9 +328,35 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
 
 type Handler = (input: unknown, context: PluginHookContext) => unknown;
 
+function assertHostOwnedOpenFields(previous: SessionOpenRequest, next: SessionOpenRequest): void {
+  for (const key of [
+    "openSupport",
+    "baseConfig",
+    "legacyConfigState",
+    "previousContribution",
+  ] as const) {
+    if (next[key] !== undefined && !isDeepStrictEqual(previous[key], next[key])) {
+      throw new Error(`agent.open.before hooks cannot change host-owned ${key}`);
+    }
+  }
+}
+
+interface HookLaunchLifetime {
+  agentId: string;
+  controller: AbortController;
+  cleanups: Array<(outcome: { installed: boolean }) => void | Promise<void>>;
+  installed: boolean;
+  installCallbacks: Array<() => void | Promise<void>>;
+  retainedLaunchId?: string;
+  users: number;
+  releaseRequested: boolean;
+  disposal?: Promise<void>;
+}
+
 export class PluginHookHandlers implements PluginLifecycleRegistration {
   private readonly handlers = new Map<string, Set<Handler>>();
   private readonly active = new Map<string, AbortController>();
+  private readonly launches = new Map<string, HookLaunchLifetime>();
 
   private readonly changed: () => void;
 
@@ -364,14 +429,63 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     input: unknown,
     context: PluginHookContext,
   ): Promise<SessionOpenWireRequest> {
+    const request = validateBeforeRequest("agent.open.before", input);
+    const id = request.launchId ?? randomUUID();
+    this.openLaunch(request.agentId, id);
+    try {
+      return await this.runOpenHooks(request, context, id);
+    } catch (error) {
+      await this.disposeLaunch(id);
+      throw error;
+    }
+  }
+
+  private async runOpenHooks(
+    input: unknown,
+    context: PluginHookContext,
+    id: string,
+  ): Promise<SessionOpenWireRequest> {
     let request = validateBeforeRequest("agent.open.before", input);
-    this.agentTools?.detach(request.agentId);
+    const lifetime = this.launches.get(id)!;
+    const launch = {
+      ...this.openLaunch(request.agentId, id),
+      retainPrevious: () => {
+        const previous = request.previousContribution;
+        const prior = previous && this.launches.get(previous.launchId);
+        if (
+          !previous ||
+          !prior ||
+          prior.agentId !== request.agentId ||
+          prior.controller.signal.aborted ||
+          !prior.installed
+        )
+          throw new Error(
+            "No live owner-specific prior contribution; fully close the agent and retained children, then reopen",
+          );
+        if (!lifetime.retainedLaunchId) {
+          lifetime.retainedLaunchId = previous.launchId;
+          prior.users += 1;
+        }
+        return freezeHookConfig(previous);
+      },
+    };
+    const openContext: PluginSessionOpenContext = { ...context, launch };
+    if (!request.launchId) this.agentTools?.detach(request.agentId);
     let tools: AgentToolDefinition[] = [];
     for (const handler of this.handlers.get("agent.open.before") ?? []) {
       context.signal.throwIfAborted();
       const result = await handler(
-        { request: { ...structuredClone(request), tools: [...tools] } },
-        context,
+        {
+          request: {
+            ...structuredClone(request),
+            openSupport: request.openSupport,
+            baseConfig: freezeHookConfig(request.baseConfig),
+            legacyConfigState: freezeHookConfig(request.legacyConfigState),
+            previousContribution: freezeHookConfig(request.previousContribution),
+            tools: [...tools],
+          },
+        },
+        openContext,
       );
       if (result === undefined) continue;
       const local = sessionOpenLocalResultSchema.parse(result);
@@ -387,8 +501,100 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
       request.tools = [];
       request.mcpServers = {};
       delete request.appendSystemPrompt;
-    } else this.agentTools?.attach(request.agentId, tools);
-    return request;
+    } else this.agentTools?.attach(request.agentId, tools, request.launchId);
+    return { ...request, retainedLaunchId: lifetime.retainedLaunchId };
+  }
+
+  private openLaunch(agentId: string, id: string): PluginSessionOpenContext["launch"] {
+    let lifetime = this.launches.get(id);
+    if (!lifetime) {
+      lifetime = {
+        agentId,
+        controller: new AbortController(),
+        cleanups: [],
+        installed: false,
+        installCallbacks: [],
+        users: 0,
+        releaseRequested: false,
+      };
+      this.launches.set(id, lifetime);
+    }
+    if (lifetime.agentId !== agentId || lifetime.controller.signal.aborted) {
+      throw new Error("Launch is disposed or belongs to another agent");
+    }
+    const owner = lifetime;
+    return {
+      id,
+      signal: owner.controller.signal,
+      onDispose(cleanup) {
+        if (owner.controller.signal.aborted) throw new Error("Launch is already disposed");
+        owner.cleanups.push(cleanup);
+      },
+      onInstalled(callback) {
+        if (owner.installed || owner.controller.signal.aborted)
+          throw new Error("Launch installation callback registered too late");
+        owner.installCallbacks.push(callback);
+      },
+      retainPrevious() {
+        throw new Error("No prior contribution was supplied for this opening");
+      },
+    };
+  }
+
+  disposeLaunch(id: string): Promise<void> {
+    const lifetime = this.launches.get(id);
+    if (!lifetime) return Promise.resolve();
+    lifetime.releaseRequested = true;
+    if (lifetime.users > 0) return Promise.resolve();
+    if (lifetime.disposal) return lifetime.disposal;
+    lifetime.controller.abort();
+    this.agentTools?.detach(lifetime.agentId, id);
+    lifetime.disposal = (async () => {
+      const results = await Promise.allSettled(
+        lifetime.cleanups
+          .splice(0)
+          .map(async (cleanup) => cleanup({ installed: lifetime.installed })),
+      );
+      if (lifetime.retainedLaunchId) await this.releaseRetainedLaunch(lifetime.retainedLaunchId);
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length) throw new AggregateError(errors, "Plugin launch cleanup failed");
+    })();
+    void lifetime.disposal.then(
+      () => {
+        if (this.launches.get(id) === lifetime) this.launches.delete(id);
+        return undefined;
+      },
+      () => {},
+    );
+    return lifetime.disposal;
+  }
+
+  async installLaunch(id: string): Promise<void> {
+    const lifetime = this.launches.get(id);
+    if (!lifetime || lifetime.controller.signal.aborted)
+      throw new Error("Cannot install a disposed plugin launch");
+    if (lifetime.installed) return;
+    lifetime.installed = true;
+    for (const callback of lifetime.installCallbacks.splice(0)) await callback();
+  }
+
+  private async releaseRetainedLaunch(id: string): Promise<void> {
+    const prior = this.launches.get(id);
+    if (!prior) throw new Error("Retained plugin launch disappeared before release");
+    prior.users -= 1;
+    if (prior.releaseRequested && prior.users === 0) await this.disposeLaunch(id);
+  }
+
+  async disposeLaunches(): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.launches.keys()].map((id) => this.disposeLaunch(id)),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Plugin launch cleanup failed");
   }
 
   cancel(id: string): void {

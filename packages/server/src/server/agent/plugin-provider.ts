@@ -34,6 +34,7 @@ import type {
   AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
+  AgentOpenSupport,
   AgentModelDefinition,
   AgentOptionControl,
   AgentPermissionRequest,
@@ -55,6 +56,7 @@ import type {
   ListImportableSessionsOptions,
   ProviderCatalog,
   ProviderRefreshContext,
+  ResolveAgentOpenSupportInput,
   SteerActiveTurnOptions,
   SteerResult,
 } from "./agent-sdk-types.js";
@@ -197,6 +199,23 @@ class ProviderRuntime {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  async resolveOpenSupport(signal?: AbortSignal): Promise<AgentOpenSupport> {
+    signal?.throwIfAborted();
+    const connection = await this.getConnection();
+    signal?.throwIfAborted();
+    return {
+      instructions: connection.capabilities.includes("session.system_prompt")
+        ? "supported"
+        : "unknown",
+      mcpHttp: connection.capabilities.includes("mcp.http") ? "supported" : "unknown",
+      exactMcpPreapproval: connection.capabilities.includes("permission.optional_tool_policy")
+        ? "supported"
+        : "unknown",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: [],
+    };
   }
 
   get isClosed(): boolean {
@@ -971,6 +990,9 @@ interface PendingChild {
 
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
+  get adapter(): NonNullable<AgentClient["adapter"]> {
+    return { kind: "plugin", id: this.provider };
+  }
   private readonly runtime: ProviderRuntime;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
@@ -991,6 +1013,10 @@ class PluginAgentClient implements AgentClient {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
+  }
+
+  resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    return this.runtime.resolveOpenSupport(input.signal);
   }
 
   async createSession(
@@ -1979,6 +2005,7 @@ function mapSessionConfig(
     toolPolicy: config.toolPolicy
       ? { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) }
       : undefined,
+    pluginToolPolicy: config.pluginToolPolicy,
     model: config.model,
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,

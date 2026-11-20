@@ -87,6 +87,9 @@ export async function createAcpProviderConnection(
   if (probe.agentCapabilities.loadSession) {
     supportedCapabilities.push("session.persistence");
   }
+  if (probe.agentCapabilities.mcpCapabilities?.http === true) {
+    supportedCapabilities.push("mcp.http");
+  }
   await probe.close();
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
   const listeners = new Set<(event: ProviderEvent) => void>();
@@ -503,10 +506,26 @@ class AcpRuntime {
     });
   }
 
+  private assertHttpSupport(
+    config: ProviderSessionConfig,
+    capabilities: readonly ProviderCapability[],
+  ): void {
+    if (
+      capabilities.includes("mcp.http") &&
+      this.agentCapabilities.mcpCapabilities?.http !== true &&
+      Object.values(config.mcpServers).some((server) => server.type === "http")
+    ) {
+      throw new Error(
+        "ACP session no longer advertises HTTP MCP support; reopen after updating the provider",
+      );
+    }
+  }
+
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
   ): Promise<readonly ProviderCapability[]> {
+    this.assertHttpSupport(input.config, connectionCapabilities);
     const mcpServers = toAcpMcpServers(input.config);
     let nativeSessionId = readNativeSessionId(input.persistence);
     const metadata: Record<string, unknown> = {

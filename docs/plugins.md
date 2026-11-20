@@ -86,6 +86,20 @@ plugin before compiling and starting from disk. A failed reload stays failed; Pa
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
 
+## Per-opening support
+
+Per-opening optional integration support and its immutable hook contract are documented in
+[plugin hooks](../public-docs/plugins/hooks.md#resolve-optional-features-for-this-opening).
+Resolve it through the selected provider client's existing connection/runtime owner; never start a
+scratch conversation or use provider/model names as capability evidence.
+
+Keep optional contributions at the open boundary, not in saved create configuration. The
+[migration guide](../public-docs/plugins/migration.md#adaptive-session-contributions-source-contract)
+owns the setup feature gate, source-only release status, legacy coexistence, explicit adoption/reset,
+and downgrade warning. Receipt storage and required-base projection belong to
+[the data model](data-model.md#saved-intent-and-adaptive-projection). Mixed-version option display
+and consumer opt-in belong to [protocol compatibility](protocol-compatibility.md).
+
 ## Client translations
 
 Plugin runtime translations follow the connected app, so never send a daemon locale through RPCs or add plugin resources to the app catalog. The installation owns the translation engine; native portal bridges must carry it alongside RPC and client-state contexts. Keep host label resolution at presentation time so language changes preserve the installation lifetime.
@@ -462,8 +476,10 @@ Server entries register async handlers with `server.addHook(name, handler)`, ret
 function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
 registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
 owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
-configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
-every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+configuration; `agent.open.before` derives optional launch contributions on every open. Its
+[launch lifetime](../public-docs/plugins/hooks.md#launch-resource-lifetime) owns provisional
+resources, install/dispose callbacks, exact-owner prior snapshots, and fixed-binding retention.
+Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
 
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.

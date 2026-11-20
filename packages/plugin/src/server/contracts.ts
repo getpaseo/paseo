@@ -5,6 +5,7 @@ import type { PluginCleanup } from "../contracts.js";
 import type { ProviderRegistration } from "./provider.js";
 import type { UsageSourceRegistration } from "./usage.js";
 import type { PluginLifecycleRegistration } from "./lifecycle.js";
+import type { LegacyAgentConfigRecipe } from "@getpaseo/protocol/plugin-agent-config";
 
 export interface PluginHandlerContext {
   paseo: PaseoApi;
@@ -40,6 +41,10 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  /** Host feature contract; absent on hosts predating adaptive session contributions. */
+  readonly features?: { readonly adaptiveAgentFeatures: true };
+  /** Register one static recipe during synchronous setup; selectors are not removal authority. */
+  registerLegacyAgentConfig(recipe: LegacyAgentConfigRecipe): void;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;

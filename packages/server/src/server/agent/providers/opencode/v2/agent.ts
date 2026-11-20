@@ -17,6 +17,8 @@ import type { Logger } from "pino";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentOpenSupport,
+  ResolveAgentOpenSupportInput,
   AgentCreateSessionOptions,
   AgentResumeSessionOptions,
   AgentDraftControls,
@@ -50,7 +52,8 @@ interface V2AgentOptions {
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   bridge?: OpenCodeBridge;
-  runtime?: Pick<V2Runtime, "acquire" | "shutdown">;
+  runtime?: Pick<V2Runtime, "acquire" | "shutdown"> &
+    Partial<Pick<V2Runtime, "describeRestrictions">>;
   selection?: OpenCodeServiceSelection;
 }
 
@@ -63,7 +66,7 @@ interface RetainedConnection {
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode";
   readonly capabilities: AgentCapabilityFlags;
-  private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
+  private readonly runtime: NonNullable<V2AgentOptions["runtime"]>;
   private readonly connections = new Map<string, RetainedConnection>();
   constructor(private readonly options: V2AgentOptions) {
     const bridge = options.bridge;
@@ -76,6 +79,23 @@ export class OpenCodeV2AgentClient implements AgentClient {
   }
   async isAvailable() {
     return true;
+  }
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    const handle = input.persistence;
+    const retained = handle && this.connections.get(handle.nativeHandle ?? handle.sessionId);
+    return {
+      instructions: "supported",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "supported",
+      restrictions: retained
+        ? { mcpConfiguration: "fixed", processEnvironment: "fixed" }
+        : ((await this.runtime.describeRestrictions?.(input.signal)) ?? {
+            mcpConfiguration: "unknown",
+            processEnvironment: "unknown",
+          }),
+      providerOptions: ["permission"],
+    };
   }
   async shutdown() {
     await this.runtime.shutdown();
@@ -167,6 +187,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
       const info = await connection.client.session.get({
         sessionID: handle.nativeHandle ?? handle.sessionId,
       });
+      if (options?.purpose !== "history")
+        await connection.client.session.update({
+          sessionID: info.id,
+          permissions: permissionRules(config),
+        });
       await applyResumeOverrides(connection.client, info, overrides);
       return await this.attach(
         connection,
@@ -206,6 +231,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       cwd: config.cwd,
       mcpServers: structuredClone(config.mcpServers ?? {}),
     };
+    if (launch?.retainPluginResources)
+      connection.retainPluginResources?.(launch.retainPluginResources);
     const bridge = this.options.bridge;
     const unbind = bridge?.bindSession({
       sessionId: info.id,

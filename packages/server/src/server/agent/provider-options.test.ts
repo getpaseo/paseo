@@ -8,7 +8,11 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { validateProviderOptions } from "./provider-options.js";
 import { applyClaudeToolPolicy, ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
-import { applyCodexToolPolicy, CodexProviderOptionsSchema } from "./providers/codex/options.js";
+import {
+  applyCodexOptionalToolPolicy,
+  applyCodexToolPolicy,
+  CodexProviderOptionsSchema,
+} from "./providers/codex/options.js";
 import {
   buildOpenCodePermissionRules,
   OpenCodeProviderOptionsSchema,
@@ -136,6 +140,51 @@ describe("provider-owned option schemas", () => {
 });
 
 describe("exact MCP preapproval mappings", () => {
+  test("Claude resolves optional exact support while preserving authored denied tools", async () => {
+    const logger = createTestLogger();
+    const client = buildProviderRegistry(logger).claude.createClient(logger);
+    expect(
+      (
+        await client.resolveOpenSupport!({
+          config: { provider: "claude", cwd: "/project" },
+          purpose: "interactive",
+        })
+      ).exactMcpPreapproval,
+    ).toBe("supported");
+    expect(applyClaudeToolPolicy({ disallowedTools: ["mcp__hub__reply"] }, hubPolicy)).toEqual({
+      allowedTools: ["mcp__hub__finish_execution"],
+      disallowedTools: ["mcp__hub__reply"],
+    });
+  });
+  test("Codex optional approvals preserve unrelated exposed tools and authored deny settings", () => {
+    expect(
+      applyCodexOptionalToolPolicy(
+        {
+          mcp_servers: {
+            hub: {
+              url: "http://127.0.0.1/hub",
+              enabled_tools: ["finish_execution", "inspect"],
+              disabled_tools: ["delete"],
+              tools: { inspect: { approval_mode: "prompt" } },
+            },
+          },
+        },
+        hubPolicy,
+      ),
+    ).toEqual({
+      mcp_servers: {
+        hub: {
+          url: "http://127.0.0.1/hub",
+          enabled_tools: ["finish_execution", "inspect"],
+          disabled_tools: ["delete"],
+          tools: {
+            inspect: { approval_mode: "prompt" },
+            finish_execution: { approval_mode: "approve" },
+          },
+        },
+      },
+    });
+  });
   test("unsupported launch omits plugin policy but stored configuration preserves its intent", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "optional-policy-launch-"));
     const base = createTestAgentClients({ supportsMcpServers: true }).codex;

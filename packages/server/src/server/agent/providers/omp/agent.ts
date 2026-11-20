@@ -10,6 +10,8 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentOpenSupport,
+  type ResolveAgentOpenSupportInput,
   type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
@@ -2285,6 +2287,17 @@ export class OmpAgentSession implements AgentSession {
 export class OmpAgentClient implements AgentClient {
   readonly provider: AgentProvider = OMP_PROVIDER;
   readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
+
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    return {
+      instructions: "supported",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "unknown",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: [],
+    };
+  }
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;

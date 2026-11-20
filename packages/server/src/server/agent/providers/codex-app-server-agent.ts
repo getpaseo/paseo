@@ -8,6 +8,8 @@ import {
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentOpenSupport,
+  type ResolveAgentOpenSupportInput,
   type AgentCreateSessionOptions,
   type AgentOptionControl,
   type AgentLaunchContext,
@@ -128,6 +130,7 @@ import {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
   applyCodexToolPolicy,
+  applyCodexOptionalToolPolicy,
   CodexProviderOptionsSchema,
   type CodexProviderOptions,
 } from "./codex/options.js";
@@ -5898,7 +5901,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       innerConfig.mcp_servers = mcpServers;
     }
-    const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    const configured = applyCodexOptionalToolPolicy(
+      applyCodexToolPolicy(innerConfig, this.config.toolPolicy),
+      this.config.pluginToolPolicy,
+    );
     return Object.keys(configured).length > 0 ? configured : null;
   }
 
@@ -7813,6 +7819,17 @@ export class CodexAppServerAgentSession implements AgentSession {
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    return {
+      instructions: "unknown",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "unknown",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: ["sandbox_workspace_write"],
+    };
+  }
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
 

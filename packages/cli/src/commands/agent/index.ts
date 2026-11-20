@@ -15,6 +15,7 @@ import { addImportOptions, runImportCommand } from "./import.js";
 import { runUpdateCommand } from "./update.js";
 import { runDetachCommand } from "./detach.js";
 import { addOpenOptions, runOpenCommand } from "./open.js";
+import { addPluginConfigCommands } from "./plugin-config.js";
 import { withOutput } from "../../output/index.js";
 import {
   addDaemonHostOption,
@@ -25,6 +26,7 @@ import {
 
 export function createAgentCommand(): Command {
   const agent = new Command("agent").description("Manage agents (advanced operations)");
+  addPluginConfigCommands(agent);
 
   // Primary agent commands (same as top-level)
   addJsonAndDaemonHostOptions(addLsOptions(agent.command("ls"))).action(withOutput(runLsCommand));

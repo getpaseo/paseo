@@ -72,7 +72,6 @@ import { matchesAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
-  buildConfigOverrides,
   isStoredAgentProviderAvailable,
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
@@ -146,7 +145,13 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
+import {
+  buildStoredAgentPayload,
+  mapAgentSnapshotEnvelopes,
+  readAgentCopySafeOptions,
+  toAgentPayload,
+} from "./agent/agent-projections.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
   assertPluginTimelineDataSize,
   assertPluginTimelineKind,
@@ -762,7 +767,8 @@ export class Session {
         return this.onBinaryMessageToSource(source, frame);
       } else this.emitBinary(frame);
     },
-    (source, message) => this.workspaceSetupMessageForClient(message, source),
+    (source, message) =>
+      this.copySafeSnapshots(this.workspaceSetupMessageForClient(message, source), source),
     (request, message) =>
       this.sessionLogger.warn(
         {
@@ -1343,8 +1349,8 @@ export class Session {
               agentStorage: this.agentStorage,
               logger: this.sessionLogger,
             }),
-          reloadAgentSession: (agentId, overrides) =>
-            this.agentManager.reloadAgentSession(agentId, overrides),
+          reloadAgentSession: (agentId, overrides, reloadOptions) =>
+            this.agentManager.reloadAgentSession(agentId, overrides, reloadOptions),
           sendSpokenInput: async (agentId, text) => {
             await this.handleSendAgentMessage(
               agentId,
@@ -3181,8 +3187,118 @@ export class Session {
         return this.handleAgentTimelineSubscription(msg, source);
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.template.get.request":
+        return this.handleAgentTemplateRequest(msg);
+      case "agent.plugin_config.preview.request":
+      case "agent.plugin_config.apply.request":
+      case "agent.plugin_config.reset.request":
+        return this.handleAgentPluginConfigRequest(msg);
       default:
         return undefined;
+    }
+  }
+
+  private async handleAgentTemplateRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.template.get.request" }>,
+  ): Promise<void> {
+    try {
+      const config = await this.agentManager.getAgentTemplateConfig(msg.agentId);
+      const agent = this.agentManager.getAgent(msg.agentId);
+      this.emit({
+        type: "agent.template.get.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          error: null,
+          template: {
+            provider: config.provider,
+            cwd: config.cwd,
+            modeId: agent?.currentModeId ?? config.modeId,
+            model: config.model,
+            thinkingOptionId: config.thinkingOptionId,
+            providerOptions: config.providerOptions,
+          },
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.template.get.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          template: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
+  private async handleAgentPluginConfigRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "agent.plugin_config.preview.request"
+          | "agent.plugin_config.apply.request"
+          | "agent.plugin_config.reset.request";
+      }
+    >,
+  ): Promise<void> {
+    try {
+      if (msg.type === "agent.plugin_config.preview.request") {
+        const preview = await this.agentManager.previewLegacyPluginConfig(
+          msg.agentId,
+          msg.pluginId,
+          msg.operation,
+        );
+        this.emit({
+          type: "agent.plugin_config.preview.response",
+          payload: { requestId: msg.requestId, agentId: msg.agentId, error: null, preview },
+        });
+      } else if (msg.type === "agent.plugin_config.apply.request") {
+        const result = await this.agentManager.applyLegacyPluginConfig(
+          msg.agentId,
+          msg.pluginId,
+          msg.expectedFingerprint,
+          msg.selections,
+        );
+        this.emit({
+          type: "agent.plugin_config.apply.response",
+          payload: { requestId: msg.requestId, agentId: msg.agentId, error: null, result },
+        });
+      } else {
+        const result = await this.agentManager.resetLegacyPluginConfig(
+          msg.agentId,
+          msg.pluginId,
+          msg.expectedFingerprint,
+          msg.receiptIds,
+        );
+        this.emit({
+          type: "agent.plugin_config.reset.response",
+          payload: { requestId: msg.requestId, agentId: msg.agentId, error: null, result },
+        });
+      }
+    } catch (error) {
+      const payload = {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        error: getErrorMessage(error),
+      };
+      if (msg.type === "agent.plugin_config.preview.request")
+        this.emit({
+          type: "agent.plugin_config.preview.response",
+          payload: { ...payload, preview: null },
+        });
+      else if (msg.type === "agent.plugin_config.apply.request")
+        this.emit({
+          type: "agent.plugin_config.apply.response",
+          payload: { ...payload, result: null },
+        });
+      else
+        this.emit({
+          type: "agent.plugin_config.reset.response",
+          payload: { ...payload, result: null },
+        });
     }
   }
 
@@ -5087,11 +5203,11 @@ export class Session {
     );
     try {
       const matched = await this.unarchiveAgentByHandle(handle);
-      const effectiveOverrides = matched
-        ? { ...buildConfigOverrides(matched.record), ...overrides }
-        : overrides;
       let snapshot: ManagedAgent;
       try {
+        const effectiveOverrides = matched
+          ? { ...(await this.agentManager.getAgentTemplateConfig(matched.record.id)), ...overrides }
+          : overrides;
         snapshot = await this.agentManager.resumeAgentFromPersistence(
           handle,
           effectiveOverrides,
@@ -9322,6 +9438,29 @@ export class Session {
     return true;
   }
 
+  private copySafeSnapshots(
+    message: SessionOutboundMessage,
+    source?: object,
+  ): SessionOutboundMessage {
+    const optedIn = source
+      ? this.supportsForSource(CLIENT_CAPS.agentTemplateProjection, source)
+      : this.supports(CLIENT_CAPS.agentTemplateProjection);
+    if (optedIn) return message;
+    // COMPAT(agentTemplateProjection): added after v0.16.2, remove after 2027-11-19 once minimum app uses fresh templates.
+    return mapAgentSnapshotEnvelopes(message, (snapshot) => {
+      const captured = readAgentCopySafeOptions(snapshot);
+      const options = captured
+        ? captured.options
+        : this.agentManager.copySafeAgentOptions(snapshot.id, snapshot.options);
+      if (options === snapshot.options) return snapshot;
+      return {
+        ...snapshot,
+        options,
+        features: featuresFromControls({ controls: snapshot.controls, options }),
+      };
+    });
+  }
+
   private emit(msg: SessionOutboundMessage): void {
     if (!this.authorization.allowsOutbound(msg)) return;
     if (msg.type === "workspace_setup_progress") {
@@ -9352,7 +9491,7 @@ export class Session {
       }
       msg = this.workspaceSetupMessageForClient(msg);
     }
-    this.onMessage(msg);
+    this.onMessage(this.copySafeSnapshots(msg));
   }
 
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.

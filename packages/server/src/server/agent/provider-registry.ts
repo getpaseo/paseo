@@ -134,6 +134,7 @@ type ProviderClientFactory = (
 ) => AgentClient;
 
 interface ResolvedProvider {
+  adapter: NonNullable<AgentClient["adapter"]>;
   definition: AgentProviderDefinition;
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
@@ -496,10 +497,12 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   configuredOptions: ProviderOptions | undefined,
+  adapter: NonNullable<AgentClient["adapter"]>,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
   const listControls = inner.listControls?.bind(inner);
+  const resolveOpenSupport = inner.resolveOpenSupport?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
@@ -512,6 +515,18 @@ function wrapClientProvider(
 
   return {
     provider,
+    adapter,
+    resolveOpenSupport: resolveOpenSupport
+      ? (input) =>
+          resolveOpenSupport({
+            ...input,
+            config: {
+              ...input.config,
+              provider: inner.provider,
+              providerOptions: withDefaults(input.config.providerOptions),
+            },
+          })
+      : undefined,
     get capabilities() {
       return inner.capabilities;
     },
@@ -753,10 +768,12 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.adapter,
   );
 }
 
 interface RegisteredProvider {
+  adapter: NonNullable<AgentClient["adapter"]>;
   definition: AgentProviderDefinition;
   createClient: ProviderClientFactory;
   contract: ProviderContract;
@@ -768,6 +785,7 @@ function resolveRegisteredProvider(input: RegisteredProvider): ResolvedProvider 
   const { definition, override, contract } = input;
   const runtimeSettings = mergeRuntimeSettings(input.runtimeSettings, toRuntimeSettings(override));
   return {
+    adapter: input.adapter,
     definition: applyOverrideToDefinition(definition, override),
     runtimeSettings,
     profileModels: override?.models ?? [],
@@ -802,6 +820,7 @@ function buildResolvedBuiltinProviders(
     resolvedProviders.set(
       definition.id,
       resolveRegisteredProvider({
+        adapter: { kind: "builtin", id: definition.id },
         definition,
         override,
         runtimeSettings: runtimeSettings?.[definition.id],
@@ -843,6 +862,7 @@ function addDerivedProviders(
       const command = override.command;
 
       resolvedProviders.set(providerId, {
+        adapter: { kind: "acp" },
         definition: createDerivedDefinition(
           providerId,
           {
@@ -908,6 +928,7 @@ function addDerivedProviders(
     const providerOptions = configuredProviderOptions(override) ?? baseProvider.providerOptions;
 
     resolvedProviders.set(providerId, {
+      adapter: baseProvider.adapter,
       definition: createDerivedDefinition(providerId, baseDefinition, override),
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
@@ -962,6 +983,7 @@ export function buildProviderRegistry(
     resolvedProviders.set(
       provider,
       resolveRegisteredProvider({
+        adapter: { kind: "plugin", id: provider },
         definition,
         override,
         runtimeSettings: runtimeSettings?.[provider],

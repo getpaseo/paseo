@@ -1,8 +1,37 @@
 import { describe, expect, it } from "vitest";
+import {
+  AgentCreatedStatusPayloadSchema,
+  AgentCreateResponseSchema,
+  AgentCreationUpdateSchema,
+  AgentListMessageSchema,
+  AgentResumedStatusPayloadSchema,
+  AgentStatusMessageSchema,
+  AgentUpdateMessageSchema,
+  CancelAgentResponseMessageSchema,
+  ClearAgentAttentionResponseMessageSchema,
+  CreationSubscribeResponseSchema,
+  FetchAgentHistoryResponseMessageSchema,
+  FetchAgentResponseMessageSchema,
+  FetchAgentsResponseMessageSchema,
+  FetchAgentTimelineResponseMessageSchema,
+  HubExecutionAgentCreateResponseSchema,
+  HubExecutionAgentUpdateSchema,
+  PluginRpcEventSchema,
+  PluginRpcInvokeResponseSchema,
+  SetAgentTimelineSubscriptionResponseMessageSchema,
+  StatusMessageSchema,
+  WaitForFinishResponseMessageSchema,
+  WorkspaceCreateResponseSchema,
+  WorkspaceCreationUpdateSchema,
+} from "@getpaseo/protocol/messages";
+import type { PluginConfigAdoptions } from "@getpaseo/protocol/plugin-agent-config";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
+  attachAgentCopySafeOptions,
   buildStoredAgentPayload,
+  mapAgentSnapshotEnvelopes,
+  readAgentCopySafeOptions,
   toAgentPayload,
   toAgentListItemPayload,
   toRecentProviderSessionDescriptorPayload,
@@ -117,6 +146,502 @@ it("projects the daemon-owned active turn identity", () => {
   });
 });
 
+describe("mapAgentSnapshotEnvelopes", () => {
+  const agent = toAgentPayload(createManagedAgent({ effectiveOptions: { view: "original" } }));
+  const secondAgent = { ...agent, id: "agent-456" };
+  const project = {
+    projectKey: "project-1",
+    projectName: "Project",
+    checkout: {
+      cwd: "/tmp/project",
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    },
+  };
+  const creation = {
+    kind: "agent",
+    idempotencyKey: "creation-1",
+    revision: 1,
+    phase: "agent_ready",
+    workspaceId: null,
+    agentId: "agent-123",
+    agent,
+    error: null,
+  };
+
+  it.each([
+    {
+      name: "status agent_created payload.agent",
+      schema: StatusMessageSchema.extend({ payload: AgentCreatedStatusPayloadSchema }),
+      input: {
+        type: "status",
+        payload: { status: "agent_created", requestId: "request-1", agentId: "agent-123", agent },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "status agent_resumed payload.agent",
+      schema: StatusMessageSchema.extend({ payload: AgentResumedStatusPayloadSchema }),
+      input: {
+        type: "status",
+        payload: {
+          status: "agent_resumed",
+          requestId: "request-1",
+          agentId: "agent-123",
+          agent,
+          timelineSize: 0,
+        },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "agent_update upsert payload.agent",
+      schema: AgentUpdateMessageSchema,
+      input: { type: "agent_update", payload: { kind: "upsert", agent } },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "agent_status payload.info",
+      schema: AgentStatusMessageSchema,
+      input: {
+        type: "agent_status",
+        payload: { agentId: "agent-123", status: "idle", info: agent },
+      },
+      expected: { payload: { info: { options: { view: "projected" } } } },
+    },
+    {
+      name: "agent_list payload.agents array",
+      schema: AgentListMessageSchema,
+      input: { type: "agent_list", payload: { agents: [agent, secondAgent] } },
+      expected: {
+        payload: {
+          agents: [
+            { id: "agent-123", options: { view: "projected" } },
+            { id: "agent-456", options: { view: "projected" } },
+          ],
+        },
+      },
+    },
+    {
+      name: "fetch_agents_response payload.entries[].agent",
+      schema: FetchAgentsResponseMessageSchema,
+      input: {
+        type: "fetch_agents_response",
+        payload: {
+          requestId: "request-1",
+          entries: [
+            { agent, project },
+            { agent: secondAgent, project },
+          ],
+          pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        },
+      },
+      expected: {
+        payload: {
+          entries: [
+            { agent: { id: "agent-123", options: { view: "projected" } } },
+            { agent: { id: "agent-456", options: { view: "projected" } } },
+          ],
+        },
+      },
+    },
+    {
+      name: "fetch_agent_history_response payload.entries[].agent",
+      schema: FetchAgentHistoryResponseMessageSchema,
+      input: {
+        type: "fetch_agent_history_response",
+        payload: {
+          requestId: "request-1",
+          entries: [
+            { agent, project },
+            { agent: secondAgent, project },
+          ],
+          pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        },
+      },
+      expected: {
+        payload: {
+          entries: [
+            { agent: { id: "agent-123", options: { view: "projected" } } },
+            { agent: { id: "agent-456", options: { view: "projected" } } },
+          ],
+        },
+      },
+    },
+    {
+      name: "fetch_agent_response payload.agent",
+      schema: FetchAgentResponseMessageSchema,
+      input: {
+        type: "fetch_agent_response",
+        payload: { requestId: "request-1", agent, project: null, error: null },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "fetch_agent_timeline_response payload.agent",
+      schema: FetchAgentTimelineResponseMessageSchema,
+      input: {
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: "request-1",
+          agentId: "agent-123",
+          agent,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+          startCursor: null,
+          endCursor: null,
+          hasOlder: false,
+          hasNewer: false,
+          entries: [],
+          error: null,
+        },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "agent.timeline.set_subscription.response payload.agents record",
+      schema: SetAgentTimelineSubscriptionResponseMessageSchema,
+      input: {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          requestId: "request-1",
+          agentIds: ["agent-123", "agent-456"],
+          agents: { "agent-123": agent, "agent-456": secondAgent },
+        },
+      },
+      expected: {
+        payload: {
+          agents: {
+            "agent-123": { id: "agent-123", options: { view: "projected" } },
+            "agent-456": { id: "agent-456", options: { view: "projected" } },
+          },
+        },
+      },
+    },
+    {
+      name: "cancel_agent_response payload.agent",
+      schema: CancelAgentResponseMessageSchema,
+      input: {
+        type: "cancel_agent_response",
+        payload: { requestId: "request-1", agentId: "agent-123", agent, error: null },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "clear_agent_attention_response payload.agents array",
+      schema: ClearAgentAttentionResponseMessageSchema,
+      input: {
+        type: "clear_agent_attention_response",
+        payload: {
+          requestId: "request-1",
+          agentId: ["agent-123", "agent-456"],
+          agents: [agent, secondAgent],
+        },
+      },
+      expected: {
+        payload: {
+          agents: [
+            { id: "agent-123", options: { view: "projected" } },
+            { id: "agent-456", options: { view: "projected" } },
+          ],
+        },
+      },
+    },
+    {
+      name: "workspace.create.update payload.agent",
+      schema: WorkspaceCreationUpdateSchema,
+      input: { type: "workspace.create.update", payload: { ...creation, kind: "workspace" } },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "agent.create.update payload.agent",
+      schema: AgentCreationUpdateSchema,
+      input: { type: "agent.create.update", payload: creation },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "creation.subscribe.response payload.snapshot.agent",
+      schema: CreationSubscribeResponseSchema,
+      input: {
+        type: "creation.subscribe.response",
+        payload: { requestId: "request-1", snapshot: creation, error: null },
+      },
+      expected: { payload: { snapshot: { agent: { options: { view: "projected" } } } } },
+    },
+    {
+      name: "agent.create.response payload.agent and payload.creation.agent",
+      schema: AgentCreateResponseSchema,
+      input: {
+        type: "agent.create.response",
+        payload: { requestId: "request-1", agent, creation, error: null },
+      },
+      expected: {
+        payload: {
+          agent: { options: { view: "projected" } },
+          creation: { agent: { options: { view: "projected" } } },
+        },
+      },
+    },
+    {
+      name: "workspace.create.response payload.agent and payload.creation.agent",
+      schema: WorkspaceCreateResponseSchema,
+      input: {
+        type: "workspace.create.response",
+        payload: {
+          requestId: "request-1",
+          agent,
+          creation: { ...creation, kind: "workspace" },
+          workspace: null,
+          setupTerminalId: null,
+          error: null,
+        },
+      },
+      expected: {
+        payload: {
+          agent: { options: { view: "projected" } },
+          creation: { agent: { options: { view: "projected" } } },
+        },
+      },
+    },
+    {
+      name: "wait_for_finish_response payload.final",
+      schema: WaitForFinishResponseMessageSchema,
+      input: {
+        type: "wait_for_finish_response",
+        payload: {
+          requestId: "request-1",
+          status: "idle",
+          final: agent,
+          error: null,
+          lastMessage: null,
+        },
+      },
+      expected: { payload: { final: { options: { view: "projected" } } } },
+    },
+    {
+      name: "hub.execution.agent.create.response payload.agent",
+      schema: HubExecutionAgentCreateResponseSchema,
+      input: {
+        type: "hub.execution.agent.create.response",
+        payload: {
+          requestId: "request-1",
+          executionId: "execution-1",
+          agentId: "agent-123",
+          agent,
+          success: true,
+          error: null,
+        },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+    {
+      name: "hub.execution.agent.update payload.agent",
+      schema: HubExecutionAgentUpdateSchema,
+      input: {
+        type: "hub.execution.agent.update",
+        payload: { executionId: "execution-1", agentId: "agent-123", agent },
+      },
+      expected: { payload: { agent: { options: { view: "projected" } } } },
+    },
+  ])("projects schema-owned $name", ({ schema, input, expected }) => {
+    const message = structuredClone(input);
+    schema.parse(message);
+
+    const projected = mapAgentSnapshotEnvelopes(message, (snapshot) => ({
+      ...snapshot,
+      options: { view: "projected" },
+    }));
+
+    expect(projected).toMatchObject(expected);
+    expect(message).toEqual(input);
+  });
+
+  it.each([
+    {
+      name: "nullable agent",
+      schema: FetchAgentResponseMessageSchema,
+      input: {
+        type: "fetch_agent_response",
+        payload: { requestId: "request-1", agent: null, error: "Not found" },
+      },
+    },
+    {
+      name: "empty agent array",
+      schema: AgentListMessageSchema,
+      input: { type: "agent_list", payload: { agents: [] } },
+    },
+    {
+      name: "empty directory entries",
+      schema: FetchAgentsResponseMessageSchema,
+      input: {
+        type: "fetch_agents_response",
+        payload: {
+          requestId: "request-1",
+          entries: [],
+          pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        },
+      },
+    },
+    {
+      name: "absent agent record",
+      schema: SetAgentTimelineSubscriptionResponseMessageSchema,
+      input: {
+        type: "agent.timeline.set_subscription.response",
+        payload: { requestId: "request-1", agentIds: [] },
+      },
+    },
+    {
+      name: "empty agent record",
+      schema: SetAgentTimelineSubscriptionResponseMessageSchema,
+      input: {
+        type: "agent.timeline.set_subscription.response",
+        payload: { requestId: "request-1", agentIds: [], agents: {} },
+      },
+    },
+    {
+      name: "nullable creation snapshot",
+      schema: CreationSubscribeResponseSchema,
+      input: {
+        type: "creation.subscribe.response",
+        payload: { requestId: "request-1", snapshot: null, error: "Not found" },
+      },
+    },
+    {
+      name: "optional creation agent",
+      schema: AgentCreationUpdateSchema,
+      input: {
+        type: "agent.create.update",
+        payload: {
+          kind: "agent",
+          idempotencyKey: "creation-1",
+          revision: 0,
+          phase: "accepted",
+          workspaceId: null,
+          agentId: null,
+          error: null,
+        },
+      },
+    },
+    {
+      name: "nullable final agent",
+      schema: WaitForFinishResponseMessageSchema,
+      input: {
+        type: "wait_for_finish_response",
+        payload: {
+          requestId: "request-1",
+          status: "timeout",
+          final: null,
+          error: null,
+          lastMessage: null,
+        },
+      },
+    },
+    {
+      name: "removed agent update",
+      schema: AgentUpdateMessageSchema,
+      input: { type: "agent_update", payload: { kind: "remove", agentId: "agent-123" } },
+    },
+  ])("preserves schema-owned $name without projecting a snapshot", ({ schema, input }) => {
+    const message = structuredClone(input);
+    schema.parse(message);
+
+    const projected = mapAgentSnapshotEnvelopes(message, () => {
+      throw new Error("This envelope has no agent snapshot");
+    });
+
+    expect(projected).toEqual(input);
+    expect(message).toEqual(input);
+  });
+
+  it.each([
+    {
+      name: "plugin RPC output",
+      schema: PluginRpcInvokeResponseSchema,
+      input: {
+        type: "plugin.rpc.invoke.response",
+        payload: {
+          requestId: "request-1",
+          output: { agent, info: agent, final: agent, agents: [agent] },
+        },
+      },
+    },
+    {
+      name: "plugin subscription event",
+      schema: PluginRpcEventSchema,
+      input: {
+        type: "plugin.rpc.event",
+        payload: {
+          subscriptionId: "subscription-1",
+          event: { agent, snapshot: { agent }, creation: { agent }, entries: [{ agent }] },
+        },
+      },
+    },
+  ])("leaves arbitrary agent-shaped $name untouched", ({ schema, input }) => {
+    const message = structuredClone(input);
+    schema.parse(message);
+
+    const projected = mapAgentSnapshotEnvelopes(message, () => {
+      throw new Error("Plugin data is not a schema-owned agent snapshot");
+    });
+
+    expect(projected).toBe(message);
+    expect(message).toEqual(input);
+  });
+
+  it("detaches projected snapshots without changing shared source payloads or opaque agent data", () => {
+    const opaqueData = { agent, agents: [agent], snapshot: { agent }, creation: { agent } };
+    const sharedAgent = {
+      ...agent,
+      metadata: { plugin: opaqueData },
+      options: { plugin: opaqueData },
+    };
+    const message = {
+      type: "agent.create.response",
+      payload: {
+        requestId: "request-1",
+        agent: sharedAgent,
+        creation: { ...creation, agent: sharedAgent },
+        error: null,
+      },
+    };
+    AgentCreateResponseSchema.parse(message);
+    const otherClientMessage = {
+      type: "fetch_agent_response",
+      payload: { requestId: "request-other-client", agent: sharedAgent, error: null },
+    };
+    FetchAgentResponseMessageSchema.parse(otherClientMessage);
+
+    const projected = mapAgentSnapshotEnvelopes(message, (snapshot) => ({
+      ...snapshot,
+      title: "Projected title",
+    }));
+
+    expect(projected.payload.agent.title).toBe("Projected title");
+    expect(projected.payload.creation.agent.title).toBe("Projected title");
+    expect(projected.payload.agent).not.toBe(sharedAgent);
+    expect(projected.payload.creation).not.toBe(message.payload.creation);
+    expect(message.payload.agent).toBe(sharedAgent);
+    expect(message.payload.creation.agent).toBe(sharedAgent);
+    expect(otherClientMessage.payload.agent.title).toBeNull();
+    expect(sharedAgent.title).toBeNull();
+    expect(projected.payload.agent.metadata?.plugin).toBe(opaqueData);
+    expect(projected.payload.agent.options?.plugin).toBe(opaqueData);
+    expect(opaqueData.agent.options).toEqual({ view: "original" });
+    expect(opaqueData.agents[0].options).toEqual({ view: "original" });
+    expect(opaqueData.snapshot.agent.options).toEqual({ view: "original" });
+    expect(opaqueData.creation.agent.options).toEqual({ view: "original" });
+  });
+});
+
 function createPermission(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissionRequest {
   const base: AgentPermissionRequest = {
     id: "perm-1",
@@ -220,6 +745,60 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it("carries detached copy-safe options through closed snapshots and spreads without serializing them", () => {
+    const agent = createManagedAgent({
+      effectiveOptions: { test_feature: true, caller: { view: "runtime" } },
+      controls: [{ type: "toggle", key: "test_feature", label: "Test feature" }],
+    });
+    const safeOptions = { test_feature: false, caller: { view: "required" } };
+    attachAgentCopySafeOptions(agent, safeOptions);
+    safeOptions.caller.view = "changed after capture";
+    const closed: ManagedAgent = { ...agent, lifecycle: "closed", session: null };
+    const payload = toAgentPayload(closed);
+    const enriched = { ...payload, title: "Enriched title" };
+    const message = mapAgentSnapshotEnvelopes(
+      { type: "agent_update", payload: { kind: "upsert", agent: enriched } },
+      (snapshot) => ({ ...snapshot, title: "Projected title" }),
+    );
+
+    expect(readAgentCopySafeOptions(message.payload.agent)).toEqual({
+      options: { test_feature: false, caller: { view: "required" } },
+    });
+    const firstRead = readAgentCopySafeOptions(payload)!;
+    (firstRead.options!.caller as { view: string }).view = "changed by one reader";
+    expect(readAgentCopySafeOptions(payload)).toEqual({
+      options: { test_feature: false, caller: { view: "required" } },
+    });
+    expect(readAgentCopySafeOptions(agent)).toEqual({
+      options: { test_feature: false, caller: { view: "required" } },
+    });
+    expect(payload.options).toEqual({ test_feature: true, caller: { view: "runtime" } });
+    expect(payload.features).toEqual([
+      { type: "toggle", id: "test_feature", label: "Test feature", value: true },
+    ]);
+    const serialized = JSON.stringify(message);
+    expect(serialized).not.toContain("required");
+    expect(readAgentCopySafeOptions(JSON.parse(serialized).payload.agent)).toBeUndefined();
+    expect(JSON.parse(serialized).payload.agent).toMatchObject({
+      options: { test_feature: true, caller: { view: "runtime" } },
+      features: [{ type: "toggle", id: "test_feature", label: "Test feature", value: true }],
+    });
+  });
+
+  it("distinguishes captured absent options from a snapshot without copy-safe capture", () => {
+    const agent = createManagedAgent({ effectiveOptions: { test_feature: true } });
+    expect(readAgentCopySafeOptions(agent)).toBeUndefined();
+    expect(readAgentCopySafeOptions(toAgentPayload(agent))).toBeUndefined();
+
+    attachAgentCopySafeOptions(agent, undefined);
+    const closed: ManagedAgent = { ...agent, lifecycle: "closed", session: null };
+    const payload = toAgentPayload(closed);
+
+    expect(readAgentCopySafeOptions({ ...payload })).toStrictEqual({ options: undefined });
+    expect(payload.options).toEqual({ test_feature: true });
+    expect(readAgentCopySafeOptions(JSON.parse(JSON.stringify(payload)))).toBeUndefined();
+  });
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({
@@ -419,6 +998,204 @@ describe("toAgentPayload", () => {
       conversationId: "conversation-stored",
     });
   });
+
+  it.each([
+    { name: "live", project: (agent: ManagedAgent) => toAgentPayload(agent) },
+    {
+      name: "stored",
+      project: (agent: ManagedAgent) =>
+        buildStoredAgentPayload(toStoredAgentRecord(agent), ["codex"], ownOptionsOnly),
+    },
+  ])("scrubs generic launch configuration from $name persistence handles only", ({ project }) => {
+    const agent = createManagedAgent({
+      provider: "codex",
+      config: { provider: "codex" },
+      persistence: {
+        provider: "codex",
+        sessionId: "persist-generic",
+        nativeHandle: { opaqueProviderState: { systemPrompt: "provider-owned history" } },
+        metadata: {
+          conversationId: "keep-conversation",
+          pluginConfigAdoptions: { version: 1, receipts: [{ id: "private-receipt" }] },
+          launchId: "private-launch",
+          systemPrompt: "dummy-prompt-secret",
+          providerOptions: { token: "dummy-option-secret" },
+          env: { TOKEN: "dummy-env-secret" },
+          launchEnv: { TOKEN: "dummy-launch-env-secret" },
+          pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+          nestedProviderData: { systemPrompt: "opaque-provider-metadata" },
+        },
+      },
+    });
+
+    const payload = project(agent);
+
+    expect(payload.persistence).toEqual({
+      provider: "codex",
+      sessionId: "persist-generic",
+      nativeHandle: { opaqueProviderState: { systemPrompt: "provider-owned history" } },
+      metadata: {
+        conversationId: "keep-conversation",
+        nestedProviderData: { systemPrompt: "opaque-provider-metadata" },
+      },
+    });
+    expect(agent.persistence?.metadata).toEqual({
+      conversationId: "keep-conversation",
+      pluginConfigAdoptions: { version: 1, receipts: [{ id: "private-receipt" }] },
+      launchId: "private-launch",
+      systemPrompt: "dummy-prompt-secret",
+      providerOptions: { token: "dummy-option-secret" },
+      env: { TOKEN: "dummy-env-secret" },
+      launchEnv: { TOKEN: "dummy-launch-env-secret" },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+      nestedProviderData: { systemPrompt: "opaque-provider-metadata" },
+    });
+  });
+
+  it.each([
+    {
+      name: "absent baseline with provider defaults",
+      baseline: { id: "inherit", label: "Inherit", kind: "absent" as const },
+      providerDefaults: { fast_mode: false },
+      expectedOptions: { fast_mode: false, caller: { keep: "original" } },
+      expectedReceipt: {
+        id: "receipt-fast",
+        pluginId: "notes",
+        recipeDigest: "recipe-notes",
+        selectorId: "fast",
+        fragmentDigest: "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+        fragment: {
+          kind: "option",
+          key: "fast_mode",
+          baseline: { id: "inherit", label: "Inherit", kind: "absent" },
+        },
+      },
+    },
+    {
+      name: "explicit false baseline over provider defaults",
+      baseline: { id: "off", label: "Off", kind: "value" as const, value: false },
+      providerDefaults: { fast_mode: true },
+      expectedOptions: { fast_mode: false, caller: { keep: "original" } },
+      expectedReceipt: {
+        id: "receipt-fast",
+        pluginId: "notes",
+        recipeDigest: "recipe-notes",
+        selectorId: "fast",
+        fragmentDigest: "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+        fragment: {
+          kind: "option",
+          key: "fast_mode",
+          baseline: { id: "off", label: "Off", kind: "value", value: false },
+        },
+      },
+    },
+  ])(
+    "projects stored adoption options using $name without changing saved intent",
+    ({ baseline, providerDefaults, expectedOptions, expectedReceipt }) => {
+      const record = toStoredAgentRecord(
+        createManagedAgent({
+          lifecycle: "closed",
+          controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+          config: {
+            modeId: undefined,
+            model: undefined,
+            providerOptions: { fast_mode: true, caller: { keep: "original" } },
+            systemPrompt: "Caller instructions",
+          },
+          launchEnv: { CALLER: "saved-env" },
+        }),
+      );
+      const receipts: PluginConfigAdoptions = {
+        version: 1,
+        receipts: [
+          {
+            id: "receipt-fast",
+            pluginId: "notes",
+            recipeDigest: "recipe-notes",
+            selectorId: "fast",
+            fragmentDigest: "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+            fragment: { kind: "option", key: "fast_mode", baseline },
+          },
+        ],
+      };
+      record.pluginConfigAdoptions = receipts;
+
+      const payload = buildStoredAgentPayload(record, ["claude"], (_provider, own) => ({
+        ...providerDefaults,
+        ...own,
+      }));
+
+      expect(payload.options).toEqual(expectedOptions);
+      expect(payload.features).toEqual([
+        { type: "toggle", id: "fast_mode", label: "Fast", value: false },
+      ]);
+      expect(payload).not.toHaveProperty("pluginConfigAdoptions");
+      expect(record.pluginConfigAdoptions).toBe(receipts);
+      expect(receipts).toEqual({ version: 1, receipts: [expectedReceipt] });
+      expect(record.config).toEqual({
+        providerOptions: { fast_mode: true, caller: { keep: "original" } },
+        systemPrompt: "Caller instructions",
+      });
+      expect(record.launchEnv).toEqual({ CALLER: "saved-env" });
+      const projectedCaller = payload.options?.caller as { keep: string };
+      projectedCaller.keep = "changed in wire payload";
+      expect(record.config?.providerOptions).toEqual({
+        fast_mode: true,
+        caller: { keep: "original" },
+      });
+    },
+  );
+
+  it.each([
+    {
+      name: "saved option changes",
+      fragment: {
+        kind: "option" as const,
+        key: "fast_mode",
+        baseline: { id: "off", label: "Off", kind: "value" as const, value: false },
+      },
+      fragmentDigest: "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    },
+    {
+      name: "saved launch environment changes",
+      fragment: {
+        kind: "env" as const,
+        key: "CALLER",
+        baseline: { id: "inherit", label: "Inherit", kind: "absent" as const },
+      },
+      fragmentDigest: "a99c33bbe8bcb5463fcc1b1ec661e91f663c1b48278bc56a16e0566283559700",
+    },
+  ])(
+    "rejects stored snapshot projection when $name after adoption",
+    ({ fragment, fragmentDigest }) => {
+      const record = toStoredAgentRecord(
+        createManagedAgent({
+          lifecycle: "closed",
+          config: { providerOptions: { fast_mode: false } },
+          launchEnv: { CALLER: "changed-env" },
+        }),
+      );
+      record.pluginConfigAdoptions = {
+        version: 1,
+        receipts: [
+          {
+            id: "receipt-stale",
+            pluginId: "notes",
+            recipeDigest: "recipe-notes",
+            selectorId: "stale",
+            fragmentDigest,
+            fragment,
+          },
+        ],
+      };
+
+      expect(() => buildStoredAgentPayload(record, ["claude"], ownOptionsOnly)).toThrow(
+        "Adopted plugin configuration is stale; reset the affected selection before editing it",
+      );
+      expect(record.config?.providerOptions).toEqual({ fast_mode: false });
+      expect(record.launchEnv).toEqual({ CALLER: "changed-env" });
+    },
+  );
 
   it("projects a closed agent's stored controls and options", () => {
     const controls: AgentOptionControl[] = [

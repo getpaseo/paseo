@@ -110,6 +110,8 @@ import {
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentOpenSupport,
+  type ResolveAgentOpenSupportInput,
   type AgentCreateSessionOptions,
   type AgentDraftControls,
   type AgentOptionControl,
@@ -1614,6 +1616,17 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly discoverModels: typeof discoverClaudeModels;
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
+
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    return {
+      instructions: "supported",
+      mcpHttp: "supported",
+      exactMcpPreapproval: "supported",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: ["additionalDirectories"],
+    };
+  }
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
@@ -3879,7 +3892,10 @@ class ClaudeAgentSession implements AgentSession {
       ultracode: _ultracode,
       ...sdkProviderOptions
     } = this.config.providerOptions;
-    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
+    const providerOptions = applyClaudeToolPolicy(
+      applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy),
+      this.config.pluginToolPolicy,
+    );
     const settingsOptions = await this.buildSettingsOptions(providerOptions);
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);

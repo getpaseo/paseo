@@ -19,6 +19,60 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+test("retained connection leases keep launch resources until each lease confirms release", async () => {
+  const harness = new V2Harness();
+  const runtime = new V2Runtime({
+    logger: createTestLogger(),
+    startup: {
+      select: async () => ({ kind: "owned" }),
+      start: async () => ({ ...harness.connection, stop: async () => undefined }),
+    },
+  });
+  let users = 0;
+  const retain = () => {
+    users += 1;
+    return async () => {
+      users -= 1;
+    };
+  };
+  try {
+    const parent = await runtime.acquire({ dedicated: true });
+    parent.retainPluginResources!(retain);
+    const child = parent.retain({ dedicated: true });
+    expect(users).toBe(2);
+    await parent.release();
+    expect(users).toBe(1);
+    await child.release();
+    expect(users).toBe(0);
+  } finally {
+    await runtime.shutdown();
+  }
+});
+
+test("owned and discovered targets describe mutable restrictions without starting helpers", async () => {
+  let starts = 0;
+  const runtime = new V2Runtime({
+    logger: createTestLogger(),
+    selection: { kind: "discovered", server: { url: "http://127.0.0.1:1" } },
+    startup: {
+      select: async () => ({ kind: "owned" }),
+      start: async () => {
+        starts += 1;
+        throw new Error("helper must not start");
+      },
+    },
+  });
+  try {
+    expect(await runtime.describeRestrictions()).toEqual({
+      mcpConfiguration: "mutable",
+      processEnvironment: "mutable",
+    });
+    expect(starts).toBe(0);
+  } finally {
+    await runtime.shutdown();
+  }
+});
+
 test("MCP location reservations are shared by leases and roll back only before configuration", async () => {
   const harness = new V2Harness();
   const runtime = new V2Runtime({

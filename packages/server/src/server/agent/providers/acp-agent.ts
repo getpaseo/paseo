@@ -70,6 +70,8 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentOpenSupport,
+  type ResolveAgentOpenSupportInput,
   type AgentCreateConfigUnattendedInput,
   type AgentDraftControls,
   type AgentOptionControl,
@@ -1049,6 +1051,19 @@ export class ACPAgentClient implements AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   readonly resolveCreateConfig = resolveACPCreateConfig;
   readonly isCreateConfigUnattended = isACPCreateConfigUnattended;
+
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    const options = ACPProviderOptionsSchema.parse(input.config.providerOptions ?? {});
+    const mcpEnabled = options.supportsMcpServers ?? this.capabilities.supportsMcpServers;
+    return {
+      instructions: "unsupported",
+      mcpHttp: mcpEnabled ? "unknown" : "unsupported",
+      exactMcpPreapproval: "unsupported",
+      restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+      providerOptions: [],
+    };
+  }
 
   protected readonly logger: Logger;
   protected readonly runtimeSettings?: ProviderRuntimeSettings;

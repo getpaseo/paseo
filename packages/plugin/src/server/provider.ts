@@ -12,6 +12,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.can_stop_runtime",
   "session.archive",
   "session.configure",
+  "session.system_prompt",
   "session.list",
   "session.persistence",
   "session.revert.both",
@@ -21,6 +22,8 @@ export const PROVIDER_CAPABILITIES = [
   "session.unarchive",
   "permission",
   "permission.tool_policy",
+  "permission.optional_tool_policy",
+  "mcp.http",
   "timeline.plugin",
 ] as const;
 
@@ -113,6 +116,8 @@ export interface ProviderSessionConfig {
   systemPrompt?: string;
   mcpServers: Readonly<Record<string, ProviderMcpServerConfig>>;
   toolPolicy?: ProviderToolPolicy;
+  /** Additive convenience approvals; never a tool-exposure allowlist. */
+  pluginToolPolicy?: ProviderToolPolicy;
   model?: string;
   mode?: string;
   thinkingOption?: string;
@@ -691,6 +696,7 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
       const capabilities: ProviderCapability[] = [];
       if (input.persistence) capabilities.push("session.persistence");
       if (input.config.toolPolicy) capabilities.push("permission.tool_policy");
+      if (input.config.pluginToolPolicy) capabilities.push("permission.optional_tool_policy");
       return capabilities;
     }
     case "session.prompt":
@@ -787,6 +793,7 @@ const sessionConfigSchema = z
     systemPrompt: z.string().optional(),
     mcpServers: z.record(z.string(), mcpServerSchema),
     toolPolicy: toolPolicySchema.optional(),
+    pluginToolPolicy: toolPolicySchema.optional(),
     model: z.string().optional(),
     mode: z.string().optional(),
     thinkingOption: z.string().optional(),

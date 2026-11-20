@@ -3,6 +3,7 @@ import type {
   SessionInfo,
   SessionMessageInfo,
   SessionCreateInput,
+  SessionUpdateInput,
   SessionLogItem,
 } from "@opencode/client";
 import type { V2Api } from "../v2/api.js";
@@ -25,6 +26,7 @@ export class V2Harness {
   };
   readonly history: SessionMessageInfo[] = [];
   readonly creates: SessionCreateInput[] = [];
+  readonly updates: SessionUpdateInput[] = [];
   readonly prompts: string[] = [];
   readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
   readonly mcpAdds: string[] = [];
@@ -141,7 +143,15 @@ export class V2Harness {
       form: { list: async () => [], reply: unexpected, cancel: unexpected },
       create: async (input = {}) => {
         this.creates.push(input);
+        this.info.permissions = input.permissions
+          ? structuredClone([...input.permissions])
+          : undefined;
         return this.info;
+      },
+      update: async (input) => {
+        this.updates.push(structuredClone(input));
+        if (input.permissions !== undefined)
+          this.info.permissions = structuredClone([...input.permissions]);
       },
       get: async () => this.info,
       list: async () => ({ data: [], cursor: {} }),

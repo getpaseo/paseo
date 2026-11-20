@@ -170,6 +170,7 @@ export interface PaseoToolHostDependencies {
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
+  launchId?: string;
   /**
    * Optional resolver for session-bound speak handlers.
    * Used by hidden voice agents to narrate through daemon-managed TTS.
@@ -876,14 +877,16 @@ function createToolCatalog(
     };
   };
 
-  const resolveInheritedProviderConfig = (
+  const resolveInheritedProviderConfig = async (
     selectedProvider: string,
-  ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
+  ): Promise<Pick<AgentSessionConfig, "providerOptions"> | undefined> => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent?.provider !== selectedProvider || !callerAgent.config?.providerOptions) {
       return undefined;
     }
-    return { providerOptions: callerAgent.config.providerOptions };
+    return {
+      providerOptions: (await agentManager.getAgentTemplateConfig(callerAgent.id)).providerOptions,
+    };
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -947,20 +950,20 @@ function createToolCatalog(
   const buildCallerAgentScheduleConfigExtras = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
     resolvedProvider: string,
+    config: AgentSessionConfig,
   ): Record<string, unknown> => {
     return {
-      ...(callerAgent.config.thinkingOptionId
-        ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
+      ...(config.thinkingOptionId ? { thinkingOptionId: config.thinkingOptionId } : {}),
+      ...(callerAgent.provider === resolvedProvider && config.providerOptions
+        ? { providerOptions: config.providerOptions }
         : {}),
-      ...(callerAgent.provider === resolvedProvider && callerAgent.config.providerOptions
-        ? { providerOptions: callerAgent.config.providerOptions }
-        : {}),
-      ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
-      ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
+      ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}),
+      ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
+      ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
     };
   };
 
-  const buildCallerAgentScheduleConfig = (
+  const buildCallerAgentScheduleConfig = async (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
     params?: { provider?: string; cwd?: string },
   ) => {
@@ -972,6 +975,12 @@ function createToolCatalog(
         })
       : null;
     const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
+    const required = await agentManager.getAgentTemplateConfig(callerAgent.id);
+    if (required.toolPolicy && resolvedProvider !== callerAgent.provider) {
+      throw new PaseoToolInputError(
+        "Cannot change providers while inheriting a required MCP tool policy",
+      );
+    }
     let resolvedModel: string | undefined;
     if (resolvedProviderModel?.model) {
       resolvedModel = resolvedProviderModel.model;
@@ -987,11 +996,11 @@ function createToolCatalog(
           }
         : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider),
+      ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider, required),
     };
   };
 
-  const resolveNewAgentScheduleTarget = (params?: {
+  const resolveNewAgentScheduleTarget = async (params?: {
     provider?: string;
     cwd?: string;
     isolation?: "local" | "worktree";
@@ -1001,7 +1010,7 @@ function createToolCatalog(
       return {
         type: "new-agent" as const,
         config: {
-          ...buildCallerAgentScheduleConfig(callerAgent, params),
+          ...(await buildCallerAgentScheduleConfig(callerAgent, params)),
           ...(params?.isolation ? { isolation: params.isolation } : {}),
         },
       };
@@ -1633,7 +1642,7 @@ function createToolCatalog(
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const inheritedConfig = await resolveInheritedProviderConfig(selectedProvider);
       const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
@@ -2713,7 +2722,7 @@ function createToolCatalog(
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: await resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -3363,6 +3372,7 @@ function createToolCatalog(
   registerPluginTools({
     agentManager,
     callerAgentId,
+    launchId: options.launchId,
     scope,
     tools,
     builtinNames,

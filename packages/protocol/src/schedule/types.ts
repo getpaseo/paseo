@@ -38,6 +38,20 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       featureValues: z.record(z.string(), z.unknown()).optional(),
       systemPrompt: z.string().optional(),
       mcpServers: z.record(z.string(), z.unknown()).optional(),
+      toolPolicy: z
+        .object({
+          preapproved: z.array(
+            z
+              .object({
+                kind: z.literal("mcp"),
+                server: z.string().min(1),
+                tool: z.string().min(1),
+              })
+              .strict(),
+          ),
+        })
+        .strict()
+        .optional(),
     }),
   }),
 ]);

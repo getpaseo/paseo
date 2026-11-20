@@ -226,6 +226,47 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
+  it("rechecks advertised HTTP support on the actual session initialize before forwarding bindings", async () => {
+    let initializes = 0;
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "initialize") return false;
+        initializes += 1;
+        instance.respond(request, {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { mcpCapabilities: { http: initializes === 1 } },
+        });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({ id: "http-check", label: "HTTP check", connector });
+    const connection = await registration.connect({ versions: [1], capabilities: ["mcp.http"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      expect(connection.capabilities).toEqual(["mcp.http"]);
+      const input = openInput();
+      input.config.mcpServers = { notes: { type: "http", url: "http://127.0.0.1:1/notes" } };
+      await connection.send(input);
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.failed" || event.type === "session.ready",
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "request.failed",
+          error: expect.objectContaining({
+            message:
+              "ACP session no longer advertises HTTP MCP support; reopen after updating the provider",
+          }),
+        }),
+      );
+      expect(countRequests(instances[1]!, "session/new")).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it.each(["replay", "skip"] as const)(
     "handles trailing load updates with %s history",
     async (history) => {
@@ -1375,6 +1416,7 @@ lines.on("line", (line) => {
     agentCapabilities: {
       loadSession: true,
       promptCapabilities: { image: true },
+      mcpCapabilities: { http: true },
       sessionCapabilities: { list: {} },
     },
   } });
@@ -1384,6 +1426,7 @@ lines.on("line", (line) => {
       "prompt.image",
       "session.list",
       "session.persistence",
+      "mcp.http",
     ]);
 
     expect(connection.capabilities).toEqual([
@@ -1391,6 +1434,7 @@ lines.on("line", (line) => {
       "prompt.image",
       "session.list",
       "session.persistence",
+      "mcp.http",
     ]);
     await connection.close();
   });

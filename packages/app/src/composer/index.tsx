@@ -1558,16 +1558,24 @@ function ComposerContentImpl({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      clearDraft("sent");
-      replaceUserInput("");
-      setSelectedAttachments([]);
-      resetSuppression();
+      const submittedText = textSource.getSnapshot();
       setSendError(null);
       setIsProcessing(true);
       void onClientSlashCommand(command)
+        .then(() => {
+          if (textSource.getSnapshot() === submittedText) {
+            clearDraft("sent");
+            replaceUserInput("");
+            setSelectedAttachments([]);
+            resetSuppression();
+          }
+          return undefined;
+        })
         .catch((error) => {
           console.error("[Composer] Failed to run client slash command:", error);
-          setSendError(error instanceof Error ? error.message : String(error));
+          setSendError(
+            `${error instanceof Error ? error.message : String(error)} ${t("common.actions.retry")}`,
+          );
         })
         .finally(() => {
           setIsProcessing(false);
@@ -1581,6 +1589,8 @@ function ComposerContentImpl({
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
+      textSource,
+      t,
     ],
   );
 

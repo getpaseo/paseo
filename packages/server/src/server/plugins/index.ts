@@ -43,6 +43,9 @@ interface PluginRuntimePort {
   isToolPluginAvailable?: PluginRuntime["isToolPluginAvailable"];
   callTool?: PluginRuntime["callTool"];
   detachTools?: PluginRuntime["detachTools"];
+  disposeLaunch?: PluginRuntime["disposeLaunch"];
+  getLegacyAgentConfigRecipes?: PluginRuntime["getLegacyAgentConfigRecipes"];
+  installLaunch?: PluginRuntime["installLaunch"];
   emit?: PluginLifecycle["emit"];
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
@@ -158,6 +161,18 @@ export class PluginService {
     this.runtime.detachTools?.(agentId);
   };
 
+  readonly disposeLaunch = async (launchId: string): Promise<void> => {
+    await this.runtime.disposeLaunch?.(launchId);
+  };
+
+  readonly installLaunch = async (launchId: string): Promise<void> => {
+    await this.runtime.installLaunch?.(launchId);
+  };
+
+  getLegacyAgentConfigRecipes(): ReturnType<PluginRuntime["getLegacyAgentConfigRecipes"]> {
+    return this.runtime.getLegacyAgentConfigRecipes?.() ?? new Map();
+  }
+
   readonly callTool: PluginAgentToolsRuntime["callTool"] = async (
     pluginId,
     pluginInstanceId,
@@ -165,10 +180,11 @@ export class PluginService {
     name,
     input,
     signal,
+    launchId,
   ) => {
     if (!this.isToolPluginAvailable(pluginId, pluginInstanceId) || !this.runtime.callTool)
       return { isError: true, text: `Plugin is not available: ${pluginId}` };
-    return this.runtime.callTool(pluginId, pluginInstanceId, agent, name, input, signal);
+    return this.runtime.callTool(pluginId, pluginInstanceId, agent, name, input, signal, launchId);
   };
 
   readonly wait: PluginLifecycle["wait"] = async (name, payload) => {

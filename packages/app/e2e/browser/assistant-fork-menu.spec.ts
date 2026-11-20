@@ -1,4 +1,4 @@
-import { expect, test as base } from "../support/fixtures";
+import { expect, test as base, type Page } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
   expectChatHistoryAttachment,
@@ -9,8 +9,9 @@ import {
   forkMostRecentAssistantTurnToNewWorkspace,
   observeForkAttachment,
 } from "../support/helpers/assistant-fork";
-import { expectComposerVisible, submitMessage } from "../support/helpers/composer";
-import { getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { composerLocator, expectComposerVisible, submitMessage } from "../support/helpers/composer";
+import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   openAgentRoute,
   seedMockAgentWorkspace,
@@ -35,8 +36,136 @@ const test = base.extend<{
   },
 });
 
+async function failTemplateLookupUntilRecovery(page: Page): Promise<() => void> {
+  let failing = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => {
+      if (typeof message !== "string") {
+        server.send(message);
+        return;
+      }
+      const envelope = JSON.parse(message) as {
+        type?: string;
+        agentId?: string;
+        message?: { type?: string; agentId?: string };
+      };
+      const request = envelope.message ?? envelope;
+      if (failing && request.type === "agent.template.get.request") {
+        // Keep the real daemon's correlated failure, not a fabricated response.
+        request.agentId = "missing-fork-template-source";
+        server.send(JSON.stringify(envelope));
+        return;
+      }
+      server.send(message);
+    });
+  });
+  return () => {
+    failing = false;
+  };
+}
+
 test.describe("Assistant fork menu", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("awaits a fresh template before adding a fork draft or chat history attachment", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-fresh-template-",
+      title: "Assistant fork fresh template",
+      initialPrompt: "emit 1 coalesced agent stream updates for template freshness.",
+      model: "ten-second-stream",
+      modeId: "load-test",
+    });
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    expect(gate.getClientRequests("hello")[0]).toMatchObject({
+      type: "hello",
+      capabilities: { agent_template_projection: true },
+    });
+    await awaitAssistantMessage(page);
+    await composerLocator(page).fill("Keep this source draft while forking.");
+    const sourceTab = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("button", { name: "Select agent mode (Load test)" })).toBeVisible();
+    const sourceUrl = page.url();
+
+    gate.holdNextClientRequest("agent.template.get.request");
+    await forkMostRecentAssistantTurnToNewTab(page);
+    await gate.waitForHeldClientRequest();
+
+    await expect(page).toHaveURL(sourceUrl);
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-testid^="workspace-tab-draft_"]')).toHaveCount(0);
+    await expect(composerLocator(page)).toHaveValue("Keep this source draft while forking.");
+    expect(gate.getClientRequestCount("agent.fork_context.request")).toBe(0);
+    expect(await session.client.fetchAgent({ agentId: session.agentId })).toMatchObject({
+      agent: { archivedAt: null },
+    });
+
+    // Change the daemon after the click captured its old app-side setup.
+    await session.client.setAgentMode(session.agentId, "approval-test");
+    gate.releaseHeldClientRequest();
+
+    await expectChatHistoryAttachment(page);
+    await expect(
+      page.getByRole("button", { name: "Select agent mode (Approval test)" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Select model (Ten second stream)" }),
+    ).toBeVisible();
+    await expect(sourceTab).toHaveAttribute("aria-selected", "false");
+    await sourceTab.click();
+    await expect(composerLocator(page)).toHaveValue("Keep this source draft while forking.");
+  });
+
+  test("keeps the source tab and draft on template failure and can retry the workspace fork", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const allowRecovery = await failTemplateLookupUntilRecovery(page);
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-template-failure-",
+      title: "Assistant fork template failure",
+      initialPrompt: "emit 1 coalesced agent stream updates for template failure.",
+      model: "ten-second-stream",
+    });
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await composerLocator(page).fill("Do not lose this draft when the template fails.");
+    const sourceTab = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
+    const sourceUrl = page.url();
+
+    await forkMostRecentAssistantTurnToNewWorkspace(page);
+
+    const error = page.getByText(/Agent not found: missing-fork-template-source/);
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(/retry|try again/i);
+    await expect(page).toHaveURL(sourceUrl);
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-testid^="workspace-tab-draft_"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open chat history attachment" })).toHaveCount(0);
+    await expect(composerLocator(page)).toHaveValue(
+      "Do not lose this draft when the template fails.",
+    );
+    await expect(composerLocator(page)).toBeEditable();
+    expect(await session.client.fetchAgent({ agentId: session.agentId })).toMatchObject({
+      agent: { archivedAt: null },
+    });
+    await expect(error).toBeVisible();
+
+    allowRecovery();
+    await forkMostRecentAssistantTurnToNewWorkspace(page);
+    await expect(page).toHaveURL(/\/new\?.*draftId=/, { timeout: 30_000 });
+    await expectChatHistoryAttachment(page);
+  });
 
   test("forks a failed assistant turn that has no provider message id", async ({
     page,

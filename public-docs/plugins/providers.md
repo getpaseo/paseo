@@ -138,8 +138,9 @@ later through `session.config`.
 ## Open a session
 
 `session.open` contains the complete launch configuration: working directory, environment, system
-prompt, MCP servers, tool policy, model, mode, `providerOptions`, and persistence
-preference.
+prompt, MCP servers, required `toolPolicy`, optional `pluginToolPolicy`, model, mode,
+`providerOptions`, and persistence preference. Optional integration fields follow the capability
+contract below; receiving a field is not permission to broaden unrelated approvals.
 
 For persisted host-scoped plugin settings, use the handle returned by `server.registerSettings()`.
 Read it in catalog and session callbacks, and subscribe when the provider keeps in-memory
@@ -187,6 +188,48 @@ emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessi
 `session.config` contains the committed values. Publish what the native agent selected after
 normalization, not a copy of the request.
 
+### Advertise optional integration support
+
+The adaptive additions are a [source contract](./migration.md#adaptive-session-contributions-source-contract),
+with no assigned released SDK floor. Negotiate only positive capabilities implemented by the
+connection. Older providers that omit a new flag leave its optional support unknown; do not infer
+it from a provider name, a model, or the existing required-policy capability.
+
+| Connection capability             | Promise                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `session.system_prompt`           | Apply the composed `ProviderSessionConfig.systemPrompt` to the opened/resumed session.                                         |
+| `mcp.http`                        | Deliver configured HTTP MCP servers through the provider's implemented session route.                                          |
+| `permission.tool_policy`          | Implement existing required exact MCP `toolPolicy`; this alone does not promise additive conveniences.                         |
+| `permission.optional_tool_policy` | Implement `pluginToolPolicy` as additive exact approvals without hiding unrelated tools or auto-approving any other operation. |
+
+`pluginToolPolicy` has the same exact grant shape as `toolPolicy`:
+`{ preapproved: [{ server, tool }] }` in `ProviderSessionConfig`. Keep the slices separate when
+mapping them to the native provider. A tool-exposure allowlist is not an implementation of optional approvals. Test
+that a non-granted tool remains exposed with its ordinary permission behavior, and that native
+tools and unrelated servers gain no approval. Without the optional capability, the host omits this
+slice while compatible tools can still use normal prompts. Required caller policy remains strict.
+
+Support resolution awaits the connection's existing negotiated capabilities, sharing its in-flight
+connection. It does not send a catalog request, start a scratch session, or make a model turn to
+discover optional support. Connection and selection errors surface instead of becoming an empty
+successful feature set. The [open-hook descriptor](./hooks.md#resolve-optional-features-for-this-opening)
+keeps actual selected provider identity separate from resolved adapter identity.
+
+### Current source verification limits
+
+These limits describe conservative host admission, not a full provider compatibility matrix or
+release acceptance result.
+
+| Runtime path                       | Current limit                                                                                                                                                                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex                              | Optional exact approval remains `unknown` until the real-process additive mapping is verified. The current resolver also leaves optional instruction support `unknown`; an accepted config shape alone does not prove runtime behavior.                         |
+| Pi                                 | Optional HTTP MCP support remains `unknown`; discovery does not create a scratch model session. Ordinary session MCP detection does not by itself establish the pre-open fact.                                                                                  |
+| Generic ACP / ACP shim             | Generic system-instruction delivery is not promised. The shim advertises HTTP only when its initialize probe reports `mcpCapabilities.http === true`, and rechecks the actual session initialize before forwarding it. A cold core ACP path may remain unknown. |
+| OpenCode retained/external runtime | Fixed bindings require exact reuse with a live retained owner; otherwise full close/reopen is required. See [launch lifetime](./hooks.md#launch-resource-lifetime).                                                                                             |
+
+Actual provider/tool smoke and actual rendered availability checks have not been established by
+this source documentation. Mocked or deterministic transport tests do not substitute for them.
+
 ## Complete the first prompt
 
 Start with message prompts. Advertise `prompt.message`, pass the content to the native agent, and
@@ -232,9 +275,11 @@ see the response.
 
 ## Add composer controls for provider options
 
-`providerOptions` is the provider's own configuration: one record of JSON values that Paseo
-stores per agent and hands to `session.open`. It includes the defaults a user set in `config.json`
-for your provider. Validate every key you read.
+`providerOptions` is the provider's own configuration: one record of JSON values handed to
+`session.open`. It includes the agent's saved options, defaults a user set in `config.json`, and
+eligible launch-only plugin candidates. Validate every key you read. The host keeps launch-only
+keys out of saved caller intent; their merge rules belong to the
+[open-hook contract](./hooks.md#contribute-optional-grants-and-provider-options).
 
 Add `controls` only when users should see and change some of those options in the composer. A
 control draws one top-level key of `providerOptions` as a toggle or a select. It holds no value:
@@ -270,9 +315,10 @@ emit({
 ```
 
 `icon` is a Lucide icon name. `defaultValue` is what a control shows for a key that has no value.
-Paseo stores every value you report when a session opens or a change is applied, including values
-at the default and values nobody set. The same controls appear in the New workspace screen, in draft
-tabs, and on running agents. Offer a control only for a key you can change on a running session.
+Paseo records the effective values you report when a session opens or a change is applied, including
+values at the default and values nobody set. Launch-owned keys remain runtime state rather than
+durable caller options, including in later unsolicited reports. The same controls appear in the
+New workspace screen, in draft tabs, and on running agents. Offer a control only for a key you can change on a running session.
 The provider may change its controls at runtime, including after a model change.
 
 A change arrives as `session.configure` with `changes.providerOptions` holding only the keys
@@ -281,17 +327,18 @@ that changed, whether or not they have a control. Apply every key and publish th
 every key as it was when you cannot apply one, for example a key you read only when a session
 opens. A
 value of `null` returns that key to the provider's default. Publish what the session ended up
-with, not a copy of the request: Paseo stores your published values so the stored options match
-what runs.
+with, not a copy of the request: Paseo updates effective state from your published values. An
+explicit caller edit is durable; an unsolicited report of a launch-only value is not.
 
 If the provider changes an option on its own, for example a model switch turns Fast off, publish
-a new `session.config` with the new values. Paseo stores them and does not set the old ones
-back.
+a new `session.config` with the new values. Paseo updates effective state and does not set the old
+ones back; launch-owned values still do not become saved intent.
 
 Not every option needs a control. A provider-specific token budget, for example, belongs in
 `providerOptions` and is not a dedicated prompt field. It is delivered in `session.open`, a caller
 can change it on a running agent, and your `session.configure` handler decides whether it can
-apply it live. Report it in `providerOptions` so Paseo stores what runs.
+apply it live. Report it in `providerOptions` so Paseo reflects what runs. For older-app display and
+consumer-owned safe-copy opt-in, see [protocol compatibility](../../docs/protocol-compatibility.md).
 
 ## Add persistence and replay
 

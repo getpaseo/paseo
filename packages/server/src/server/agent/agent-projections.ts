@@ -21,6 +21,7 @@ import type {
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import type { ManagedAgent } from "./agent-manager.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
+import { projectAgentRequiredConfig } from "./plugin-config-adoption.js";
 import type { JsonValue } from "../json-utils.js";
 import {
   isStoredAgentProviderAvailable,
@@ -28,6 +29,32 @@ import {
   toAgentPersistenceHandle,
 } from "../persistence-hooks.js";
 export type { ManagedAgent };
+
+const agentCopySafeOptions = Symbol("agentCopySafeOptions");
+
+interface AgentCopySafeOptions {
+  options: ProviderOptions | undefined;
+}
+
+interface AgentWithCopySafeOptions {
+  [agentCopySafeOptions]?: AgentCopySafeOptions;
+}
+
+/** Enumerable symbols survive snapshot spreads without entering JSON wire payloads. */
+export function attachAgentCopySafeOptions<T extends object>(
+  target: T,
+  options: ProviderOptions | undefined,
+): T {
+  (target as T & AgentWithCopySafeOptions)[agentCopySafeOptions] = {
+    options: structuredClone(options),
+  };
+  return target;
+}
+
+export function readAgentCopySafeOptions(target: object): AgentCopySafeOptions | undefined {
+  const captured = (target as AgentWithCopySafeOptions)[agentCopySafeOptions];
+  return captured ? structuredClone(captured) : undefined;
+}
 
 interface ProjectionOptions {
   title?: string | null;
@@ -192,7 +219,76 @@ export function toAgentPayload(
     payload.attentionTimestamp = null;
   }
 
+  const copySafe = readAgentCopySafeOptions(agent);
+  if (copySafe) attachAgentCopySafeOptions(payload, copySafe.options);
   return payload;
+}
+
+/** Maps only schema-owned agent snapshot containers, never metadata or tool results. */
+export function mapAgentSnapshotEnvelopes<Message>(
+  message: Message,
+  project: (snapshot: AgentSnapshotPayload) => AgentSnapshotPayload,
+): Message {
+  if (message === null || typeof message !== "object" || !("type" in message)) return message;
+  const types = new Set([
+    "status",
+    "agent_update",
+    "agent_status",
+    "agent_list",
+    "fetch_agents_response",
+    "fetch_agent_history_response",
+    "fetch_agent_response",
+    "fetch_agent_timeline_response",
+    "agent.timeline.set_subscription.response",
+    "cancel_agent_response",
+    "clear_agent_attention_response",
+    "workspace.create.update",
+    "agent.create.update",
+    "creation.subscribe.response",
+    "agent.create.response",
+    "workspace.create.response",
+    "wait_for_finish_response",
+    "hub.execution.agent.create.response",
+    "hub.execution.agent.update",
+  ]);
+  if (!types.has(String(message.type))) return message;
+  function visit(value: unknown, key: string): unknown {
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) return value.map((entry) => visit(entry, key));
+    if (
+      ["agent", "info", "final"].includes(key) &&
+      "id" in value &&
+      "provider" in value &&
+      "cwd" in value &&
+      "capabilities" in value
+    ) {
+      return project(value as AgentSnapshotPayload);
+    }
+    const source = value as Record<string, unknown>;
+    const mapped: Record<string, unknown> = { ...source };
+    for (const field of [
+      "payload",
+      "agent",
+      "info",
+      "final",
+      "snapshot",
+      "creation",
+      "entries",
+      "agents",
+    ]) {
+      if (!Object.hasOwn(source, field)) continue;
+      if (field === "agents" && source[field] && !Array.isArray(source[field])) {
+        mapped[field] = Object.fromEntries(
+          Object.entries(source[field] as Record<string, unknown>).map(([id, entry]) => [
+            id,
+            visit(entry, "agent"),
+          ]),
+        );
+      } else mapped[field] = visit(source[field], field === "agents" ? "agent" : field);
+    }
+    return mapped;
+  }
+  return visit(message, "message") as Message;
 }
 
 function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | undefined {
@@ -249,8 +345,24 @@ function buildStoredOptionControls(
   effectiveOptionsFor: EffectiveOptionsResolver,
 ): Pick<AgentSnapshotPayload, "features" | "options" | "controls"> {
   const controls = normalizeControls(record.controls);
+  const required = projectAgentRequiredConfig({
+    config: {
+      provider: record.provider,
+      cwd: record.cwd,
+      ...record.config,
+      systemPrompt: record.config?.systemPrompt ?? undefined,
+      providerOptions: record.config?.providerOptions ?? undefined,
+      mcpServers: record.config?.mcpServers ?? undefined,
+      toolPolicy: record.config?.toolPolicy ?? undefined,
+      modeId: record.config?.modeId ?? undefined,
+      model: record.config?.model ?? undefined,
+      thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
+    },
+    env: record.launchEnv ?? {},
+    receipts: record.pluginConfigAdoptions,
+  });
   const options = sanitizeEffectiveOptions(
-    effectiveOptionsFor(record.provider, record.config?.providerOptions ?? undefined),
+    effectiveOptionsFor(record.provider, required.config.providerOptions),
   );
   return {
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
@@ -509,6 +621,13 @@ function projectPersistenceHandleForWire(
   delete projected.metadata.daemonAppendSystemPrompt;
   delete projected.metadata.paseoInstructionReceipt;
   delete projected.metadata.toolPolicySource;
+  delete projected.metadata.pluginToolPolicy;
+  delete projected.metadata.pluginConfigAdoptions;
+  delete projected.metadata.launchId;
+  delete projected.metadata.systemPrompt;
+  delete projected.metadata.providerOptions;
+  delete projected.metadata.env;
+  delete projected.metadata.launchEnv;
   if (Object.keys(projected.metadata).length === 0) {
     delete projected.metadata;
   }

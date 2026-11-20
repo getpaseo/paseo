@@ -6,6 +6,20 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleStore } from "./store.js";
+import { ScheduleTargetSchema } from "@getpaseo/protocol/schedule/types";
+
+test("new-agent schedule templates retain required MCP policy alongside their bindings", () => {
+  const target = {
+    type: "new-agent",
+    config: {
+      provider: "claude",
+      cwd: "/project",
+      mcpServers: { required: { type: "http", url: "http://127.0.0.1:1/required" } },
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "required", tool: "read" }] },
+    },
+  };
+  expect(ScheduleTargetSchema.parse(target)).toEqual(target);
+});
 
 describe("ScheduleStore", () => {
   let tempDir: string;

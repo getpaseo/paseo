@@ -14,6 +14,10 @@ import {
   ProviderLaunchSchema,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import {
+  LegacyAgentConfigRecipeSchema,
+  type LegacyAgentConfigRecipe,
+} from "@getpaseo/protocol/plugin-agent-config";
 
 export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
@@ -33,9 +37,18 @@ export interface PluginUsageSourceMetadata {
 }
 
 export type PluginProcessRequest =
-  | { type: "tool.call"; requestId: string; agent: PluginHookAgent; name: string; input: unknown }
+  | {
+      type: "tool.call";
+      requestId: string;
+      agent: PluginHookAgent;
+      name: string;
+      input: unknown;
+      launchId?: string;
+    }
   | { type: "tool.cancel"; requestId: string }
   | { type: "tools.detach"; agentId: string }
+  | { type: "launch.dispose"; requestId: string; launchId: string }
+  | { type: "launch.install"; requestId: string; launchId: string }
   | {
       type: "provider.status";
       requestId: string;
@@ -96,6 +109,7 @@ export type PluginProcessMessage =
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
+      legacyAgentConfig?: LegacyAgentConfigRecipe;
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
@@ -175,10 +189,25 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
           .strict(),
         name: z.string(),
         input: z.unknown(),
+        launchId: z.string().min(1).optional(),
       })
       .strict(),
     z.object({ type: z.literal("tool.cancel"), requestId: z.string() }).strict(),
     z.object({ type: z.literal("tools.detach"), agentId: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("launch.dispose"),
+        requestId: z.string().min(1),
+        launchId: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("launch.install"),
+        requestId: z.string().min(1),
+        launchId: z.string().min(1),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("provider.status"),
@@ -300,6 +329,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
+        legacyAgentConfig: LegacyAgentConfigRecipeSchema.optional(),
       })
       .strict(),
     z

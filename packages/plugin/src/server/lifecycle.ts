@@ -1,16 +1,40 @@
 import type { AgentToolDefinition } from "./agent-tools.js";
+import { z } from "zod";
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentSessionConfig,
   JsonValue,
+  ProviderOptions,
+  ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { PaseoApi } from "@getpaseo/client";
 import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
+import type { LegacyAgentConfigState } from "@getpaseo/protocol/plugin-agent-config";
 
 export interface PluginHookContext {
   paseo: PaseoApi;
   signal: AbortSignal;
+}
+
+export interface PluginSessionOpenContext extends PluginHookContext {
+  readonly launch: {
+    readonly id: string;
+    readonly signal: AbortSignal;
+    onDispose(cleanup: (outcome: { installed: boolean }) => void | Promise<void>): void;
+    onInstalled(callback: () => void | Promise<void>): void;
+    /** Retains this plugin instance's live prior contribution, or throws when none is valid. */
+    retainPrevious(): PluginPriorContribution;
+  };
+}
+
+export interface PluginPriorContribution {
+  readonly launchId: string;
+  readonly mcpServers: Readonly<NonNullable<AgentSessionConfig["mcpServers"]>>;
+  readonly env: Readonly<Record<string, string>>;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly toolPolicy?: ToolPolicy;
+  readonly providerOptions?: ProviderOptions;
 }
 
 export interface PluginHookWorkspace {
@@ -76,8 +100,63 @@ export interface PluginHookAgent {
   metadata: Record<string, JsonValue>;
 }
 
+const featureSupportSchema = z.enum(["supported", "unsupported", "unknown"]);
+const launchRestrictionSchema = z.enum(["mutable", "fixed", "none", "unknown"]);
+
+export const PluginOpenSupportSchema = z
+  .object({
+    adapter: z.discriminatedUnion("kind", [
+      z
+        .object({ kind: z.literal("builtin"), id: z.string().min(1) })
+        .strict()
+        .readonly(),
+      z
+        .object({ kind: z.literal("acp") })
+        .strict()
+        .readonly(),
+      z
+        .object({ kind: z.literal("plugin"), id: z.string().min(1) })
+        .strict()
+        .readonly(),
+    ]),
+    instructions: featureSupportSchema,
+    mcpHttp: featureSupportSchema,
+    exactMcpPreapproval: featureSupportSchema,
+    reasons: z
+      .object({
+        instructions: z.enum(["not-established", "adapter-unsupported"]).optional(),
+        mcpHttp: z.enum(["not-established", "adapter-unsupported"]).optional(),
+        exactMcpPreapproval: z.enum(["not-established", "adapter-unsupported"]).optional(),
+      })
+      .strict()
+      .readonly()
+      .optional(),
+    attachedTools: z
+      .object({
+        delivery: z.enum(["native", "mcp", "none", "unknown"]),
+        enabled: z.boolean(),
+        disabledTools: z.array(z.string()).readonly(),
+      })
+      .strict()
+      .readonly(),
+    restrictions: z
+      .object({
+        mcpConfiguration: launchRestrictionSchema,
+        processEnvironment: launchRestrictionSchema,
+      })
+      .strict()
+      .readonly(),
+    providerOptions: z.array(z.string()).readonly(),
+  })
+  .strict()
+  .readonly();
+
+export type PluginOpenSupport = z.infer<typeof PluginOpenSupportSchema>;
+
 export interface PluginSessionOpenRequest {
   agentId: string;
+  /** Host-owned identity for this opening; omitted by hosts predating launch lifetimes. */
+  readonly launchId?: string;
   workspaceId: string | null;
   provider: string;
   cwd: string;
@@ -88,11 +167,22 @@ export interface PluginSessionOpenRequest {
   readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+  /** Host-resolved support for this opening; absent on hosts predating adaptive features. */
+  readonly openSupport?: PluginOpenSupport;
+  /** Projected required configuration before this plugin contributes; never mutate it. */
+  readonly baseConfig?: Readonly<AgentSessionConfig>;
+  /** Static matches only; presence is not proof that the saved field belongs to this plugin. */
+  readonly legacyConfigState?: LegacyAgentConfigState;
+  readonly previousContribution?: PluginPriorContribution;
   /** Instructions appended for this open; not saved on the agent. */
   appendSystemPrompt?: string[];
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+  /** Optional exact approvals, limited to this plugin's contributed server bindings. */
+  toolPolicy?: ToolPolicy;
+  /** Launch-only options. Explicit caller/default options win per top-level key. */
+  providerOptions?: ProviderOptions;
 }
 
 export type PluginTurnOutcome =
@@ -172,7 +262,7 @@ export type PluginHookResult<Name extends keyof PluginHooks> = {
 type HookHandlers = {
   [Name in keyof PluginHooks]: (
     payload: PluginHookPayload<Name>,
-    context: PluginHookContext,
+    context: Name extends "agent.open.before" ? PluginSessionOpenContext : PluginHookContext,
   ) => Promise<PluginHookResult<Name>>;
 };
 
@@ -245,7 +335,7 @@ type PluginBeforeResults = {
 export function createLifecycleRegistration(
   register: (
     name: keyof PluginHooks,
-    handler: (input: never, context: PluginHookContext) => unknown,
+    handler: (input: never, context: never) => unknown,
   ) => () => void,
 ): PluginLifecycleRegistration {
   const names = new Set<string>(Object.keys(pluginHookRegistry));

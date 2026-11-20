@@ -99,6 +99,11 @@ function applyNewAgentConfig(
       throw new Error("provider cannot be empty");
     }
     config.provider = trimmed;
+    if (target.config.toolPolicy && trimmed !== target.config.provider) {
+      throw new Error(
+        "Cannot change providers while the schedule carries a required MCP tool policy",
+      );
+    }
   }
   if (patch.cwd !== undefined) {
     const trimmed = patch.cwd.trim();
@@ -138,6 +143,19 @@ function applyNewAgentConfig(
     config.isolation = patch.isolation;
   }
   return { ...target, config };
+}
+
+function preserveScheduleToolPolicy(current: ScheduleTarget, next: ScheduleTarget): ScheduleTarget {
+  if (current.type !== "new-agent" || !current.config.toolPolicy) return next;
+  if (next.type !== "new-agent" || current.config.provider !== next.config.provider) {
+    throw new Error("Cannot replace a schedule target while it carries a required MCP tool policy");
+  }
+  const policy = next.config.toolPolicy ?? current.config.toolPolicy;
+  for (const grant of policy.preapproved) {
+    if (!Object.hasOwn(next.config.mcpServers ?? {}, grant.server))
+      throw new Error("Schedule required tool policy must travel with all referenced MCP bindings");
+  }
+  return { ...next, config: { ...next.config, toolPolicy: policy } };
 }
 
 function normalizeMaxRuns(value: number | null | undefined): number | null {
@@ -406,7 +424,7 @@ export class ScheduleService {
           name,
           prompt,
           cadence,
-          target: inputTarget,
+          target: preserveScheduleToolPolicy(current.target, inputTarget),
           status: "active",
           pausedAt: null,
           nextRunAt: nextRunAt.toISOString(),
@@ -1162,6 +1180,7 @@ function buildScheduleAgentConfig(
     providerOptions: foldFeatureValues(config).providerOptions,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
+    toolPolicy: config.toolPolicy,
   };
 }
 

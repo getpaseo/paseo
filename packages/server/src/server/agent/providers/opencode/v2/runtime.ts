@@ -33,7 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OpenCodeBridge } from "../bridge.js";
 import { V2_SESSION_ENV_KEYS } from "./configuration.js";
-import type { McpServerConfig } from "../../../agent-sdk-types.js";
+import type { AgentOpenSupport, McpServerConfig } from "../../../agent-sdk-types.js";
 
 function processEnvironment(env: Record<string, string> = {}): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !V2_SESSION_ENV_KEYS.has(key)));
@@ -49,6 +49,7 @@ export interface V2Connection {
   unbindSession(sessionId: string, cwd: string): Promise<void>;
   refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
   readonly exited: Promise<Error>;
+  retainPluginResources?(retain: () => () => Promise<void>): void;
 }
 interface Generation {
   client: V2Api;
@@ -122,6 +123,15 @@ export class V2Runtime {
             }),
           env: options.settings?.env,
         }));
+  }
+
+  async describeRestrictions(signal?: AbortSignal): Promise<AgentOpenSupport["restrictions"]> {
+    if (this.closed) throw new Error("OpenCode runtime is closed");
+    signal?.throwIfAborted();
+    const selection = await this.selection;
+    signal?.throwIfAborted();
+    const restriction = selection.kind === "explicit" ? "none" : "mutable";
+    return { mcpConfiguration: restriction, processEnvironment: restriction };
   }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
@@ -214,12 +224,18 @@ export class V2Runtime {
     }
   }
 
-  private lease(generation: Generation, pending: TrackedStart): V2Connection {
+  private lease(
+    generation: Generation,
+    pending: TrackedStart,
+    inheritedResources: Array<() => () => Promise<void>> = [],
+  ): V2Connection {
     if (this.closed || !this.generations.has(generation))
       throw new Error("OpenCode helper server is no longer running");
     generation.users += 1;
     let released = false;
     const locations = new Map<string, McpLocation>();
+    const resources = new Map<() => () => Promise<void>, () => Promise<void>>();
+    for (const retain of inheritedResources) resources.set(retain, retain());
     const release = async () => {
       if (released) return;
       released = true;
@@ -228,6 +244,12 @@ export class V2Runtime {
         if (!location.users && !location.committed) generation.locations.delete(cwd);
       }
       generation.users -= 1;
+      const results = await Promise.allSettled([...resources.values()].map((cleanup) => cleanup()));
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length)
+        throw new AggregateError(errors, "OpenCode plugin resource release failed");
       if (generation.users !== 0 || pending.reservations !== 0) return;
       if (this.current === pending) return;
       await this.stopGeneration(generation);
@@ -235,6 +257,10 @@ export class V2Runtime {
     return {
       client: generation.client,
       release,
+      retainPluginResources: (retain) => {
+        if (released) throw new Error("OpenCode connection has been released");
+        if (!resources.has(retain)) resources.set(retain, retain());
+      },
       reserveMcpServers: (cwd, servers) => {
         if (released) throw new Error("OpenCode connection has been released");
         let location = generation.locations.get(cwd);
@@ -263,7 +289,7 @@ export class V2Runtime {
           throw new Error("OpenCode retained connection requires an isolated server");
         if (pending.isolated && !isDeepStrictEqual(env, pending.env))
           throw new Error("OpenCode retained connection cannot change process environment");
-        return this.lease(generation, pending);
+        return this.lease(generation, pending, [...resources.keys()]);
       },
       bindSession: generation.bindSession,
       unbindSession: generation.unbindSession,

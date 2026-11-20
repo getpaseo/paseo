@@ -32,17 +32,19 @@ for native keys and examples.
 
 ### Options flow
 
-`options` on the agent snapshot is the only option state. Controls describe how to draw an
-option and read `options`; they hold no value of their own. Any option can be read and set with
-or without a control.
+`options` on the agent snapshot describes option state; controls hold no value of their own.
+The host separates saved caller intent from effective launch options. Older consumers can receive
+a copy-safe option view rather than temporary plugin overrides; [protocol compatibility](protocol-compatibility.md)
+owns that per-recipient display contract. Any option can be read and set with or without a control.
 
 - **Create and resume.** The provider opens with the options it is given and emits nothing about
   them while opening. `openOptionsPatch` carries every option the session ended up with that
   differs from what it was given, including a setting nobody asked for (a native default such as
   Cursor opening with Fast on). It is set before `createSession`/`resumeSession` resolves and the
-  daemon stores it before the agent is published. A reopened agent resumes that state, so a
-  native default the provider later changes does not follow. `options` on the snapshot is what
-  the session opened with, and afterwards it moves only through an apply or an `options_changed`.
+  daemon records it before the agent is published. For non-launch-owned keys, a reopened agent
+  resumes that stored state, so a native default the provider later changes does not follow.
+  Launch-owned values update effective state only. The effective option view is what the session
+  opened with, and afterwards moves through an apply or an `options_changed`.
   Editing a provider default in `config.json` affects agents the next time they open.
 - **Live apply.** `applyOptions` receives the keys the patch touches, resolved against the
   `config.json` defaults. A removal arrives as the default the key falls back to, or `null` when
@@ -92,18 +94,49 @@ or without a control.
   create that carries options first lists the controls for its own provider, model, mode and
   thinking level, since which options are controls differs by model, and sends those as
   `featureValues`; callers do not prime anything.
+- **Launch-owned options.** Open-hook option candidates are temporary. Their keys are tracked on
+  the launch/session; opening normalization and unsolicited reports update effective state without
+  copying those values into saved caller intent. Explicit caller edits remain durable and take
+  precedence on later opens. Do not infer ownership from equal values. The
+  [hook contract](../public-docs/plugins/hooks.md#contribute-optional-grants-and-provider-options)
+  owns merge precedence and plugin-local scope.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
-  `options_changed` event. The daemon stores and forwards it and does not push the old value back.
+  `options_changed` event. The daemon forwards effective state and does not push the old value back.
+  Persistence excludes launch-owned keys; other reported options retain their established storage behavior.
 
 Exact MCP preapproval is a separate daemon-owned contract. A new provider must fail
 closed for Hub unattended execution until it can approve one exact injected MCP
 server and tool identity without approving native tools.
 
-Plugin-provider policy support is resolved from the connection's negotiated
+Plugin-provider required-policy support is resolved from the connection's negotiated
 `permission.tool_policy` capability. Caller policies remain required. Policies
 added only by creation hooks can use ordinary permission prompts on unsupported
 providers; the daemon records that origin privately so reopen does not promote
 those conveniences into requirements. See the [create-hook contract](../public-docs/plugins/hooks.md#agentcreatebefore).
+
+### Per-opening support ownership
+
+The client/runtime that will open the session resolves optional support through
+`AgentClient.resolveOpenSupport(input)`. The registry forwards normalized defaults, launch context,
+and the resolved adapter identity without replacing the selected provider ID. The manager combines
+those facts with daemon tool policy before hooks run. Missing facts remain unknown; final required
+configuration validation is not relaxed.
+
+Reuse the provider's owned connection or runtime selection. Do not add a catalog/model turn or a
+throwaway session for this query. OpenCode's runtime selection/retention owner describes fixed
+configuration; a plugin cannot override an external target or silently rotate a retained binding.
+The [hook descriptor and lifetime](../public-docs/plugins/hooks.md#resolve-optional-features-for-this-opening)
+own the author-facing rules.
+
+Keep launch-only exact grants separate as `pluginToolPolicy` through native mapping. Do not feed
+them into a required-policy mapper that narrows the tool catalog. The
+[public provider contract](../public-docs/plugins/providers.md#advertise-optional-integration-support)
+owns positive flags, additive-approval requirements, and the
+[current Codex/Pi/runtime verification limits](../public-docs/plugins/providers.md#current-source-verification-limits).
+These source contracts are not full acceptance or install-readiness evidence.
+OpenCode interactive resume replaces the complete native permission-rule array from current
+required grants, optional grants and authored permission options. Send an empty array to remove
+old conveniences; history-only resume must not change native permission state.
 
 ## Core adapter patterns
 

@@ -230,6 +230,54 @@ The answer comes from the running session, not from a directory scan, so it incl
 
 A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
 
+## Saved plugin configuration
+
+An agent handle exposes `legacyPluginConfig` for explicit adoption of old saved plugin additions.
+These methods are part of the [adaptive source contract](/docs/plugins/migration#adaptive-session-contributions-source-contract),
+with no assigned released host/SDK minimum. They require the host feature `adaptiveAgentFeatures`
+and `workspace.write`; the SDK rejects unsupported hosts with update guidance.
+
+```ts
+const agent = client.agents.ref(agentUuid);
+const preview = await agent.legacyPluginConfig.preview({
+  pluginId: runtimePluginId,
+  operation: "adopt",
+});
+```
+
+Preview returns candidate IDs/labels, consequences, blocked reasons, named baseline choices,
+current receipt IDs, and `expectedFingerprint`. Choose candidates yourself; never auto-select a
+candidate merely because its name matches. Apply only those selections against that preview:
+
+```ts
+const result = await agent.legacyPluginConfig.apply({
+  pluginId: runtimePluginId,
+  expectedFingerprint: preview.expectedFingerprint,
+  selections: [{ id: chosenCandidateId, baselineId: chosenBaselineId }],
+});
+```
+
+Omit `baselineId` only for a candidate that does not require a baseline. A reset uses a separate
+preview with `operation: "reset"` and selected IDs from its `receiptIds`:
+
+```ts
+const resetPreview = await agent.legacyPluginConfig.preview({
+  pluginId: runtimePluginId,
+  operation: "reset",
+});
+const resetResult = await agent.legacyPluginConfig.reset({
+  pluginId: runtimePluginId,
+  expectedFingerprint: resetPreview.expectedFingerprint,
+  receiptIds: [chosenReceiptId],
+});
+```
+
+Mutations return `{ receiptIds, appliesOn: "next-open" }` and do not reload the agent. Stale state
+requires another preview. The [migration procedure](/docs/plugins/migration#explicitly-adopt-or-reset-one-saved-agent)
+owns policy restrictions, retained originals, reset-first edits, and downgrade precautions. For
+mixed-version option display and consumer-owned safe-copy opt-in, see
+[protocol compatibility](../../docs/protocol-compatibility.md).
+
 ## Archive or detach
 
 ```ts

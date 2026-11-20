@@ -942,6 +942,7 @@ export interface CreateScheduleOptions {
           providerOptions?: AgentSessionConfig["providerOptions"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
+          toolPolicy?: AgentSessionConfig["toolPolicy"];
         };
       };
   maxRuns?: number;
@@ -4236,6 +4237,69 @@ export class DaemonClient {
     return payload;
   }
 
+  private requireAdaptiveAgentFeatures(): void {
+    if (this.lastServerInfoMessage?.features?.adaptiveAgentFeatures !== true) {
+      throw new Error("Update the host to use adaptive agent configuration.");
+    }
+  }
+
+  async getAgentTemplate(agentId: string) {
+    this.requireAdaptiveAgentFeatures();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.template.get.response">({
+        message: { type: "agent.template.get.request", agentId },
+      });
+    if (payload.error || !payload.template)
+      throw new Error(payload.error ?? "Host returned no agent template");
+    return payload.template;
+  }
+
+  async previewLegacyPluginConfig(
+    agentId: string,
+    input: { pluginId: string; operation: "adopt" | "reset" },
+  ) {
+    this.requireAdaptiveAgentFeatures();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.plugin_config.preview.response">({
+        message: { type: "agent.plugin_config.preview.request", agentId, ...input },
+      });
+    if (payload.error || !payload.preview)
+      throw new Error(payload.error ?? "Host returned no plugin configuration preview");
+    return payload.preview;
+  }
+
+  async applyLegacyPluginConfig(
+    agentId: string,
+    input: {
+      pluginId: string;
+      expectedFingerprint: string;
+      selections: Array<{ id: string; baselineId?: string }>;
+    },
+  ) {
+    this.requireAdaptiveAgentFeatures();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.plugin_config.apply.response">({
+        message: { type: "agent.plugin_config.apply.request", agentId, ...input },
+      });
+    if (payload.error || !payload.result)
+      throw new Error(payload.error ?? "Host returned no plugin configuration result");
+    return payload.result;
+  }
+
+  async resetLegacyPluginConfig(
+    agentId: string,
+    input: { pluginId: string; expectedFingerprint: string; receiptIds: string[] },
+  ) {
+    this.requireAdaptiveAgentFeatures();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.plugin_config.reset.response">({
+        message: { type: "agent.plugin_config.reset.request", agentId, ...input },
+      });
+    if (payload.error || !payload.result)
+      throw new Error(payload.error ?? "Host returned no plugin configuration result");
+    return payload.result;
+  }
+
   // ============================================================================
   // Agent Interaction
   // ============================================================================
@@ -7171,6 +7235,9 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent" && options.target.config.toolPolicy) {
+      this.requireAdaptiveAgentFeatures();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {

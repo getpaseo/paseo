@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AgentForkContextOptions,
@@ -21,6 +22,7 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 import { toErrorMessage } from "@/utils/error-messages";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { resolveDraftAgentSetup } from "@/client-slash-commands";
 
 /**
  * The subset of an agent record that a fork needs in order to seed the new
@@ -126,8 +128,11 @@ export function useForkAgent(
   const router = useRouter();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const supportsAgentForkContext = useHostFeature(serverId, "agentForkContext") && !readOnly;
+  const dismissFailure = useRef<(() => void) | null>(null);
 
   return useStableEvent(async ({ agentId, agent, workspaceId, target, boundary }) => {
+    dismissFailure.current?.();
+    dismissFailure.current = null;
     try {
       if (!supportsAgentForkContext) {
         toast?.error(t("message.actions.forkUnavailable"));
@@ -136,7 +141,7 @@ export function useForkAgent(
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const draftSetup = buildForkDraftSetup(agent);
+      const draftSetup = await resolveDraftAgentSetup(client, agentId, buildForkDraftSetup(agent));
       const prepareForkDraft = async () => {
         const draftId = generateDraftId();
         const payload = await client.buildAgentForkContext(agentId, boundary);
@@ -187,7 +192,14 @@ export function useForkAgent(
         }),
       );
     } catch (error) {
-      toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+      dismissFailure.current =
+        toast?.show(
+          `${toErrorMessage(error) || t("message.actions.forkFailed")} ${t("common.actions.retry")}`,
+          {
+            variant: "error",
+            durationMs: null,
+          },
+        ) ?? null;
     }
   });
 }

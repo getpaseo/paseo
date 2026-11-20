@@ -11,6 +11,8 @@ import type {
   ListImportableSessionsOptions,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
+  AgentOpenSupport,
+  ResolveAgentOpenSupportInput,
 } from "../../agent-sdk-types.js";
 import {
   createProviderEnvSpec,
@@ -130,6 +132,12 @@ export class OpenCodeRuntimeClient implements AgentClient {
     const selection = await this.selectService();
     if (selection.kind !== "owned") return true;
     return this.legacy.isAvailable();
+  }
+  async resolveOpenSupport(input: ResolveAgentOpenSupportInput): Promise<AgentOpenSupport> {
+    input.signal?.throwIfAborted();
+    const client = await this.client();
+    input.signal?.throwIfAborted();
+    return client.resolveOpenSupport(input);
   }
   async getDiagnostic() {
     const selection = await this.selectService();

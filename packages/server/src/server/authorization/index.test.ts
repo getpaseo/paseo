@@ -35,6 +35,17 @@ function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundM
 }
 
 describe("SessionAuthorization", () => {
+  test("viewers can read narrow templates but cannot preview or mutate sensitive legacy treatment", () => {
+    const viewer = new SessionAuthorization(["workspace.read"]);
+    const editor = new SessionAuthorization(["workspace.read", "workspace.write"]);
+    expect(viewer.allowsInbound(inboundMessage("agent.template.get.request"))).toBe(true);
+    expect(viewer.allowsInbound(inboundMessage("agent.plugin_config.preview.request"))).toBe(false);
+    expect(viewer.allowsInbound(inboundMessage("agent.plugin_config.apply.request"))).toBe(false);
+    expect(viewer.allowsInbound(inboundMessage("agent.plugin_config.reset.request"))).toBe(false);
+    expect(editor.allowsInbound(inboundMessage("agent.plugin_config.preview.request"))).toBe(true);
+    expect(editor.allowsInbound(inboundMessage("agent.plugin_config.apply.request"))).toBe(true);
+    expect(editor.allowsInbound(inboundMessage("agent.plugin_config.reset.request"))).toBe(true);
+  });
   test("owner authority covers every session operation", () => {
     const authorization = new SessionAuthorization(OWNER_PERMISSIONS);
 

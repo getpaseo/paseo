@@ -20,6 +20,8 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
+import { selectLegacyAdoptions } from "./plugin-config-adoption.js";
+import { buildVoiceModeSystemPrompt } from "../voice-config.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
 import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
@@ -3644,6 +3646,8 @@ test("createAgent passes daemon launch env through the provider launch context",
   });
   expect(client.lastLaunchContext).toEqual({
     agentId: snapshot.id,
+    launchId: expect.any(String),
+    retainPluginResources: expect.any(Function),
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
@@ -3722,11 +3726,15 @@ test.each([
       });
       expect(client.lastLaunchContext).toEqual({
         agentId: agent.id,
+        launchId: expect.any(String),
+        retainPluginResources: expect.any(Function),
         env: { ...expectedEnv, PASEO_AGENT_ID: agent.id, PASEO_AGENT_CWD: workdir },
       });
       await manager.reloadAgentSession(agent.id);
       expect(client.lastLaunchContext).toEqual({
         agentId: agent.id,
+        launchId: expect.any(String),
+        retainPluginResources: expect.any(Function),
         env: { ...expectedEnv, PASEO_AGENT_ID: agent.id, PASEO_AGENT_CWD: workdir },
       });
       expect(toAgentPayload(resumed)).not.toHaveProperty("launchEnv");
@@ -3933,7 +3941,11 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: expect.stringMatching(
+        new RegExp(
+          `^http://127\\.0\\.0\\.1:6767/mcp/agents\\?callerAgentId=${snapshot.id}&launchId=[a-f0-9-]{36}$`,
+        ),
+      ),
     },
     custom: {
       type: "stdio",
@@ -4234,7 +4246,11 @@ test("createAgent allows best-effort internal MCP when the provider session repo
   expect(manager.getMcpAuthToken()).toBe("cap-token");
   expect(client.lastConfig?.mcpServers?.paseo).toEqual({
     type: "http",
-    url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+    url: expect.stringMatching(
+      new RegExp(
+        `^http://127\\.0\\.0\\.1:6767/mcp/agents\\?callerAgentId=${snapshot.id}&launchId=[a-f0-9-]{36}$`,
+      ),
+    ),
     headers: { Authorization: "Bearer cap-token" },
   });
 
@@ -4302,7 +4318,11 @@ test("uses each provider's current policy for new sessions and snapshots it by a
   );
 
   expect(policyInputs).toEqual([
-    { callerAgentId: codexAgent.id, paseoToolPolicy: { disabledTools: ["list_agents"] } },
+    {
+      callerAgentId: codexAgent.id,
+      launchId: expect.any(String),
+      paseoToolPolicy: { disabledTools: ["list_agents"] },
+    },
   ]);
   expect(codex.launchContexts[0]?.paseoTools).toBe(paseoTools);
   expect(claude.launchContexts[0]?.paseoTools).toBeUndefined();
@@ -4327,9 +4347,14 @@ test("uses each provider's current policy for new sessions and snapshots it by a
     disabledTools: ["create_agent"],
   });
   expect(policyInputs).toEqual([
-    { callerAgentId: codexAgent.id, paseoToolPolicy: { disabledTools: ["list_agents"] } },
+    {
+      callerAgentId: codexAgent.id,
+      launchId: expect.any(String),
+      paseoToolPolicy: { disabledTools: ["list_agents"] },
+    },
     {
       callerAgentId: nextCodexAgent.id,
+      launchId: expect.any(String),
       paseoToolPolicy: { disabledTools: ["create_agent"] },
     },
   ]);
@@ -4373,7 +4398,11 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
 
   expect(enabledClient.lastConfig?.mcpServers?.paseo).toEqual({
     type: "http",
-    url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${enabledAgent.id}`,
+    url: expect.stringMatching(
+      new RegExp(
+        `^http://127\\.0\\.0\\.1:6767/mcp/agents\\?callerAgentId=${enabledAgent.id}&launchId=[a-f0-9-]{36}$`,
+      ),
+    ),
   });
 
   const disabledClient = new McpClient();
@@ -4442,7 +4471,11 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
   expect(client.resumeOverrides[0]?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: expect.stringMatching(
+        new RegExp(
+          `^http://127\\.0\\.0\\.1:6768/mcp/agents\\?callerAgentId=${snapshot.id}&launchId=[a-f0-9-]{36}$`,
+        ),
+      ),
     },
     custom: {
       type: "stdio",
@@ -5143,6 +5176,8 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
   expect(client.lastResumeOverrides).not.toHaveProperty("modeId");
   expect(client.lastResumeLaunchContext).toEqual({
     agentId: resumed.id,
+    launchId: expect.any(String),
+    retainPluginResources: expect.any(Function),
     env: {
       PASEO_AGENT_ID: resumed.id,
       PASEO_AGENT_CWD: workdir,
@@ -5336,6 +5371,8 @@ test("importProviderSession imports the selected session without listing and pub
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
   expect(client.importLaunchContext).toEqual({
     agentId: imported.id,
+    launchId: expect.any(String),
+    retainPluginResources: expect.any(Function),
     env: {
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,
@@ -5440,6 +5477,8 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
 
   expect(client.lastCreateLaunchContext).toEqual({
     agentId: snapshot.id,
+    launchId: expect.any(String),
+    retainPluginResources: expect.any(Function),
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
@@ -5452,6 +5491,8 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
 
   expect(client.lastResumeLaunchContext).toEqual({
     agentId: snapshot.id,
+    launchId: expect.any(String),
+    retainPluginResources: expect.any(Function),
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
@@ -10112,6 +10153,8 @@ test("a sender's start wait follows its prompt across a stale-session retry", as
 
 test("a sender's start wait follows its prompt when the session is stale before the wait begins", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-stale-start-"));
+  const resumeEntered = deferred<void>();
+  const releaseResume = deferred<void>();
   class StaleStartSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       throw new StaleProviderSessionError("stale-bridge");
@@ -10120,6 +10163,14 @@ test("a sender's start wait follows its prompt when the session is stale before 
   class StaleStartClient extends ResumeTrackingTestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new StaleStartSession(config);
+    }
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeEntered.resolve();
+      await releaseResume.promise;
+      return super.resumeSession(handle, config);
     }
   }
   const client = new StaleStartClient();
@@ -10133,8 +10184,9 @@ test("a sender's start wait follows its prompt when the session is stale before 
       runOptions: { clientMessageId: "immediate-stale-start" },
     });
     // The stale start has failed and been cleared before the sender begins waiting.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await resumeEntered.promise;
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    releaseResume.resolve();
     await expect(dispatchStarted(dispatch)).resolves.toBeUndefined();
     await client.waitForRetryStart();
     expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual([
@@ -10144,6 +10196,7 @@ test("a sender's start wait follows its prompt when the session is stale before 
       }),
     ]);
   } finally {
+    releaseResume.resolve();
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();
@@ -13834,6 +13887,356 @@ test("failed startup history closes the session without registering an agent", a
   }
 });
 
+test("failed startup history retains its pending runtime and staged tools until closeAgent confirms closure", async () => {
+  const agentId = "85ff127d-af40-4ea4-9396-58620b6c40b8";
+  const otherAgentId = "06d42d84-60e8-49a6-8a10-3ae99abc0358";
+  const liveLaunches = new Set<string>();
+  let launchId = "";
+  let closed = false;
+  let rejectClose = true;
+  class FailingHistorySession extends TestAgentSession {
+    readonly initialTimeline = [
+      {
+        item: { type: "notification", level: "info", message: "Runtime v2" } as const,
+        timestamp: "2026-09-22T00:00:00.000Z",
+      },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close(): Promise<void> {
+      if (rejectClose) throw new Error("Provider still owns the writer");
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return new FailingHistorySession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) => {
+        if (name !== "agent.open.before") return request;
+        if (!request.launchId) throw new Error("Expected the host opening to own a launch");
+        launchId = request.launchId;
+        liveLaunches.add(launchId);
+        return {
+          ...request,
+          tools: [
+            {
+              name: "pending_tool",
+              description: "Dummy pending runtime tool",
+              inputSchema: { type: "object", properties: {} },
+              pluginId: "dummy-plugin",
+              pluginInstanceId: "dummy-instance",
+            },
+          ],
+        };
+      },
+    },
+    pluginAgentTools: {
+      isToolPluginAvailable: () => true,
+      detachTools: () => {},
+      disposeLaunch: async (id) => {
+        liveLaunches.delete(id);
+      },
+      callTool: async (_pluginId, _instanceId, _agent, _name, _input, _signal, id) => {
+        if (!id || !liveLaunches.has(id)) throw new Error("Dummy launch is disposed");
+        return { text: "Dummy credential and catalog remain usable" };
+      },
+    },
+  });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "failed-history", metadata: { cwd: tmpdir() } },
+        undefined,
+        agentId,
+      ),
+    ).rejects.toThrow();
+
+    expect({
+      agents: manager.listAgents(),
+      closed,
+      launchRetained: liveLaunches.has(launchId),
+    }).toEqual({ agents: [], closed: false, launchRetained: true });
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(manager.getPluginTools(agentId)).toEqual([]);
+    expect(() => manager.getPluginTools(otherAgentId, launchId)).toThrow(
+      "Plugin launch is disposed or belongs to another agent",
+    );
+    const tools = manager.getPluginTools(agentId, launchId);
+    expect(tools).toHaveLength(1);
+    await expect(manager.executePluginTool(tools[0]!, agentId, {})).resolves.toEqual({
+      text: "Dummy credential and catalog remain usable",
+    });
+
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+
+    expect({ closed, launchRetained: liveLaunches.has(launchId) }).toEqual({
+      closed: true,
+      launchRetained: false,
+    });
+    expect(() => manager.getPluginTools(agentId, launchId)).toThrow(
+      "Plugin launch is disposed or belongs to another agent",
+    );
+  } finally {
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+  }
+});
+
+test("a pending unregistered runtime blocks another open until explicit close succeeds", async () => {
+  const agentId = "269f3dc9-a640-4fae-9e91-aa17f43bb923";
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "pending-writer",
+    metadata: { cwd: tmpdir() },
+  };
+  let failHistory = true;
+  let rejectClose = true;
+  let openCount = 0;
+  let closed = false;
+  class PendingSession extends TestAgentSession {
+    readonly initialTimeline = [
+      { item: { type: "notification", level: "info", message: "Pending writer" } as const },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      if (failHistory) throw new Error("History unavailable");
+    }
+    override async close(): Promise<void> {
+      if (rejectClose) throw new Error("Provider still owns the writer");
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      openCount += 1;
+      return new PendingSession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    await expect(manager.resumeAgentFromPersistence(handle, undefined, agentId)).rejects.toThrow();
+    failHistory = false;
+
+    await expect(manager.resumeAgentFromPersistence(handle, undefined, agentId)).rejects.toThrow(
+      "pending runtime",
+    );
+    expect({ openCount, closed, agents: manager.listAgents() }).toEqual({
+      openCount: 1,
+      closed: false,
+      agents: [],
+    });
+
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+    const recovered = await manager.resumeAgentFromPersistence(handle, undefined, agentId);
+    expect({ openCount, closed, id: recovered.id, lifecycle: recovered.lifecycle }).toEqual({
+      openCount: 2,
+      closed: true,
+      id: agentId,
+      lifecycle: "idle",
+    });
+  } finally {
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+  }
+});
+
+test("shutdown flush closes a pending unregistered runtime absent from the managed agent list", async () => {
+  const agentId = "8e0efdf1-4b5d-4972-898a-dc1ada078e91";
+  let rejectClose = true;
+  let closeCount = 0;
+  let closed = false;
+  class PendingSession extends TestAgentSession {
+    readonly initialTimeline = [
+      { item: { type: "notification", level: "info", message: "Pending writer" } as const },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close(): Promise<void> {
+      closeCount += 1;
+      if (rejectClose) throw new Error("Provider still owns the writer");
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return new PendingSession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "shutdown-pending", metadata: { cwd: tmpdir() } },
+        undefined,
+        agentId,
+      ),
+    ).rejects.toThrow();
+    expect(manager.listAgents({ includeInternal: true })).toEqual([]);
+    expect(closeCount).toBe(1);
+
+    manager.prepareForShutdown();
+    rejectClose = false;
+    await manager.flushForShutdown();
+
+    expect({ closeCount, closed }).toEqual({ closeCount: 2, closed: true });
+    await manager.closeAgent(agentId);
+    expect(closeCount).toBe(2);
+  } finally {
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+  }
+});
+
+test("shutdown flush surfaces pending runtime close failure without dropping its cleanup owner", async () => {
+  const agentId = "371a7a3f-142d-477a-aed9-108726a2a657";
+  let rejectClose = true;
+  let closeCount = 0;
+  let closed = false;
+  class PendingSession extends TestAgentSession {
+    readonly initialTimeline = [
+      { item: { type: "notification", level: "info", message: "Pending writer" } as const },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close(): Promise<void> {
+      closeCount += 1;
+      if (rejectClose) throw new Error("Provider still owns the writer");
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return new PendingSession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "shutdown-pending", metadata: { cwd: tmpdir() } },
+        undefined,
+        agentId,
+      ),
+    ).rejects.toThrow();
+    manager.prepareForShutdown();
+
+    await expect(manager.flushForShutdown()).rejects.toThrow("Provider still owns the writer");
+    expect({ closeCount, closed }).toEqual({ closeCount: 2, closed: false });
+
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+    expect({ closeCount, closed }).toEqual({ closeCount: 3, closed: true });
+  } finally {
+    rejectClose = false;
+    await manager.closeAgent(agentId);
+  }
+});
+
+test("shutdown flush bounds a pending close and retains ownership after its late rejection", async () => {
+  const agentId = "8f2ec020-d7e8-4afb-b6bd-1dd22c92a713";
+  const lateClose = deferred<void>();
+  const closeEntered = deferred<void>();
+  let closeCount = 0;
+  let holdClose = true;
+  let closed = false;
+  class PendingSession extends TestAgentSession {
+    readonly initialTimeline = [
+      { item: { type: "notification", level: "info", message: "Pending writer" } as const },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close(): Promise<void> {
+      closeCount += 1;
+      if (closeCount === 1) throw new Error("Provider still owns the writer");
+      if (holdClose) {
+        closeEntered.resolve();
+        await lateClose.promise;
+      }
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return new PendingSession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "shutdown-pending", metadata: { cwd: tmpdir() } },
+        undefined,
+        agentId,
+      ),
+    ).rejects.toThrow();
+    manager.prepareForShutdown();
+    const flushing = manager.flushForShutdown();
+
+    await expect(flushing).rejects.toThrow("Timed out closing pending runtime");
+    await closeEntered.promise;
+    expect({ closeCount, closed }).toEqual({ closeCount: 2, closed: false });
+
+    holdClose = false;
+    const closing = manager.closeAgent(agentId);
+    lateClose.reject(new Error("Late provider close failure"));
+    await expect(closing).rejects.toThrow("Late provider close failure");
+    expect(closeCount).toBe(2);
+
+    await manager.closeAgent(agentId);
+    expect({ closeCount, closed }).toEqual({ closeCount: 3, closed: true });
+  } finally {
+    holdClose = false;
+    lateClose.resolve();
+    await manager.closeAgent(agentId);
+  }
+});
+
 test("usage session is a pure read of the live adapter and disappears on close", async () => {
   const descriptor = {
     provider: "claude",
@@ -14549,6 +14952,67 @@ describe("agent options", () => {
     expect(agent?.config.providerOptions).toEqual({ web_search: true });
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
     expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("provider option events update launch-owned effective values without persisting them as caller intent", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-option-event-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        wait: async () => {},
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.open.before"
+            ? { ...request, providerOptions: { launch_option: "initial" } }
+            : request,
+      },
+    });
+    try {
+      const agent = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+          providerOptions: { caller_option: true },
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      expect(manager.getAgent(agent.id)?.effectiveOptions).toEqual({
+        service_tier: "default",
+        caller_option: true,
+        launch_option: "initial",
+      });
+
+      client.session!.pushEvent({
+        type: "options_changed",
+        provider: "codex",
+        patch: { launch_option: "provider-reported", caller_option: false },
+      });
+      await manager.flush();
+      await storage.flush();
+
+      expect(manager.getAgent(agent.id)?.effectiveOptions).toEqual({
+        service_tier: "default",
+        caller_option: false,
+        launch_option: "provider-reported",
+      });
+      expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({ caller_option: false });
+      expect((await storage.get(agent.id))?.config?.providerOptions).toEqual({
+        caller_option: false,
+      });
+      expect((await manager.getAgentTemplateConfig(agent.id)).providerOptions).toEqual({
+        caller_option: false,
+      });
+    } finally {
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 
   test("a stored legacy Codex record reads its saved Fast speed as the speed its control selects", () => {
@@ -15687,6 +16151,122 @@ test("an idle-only prompt waits for idle and checks admission before handoff", a
     expect(session.startedModes).toEqual(["plan", "full-access"]);
   } finally {
     await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("voice runtime overlays preserve adopted saved instructions and receipts across on and off reloads", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-adopted-voice-overlay-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class VoiceRecordingClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeOverrides.push(structuredClone(config));
+      return new TestAgentSession({
+        ...config,
+        provider: this.provider,
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+  const client = new VoiceRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon instructions",
+  });
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        systemPrompt: "Caller α\n\nLegacy plugin instructions",
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const originalConfig = JSON.stringify((await storage.get(agent.id))!.config);
+    const receipts = selectLegacyAdoptions({
+      pluginId: "notes",
+      config: agent.config,
+      env: {},
+      recipe: {
+        version: 1,
+        selectors: [
+          {
+            id: "prompt",
+            group: "notes",
+            label: "Instructions",
+            kind: "prompt-suffix",
+            text: "\n\nLegacy plugin instructions",
+          },
+        ],
+      },
+      selections: [{ id: "prompt" }],
+    });
+    await storage.mutatePluginConfigAdoptions(agent.id, () => ({ version: 1, receipts }));
+    const originalReceipts = JSON.stringify((await storage.get(agent.id))!.pluginConfigAdoptions);
+    const voiceOn = buildVoiceModeSystemPrompt(undefined, true);
+    await manager.reloadAgentSession(agent.id, undefined, { runtimeAppendSystemPrompt: voiceOn });
+    await manager.flush();
+    await storage.flush();
+
+    expect(client.resumeOverrides[0]?.systemPrompt).toBe("Caller α");
+    expect(client.resumeOverrides[0]?.daemonAppendSystemPrompt).toBe(
+      `Daemon instructions\n\n${voiceOn}`,
+    );
+    expect(client.resumeOverrides[0]?.daemonAppendSystemPrompt).toContain(
+      "Paseo voice mode is now on.",
+    );
+    expect(JSON.stringify((await storage.get(agent.id))!.config)).toBe(originalConfig);
+    expect(JSON.stringify((await storage.get(agent.id))!.pluginConfigAdoptions)).toBe(
+      originalReceipts,
+    );
+    expect((await manager.getAgentTemplateConfig(agent.id)).systemPrompt).toBe("Caller α");
+    expect(
+      (await manager.getAgentTemplateConfig(agent.id)).daemonAppendSystemPrompt,
+    ).toBeUndefined();
+
+    await manager.reloadAgentSession(agent.id);
+    await manager.reloadAgentSession(agent.id);
+    expect(client.resumeOverrides[2]?.daemonAppendSystemPrompt).toBe(
+      `Daemon instructions\n\n${voiceOn}`,
+    );
+
+    const voiceOff = buildVoiceModeSystemPrompt(undefined, false);
+    await manager.reloadAgentSession(agent.id, undefined, { runtimeAppendSystemPrompt: voiceOff });
+    await manager.flush();
+    await storage.flush();
+
+    expect(client.resumeOverrides).toHaveLength(4);
+    expect(client.resumeOverrides[3]?.systemPrompt).toBe("Caller α");
+    expect(client.resumeOverrides[3]?.daemonAppendSystemPrompt).toBe(
+      `Daemon instructions\n\n${voiceOff}`,
+    );
+    expect(client.resumeOverrides[3]?.daemonAppendSystemPrompt).toContain(
+      "Ignore any earlier Paseo voice mode instructions in this thread.",
+    );
+    expect(client.resumeOverrides[3]?.daemonAppendSystemPrompt).not.toContain(
+      "Paseo voice mode is now on.",
+    );
+    expect(JSON.stringify((await storage.get(agent.id))!.config)).toBe(originalConfig);
+    expect(JSON.stringify((await storage.get(agent.id))!.pluginConfigAdoptions)).toBe(
+      originalReceipts,
+    );
+    expect(manager.getAgent(agent.id)?.config.systemPrompt).toBe(
+      "Caller α\n\nLegacy plugin instructions",
+    );
+    expect((await manager.getAgentTemplateConfig(agent.id)).systemPrompt).toBe("Caller α");
+    expect(
+      (await manager.getAgentTemplateConfig(agent.id)).daemonAppendSystemPrompt,
+    ).toBeUndefined();
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

@@ -7,6 +7,304 @@ const paseo = createPaseoApi(
   new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "lifecycle-unit" }),
 );
 
+test("older hook results preserve the host's session support facts", async () => {
+  const input = {
+    agentId: "agent",
+    workspaceId: null,
+    provider: "work-claude",
+    cwd: "/project",
+    title: null,
+    labels: {},
+    tools: [],
+    mcpServers: {},
+    env: {},
+    reason: "resume" as const,
+    purpose: "interactive" as const,
+    openSupport: {
+      adapter: { kind: "builtin" as const, id: "claude" },
+      instructions: "supported" as const,
+      mcpHttp: "supported" as const,
+      exactMcpPreapproval: "supported" as const,
+      attachedTools: { delivery: "mcp" as const, enabled: true, disabledTools: [] },
+      restrictions: {
+        mcpConfiguration: "mutable" as const,
+        processEnvironment: "mutable" as const,
+      },
+      providerOptions: ["additionalDirectories"],
+    },
+  };
+  const { openSupport, ...olderResult } = input;
+  const result = await validateBeforeResult("agent.open.before", input, olderResult);
+  expect(result).toMatchObject({ provider: "work-claude", openSupport });
+});
+
+test("session support facts stay immutable inside the hook callback", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", ({ request }) => {
+    expect(Object.isFrozen(request.openSupport)).toBe(true);
+    expect(Object.isFrozen(request.openSupport?.adapter)).toBe(true);
+    expect(Object.isFrozen(request.openSupport?.attachedTools.disabledTools)).toBe(true);
+    expect(Object.isFrozen(request.openSupport?.restrictions)).toBe(true);
+    expect(Object.isFrozen(request.openSupport?.providerOptions)).toBe(true);
+    return request;
+  });
+  await hooks.invoke(
+    "operation",
+    "agent.open.before",
+    {
+      agentId: "agent",
+      workspaceId: null,
+      provider: "work-claude",
+      cwd: "/project",
+      reason: "resume",
+      purpose: "interactive",
+      title: null,
+      labels: {},
+      tools: [],
+      mcpServers: {},
+      env: {},
+      openSupport: {
+        adapter: { kind: "builtin", id: "claude" },
+        instructions: "supported",
+        mcpHttp: "supported",
+        exactMcpPreapproval: "supported",
+        attachedTools: { delivery: "mcp", enabled: true, disabledTools: [] },
+        restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+        providerOptions: ["additionalDirectories"],
+      },
+    },
+    paseo,
+  );
+});
+
+test("hooks cannot replace host-owned support with a more permissive descriptor", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    openSupport: { ...request.openSupport!, mcpHttp: "supported" },
+  }));
+  await expect(
+    hooks.invoke(
+      "operation",
+      "agent.open.before",
+      {
+        agentId: "agent",
+        workspaceId: null,
+        provider: "plugin-provider",
+        cwd: "/project",
+        reason: "resume",
+        purpose: "interactive",
+        title: null,
+        labels: {},
+        tools: [],
+        mcpServers: {},
+        env: {},
+        openSupport: {
+          adapter: { kind: "plugin", id: "plugin-provider" },
+          instructions: "unknown",
+          mcpHttp: "unknown",
+          exactMcpPreapproval: "unknown",
+          attachedTools: { delivery: "unknown", enabled: true, disabledTools: [] },
+          restrictions: { mcpConfiguration: "unknown", processEnvironment: "unknown" },
+          providerOptions: [],
+        },
+      },
+      paseo,
+    ),
+  ).rejects.toThrow("agent.open.before hooks cannot change host-owned openSupport");
+});
+
+test("launch lifetime survives hook completion and disposal aborts before awaiting cleanup", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  let launchSignal: AbortSignal | undefined;
+  let finishCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => {
+    finishCleanup = resolve;
+  });
+  const events: string[] = [];
+  hooks.addHook("agent.open.before", async ({ request }, { launch }) => {
+    launchSignal = launch.signal;
+    launch.onDispose(async () => {
+      events.push(launch.signal.aborted ? "aborted-before-cleanup" : "not-aborted");
+      await cleanup;
+      events.push("cleanup-finished");
+    });
+    return request;
+  });
+  await hooks.invoke(
+    "hook",
+    "agent.open.before",
+    {
+      agentId: "agent",
+      launchId: "launch-one",
+      workspaceId: null,
+      provider: "claude",
+      cwd: "/project",
+      reason: "resume",
+      purpose: "interactive",
+      title: null,
+      labels: {},
+      tools: [],
+      mcpServers: {},
+      env: {},
+    },
+    paseo,
+  );
+  expect(launchSignal?.aborted).toBe(false);
+  const disposal = hooks.disposeLaunch("launch-one");
+  expect(events).toEqual(["aborted-before-cleanup"]);
+  finishCleanup();
+  await disposal;
+  await hooks.disposeLaunch("launch-one");
+  expect(events).toEqual(["aborted-before-cleanup", "cleanup-finished"]);
+});
+
+test("failed launch cleanup stays rejected without rerunning callbacks and bulk disposal reports it", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  let cleanups = 0;
+  let launchSignal: AbortSignal | undefined;
+  hooks.addHook("agent.open.before", async ({ request }, { launch }) => {
+    launchSignal = launch.signal;
+    launch.onDispose(() => {
+      cleanups++;
+      throw new Error("Allocated resource cleanup failed");
+    });
+    return request;
+  });
+  await hooks.invoke(
+    "hook",
+    "agent.open.before",
+    {
+      agentId: "agent",
+      launchId: "failed-launch",
+      workspaceId: null,
+      provider: "claude",
+      cwd: "/project",
+      reason: "create",
+      purpose: "interactive",
+      title: null,
+      labels: {},
+      tools: [],
+      mcpServers: {},
+      env: {},
+    },
+    paseo,
+  );
+
+  const disposal = hooks.disposeLaunch("failed-launch");
+  const failure: unknown = await disposal.catch((error: unknown) => error);
+  expect(failure).toMatchObject({
+    message: "Plugin launch cleanup failed",
+    errors: [{ message: "Allocated resource cleanup failed" }],
+  });
+  expect(hooks.disposeLaunch("failed-launch")).toBe(disposal);
+  await expect(hooks.disposeLaunch("failed-launch")).rejects.toBe(failure);
+  expect(launchSignal?.aborted).toBe(true);
+  expect(cleanups).toBe(1);
+  await expect(hooks.installLaunch("failed-launch")).rejects.toThrow("disposed");
+  await expect(hooks.disposeLaunches()).rejects.toMatchObject({
+    message: "Plugin launch cleanup failed",
+    errors: [failure],
+  });
+  expect(cleanups).toBe(1);
+});
+
+test("open hooks contribute launch-only grants and options beside immutable caller configuration", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    providerOptions: { additionalDirectories: ["/linked"] },
+    mcpServers: { notes: { type: "http", url: "http://127.0.0.1:1/notes" } },
+    toolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+  }));
+  expect(
+    await hooks.invoke(
+      "hook",
+      "agent.open.before",
+      {
+        agentId: "agent",
+        launchId: "launch",
+        workspaceId: null,
+        provider: "claude",
+        cwd: "/project",
+        reason: "resume",
+        purpose: "interactive",
+        title: null,
+        labels: {},
+        tools: [],
+        mcpServers: {},
+        env: {},
+        baseConfig: {
+          provider: "claude",
+          cwd: "/project",
+          systemPrompt: "Caller instructions",
+          providerOptions: { additionalDirectories: ["/caller"] },
+        },
+      },
+      paseo,
+    ),
+  ).toMatchObject({
+    baseConfig: {
+      systemPrompt: "Caller instructions",
+      providerOptions: { additionalDirectories: ["/caller"] },
+    },
+    providerOptions: { additionalDirectories: ["/linked"] },
+    toolPolicy: { preapproved: [{ kind: "mcp", server: "notes", tool: "read" }] },
+  });
+});
+
+test("installed notification and retained references keep the original launch alive until its last user releases", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  const events: string[] = [];
+  let originalSignal: AbortSignal | undefined;
+  hooks.addHook("agent.open.before", async ({ request }, { launch }) => {
+    if (launch.id === "original") originalSignal = launch.signal;
+    else launch.retainPrevious();
+    launch.onInstalled(() => {
+      events.push(`installed:${launch.id}`);
+    });
+    launch.onDispose(({ installed }) => {
+      events.push(`disposed:${launch.id}:${installed}`);
+    });
+    return request;
+  });
+  const request = {
+    agentId: "agent",
+    workspaceId: null,
+    provider: "claude",
+    cwd: "/project",
+    reason: "resume",
+    purpose: "interactive",
+    title: null,
+    labels: {},
+    tools: [],
+    mcpServers: {},
+    env: {},
+  };
+  await hooks.invoke("first", "agent.open.before", { ...request, launchId: "original" }, paseo);
+  await hooks.installLaunch("original");
+  await hooks.installLaunch("original");
+  await hooks.invoke(
+    "second",
+    "agent.open.before",
+    {
+      ...request,
+      launchId: "replacement",
+      previousContribution: { launchId: "original", mcpServers: {}, env: {} },
+    },
+    paseo,
+  );
+  await hooks.disposeLaunch("original");
+  expect(originalSignal?.aborted).toBe(false);
+  await hooks.disposeLaunch("replacement");
+  expect(originalSignal?.aborted).toBe(true);
+  expect(events).toEqual([
+    "installed:original",
+    "disposed:replacement:false",
+    "disposed:original:true",
+  ]);
+});
+
 test("removing an old registration twice preserves a newer registration for the same hook", async () => {
   const hooks = new PluginHookHandlers(() => {});
   const remove = hooks.addHook("workspace.create.before", async ({ request }) => {

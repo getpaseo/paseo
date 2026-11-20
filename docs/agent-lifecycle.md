@@ -45,6 +45,9 @@ primed.
 Reload releases the old runtime before resuming its durable session: an idle provider process can
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
 replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
+Before installation, a returned provider session has a pending runtime owner. If admission fails
+and closure rejects, that owner retains the session and launch resources, blocks another writer,
+and remains addressable by explicit close or bounded shutdown cleanup. It is not a usable agent.
 
 Idle resumable runtimes are collected after one hour without activity, checked once a minute.
 Collection releases the process and preserves the agent record, conversation, relationships, and

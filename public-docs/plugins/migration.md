@@ -1,17 +1,143 @@
 ---
-title: Migrate a plugin to runtime entries
-description: Mechanical migration from a mixed plugin entry to explicit client and server entries.
+title: Migrate a plugin
+description: Move to adaptive session contributions or migrate older mixed entries to client and server entries.
 nav: Migration
 order: 48
 category: Plugins
 ---
 
-# Migrate a plugin to runtime entries
+# Migrate a plugin
 
-Use this guide to update plugins written for Paseo 0.7 or earlier to the current client/server entry format, introduced in 0.8.
+Use the adaptive migration below for optional per-session features. For plugins written for Paseo
+0.7 or earlier, start with [runtime entry migration](#1-classify-the-existing-code), introduced in 0.8.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
-steps in order. Do not keep a compatibility entry.
+applicable migration in order. Do not keep a compatibility entry.
+
+## Adaptive session contributions (source contract)
+
+This contract is source-only. No released host/SDK minimum has been assigned. Existing package
+versions or manifest requirements do not establish support, and this guide is not an installation
+or release-readiness claim. Before publication, align the plugin dependency/lockfile and
+`requirements.paseo` with the real host/SDK release that supplies these APIs. Do not invent a version
+or commit local absolute `file:` dependencies.
+
+Check the host feature once during synchronous server setup, before registering adaptive hooks:
+
+```ts
+export default function contribute(server: PluginServerContext) {
+  if (!server.features?.adaptiveAgentFeatures) {
+    throw new Error("Update the Paseo host to use adaptive plugin features.");
+  }
+  // Register this plugin's recipe and open hooks here.
+  return () => {};
+}
+```
+
+Import `PluginServerContext` from `@getpaseo/plugin/server`. Do not maintain a second create-hook
+implementation for old hosts. Existing old plugins retain their established behavior; an upgraded
+adaptive plugin needs the feature-bearing host.
+
+Move optional instructions, tools, MCP bindings, exact approval conveniences, environment, and
+provider options out of `agent.create.before` and into `agent.open.before`. Derive each independent
+feature from current preferences and `openSupport` on every interactive open. Keep preferences,
+stored plugin data, helper routing, and per-call permission checks unchanged. Unknown support
+omits only the optional feature that depends on it; do not retry startup with reduced caller
+requirements. See the [hook contract](./hooks.md#resolve-optional-features-for-this-opening) for
+support, merge precedence, and launch-resource ownership.
+
+### Coexist with saved contributions
+
+Moving the hook does not remove contributions already saved by the old create hook. Register one
+static `server.registerLegacyAgentConfig({ version: 1, selectors: [...] })` recipe during synchronous
+setup. The host binds it to the installed runtime plugin ID. Duplicate or late registration fails.
+Each selector has an `id`, `group`, and `label`, plus its field-specific selector:
+
+| `kind`           | Exact selection                                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp`            | `name` of a saved server.                                                                                                                                 |
+| `prompt-suffix`  | Literal `text`; optional `followedBySuffix` lists exact known trailing variants.                                                                          |
+| `prompt-section` | Literal `start` and `end` markers around one well-formed section.                                                                                         |
+| `grant`          | Exact `server` and `tool`.                                                                                                                                |
+| `option` / `env` | Top-level `key` and named `baselines`, each with `id`, `label`, and `kind: "absent"` or `kind: "value"` plus `value`. Environment values must be strings. |
+
+Recipes contain no callbacks, regular expressions, arbitrary paths, owner assertions, or expected
+secrets. Names and literal matches nominate candidates, not authority to remove caller state.
+Do not guess overwritten caller baselines. An absent baseline means inherit current defaults,
+not recover the historical value.
+
+Use `baseConfig` and `legacyConfigState.selectors` to suppress conflicting additions before
+allocating credentials. Selector states are `present`, `absent`, or `ambiguous`, not provenance.
+
+| Required base for one feature group                                      | New optional contribution                                                                                              |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Saved endpoint remains, including a coincidentally named caller endpoint | Preserve it; add no replacement endpoint, dependent instructions, environment, or grants. Never claim its credentials. |
+| Endpoint adopted but matching saved instructions remain                  | Derive eligible tools only if their names are free; preserve the text and append no duplicate guidance.                |
+| Endpoint remains but instructions adopted                                | Suppress the endpoint's whole dependent group; do not describe an unowned binding.                                     |
+| Prompt match is ambiguous                                                | Preserve caller text and suppress fresh guidance for that group; explain the ambiguity.                                |
+| Plugin preference is Off, but saved values remain unadopted              | Add nothing new. Off does not erase saved values; existing per-call safety controls still apply.                       |
+| Group fully adopted or absent                                            | Derive eligible contributions for this opening. Independent groups remain independent.                                 |
+
+Do not strip text by heading, rotate a legacy credential, infer ownership from a server name, or
+auto-approve a saved binding. A blocked adoption must not itself prevent an otherwise valid legacy
+chat from opening with its unchanged required configuration.
+
+### Explicitly adopt or reset one saved agent
+
+Adoption means excluding selected old fragments from the required launch base so the current plugin
+can derive eligible replacements. It does not erase originals, rewrite plugin data, or prove that
+an old endpoint is live. There is no automatic migration.
+
+Use [CLI preview/apply/reset](/docs/cli#saved-plugin-configuration) or the
+[SDK agent operations](/docs/sdk/agents#saved-plugin-configuration). All three operations require
+`workspace.write` and `server_info.features.adaptiveAgentFeatures`. Preview reads the exact saved
+agent without opening a provider, running hooks, minting credentials, or unarchiving it. It returns
+candidate labels, consequences, blocked reasons, baseline IDs, receipt IDs, and an expected-state
+fingerprint, not raw prompts, credential URLs/headers, environment values, or option values.
+
+Select candidates explicitly. Option and environment candidates require an explicit baseline ID;
+leaving a candidate unselected keeps it unadopted. Required, mixed caller/plugin, and unmarked
+policies cannot be reclassified by adoption. A dependent endpoint is blocked too. Plugin-only
+policy adoption requires exact known grants and selection of every reference to an adopted server.
+There is no policy-release override.
+
+Apply and reset compare a fresh preview fingerprint against current saved state. A changed recipe,
+configuration, receipt set, or daemon restart can make it stale: preview again, do not force it.
+Mutations reject running agents and uncertain closure. An idle live session becomes stale for its
+next legitimate open; neither command reloads it or interrupts a turn. Results say
+`appliesOn: "next-open"`.
+
+If an adopted fragment changes, projection fails with reset-first guidance. Explicit edits to an
+adopted option key also require reset first, even if the new value equals the old value. Reset the
+affected receipt before editing, then preview again if you want to adopt the revised fragment.
+Unrelated edits preserve valid selections; prompt selections bind to the whole original prompt,
+so editing that prompt requires resetting its affected selections first.
+
+Reset removes only selected receipts. The next open uses the retained original intent, even if the
+plugin is disabled. Reset preview does not require a running plugin. Review that restored intent
+before reopening; reset is not a request to disable the old integration.
+If resetting a grant receipt would leave a dependent endpoint receipt unusable, reset both together.
+The error names the dependent endpoint receipts; it never expands your selection automatically.
+Reset still permits incremental recovery from already stale or broken receipt sets.
+
+**Before downgrading a host:** reset and review adoption receipts with the feature-bearing host.
+An older host may ignore receipts and reactivate the retained original additions. Do not assume
+cross-downgrade execution parity. Already copied drafts or independently saved schedule templates
+are not retroactively reconstructed by adoption.
+
+Older-app option display and the updated app's explicit safe-copy opt-in are owned by
+[protocol compatibility](../../docs/protocol-compatibility.md). Updating an SDK alone does not
+assert that its consuming app uses the new copy flow.
+
+### Verification before release
+
+Exercise supported, limited, and supported-again openings, failed replacement cleanup, fixed-binding
+retention, unadopted/partial adoption, blocked policy, reset, and caller-name collisions in isolated
+fixtures. Compare durable preferences/data and original saved intent, not just startup success.
+The source contract does not establish actual provider behavior or rendered availability states.
+Real-provider smoke, actual render/platform checks, and release metadata alignment remain separate
+release gates; they are not reported as completed by this guide. Current provider-specific limits
+are listed in [the provider guide](./providers.md#current-source-verification-limits).
 
 ## 1. Classify the existing code
 

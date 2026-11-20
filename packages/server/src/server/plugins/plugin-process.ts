@@ -34,6 +34,10 @@ import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
+import {
+  LegacyAgentConfigRecipeSchema,
+  type LegacyAgentConfigRecipe,
+} from "@getpaseo/protocol/plugin-agent-config";
 
 import { PluginSettingsStore } from "./settings/index.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
@@ -91,6 +95,29 @@ export function createPluginWorker(options: {
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
   let stopping = false;
+  let legacyAgentConfig: LegacyAgentConfigRecipe | undefined;
+  let setupComplete = false;
+
+  function registerLegacyAgentConfig(recipe: LegacyAgentConfigRecipe): void {
+    if (setupComplete || legacyAgentConfig)
+      throw new Error("Register one legacy agent recipe during synchronous setup");
+    const parsed = LegacyAgentConfigRecipeSchema.parse(recipe);
+    if (Buffer.byteLength(JSON.stringify(parsed)) > 65536)
+      throw new Error("Legacy agent recipe exceeds 64 KiB");
+    const ids = parsed.selectors.map((selector) => selector.id);
+    if (new Set(ids).size !== ids.length)
+      throw new Error("Legacy agent recipe selector IDs must be unique");
+    for (const selector of parsed.selectors) {
+      if (selector.kind !== "option" && selector.kind !== "env") continue;
+      for (const baseline of selector.baselines) {
+        if (baseline.kind === "value" && Buffer.byteLength(JSON.stringify(baseline.value)) > 16384)
+          throw new Error(
+            `Legacy agent baseline "${baseline.id}" for selector "${selector.id}" exceeds 16 KiB`,
+          );
+      }
+    }
+    legacyAgentConfig = parsed;
+  }
   function send(message: PluginProcessMessage): void {
     channel.send(message);
   }
@@ -322,6 +349,8 @@ export function createPluginWorker(options: {
         )
       : null;
     const contributedCleanup = contribute({
+      features: Object.freeze({ adaptiveAgentFeatures: true }),
+      registerLegacyAgentConfig,
       handle,
       registerProvider,
       registerUsageSource,
@@ -330,6 +359,7 @@ export function createPluginWorker(options: {
       on: hooks.on,
       before: hooks.before,
     });
+    setupComplete = true;
     if (typeof contributedCleanup !== "function") {
       throw new Error("Plugin contribution must return a cleanup function");
     }
@@ -350,6 +380,7 @@ export function createPluginWorker(options: {
       methods: [...handlers.keys()].sort(),
       subscriptions: subscriptions.catalog(),
       hooks: hooks.catalog(),
+      legacyAgentConfig,
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
@@ -364,6 +395,12 @@ export function createPluginWorker(options: {
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
     hooks.close();
+    let launchCleanupError: unknown;
+    try {
+      await hooks.disposeLaunches();
+    } catch (error) {
+      launchCleanupError = error;
+    }
     agentTools.close();
     subscriptions.releaseAll();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
@@ -380,6 +417,8 @@ export function createPluginWorker(options: {
     await sendAndWait({ type: "paseo_close" });
     daemonClient = null;
     paseo = null;
+    if (launchCleanupError)
+      console.error("Plugin launch cleanup failed during shutdown", launchCleanupError);
     channel.disconnect();
   }
 
@@ -430,8 +469,24 @@ export function createPluginWorker(options: {
     message: PluginProcessRequest,
   ): message is Extract<
     PluginProcessRequest,
-    { type: "tool.call" | "tool.cancel" | "tools.detach" }
+    { type: "tool.call" | "tool.cancel" | "tools.detach" | "launch.dispose" | "launch.install" }
   > {
+    if (message.type === "launch.install") {
+      void hooks.installLaunch(message.launchId).then(
+        () => send({ type: "result", requestId: message.requestId, output: null }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "launch.dispose") {
+      void hooks.disposeLaunch(message.launchId).then(
+        () => send({ type: "result", requestId: message.requestId, output: null }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
     if (message.type === "tools.detach") {
       agentTools.detach(message.agentId);
       return true;
@@ -446,7 +501,14 @@ export function createPluginWorker(options: {
         return true;
       }
       void agentTools
-        .call(message.requestId, message.agent, message.name, message.input, paseo)
+        .call(
+          message.requestId,
+          message.agent,
+          message.name,
+          message.input,
+          paseo,
+          message.launchId,
+        )
         .then((output) =>
           send({
             type: "result",

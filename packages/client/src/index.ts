@@ -435,6 +435,23 @@ export interface PaseoAgentHandle {
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
   readonly backgroundWork: PaseoAgentBackgroundWorkHandle;
+  readonly legacyPluginConfig: {
+    preview(input: {
+      pluginId: string;
+      operation: "adopt" | "reset";
+    }): ReturnType<DaemonClient["previewLegacyPluginConfig"]>;
+    apply(input: {
+      pluginId: string;
+      expectedFingerprint: string;
+      selections: Array<{ id: string; baselineId?: string }>;
+    }): ReturnType<DaemonClient["applyLegacyPluginConfig"]>;
+    reset(input: {
+      pluginId: string;
+      expectedFingerprint: string;
+      receiptIds: string[];
+    }): ReturnType<DaemonClient["resetLegacyPluginConfig"]>;
+  };
+  template(): ReturnType<DaemonClient["getAgentTemplate"]>;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   /**
@@ -1049,6 +1066,12 @@ function createAgentHandleFactory(
                 });
             }
           }),
+      },
+      template: () => daemonClient.getAgentTemplate(id),
+      legacyPluginConfig: {
+        preview: (input) => daemonClient.previewLegacyPluginConfig(id, input),
+        apply: (input) => daemonClient.applyLegacyPluginConfig(id, input),
+        reset: (input) => daemonClient.resetLegacyPluginConfig(id, input),
       },
       backgroundWork: {
         stop: (item, options) => daemonClient.stopAgentBackgroundWork(id, item, options),

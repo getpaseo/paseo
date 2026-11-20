@@ -6,7 +6,15 @@ import type {
   ProjectPlacementPayload,
   SessionOutboundMessage,
 } from "../../messages.js";
-import type { ManagedAgent } from "../../agent/agent-manager.js";
+import { AgentManager, type ManagedAgent } from "../../agent/agent-manager.js";
+import {
+  mapAgentSnapshotEnvelopes,
+  readAgentCopySafeOptions,
+  toAgentPayload,
+} from "../../agent/agent-projections.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
+import { createTestAgentClient } from "../../test-utils/fake-agent-client.js";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 import { DirectorySyncService } from "../../directory-sync/index.js";
 
@@ -300,6 +308,153 @@ describe("matchesAgentUpdatesFilter", () => {
 });
 
 describe("forwardLiveAgent", () => {
+  test("retains copy-safe live snapshots queued before their manager session closes", async () => {
+    const logger = createTestLogger();
+    const manager = new AgentManager({
+      clients: { codex: createTestAgentClient("codex") },
+      logger,
+      pluginLifecycle: {
+        wait: async () => {},
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.open.before"
+            ? { ...request, providerOptions: { test_feature: true } }
+            : request,
+      },
+    });
+    const enriching = deferred<void>();
+    const releaseEnrichment = deferred<void>();
+    const legacy: SessionOutboundMessage[] = [];
+    const capable: SessionOutboundMessage[] = [];
+    const forwards: Promise<void>[] = [];
+    const service = createAgentUpdatesService({
+      emit: () => {},
+      enrichAgentPayload: async (payload) => {
+        enriching.resolve();
+        await releaseEnrichment.promise;
+        return { ...payload, title: "Enriched after close" };
+      },
+      buildStoredAgentPayload: () => {
+        throw new Error("Only managed snapshots are forwarded in this test");
+      },
+      isProviderVisibleToClient: () => true,
+      buildProjectPlacementForWorkspaceId: async () => makeProject(),
+      emitWorkspaceUpdateForWorkspaceId: async () => {},
+      sequenceAgentUpdate: (payload) => payload,
+      logger,
+    });
+    service.beginSubscription({
+      subscriptionId: "legacy",
+      emit: (message) => {
+        const projected = mapAgentSnapshotEnvelopes(message, (snapshot) => {
+          const captured = readAgentCopySafeOptions(snapshot);
+          const options = captured
+            ? captured.options
+            : manager.copySafeAgentOptions(snapshot.id, snapshot.options);
+          return {
+            ...snapshot,
+            options,
+            features: featuresFromControls({ controls: snapshot.controls, options }),
+          };
+        });
+        legacy.push(JSON.parse(JSON.stringify(projected)));
+      },
+    });
+    service.beginSubscription({
+      subscriptionId: "capable",
+      emit: (message) => capable.push(JSON.parse(JSON.stringify(message))),
+    });
+    service.flushBootstrapped("legacy");
+    service.flushBootstrapped("capable");
+    try {
+      const created = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        "11111111-1111-4111-8111-111111111111",
+        { workspaceId: "ws-1" },
+      );
+      const fetched = manager.getAgent(created.id)!;
+      const listed = manager.listAgents()[0]!;
+      const replayed: ManagedAgent[] = [];
+      const unsubscribeReplay = manager.subscribe((event) => {
+        if (event.type === "agent_state") replayed.push(event.agent);
+      });
+      unsubscribeReplay();
+      const replayedById: ManagedAgent[] = [];
+      const unsubscribeById = manager.subscribe(
+        (event) => {
+          if (event.type === "agent_state") replayedById.push(event.agent);
+        },
+        { agentId: created.id },
+      );
+      unsubscribeById();
+      const unsubscribe = manager.subscribe(
+        (event) => {
+          if (event.type === "agent_state") forwards.push(service.forwardLiveAgent(event.agent));
+        },
+        { replayState: false },
+      );
+      await manager.setLabels(created.id, { queued: "before-close" });
+      await enriching.promise;
+      await manager.closeAgent(created.id);
+      unsubscribe();
+      expect(manager.getAgent(created.id)).toBeNull();
+      releaseEnrichment.resolve();
+      await Promise.all(forwards);
+
+      expect(
+        legacy[0],
+        "An idle update queued before close must keep the safe option view captured while its session was owned",
+      ).toMatchObject({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            status: "idle",
+            options: {},
+            features: [{ id: "test_feature", value: false }],
+          },
+        },
+      });
+      expect(legacy).toHaveLength(2);
+      expect(legacy[0]).not.toHaveProperty("payload.agent.options.test_feature");
+      expect(legacy[1]).toMatchObject({
+        payload: { agent: { status: "closed", features: [{ id: "test_feature", value: false }] } },
+      });
+      expect(legacy[1]).not.toHaveProperty("payload.agent.options.test_feature");
+      expect(capable).toMatchObject([
+        {
+          payload: {
+            agent: {
+              status: "idle",
+              options: { test_feature: true },
+              features: [{ id: "test_feature", value: true }],
+            },
+          },
+        },
+        {
+          payload: {
+            agent: {
+              status: "closed",
+              options: { test_feature: true },
+              features: [{ id: "test_feature", value: true }],
+            },
+          },
+        },
+      ]);
+      expect(readAgentCopySafeOptions(toAgentPayload(created))).toEqual({ options: {} });
+      expect(readAgentCopySafeOptions(toAgentPayload(fetched))).toEqual({ options: {} });
+      expect(readAgentCopySafeOptions(toAgentPayload(listed))).toEqual({ options: {} });
+      expect(readAgentCopySafeOptions(toAgentPayload(replayed[0]!))).toEqual({ options: {} });
+      expect(readAgentCopySafeOptions(toAgentPayload(replayedById[0]!))).toEqual({ options: {} });
+    } finally {
+      releaseEnrichment.resolve();
+      await manager.closeAgent("11111111-1111-4111-8111-111111111111");
+      await Promise.all(forwards);
+      await manager.flush();
+      service.dispose();
+    }
+  });
+
   test("emits snapshots for one agent in forward call order", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });

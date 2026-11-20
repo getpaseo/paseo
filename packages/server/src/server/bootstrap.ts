@@ -1624,6 +1624,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
+    launchId: runtime.launchId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
     resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -1646,10 +1647,11 @@ export async function createPaseoDaemon(
   {
     const agentMcpRoute = "/mcp/agents";
 
-    const createAgentMcpSession = async (callerAgentId?: string) => {
+    const createAgentMcpSession = async (callerAgentId?: string, launchId?: string) => {
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
+          launchId,
           paseoToolPolicy: callerAgentId
             ? agentManager.getPaseoToolPolicy(callerAgentId)
             : undefined,
@@ -1703,7 +1705,7 @@ export async function createPaseoDaemon(
         logger.debug(
           {
             method: req.method,
-            url: req.originalUrl,
+            url: req.originalUrl.replace(/([?&]launchId=)[^&]*/g, "$1[redacted]"),
             sessionId: req.header("mcp-session-id"),
             authorization: req.header("authorization") ? MCP_DEBUG_SECRET : undefined,
             body: describeMcpDebugPayload(req.body),
@@ -1733,7 +1735,11 @@ export async function createPaseoDaemon(
         } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
           callerAgentId = callerAgentIdRaw[0];
         }
-        const { server, transport } = await createAgentMcpSession(callerAgentId);
+        const launchId = req.query.launchId;
+        if (launchId !== undefined && (typeof launchId !== "string" || !launchId)) {
+          throw new Error("Expected one nonempty launch selector");
+        }
+        const { server, transport } = await createAgentMcpSession(callerAgentId, launchId);
         res.on("close", () => {
           void transport.close();
           void server.close();
@@ -2004,7 +2010,7 @@ export async function createPaseoDaemon(
 
   const stop = async (options?: { keepTerminals?: boolean }) => {
     const keepTerminals = options?.keepTerminals === true;
-    let terminalShutdownError: unknown = null;
+    const shutdownErrors: unknown[] = [];
     localCredential = null;
     await deleteLocalCredential(config.paseoHome);
     // Stop tracking plugin provider registrations before anything tears plugins
@@ -2034,8 +2040,17 @@ export async function createPaseoDaemon(
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
-    await agentProviderRuntime.shutdown();
-    await pluginRuntime.stopAllPlugins();
+    for (const close of [
+      () => agentProviderRuntime.shutdown(),
+      () => pluginRuntime.stopAllPlugins(),
+    ]) {
+      try {
+        await close();
+      } catch (error) {
+        shutdownErrors.push(error);
+        logger.error({ err: error }, "Provider or plugin shutdown failed");
+      }
+    }
     try {
       if (keepTerminals) {
         await terminalManager.detach();
@@ -2046,7 +2061,7 @@ export async function createPaseoDaemon(
     } catch (error) {
       // Finish the rest of the shutdown, then report it: the supervisor and `daemon stop`
       // retry the cleanup from the record the reaper kept.
-      terminalShutdownError = error;
+      shutdownErrors.push(error);
       logger.error({ err: error }, "Terminal shutdown failed");
     }
     await speechService.stop();
@@ -2071,9 +2086,8 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
     }
-    if (terminalShutdownError) {
-      throw terminalShutdownError;
-    }
+    if (shutdownErrors.length === 1) throw shutdownErrors[0];
+    if (shutdownErrors.length) throw new AggregateError(shutdownErrors, "Daemon shutdown failed");
   };
 
   return {

@@ -122,8 +122,7 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
   }
 }
 
-// Protocol support belongs to the installed client. Only browser hosting needs
-// a resource supplied by the caller. Keep this exhaustive as the protocol evolves.
+// Defaults assert SDK behavior, not application copying or supplied browser resources.
 export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.terminalChunkedReplay]: true,
   [CLIENT_CAPS.binaryChunkingV1]: true,
@@ -147,7 +146,13 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.pluginBinaryPayloads]: true,
   [CLIENT_CAPS.backgroundAgents]: true,
   [CLIENT_CAPS.explicitEventSubscriptions]: true,
-} satisfies Record<Exclude<ClientCapability, typeof CLIENT_CAPS.browserHost>, true>;
+} satisfies Record<
+  Exclude<
+    ClientCapability,
+    typeof CLIENT_CAPS.browserHost | typeof CLIENT_CAPS.agentTemplateProjection
+  >,
+  true
+>;
 
 /** Calling releases demand; ready waits for membership, or local attachment on broadcast hosts. */
 export type TimelineSubscription = (() => void) & {

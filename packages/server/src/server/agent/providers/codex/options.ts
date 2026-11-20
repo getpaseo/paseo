@@ -92,3 +92,20 @@ export function applyCodexToolPolicy(
 function readRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
 }
+
+export function applyCodexOptionalToolPolicy(
+  config: Record<string, unknown>,
+  toolPolicy: ToolPolicy | undefined,
+): Record<string, unknown> {
+  if (!toolPolicy) return config;
+  const servers = readRecord(config.mcp_servers);
+  for (const grant of toolPolicy.preapproved) {
+    const server = readRecord(servers[grant.server]);
+    const tools = readRecord(server.tools);
+    const authored = readRecord(tools[grant.tool]);
+    if (authored.approval_mode !== undefined) continue;
+    tools[grant.tool] = { ...authored, approval_mode: "approve" };
+    servers[grant.server] = { ...server, tools };
+  }
+  return { ...config, mcp_servers: servers };
+}

@@ -287,6 +287,47 @@ plugin's recent daemon-side stdout and stderr. Add `--json` for structured entri
 [Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
 behavior.
 
+## Saved plugin configuration
+
+`agent plugin-config` previews, adopts, or resets old plugin additions for one saved agent. This is
+the [adaptive source contract](/docs/plugins/migration#adaptive-session-contributions-source-contract),
+not a command available at an assigned released version. The target host must advertise
+`adaptiveAgentFeatures`; every operation requires `workspace.write`.
+
+Use the complete agent UUID as `AGENT_UUID`, not a title or ID prefix, and the installed runtime
+plugin ID as `PLUGIN_ID`. Preview first:
+
+```bash
+paseo agent plugin-config preview "$AGENT_UUID" --plugin "$PLUGIN_ID"
+```
+
+Read each candidate's consequence and blocked reason. Copy its exact ID and the returned
+`expectedFingerprint` into your apply request. For option/environment candidates, select one of
+the displayed baseline IDs explicitly:
+
+```bash
+paseo agent plugin-config apply "$AGENT_UUID" --plugin "$PLUGIN_ID" --expect "$FINGERPRINT" --select "$CANDIDATE_ID=$BASELINE_ID" --yes
+```
+
+For a candidate without baselines, use `--select "$CANDIDATE_ID"`. Repeat `--select` for each
+chosen candidate. There is no default baseline, `--all`, or `--force`. Apply requires `--expect`,
+at least one explicit selection, and `--yes`; the command does not prompt in their place.
+
+Reset has its own fresh preview and explicit receipt selection:
+
+```bash
+paseo agent plugin-config preview "$AGENT_UUID" --plugin "$PLUGIN_ID" --operation reset
+paseo agent plugin-config reset "$AGENT_UUID" --plugin "$PLUGIN_ID" --expect "$RESET_FINGERPRINT" --receipt "$RECEIPT_ID" --yes
+```
+
+Repeat `--receipt` to reset multiple displayed receipts. Both mutations return receipt IDs and
+`appliesOn: "next-open"`; neither automatically reloads the agent. A stale fingerprint requires a
+new preview, not an override. Standard `--json` and daemon-target options are available.
+
+Read the [adoption/reset procedure](/docs/plugins/migration#explicitly-adopt-or-reset-one-saved-agent)
+before applying: required policies cannot be released by adoption, originals remain retained,
+affected edits need reset first, and an older host may reactivate originals after a downgrade.
+
 ## Listing agents
 
 ```bash

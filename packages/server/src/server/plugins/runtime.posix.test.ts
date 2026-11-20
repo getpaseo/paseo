@@ -855,6 +855,445 @@ export default function contribute(server: any) { server.registerProvider(provid
     ]);
   });
 
+  it("preserves immutable host support across a real plugin process and older hook returns", async () => {
+    const directory = await createPlugin(
+      "support-reader",
+      `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (!Object.isFrozen(request.openSupport) || !Object.isFrozen(request.openSupport.adapter)) {
+      throw new Error("Host support was mutable after IPC");
+    }
+    const { openSupport, ...older } = request;
+    return { ...older, env: { ...older.env, ADAPTER_ID: openSupport.adapter.id } };
+  });
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    const openSupport = {
+      adapter: { kind: "builtin" as const, id: "claude" },
+      instructions: "supported" as const,
+      mcpHttp: "supported" as const,
+      exactMcpPreapproval: "unknown" as const,
+      attachedTools: { delivery: "mcp" as const, enabled: true, disabledTools: [] },
+      restrictions: {
+        mcpConfiguration: "mutable" as const,
+        processEnvironment: "mutable" as const,
+      },
+      providerOptions: ["additionalDirectories"],
+    };
+    try {
+      await runtime.startPlugin("support-reader", directory);
+      const result = await runtime.before("agent.open.before", {
+        agentId: "agent",
+        workspaceId: null,
+        provider: "work-claude",
+        cwd: "/project",
+        reason: "resume",
+        purpose: "interactive",
+        title: null,
+        background: false,
+        labels: {},
+        metadata: {},
+        tools: [],
+        mcpServers: {},
+        env: {},
+        openSupport,
+      });
+      expect(result.openSupport).toEqual(openSupport);
+      expect(result.provider).toBe("work-claude");
+      expect(result.env).toEqual({ ADAPTER_ID: "claude" });
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("failed replacement hooks dispose only their own launch and keep original tool handlers", async () => {
+    const directory = await createPlugin(
+      "launch-tools",
+      `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }, { launch }) => {
+    const value = request.labels.value;
+    launch.onDispose(() => console.log("disposed:" + launch.id));
+    const tool = defineAgentTool({ name: "notes", description: "Read notes", input: z.object({}),
+      execute: () => ({ text: value + ":" + launch.signal.aborted }) });
+    return { ...request, tools: [tool] };
+  });
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.labels.fail === "yes") throw new Error("replacement rejected");
+    return request;
+  });
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    const request = {
+      agentId: "agent",
+      workspaceId: null,
+      provider: "claude",
+      cwd: "/project",
+      reason: "resume" as const,
+      purpose: "interactive" as const,
+      title: null,
+      background: false,
+      labels: { value: "original" },
+      metadata: {},
+      tools: [],
+      mcpServers: {},
+      env: {},
+      launchId: "original-launch",
+    };
+    const agent = {
+      id: "agent",
+      workspaceId: null,
+      parentAgentId: null,
+      provider: "claude",
+      cwd: "/project",
+      title: null,
+      background: false,
+      metadata: {},
+    };
+    try {
+      await runtime.startPlugin("launch-tools", directory);
+      const original = await runtime.before("agent.open.before", request);
+      const tool = original.tools[0]!;
+      await expect(
+        runtime.before("agent.open.before", {
+          ...request,
+          launchId: "replacement-launch",
+          labels: { value: "replacement", fail: "yes" },
+        }),
+      ).rejects.toThrow("replacement rejected");
+      expect(
+        await runtime.callTool(
+          tool.pluginId!,
+          tool.pluginInstanceId!,
+          agent,
+          "notes",
+          {},
+          undefined,
+          "original-launch",
+        ),
+      ).toEqual({ text: "original:false" });
+      await runtime.disposeLaunch("original-launch");
+      expect(
+        await runtime.callTool(
+          tool.pluginId!,
+          tool.pluginInstanceId!,
+          agent,
+          "notes",
+          {},
+          undefined,
+          "original-launch",
+        ),
+      ).toEqual({ isError: true, text: "Agent tool not attached: notes" });
+      expect(
+        pluginMessages(runtime, "launch-tools").filter((message) =>
+          message.startsWith("disposed:"),
+        ),
+      ).toEqual(["disposed:replacement-launch", "disposed:original-launch"]);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("failed launch disposal stays rejected without retrying cleanup and shutdown reports it", async () => {
+    const directory = await createPlugin(
+      "failed-launch-cleanup",
+      `
+import { appendFile } from "node:fs/promises";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }, { launch }) => {
+    if (request.reason === "refresh") {
+      if (request.previousContribution) throw new Error("Disposed contribution was offered again");
+      return request;
+    }
+    launch.onDispose(async () => {
+      await appendFile(request.cwd + "/cleanup-count", "cleanup\\n");
+      throw new Error("Allocated resource cleanup failed");
+    });
+    const tool = defineAgentTool({ name: "notes", description: "Read notes", input: z.object({}),
+      execute: () => ({ text: "live" }) });
+    return { ...request, tools: [tool] };
+  });
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    let stopping: Promise<void> | undefined;
+    try {
+      await runtime.startPlugin("failed-launch-cleanup", directory);
+      const request = {
+        agentId: "agent",
+        launchId: "failed-launch",
+        workspaceId: null,
+        provider: "claude",
+        cwd: directory,
+        reason: "create" as const,
+        purpose: "interactive" as const,
+        title: null,
+        background: false,
+        labels: {},
+        metadata: {},
+        tools: [],
+        mcpServers: {},
+        env: {},
+      };
+      const agent = {
+        id: "agent",
+        workspaceId: null,
+        parentAgentId: null,
+        provider: "claude",
+        cwd: directory,
+        title: null,
+        background: false,
+        metadata: {},
+      };
+      const opened = await runtime.before("agent.open.before", request);
+      const tool = opened.tools[0]!;
+      await runtime.installLaunch("failed-launch");
+      expect(
+        await runtime.callTool(
+          tool.pluginId!,
+          tool.pluginInstanceId!,
+          agent,
+          "notes",
+          {},
+          undefined,
+          "failed-launch",
+        ),
+      ).toEqual({ text: "live" });
+
+      const disposal = runtime.disposeLaunch("failed-launch");
+      const failure: unknown = await disposal.catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: "Plugin launch disposal failed",
+        errors: [{ message: "Plugin launch cleanup failed" }],
+      });
+      const repeated = runtime.disposeLaunch("failed-launch");
+      expect(repeated).toBe(disposal);
+      await expect(repeated).rejects.toBe(failure);
+      expect(await readFile(path.join(directory, "cleanup-count"), "utf8")).toBe("cleanup\n");
+      expect(
+        await runtime.callTool(
+          tool.pluginId!,
+          tool.pluginInstanceId!,
+          agent,
+          "notes",
+          {},
+          undefined,
+          "failed-launch",
+        ),
+      ).toEqual({ isError: true, text: "Agent tool not attached: notes" });
+      await expect(runtime.installLaunch("failed-launch")).rejects.toThrow("disposed");
+      expect(
+        await runtime.before("agent.open.before", {
+          ...request,
+          launchId: "replacement-launch",
+          reason: "refresh",
+        }),
+      ).toMatchObject({ tools: [] });
+      await runtime.disposeLaunch("replacement-launch");
+
+      stopping = runtime.stopAll();
+      await expect(stopping).rejects.toMatchObject({
+        message: "Plugin launch disposal failed",
+        errors: [{ message: "Plugin launch disposal failed" }],
+      });
+      expect(runtime.catalog()).toEqual([]);
+      expect(await readFile(path.join(directory, "cleanup-count"), "utf8")).toBe("cleanup\n");
+    } finally {
+      await (stopping ?? runtime.stopAll()).catch((error: unknown) => {
+        expect(error).toMatchObject({ message: "Plugin launch disposal failed" });
+      });
+    }
+  });
+
+  it("advertises adaptive feature support at plugin setup", async () => {
+    const directory = await createPlugin(
+      "adaptive-setup",
+      `
+export default function contribute(server) {
+  if (server.features?.adaptiveAgentFeatures !== true) throw new Error("Update the Paseo host for adaptive features");
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await expect(runtime.startPlugin("adaptive-setup", directory)).resolves.toBeUndefined();
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("registers a legacy baseline value at exactly 16 KiB of JSON UTF-8 bytes", async () => {
+    const value = "α".repeat(8191);
+    const recipe = {
+      version: 1,
+      selectors: [
+        {
+          id: "option",
+          group: "notes",
+          label: "Notes option",
+          kind: "option",
+          key: "notes",
+          baselines: [{ id: "value", label: "Known baseline", kind: "value", value }],
+        },
+      ],
+    };
+    expect(Buffer.byteLength(JSON.stringify(value))).toBe(16384);
+    expect(Buffer.byteLength(JSON.stringify(recipe))).toBeLessThan(65536);
+    const directory = await createPlugin(
+      "baseline-boundary",
+      `export default function contribute(server) {
+  server.registerLegacyAgentConfig(${JSON.stringify(recipe)});
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("baseline-boundary", directory);
+      expect(runtime.getLegacyAgentConfigRecipes().get("baseline-boundary")).toEqual(recipe);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("rejects a legacy baseline value above 16 KiB even when its recipe is below 64 KiB", async () => {
+    const value = "α".repeat(8191) + "a";
+    const recipe = {
+      version: 1,
+      selectors: [
+        {
+          id: "option",
+          group: "notes",
+          label: "Notes option",
+          kind: "option",
+          key: "notes",
+          baselines: [{ id: "inherit", label: "Inherit", kind: "absent" }],
+        },
+        {
+          id: "environment",
+          group: "notes",
+          label: "Notes environment",
+          kind: "env",
+          key: "NOTES",
+          baselines: [
+            { id: "inherit", label: "Inherit", kind: "absent" },
+            { id: "value", label: "Known baseline", kind: "value", value },
+          ],
+        },
+      ],
+    };
+    expect(Buffer.byteLength(JSON.stringify(value))).toBe(16385);
+    expect(Buffer.byteLength(JSON.stringify(recipe))).toBeLessThan(65536);
+    const directory = await createPlugin(
+      "baseline-over-limit",
+      `export default function contribute(server) {
+  server.registerLegacyAgentConfig(${JSON.stringify(recipe)});
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await expect(runtime.startPlugin("baseline-over-limit", directory)).rejects.toThrow(
+        'Legacy agent baseline "value" for selector "environment" exceeds 16 KiB',
+      );
+      expect(runtime.getLegacyAgentConfigRecipes().has("baseline-over-limit")).toBe(false);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it.each([
+    {
+      name: "duplicate synchronous registration",
+      registration: `const recipe = { version: 1, selectors: [] };
+  server.registerLegacyAgentConfig(recipe);
+  server.registerLegacyAgentConfig(recipe);`,
+      error: "Register one legacy agent recipe during synchronous setup",
+    },
+    {
+      name: "duplicate selector IDs",
+      registration: `server.registerLegacyAgentConfig({
+    version: 1,
+    selectors: [
+      { id: "duplicate", group: "notes", label: "First", kind: "mcp", name: "first" },
+      { id: "duplicate", group: "notes", label: "Second", kind: "mcp", name: "second" },
+    ],
+  });`,
+      error: "Legacy agent recipe selector IDs must be unique",
+    },
+    {
+      name: "total recipe above 64 KiB with individually valid selectors",
+      registration: `const recipe = {
+    version: 1,
+    selectors: [
+      { id: "first", group: "notes", label: "First", kind: "prompt-suffix", text: "a".repeat(16384) },
+      { id: "second", group: "notes", label: "Second", kind: "prompt-suffix", text: "b".repeat(16384) },
+      { id: "third", group: "notes", label: "Third", kind: "prompt-suffix", text: "c".repeat(16384) },
+      { id: "fourth", group: "notes", label: "Fourth", kind: "prompt-suffix", text: "d".repeat(16384) },
+    ],
+  };
+  server.registerLegacyAgentConfig(recipe);`,
+      error: "Legacy agent recipe exceeds 64 KiB",
+    },
+  ])("legacy recipe registration contract rejects $name", async ({ registration, error }) => {
+    const directory = await createPlugin(
+      "recipe-contract",
+      `export default function contribute(server) {
+  ${registration}
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await expect(runtime.startPlugin("recipe-contract", directory)).rejects.toThrow(error);
+      expect(runtime.getLegacyAgentConfigRecipes().has("recipe-contract")).toBe(false);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("legacy recipe registration contract rejects registration through RPC after setup", async () => {
+    const directory = await createPlugin(
+      "late-recipe",
+      `import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+
+const registerRecipe = defineRpc({
+  name: "register-recipe",
+  input: z.object({}),
+  output: z.object({ registered: z.boolean() }),
+});
+
+export default function contribute(server) {
+  server.handle(registerRecipe, () => {
+    server.registerLegacyAgentConfig({ version: 1, selectors: [] });
+    return { registered: true };
+  });
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("late-recipe", directory);
+      expect(runtime.getLegacyAgentConfigRecipes().has("late-recipe")).toBe(false);
+      await expect(runtime.invoke("late-recipe", "register-recipe", {})).rejects.toThrow(
+        "Register one legacy agent recipe during synchronous setup",
+      );
+      expect(runtime.getLegacyAgentConfigRecipes().has("late-recipe")).toBe(false);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
   it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
     const directory = await createPlugin(
       "output",

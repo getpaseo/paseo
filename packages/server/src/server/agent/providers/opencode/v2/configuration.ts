@@ -20,7 +20,10 @@ export function permissionRules(config: AgentSessionConfig): PermissionRuleset {
       OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {}),
       undefined,
     ) ?? [];
-  const grants: PermissionRuleset = (config.toolPolicy?.preapproved ?? []).map((grant) => ({
+  const grants: PermissionRuleset = [
+    ...(config.toolPolicy?.preapproved ?? []),
+    ...(config.pluginToolPolicy?.preapproved ?? []),
+  ].map((grant) => ({
     action: `${grant.server.replace(/[^a-zA-Z0-9_-]/g, "_")}_${grant.tool.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
     resource: "*",
     effect: "allow",

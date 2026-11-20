@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ProviderInputSchema, type ProviderInput } from "./provider.js";
+import {
+  negotiateProviderCapabilities,
+  ProviderInputSchema,
+  requiredProviderCapabilities,
+  requireProviderCapabilities,
+  type ProviderInput,
+} from "./provider.js";
 
 type ReviewMode = "uncommitted" | "base" | "all";
 type Delivery = "auto" | "steer";
@@ -10,6 +16,48 @@ const contextLine = {
   type: "add",
   content: "const value = 1;",
 } as const;
+
+it("negotiates optional integration support independently from required tool policies", () => {
+  expect(
+    negotiateProviderCapabilities(
+      [
+        "mcp.http",
+        "session.system_prompt",
+        "permission.optional_tool_policy",
+        "permission.tool_policy",
+      ],
+      ["mcp.http", "session.system_prompt", "permission.optional_tool_policy"],
+    ),
+  ).toEqual(["mcp.http", "session.system_prompt", "permission.optional_tool_policy"]);
+});
+
+it("requires explicit optional-policy support without making required tool policy optional", () => {
+  const input = ProviderInputSchema.parse({
+    type: "session.open",
+    requestId: "open-1",
+    sessionId: "session-1",
+    config: {
+      cwd: "/workspace",
+      env: {},
+      mcpServers: { memory: { type: "http", url: "http://127.0.0.1/memory" } },
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "memory", tool: "required" }] },
+      pluginToolPolicy: { preapproved: [{ kind: "mcp", server: "memory", tool: "read" }] },
+      settings: {},
+      persist: true,
+    },
+    history: "skip",
+  });
+  expect(requiredProviderCapabilities(input)).toEqual([
+    "permission.tool_policy",
+    "permission.optional_tool_policy",
+  ]);
+  expect(() => requireProviderCapabilities(["permission.tool_policy"], input)).toThrow(
+    "Provider does not support permission.optional_tool_policy",
+  );
+  expect(() => requireProviderCapabilities(["permission.optional_tool_policy"], input)).toThrow(
+    "Provider does not support permission.tool_policy",
+  );
+});
 
 function reviewPrompt(mode: ReviewMode, delivery: Delivery): ProviderInput {
   return {
