@@ -4,6 +4,7 @@ import {
   DEFAULT_UI_FONT_STACK,
   DEFAULT_MONO_FONT_STACK,
   FONT_SIZE,
+  PLUGIN_THEME_NAMES,
   REGISTERED_THEMES,
   themeContentMaxWidth,
   type Theme,
@@ -20,10 +21,13 @@ export interface AppearanceInput {
   codeFontSize: number; // already clamped
   contentMaxWidth: number | undefined; // undefined fills the available width
   syntaxTheme: SyntaxThemeId;
+  // The selected plugin theme as built, never patched. Its UI font ramp replaces `FONT_SIZE`
+  // as the base for its slot, so a theme's sizes hold at the default UI font size setting.
+  contributedTheme: Theme | null;
 }
 
 /**
- * Build the font-size ramp from the canonical `FONT_SIZE` ramp, scaled
+ * Build the font-size ramp from an authored ramp (`FONT_SIZE`, or a plugin theme's), scaled
  * proportionally from the requested base size so the type hierarchy is preserved
  * sizes. Deriving from the authored ramp — NOT the live (possibly already-scaled)
  * theme — makes `applyAppearance` idempotent: repeated applies never compound, and a
@@ -32,19 +36,20 @@ export interface AppearanceInput {
  * control on a separate semantic axis (mono/diff text).
  */
 function scaleFontSize(
+  ramp: Theme["fontSize"],
   uiBaseSize: number,
   contentSize: number,
   codeSize: number,
 ): Theme["fontSize"] {
   const r = uiBaseSize / FONT_SIZE.base;
   return {
-    sm: Math.round(FONT_SIZE.sm * r),
-    base: Math.round(FONT_SIZE.base * r),
-    lg: Math.round(FONT_SIZE.lg * r),
-    xl: Math.round(FONT_SIZE.xl * r),
-    "2xl": Math.round(FONT_SIZE["2xl"] * r),
-    "3xl": Math.round(FONT_SIZE["3xl"] * r),
-    "4xl": Math.round(FONT_SIZE["4xl"] * r),
+    sm: Math.round(ramp.sm * r),
+    base: Math.round(ramp.base * r),
+    lg: Math.round(ramp.lg * r),
+    xl: Math.round(ramp.xl * r),
+    "2xl": Math.round(ramp["2xl"] * r),
+    "3xl": Math.round(ramp["3xl"] * r),
+    "4xl": Math.round(ramp["4xl"] * r),
     content: contentSize, // absolute, NOT scaled
     code: codeSize, // absolute, NOT scaled
   };
@@ -67,6 +72,9 @@ export function applyAppearance(input: AppearanceInput): void {
   const diffLineHeight = Math.round(input.codeFontSize * 1.5); // couple to code size
   const contentMaxWidth = themeContentMaxWidth(input.contentMaxWidth);
   const activeTheme = UnistylesRuntime.themeName;
+  const contributedSlot = input.contributedTheme
+    ? PLUGIN_THEME_NAMES[input.contributedTheme.colorScheme]
+    : null;
   // Unistyles web emits after each registry patch. Updating the mounted theme
   // first ensures subscribers receive its new numeric tokens in this render;
   // updating it last makes Pure black appear one committed value behind.
@@ -77,7 +85,12 @@ export function applyAppearance(input: AppearanceInput): void {
   for (const key of themeKeys) {
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
+      const ramp =
+        key === contributedSlot && input.contributedTheme
+          ? input.contributedTheme.fontSize
+          : FONT_SIZE;
       const fontSize = scaleFontSize(
+        ramp,
         input.uiBaseFontSize,
         input.contentFontSize,
         input.codeFontSize,

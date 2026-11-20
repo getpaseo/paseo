@@ -30,7 +30,74 @@ const hexColorSchema = z
   .string()
   .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
 
+function pixels(max: number) {
+  return z.number().finite().min(0).max(max).optional();
+}
+
+const fontSizeSchema = z.number().finite().min(8).max(64).optional();
+
+const fontWeightSchema = z
+  .enum(["normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900"])
+  .optional();
+
+// Keys a theme cannot set stay out of these schemas, so `strictObject` rejects them:
+// radius `none`/`full`, spacing/border `0`, opacity `0`/`100`.
+const tokenSchemas = {
+  radius: z
+    .strictObject({
+      sm: pixels(64),
+      base: pixels(64),
+      md: pixels(64),
+      lg: pixels(64),
+      xl: pixels(64),
+      "2xl": pixels(64),
+    })
+    .optional(),
+  spacing: z
+    .strictObject({
+      0.5: pixels(256),
+      1: pixels(256),
+      1.5: pixels(256),
+      2: pixels(256),
+      3: pixels(256),
+      3.5: pixels(256),
+      4: pixels(256),
+      6: pixels(256),
+      7: pixels(256),
+      8: pixels(256),
+      12: pixels(256),
+      16: pixels(256),
+      20: pixels(256),
+      24: pixels(256),
+      32: pixels(256),
+    })
+    .optional(),
+  fontSize: z
+    .strictObject({
+      sm: fontSizeSchema,
+      base: fontSizeSchema,
+      lg: fontSizeSchema,
+      xl: fontSizeSchema,
+      "2xl": fontSizeSchema,
+      "3xl": fontSizeSchema,
+      "4xl": fontSizeSchema,
+    })
+    .optional(),
+  fontWeight: z
+    .strictObject({
+      normal: fontWeightSchema,
+      medium: fontWeightSchema,
+      semibold: fontWeightSchema,
+      bold: fontWeightSchema,
+    })
+    .optional(),
+  borderWidth: z.strictObject({ 1: pixels(8), 2: pixels(8) }).optional(),
+  opacity: z.strictObject({ 50: z.number().finite().min(0).max(1).optional() }).optional(),
+  iconStrokeWidth: z.number().finite().min(0.5).max(4).optional(),
+};
+
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
+  ...tokenSchemas,
   id: z.string(),
   name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
   appearance: z.enum(["light", "dark"]),
@@ -155,9 +222,22 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
 }
 
 export function buildPluginTheme(contribution: PluginThemeContribution): Theme {
-  return contribution.appearance === "light"
-    ? buildLightPluginTheme(contribution)
-    : buildDarkPluginTheme(contribution);
+  const theme =
+    contribution.appearance === "light"
+      ? buildLightPluginTheme(contribution)
+      : buildDarkPluginTheme(contribution);
+  // Omitted tokens keep Paseo's scale. The UI font ramp is the base the user's
+  // Settings → Appearance font size scales (see `applyAppearance`).
+  return {
+    ...theme,
+    spacing: { ...theme.spacing, ...contribution.spacing },
+    fontSize: { ...theme.fontSize, ...contribution.fontSize },
+    fontWeight: { ...theme.fontWeight, ...contribution.fontWeight },
+    borderRadius: { ...theme.borderRadius, ...contribution.radius },
+    borderWidth: { ...theme.borderWidth, ...contribution.borderWidth },
+    opacity: { ...theme.opacity, ...contribution.opacity },
+    iconStrokeWidth: contribution.iconStrokeWidth ?? theme.iconStrokeWidth,
+  };
 }
 
 function selectTarget(id: string, targets: PluginThemeTarget[]): PluginThemeTarget {

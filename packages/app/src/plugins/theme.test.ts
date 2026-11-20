@@ -370,3 +370,80 @@ describe("collectPluginThemes", () => {
     expect(withoutHostZ[0]?.theme.colors.surface0).toBe("#1e1e2e");
   });
 });
+
+describe("plugin theme design tokens", () => {
+  const TOKEN_KEYS = [
+    "spacing",
+    "fontSize",
+    "fontWeight",
+    "borderRadius",
+    "borderWidth",
+    "opacity",
+    "iconStrokeWidth",
+  ] as const;
+
+  it("renders a color-only theme with Paseo's tokens unchanged", () => {
+    const dark = buildPluginTheme(parsePluginThemeContribution(MOCHA));
+    const light = buildPluginTheme(parsePluginThemeContribution(LATTE));
+    for (const key of TOKEN_KEYS) {
+      expect(dark[key]).toEqual(darkTheme[key]);
+      expect(light[key]).toEqual(lightTheme[key]);
+    }
+  });
+
+  it("merges a partial radius scale and keeps none and full fixed", () => {
+    const theme = buildPluginTheme(
+      parsePluginThemeContribution({ ...MOCHA, radius: { md: 3, "2xl": 10 } }),
+    );
+    expect(theme.borderRadius).toEqual({ ...darkTheme.borderRadius, md: 3, "2xl": 10 });
+    expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { full: 4 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { none: 1 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { md: -1 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { md: 65 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { md: Number.NaN } })).toThrow();
+  });
+
+  it("merges spacing and keeps 0 fixed", () => {
+    const theme = buildPluginTheme(parsePluginThemeContribution({ ...MOCHA, spacing: { 2: 6 } }));
+    expect(theme.spacing).toEqual({ ...darkTheme.spacing, 2: 6 });
+    expect(() => parsePluginThemeContribution({ ...MOCHA, spacing: { 0: 2 } })).toThrow();
+    expect(() =>
+      parsePluginThemeContribution({ ...MOCHA, spacing: { 4: Number.POSITIVE_INFINITY } }),
+    ).toThrow();
+  });
+
+  it("merges the UI font ramp and font weights", () => {
+    const theme = buildPluginTheme(
+      parsePluginThemeContribution({
+        ...MOCHA,
+        fontSize: { base: 13 },
+        fontWeight: { medium: "600" },
+      }),
+    );
+    expect(theme.fontSize).toEqual({ ...darkTheme.fontSize, base: 13 });
+    expect(theme.fontWeight).toEqual({ ...darkTheme.fontWeight, medium: "600" });
+    expect(() => parsePluginThemeContribution({ ...MOCHA, fontSize: { content: 16 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, fontSize: { base: 4 } })).toThrow();
+    expect(() =>
+      parsePluginThemeContribution({ ...MOCHA, fontWeight: { medium: "550" } }),
+    ).toThrow();
+  });
+
+  it("merges border width, opacity, and the icon stroke width", () => {
+    const theme = buildPluginTheme(
+      parsePluginThemeContribution({
+        ...MOCHA,
+        borderWidth: { 1: 0.5 },
+        opacity: { 50: 0.4 },
+        iconStrokeWidth: 1,
+      }),
+    );
+    expect(theme.borderWidth).toEqual({ ...darkTheme.borderWidth, 1: 0.5 });
+    expect(theme.opacity).toEqual({ ...darkTheme.opacity, 50: 0.4 });
+    expect(theme.iconStrokeWidth).toBe(1);
+    expect(() => parsePluginThemeContribution({ ...MOCHA, borderWidth: { 0: 1 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, opacity: { 50: 2 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, opacity: { 100: 0.9 } })).toThrow();
+    expect(() => parsePluginThemeContribution({ ...MOCHA, iconStrokeWidth: 0 })).toThrow();
+  });
+});

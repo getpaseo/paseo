@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
-import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES, type Theme } from "@/styles/theme";
+import {
+  DEFAULT_UI_FONT_STACK,
+  PLUGIN_THEME_NAMES,
+  REGISTERED_THEMES,
+  darkTheme,
+  type Theme,
+} from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -71,6 +77,7 @@ function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
     codeFontSize: 12,
     contentMaxWidth: 820,
     syntaxTheme: "one",
+    contributedTheme: null,
     ...overrides,
   };
 }
@@ -159,6 +166,24 @@ describe("applyAppearance", () => {
     const { fontSize } = updater(alreadyScaled);
     expect(fontSize.base).toBe(15); // rebuilt from FONT_SIZE, not the live value of 4
     expect(fontSize.lg).toBe(17);
+  });
+
+  it("scales a contributed theme's ramp in its slot and keeps the canonical ramp elsewhere", () => {
+    const contributedTheme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, base: 13, lg: 20 },
+    };
+    applyAppearance(makeInput({ uiBaseFontSize: 14, contributedTheme }));
+
+    const slot = ALL_THEME_KEYS.indexOf(PLUGIN_THEME_NAMES.dark);
+    const plugin = runCapturedUpdater(slot).fontSize;
+    expect(plugin.base).toBe(13); // default UI size keeps the theme's sizes
+    expect(plugin.lg).toBe(20);
+    expect(runCapturedUpdater(ALL_THEME_KEYS.indexOf("dark")).fontSize.base).toBe(14);
+
+    updateTheme.mockClear();
+    applyAppearance(makeInput({ uiBaseFontSize: 28, contributedTheme }));
+    expect(runCapturedUpdater(slot).fontSize.base).toBe(26); // the user's size scales it
   });
 
   it("leaves the UI ramp at authored sizes when only the code size changes", () => {

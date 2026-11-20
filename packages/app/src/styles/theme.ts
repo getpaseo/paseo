@@ -653,21 +653,36 @@ export function themeContentMaxWidth(
     : (width ?? "100%");
 }
 
+export type ThemeFontWeight =
+  | "normal"
+  | "bold"
+  | "100"
+  | "200"
+  | "300"
+  | "400"
+  | "500"
+  | "600"
+  | "700"
+  | "800"
+  | "900";
+
 // `fontSize`, `fontFamily`, `lineHeight`, and `contentMaxWidth` are deliberately widened to plain
 // `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
-// them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
-// literal types.
+// them at runtime via `UnistylesRuntime.updateTheme`. `spacing`, `fontWeight`, `borderRadius`,
+// `borderWidth`, `opacity`, and `iconStrokeWidth` are widened so plugin themes can set them.
+// `iconSize` keeps its literal types.
 interface CommonTheme {
-  spacing: typeof SPACING;
+  spacing: Record<keyof typeof SPACING, number>;
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
   contentMaxWidth: ReturnType<typeof themeContentMaxWidth>;
   iconSize: typeof ICON_SIZE;
-  fontWeight: typeof FONT_WEIGHT;
-  borderRadius: typeof BORDER_RADIUS;
-  borderWidth: typeof BORDER_WIDTH;
-  opacity: typeof OPACITY;
+  iconStrokeWidth: number;
+  fontWeight: Record<keyof typeof FONT_WEIGHT, ThemeFontWeight>;
+  borderRadius: Record<keyof typeof BORDER_RADIUS, number>;
+  borderWidth: Record<keyof typeof BORDER_WIDTH, number>;
+  opacity: Record<keyof typeof OPACITY, number>;
 }
 
 const commonTheme: CommonTheme = {
@@ -677,6 +692,7 @@ const commonTheme: CommonTheme = {
   lineHeight: LINE_HEIGHT,
   contentMaxWidth: themeContentMaxWidth(DEFAULT_CONTENT_MAX_WIDTH),
   iconSize: ICON_SIZE,
+  iconStrokeWidth: ICON_STROKE_WIDTH,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,
   borderWidth: BORDER_WIDTH,

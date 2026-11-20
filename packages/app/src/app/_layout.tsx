@@ -33,7 +33,7 @@ import {
 import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { AppearanceProvider } from "@/appearance/provider";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
@@ -129,7 +129,7 @@ import {
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore, type LeftSidebarPresentation } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
+import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { WorkspaceLayoutModePublisher } from "@/workspace-tabs/layout-mode-publisher";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
@@ -1020,11 +1020,16 @@ function RootProviders({ children }: { children: ReactNode }) {
   );
 }
 
+// LucideProvider memoizes its context, so icons re-render only when the stroke width changes.
+const ThemedLucideProvider = withUnistyles(LucideProvider, (theme) => ({
+  strokeWidth: theme.iconStrokeWidth,
+}));
+
 function RootAppTree() {
   return (
     <GestureHandlerRootView style={flexStyle}>
       <View style={layoutStyles.surfaceFill}>
-        <LucideProvider strokeWidth={ICON_STROKE_WIDTH}>
+        <ThemedLucideProvider>
           <AddHostProvider>
             <RootProviders>
               <RuntimeProviders>
@@ -1032,7 +1037,7 @@ function RootAppTree() {
               </RuntimeProviders>
             </RootProviders>
           </AddHostProvider>
-        </LucideProvider>
+        </ThemedLucideProvider>
       </View>
     </GestureHandlerRootView>
   );

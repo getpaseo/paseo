@@ -77,6 +77,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       codeFontSize: settings.codeFontSize,
       contentMaxWidth,
       syntaxTheme: settings.syntaxTheme,
+      contributedTheme: selected?.theme ?? null,
     });
     setHasAppliedAppearance(true);
   }, [

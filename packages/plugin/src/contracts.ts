@@ -49,7 +49,10 @@ export interface PluginWorkspaceSnapshot {
   readonly status: "needs_input" | "failed" | "running" | "attention" | "done";
   readonly statusEnteredAt: string | null;
   readonly archivingAt: string | null;
-  readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
+  readonly diffStat: {
+    readonly additions: number;
+    readonly deletions: number;
+  } | null;
 }
 
 export interface PluginAgentSnapshot {
@@ -98,11 +101,76 @@ export interface PluginThemeColors {
   foregroundExtraMuted?: string;
 }
 
+/** Pixel sizes. `none` (0) and `full` (pill) are fixed so round elements stay round. */
+export interface PluginThemeRadius {
+  sm?: number;
+  base?: number;
+  md?: number;
+  lg?: number;
+  xl?: number;
+  "2xl"?: number;
+}
+
+/** Pixel sizes for the spacing scale. `0` is fixed. */
+export type PluginThemeSpacing = Partial<
+  Record<0.5 | 1 | 1.5 | 2 | 3 | 3.5 | 4 | 6 | 7 | 8 | 12 | 16 | 20 | 24 | 32, number>
+>;
+
+/** The UI type ramp in pixels. Chat content and code sizes stay user settings. */
+export interface PluginThemeFontSize {
+  sm?: number;
+  base?: number;
+  lg?: number;
+  xl?: number;
+  "2xl"?: number;
+  "3xl"?: number;
+  "4xl"?: number;
+}
+
+export type PluginThemeFontWeightValue =
+  | "normal"
+  | "bold"
+  | "100"
+  | "200"
+  | "300"
+  | "400"
+  | "500"
+  | "600"
+  | "700"
+  | "800"
+  | "900";
+
+export interface PluginThemeFontWeight {
+  normal?: PluginThemeFontWeightValue;
+  medium?: PluginThemeFontWeightValue;
+  semibold?: PluginThemeFontWeightValue;
+  bold?: PluginThemeFontWeightValue;
+}
+
+/** Pixel widths. `0` is fixed. */
+export interface PluginThemeBorderWidth {
+  1?: number;
+  2?: number;
+}
+
+/** `50` is the disabled-control opacity, from 0 to 1. `0` and `100` are fixed. */
+export interface PluginThemeOpacity {
+  50?: number;
+}
+
 export interface PluginThemeContribution<Text extends PluginText = string> {
   id: string;
   name: Text;
   appearance: "light" | "dark";
   colors: PluginThemeColors;
+  radius?: PluginThemeRadius;
+  spacing?: PluginThemeSpacing;
+  fontSize?: PluginThemeFontSize;
+  fontWeight?: PluginThemeFontWeight;
+  borderWidth?: PluginThemeBorderWidth;
+  opacity?: PluginThemeOpacity;
+  /** Default stroke width of Paseo's line icons. */
+  iconStrokeWidth?: number;
 }
 
 export interface PluginAttachmentSourceContribution<Text extends PluginText = string> {
