@@ -10,6 +10,7 @@ import {
   Braces,
   Compass,
   ExternalLink,
+  FileCode2,
   Gem,
   GitFork,
   GitPullRequest,
@@ -18,6 +19,7 @@ import {
   Merge,
   Monitor,
   Puzzle,
+  Server,
   Smartphone,
   Terminal,
   Users,
@@ -88,8 +90,8 @@ import {
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
-import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { PaseoHubMark } from "~/components/paseo-brand";
+import { HubLandingFlow } from "~/components/hub-flow";
+import { PaseoHubLockup, PaseoHubMark } from "~/components/paseo-brand";
 import {
   MobileChat,
   MobileDiff,
@@ -107,16 +109,17 @@ import "~/styles.css";
 interface LandingPageProps {
   title: React.ReactNode;
   subtitle: React.ReactNode;
+  showHubEyebrow?: boolean;
 }
 
-export function LandingPage({ title, subtitle }: LandingPageProps) {
+export function LandingPage({ title, subtitle, showHubEyebrow = false }: LandingPageProps) {
   return (
     <CursorFieldProvider>
       {/* Hero section with background image */}
       <div className="relative bg-cover bg-center bg-no-repeat">
         <div className="relative px-6 pt-4 pb-10 md:px-32 md:pt-6 md:pb-12 max-w-7xl mx-auto">
-          <Nav />
-          <Hero title={title} subtitle={subtitle} />
+          <Nav compact={showHubEyebrow} />
+          <Hero title={title} subtitle={subtitle} showHubEyebrow={showHubEyebrow} />
           <GetStarted />
         </div>
 
@@ -145,6 +148,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <TurnkeySection />
             <ExtensibleSection />
             <AutomationSection />
+            <HubSection />
             <SponsorsSection placement="page" />
             <SponsorSection />
             <PhilosophySection />
@@ -157,21 +161,52 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
   );
 }
 
-function Nav() {
+function Nav({ compact = false }: { compact?: boolean }) {
   return (
-    <nav className="mb-20 md:mb-24">
+    <nav className={compact ? "mb-12 md:mb-16" : "mb-20 md:mb-24"}>
       <SiteHeader />
     </nav>
   );
 }
 
-function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.ReactNode }) {
+function Hero({
+  title,
+  subtitle,
+  showHubEyebrow = false,
+}: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  showHubEyebrow?: boolean;
+}) {
   return (
     <div className="space-y-6 text-center">
+      {showHubEyebrow ? <HubHeroEyebrow /> : null}
       <h1 className="text-4xl md:text-6xl font-medium tracking-tight leading-[0.95]">{title}</h1>
       <p className="text-base leading-relaxed text-white/70 md:text-lg max-w-lg mx-auto">
         {subtitle}
       </p>
+    </div>
+  );
+}
+
+function HubHeroEyebrow() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  return (
+    <div className="flex justify-center">
+      <a
+        href={localize("/hub")}
+        className="group inline-flex max-w-full items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/75 transition-colors hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+      >
+        <PaseoHubMark className="h-3.5 w-3.5 shrink-0 text-white/90" />
+        <span className="font-medium text-white/90">{t("landing.hubEyebrow.product")}</span>
+        <span aria-hidden="true" className="h-3 w-px shrink-0 bg-white/15" />
+        <span className="truncate text-white/65">{t("landing.hubEyebrow.label")}</span>
+        <ArrowRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 text-white/45 transition-transform group-hover:translate-x-0.5 group-hover:text-white/80"
+        />
+      </a>
     </div>
   );
 }
@@ -517,7 +552,6 @@ function TurnkeySection() {
             ctaHref={localize("/hub")}
             ctaLabel={t("landing.runAnywhere.teamsCta")}
             ctaIcon={PASEO_HUB_CTA_ICON}
-            showIntegrationIcons
           />
         </div>
       </div>
@@ -534,7 +568,6 @@ function TurnkeyExtensionCard({
   ctaHref,
   ctaLabel,
   ctaIcon,
-  showIntegrationIcons = false,
 }: {
   icon: LucideIcon;
   title: string;
@@ -542,7 +575,6 @@ function TurnkeyExtensionCard({
   ctaHref: string;
   ctaLabel: string;
   ctaIcon?: React.ReactNode;
-  showIntegrationIcons?: boolean;
 }) {
   return (
     <FeatureCard icon={Icon} title={title} description={description}>
@@ -555,19 +587,10 @@ function TurnkeyExtensionCard({
           {ctaLabel}
           <ArrowRight className="h-3.5 w-3.5" />
         </a>
-        {showIntegrationIcons ? INTEGRATION_ICONS : null}
       </div>
     </FeatureCard>
   );
 }
-
-const INTEGRATION_ICONS = (
-  <span className="flex items-center gap-2 text-extra-muted-foreground">
-    <GitHubIcon className="h-4 w-4" />
-    <SlackIcon className="h-4 w-4" />
-    <DiscordIcon className="h-4 w-4" />
-  </span>
-);
 
 /** The lead product of a section: an icon tile and title on the page background. */
 function ProductLead({
@@ -857,6 +880,71 @@ function SdkAutomationExample() {
       <span className="text-purple-300">await</span> agent.
       <span className="text-sky-300">waitForFinish</span>();
     </pre>
+  );
+}
+
+const HUB_HIGHLIGHTS = [
+  { key: "machines", Icon: Laptop },
+  { key: "authoring", Icon: FileCode2 },
+  { key: "hosting", Icon: Server },
+] as const;
+
+const HUB_HIGHLIGHT_CODE_COMPONENTS = {
+  code: <code className="font-mono text-[11px] text-white/80" />,
+};
+
+function HubSection() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  return (
+    <motion.section
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
+      aria-labelledby="hub-section-heading"
+    >
+      <div className="mb-12 space-y-2.5">
+        <h2 id="hub-section-heading">
+          <PaseoHubLockup className="h-7 w-auto text-foreground md:h-8" />
+          <span className="sr-only">{t("hub.title")}</span>
+        </h2>
+        <p className="max-w-lg text-base text-pretty text-muted-foreground">
+          {t("landing.hubSection.description")}
+        </p>
+      </div>
+
+      <div className="space-y-5">
+        <HubLandingFlow />
+
+        <div className="grid gap-3 md:grid-cols-3">
+          {HUB_HIGHLIGHTS.map(({ key, Icon }) => (
+            <div
+              key={key}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3.5 py-3 text-xs text-white/80"
+            >
+              <Icon className="h-4 w-4 shrink-0 text-extra-muted-foreground" strokeWidth={1.5} />
+              <span className="min-w-0">
+                <Trans
+                  i18nKey={`landing.hubSection.highlights.${key}`}
+                  components={HUB_HIGHLIGHT_CODE_COMPONENTS}
+                />
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <a href={localize("/hub")} className={PRIMARY_CTA_CLASS}>
+            {t("landing.hubSection.exploreCta")}
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </a>
+          <a href={localize("/docs/hub")} className={SECONDARY_CTA_CLASS}>
+            {t("landing.hubSection.docsCta")}
+          </a>
+        </div>
+      </div>
+    </motion.section>
   );
 }
 

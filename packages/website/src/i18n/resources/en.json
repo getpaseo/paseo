@@ -348,6 +348,10 @@
     "intro": "Paseo supports many agents natively. It also runs any <acp>ACP agent</acp>, and you can add new providers with <plugins>plugins</plugins>."
   },
   "landing": {
+    "hubEyebrow": {
+      "product": "Paseo Hub",
+      "label": "Automations on your machines"
+    },
     "socialProof": {
       "title": "Loved by developers",
       "description": "See what developers are saying about Paseo",
@@ -369,8 +373,21 @@
       "remoteDescription": "Run Paseo on a home lab, or a cloud machine",
       "remoteCta": "Docs",
       "teamsTitle": "Teams and triggers",
-      "teamsDescription": "Share access or start work from GitHub, Slack, and Discord",
+      "teamsDescription": "Share daemons with your team and automate runs with Paseo Hub",
       "teamsCta": "Paseo Hub"
+    },
+    "hubSection": {
+      "description": "Run agents on your machines from GitHub, Linear, Slack, Discord, schedules, or webhooks.",
+      "flowTriggers": "Trigger sources",
+      "flowDaemons": "Your connected daemons",
+      "flowOpenSession": "Open live session in Paseo",
+      "highlights": {
+        "machines": "Your machines and subscriptions",
+        "authoring": "Dashboard or YAML (<code>paseo hub deploy</code>)",
+        "hosting": "Self-hosted (Apache 2.0) or hosted"
+      },
+      "exploreCta": "Explore Paseo Hub",
+      "docsCta": "Self-host docs"
     },
     "automation": {
       "title": "Built for automation",
@@ -580,22 +597,111 @@
     "reddit": "Workflows and questions."
   },
   "hub": {
-    "metaTitle": "Paseo Hub - GitHub, Slack, and Discord triggers",
-    "metaDescription": "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
+    "metaTitle": "Paseo Hub - Agent automations on your machines",
+    "metaDescription": "Automate Claude Code, Codex, and OpenCode on your own machines from GitHub, Linear, Slack, Discord, schedules, webhooks, and the HTTP API. Self-hosted or hosted.",
     "title": "Paseo Hub",
-    "intro": "An optional service that sits above your daemons and gives them extra capabilities.",
-    "runIt": "Run it yourself or use the hosted service.",
+    "intro": "Automate coding agents and share daemons across your team. Every run executes on your own machines.",
+    "runIt": "Run it yourself under Apache 2.0 or use the hosted service.",
+    "hero": {
+      "getStarted": "Get started",
+      "selfHost": "Self-host"
+    },
+    "automations": {
+      "title": "Automations from every source",
+      "description": "Triggers watch for events across your tools and start agents on your connected daemons."
+    },
+    "sources": {
+      "github": {
+        "name": "GitHub",
+        "description": "Issues, pull requests, commits, comments, and labels."
+      },
+      "linear": {
+        "name": "Linear",
+        "description": "Issue assignments, project, state, and label filters, and comments."
+      },
+      "slack": {
+        "name": "Slack",
+        "description": "Bot mentions in channels and threads."
+      },
+      "discord": {
+        "name": "Discord",
+        "description": "Bot mentions in channels and threads."
+      },
+      "schedules": {
+        "name": "Schedules",
+        "description": "Recurring runs with timezones, presets, or calendar rules."
+      },
+      "webhooks": {
+        "name": "Webhooks & API",
+        "description": "Inbound webhooks and <code>POST /api/v1/manual-runs</code> with scoped keys and typed inputs."
+      }
+    },
+    "demo": {
+      "showIssues": "<mention/> show me the latest P0 issues",
+      "issuesOpen": "Three P0 issues are open:",
+      "createPr": "<mention/> create a pull request for the first one",
+      "ranOn": "Continued on <host>macbook-pro</host>. Opened <pr>getpaseo/paseo#1234</pr> with a fix for the terminal writes.",
+      "filesChanged": "3 files changed",
+      "testsPassed": "tests passed",
+      "openInPaseo": "Open in Paseo",
+      "bot": "Bot",
+      "caption": "Follow-up messages in the same thread steer the running agent. Open the live session in Paseo on desktop or phone at any time."
+    },
+    "authoring": {
+      "title": "Configure in the dashboard or ship as code",
+      "description": "Set up triggers in the browser or commit YAML files to your repository and deploy from the CLI.",
+      "dashboardTitle": "Dashboard and run activity",
+      "dashboardDescription": "Pick a daemon, working directory, and agent runtime in the browser. Hub validates every model and mode against the live daemon before saving.",
+      "triggersLabel": "Triggers:",
+      "triggersText": "Create, edit, or pause automations in form or YAML view.",
+      "validationLabel": "Live checks:",
+      "validationText": "Validate providers, models, and modes against the connected daemon.",
+      "activityLabel": "Run activity:",
+      "activityText": "Inspect deliveries, routing outcomes, outputs, and errors.",
+      "docsLink": "Read configuration docs"
+    },
+    "shape": {
+      "title": "Shared with your team, locked to your machines",
+      "description": "Hub connects to the daemons you already run. Your team shares triggers and history while your code stays on your machines.",
+      "triggersRow": "Automation sources",
+      "webhooks": "webhooks, mentions, schedules, and API",
+      "hub": "Hub",
+      "hubHosting": "Self-hosted or hosted",
+      "sameRpcs": "the same RPCs the app and CLI use",
+      "daemonsRow": "Your connected daemons",
+      "directOrRelay": "direct connection or encrypted relay",
+      "appsRow": "Paseo clients",
+      "desktop": "Desktop",
+      "web": "Web",
+      "mobile": "Mobile",
+      "cli": "CLI"
+    },
+    "guardrails": {
+      "optInTitle": "Opt-in execution",
+      "optInDescription": "The <code>hub.execute</code> permission is off by default on every daemon and granted per machine.",
+      "scopedTitle": "Scoped triggers",
+      "scopedDescription": "Every trigger requires sender allowlists, resource filters, and explicit per-step GitHub permissions.",
+      "visibilityTitle": "Team visibility",
+      "visibilityDescription": "Owners, admins, and members share daemons, triggers, run history, routing outcomes, and audit logs."
+    },
+    "agents": {
+      "title": "Runs the agents you already have",
+      "description": "Hub runs Claude Code, Codex, and OpenCode on your machines with your own subscriptions, models, and skills."
+    },
     "pricing": {
-      "title": "Choose how to run Hub",
-      "unavailable": "The plan comparison is temporarily unavailable.",
-      "selfHost": "Self-host Hub",
+      "title": "Self-host or hosted",
+      "seatNote": "Run the open-source Hub yourself under Apache 2.0 or use the hosted service. Only Hub dashboard members count as seats.",
+      "unavailable": "The hosted plan comparison is temporarily unavailable.",
+      "selfHost": "Self-host docs",
       "selfHosted": "Self-hosted",
       "free": "Free",
-      "openSource": "/ open source",
+      "openSource": "/ Apache 2.0",
       "getStarted": "Get started",
-      "operateHub": "You operate Hub",
+      "operateHub": "Run with <code>npx @getpaseo/hub</code> or Docker Compose",
+      "allSources": "GitHub, Linear, Slack, Discord, schedules, webhooks, and API",
+      "managedSources": "GitHub, Linear, Slack, Discord, schedules, webhooks, and API",
       "ownApps": "Provider apps you create and control",
-      "openSourceFeature": "Open source",
+      "openSourceFeature": "Apache 2.0 open source",
       "unlimitedRuns": "Unlimited agent runs",
       "runsPerMonth": "{{value}} agent runs a month",
       "unlimitedUnits": "Unlimited {{unit}}s",
@@ -607,71 +713,32 @@
       "perUnitMonths": "per {{unit}} / {{count}} months",
       "seat": "seat"
     },
-    "triggers": {
-      "title": "Triggers, running on your machines",
-      "description": "Mention the bot in GitHub, Slack, or Discord and an agent starts on your daemon.",
-      "github": "Issues, PRs, and reviews.",
-      "slack": "Channels and threads.",
-      "discord": "Channels and threads."
-    },
-    "demo": {
-      "showIssues": "<mention/> show me the latest P0 issues",
-      "issuesOpen": "Three P0 issues are open:",
-      "createPr": "<mention/> create a pull request for the first one",
-      "ranOn": "Ran on <host>macbook-pro</host>. Opened <pr>getpaseo/paseo#1234</pr> with a fix for the terminal writes.",
-      "filesChanged": "3 files changed",
-      "testsPassed": "tests passed",
-      "bot": "Bot",
-      "caption": "The agent ran on your daemon, with your keys."
-    },
-    "agents": {
-      "title": "Runs the agents you already have",
-      "description": "The Hub ships no agent of its own, so your team works with the providers, subscriptions, and skills already configured on your daemons."
-    },
-    "shape": {
-      "title": "Works with your existing infrastructure",
-      "description": "The Hub connects to the daemons you already run, and your apps keep connecting to those same daemons.",
-      "triggersRow": "Triggers and teammates",
-      "yourTeam": "Your team",
-      "futureIntegrations": "Future integrations",
-      "webhooks": "webhooks and mentions",
-      "hub": "Hub",
-      "hubHosting": "Self-hosted or managed",
-      "sameRpcs": "the same RPCs the app and CLI use",
-      "daemonsRow": "Your daemons",
-      "directOrRelay": "direct connection or relay",
-      "appsRow": "Paseo apps",
-      "desktop": "Desktop",
-      "web": "Web",
-      "mobile": "Mobile",
-      "cli": "CLI"
-    },
     "faq": {
       "title": "FAQ",
-      "whatQuestion": "What is the Hub?",
-      "whatAnswer": "A separate service that sits above your Paseo daemons. You connect one or more daemons to it and it gives them GitHub, Slack, and Discord triggers, with collaboration features planned. Paseo works fully without it.",
-      "separateQuestion": "Why is it a separate service instead of part of the daemon?",
-      "separateAnswer1": "The daemon stays one lean executable on one machine. The Hub talks to daemons over the same RPCs the app and the CLI use, so anyone can build their own hub on top of Paseo.",
-      "separateAnswer2": "It also has a different job. The Hub is meant to be exposed to the internet, shared with a team, and run multi-tenant. None of that belongs in a single machine daemon.",
+      "whatQuestion": "What is Paseo Hub?",
+      "whatAnswer": "Paseo Hub is a separate service that sits above your Paseo daemons. Connect one or more daemons to automate agent runs from GitHub, Linear, Slack, Discord, schedules, webhooks, and the HTTP API, and share them with your team. Paseo works on its own without Hub.",
+      "separateQuestion": "Why is Hub a separate service instead of part of the daemon?",
+      "separateAnswer1": "The daemon stays a single process on one machine. Hub talks to daemons over the same RPCs that the app and CLI use, so anyone can build another service on top of Paseo.",
+      "separateAnswer2": "Hub also has a different job. It receives public webhooks, handles team access, and runs multi-tenant. None of that belongs inside a single-machine daemon.",
       "selfHostQuestion": "Can I run it myself?",
-      "selfHostAnswer": "Yes. Run <code>npx @getpaseo/hub</code> and complete setup in the browser. The source is available on <github>GitHub</github>, and the <guide>self-hosting guide</guide> covers more involved deployments.",
+      "selfHostAnswer": "Yes. Run <code>npx @getpaseo/hub</code> or start it with Docker Compose and finish setup in your browser. The Apache 2.0 source is on <github>GitHub</github>, and the <guide>self-hosting guide</guide> covers production deployments.",
       "needQuestion": "What do I need to run it?",
-      "needAnswer": "Node.js and a running Paseo daemon. Hub guides you through connecting the provider apps you want.",
+      "needAnswer": "You need Node.js or Docker and a running Paseo daemon. Hub walks you through connecting your daemons and provider apps.",
       "hostedQuestion": "Is there a hosted version?",
-      "hostedAnswer": "Yes. The hosted service runs the same Hub software you can self-host.",
-      "plannedQuestion": "What else is planned?",
-      "plannedIntro": "Not built yet, listed so you know where this is going.",
-      "plannedProvisioning": "Provisioning daemons for your team",
-      "plannedSharing": "Sharing settings and skills across a team",
-      "plannedIntegrations": "More integrations",
+      "hostedAnswer": "Yes. The <hosted>hosted service</hosted> runs the same open-source Hub software that you can self-host. Only Hub dashboard members count as seats.",
+      "codeQuestion": "Can Hub run code on my machines?",
+      "codeAnswer": "Only on daemons where you grant the <code>hub.execute</code> permission. Enrolling a daemon does not enable execution by default, and you can revoke the permission from the machine at any time.",
       "moveQuestion": "Do I have to move my team to a new tool?",
-      "moveAnswer": "No. The Hub works in the Slack or Discord your team already uses, and on the daemons you already run. When the work gets serious you switch to the Paseo app on those same daemons.",
+      "moveAnswer": "No. Hub runs from GitHub, Linear, Slack, Discord, schedules, and webhooks on the daemons you already use. When you want to inspect or steer a run directly, open the live session in Paseo on desktop or mobile.",
       "agentsQuestion": "Which agents does it run?",
-      "agentsAnswer": "Whichever ones your daemons have configured, with your own subscriptions and skills. The Hub ships no agent of its own.",
-      "codeQuestion": "Can the Hub run code on my machines?",
-      "codeAnswer": "Yes, on the daemons you connect to it and nowhere else. That is the whole point of triggers, and it's why access to the beta stays small and trusted.",
-      "accessQuestion": "How do I get access?",
-      "accessAnswer": "You can self-host today or <hosted>sign in to Hosted Hub</hosted> for a free account. When you want more agent runs or more seats, upgrade from Billing inside Hub."
+      "agentsAnswer": "Hub runs Claude Code, Codex, and OpenCode on your connected daemons using your own subscriptions, models, and skills. Hub ships no agent of its own.",
+      "plannedQuestion": "What else is planned?",
+      "plannedIntro": "These capabilities are not built yet, and are listed so you know where Hub is heading.",
+      "plannedProvisioning": "Provisioning remote daemons for your team",
+      "plannedSharing": "Sharing settings and skills across a team",
+      "plannedIntegrations": "Additional provider integrations",
+      "accessQuestion": "How do I get started?",
+      "accessAnswer": "Self-host Hub with <code>npx @getpaseo/hub</code> or <hosted>sign in to hosted Hub</hosted> with a free account. Upgrade from Billing inside Hub when you need more runs or seats."
     }
   },
   "changelog": {

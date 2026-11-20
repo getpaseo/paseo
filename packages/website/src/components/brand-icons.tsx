@@ -45,6 +45,20 @@ export function SlackIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+export function LinearIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M2.15 13.85 13.85 2.15A6.77 6.77 0 0 0 2.15 13.85Zm.9-5.2 5.6-5.6a4.8 4.8 0 0 1 4.3-.9l-8.99 8.99a4.8 4.8 0 0 1-.9-2.49Zm4.3 4.3 5.6-5.6a4.8 4.8 0 0 1-.9 4.3l-1.2 1.2a4.8 4.8 0 0 1-2.5.1Z" />
+    </svg>
+  );
+}
+
 export function OpenCollectiveIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
