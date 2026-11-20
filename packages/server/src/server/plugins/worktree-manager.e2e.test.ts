@@ -50,7 +50,7 @@ let cwd = process.cwd();
 const args = [];
 for (let index = 0; index < rawArgs.length; index++) {
   if (rawArgs[index] === "-C" && rawArgs[index + 1]) {
-    cwd = rawArgs[++index];
+    cwd = path.resolve(rawArgs[++index]);
   } else {
     args.push(rawArgs[index]);
   }
@@ -107,7 +107,7 @@ if (command === "switch") {
 }
 
 if (command === "remove") {
-  const target = args.at(-1);
+  const target = path.resolve(args.at(-1));
   const keptRefs = execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/paseo/kept-commits"], {
     cwd,
     encoding: "utf8",
@@ -1191,7 +1191,7 @@ while (!existsSync(${JSON.stringify(releaseTeardownMarker)})) {
     path.join(repository, "paseo.json"),
     JSON.stringify({
       worktree: {
-        teardown: [`"${process.execPath}" "${teardownScript}"`],
+        teardown: [`node "${teardownScript}"`],
       },
     }),
   );
