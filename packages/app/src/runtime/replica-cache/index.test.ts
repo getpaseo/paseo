@@ -1150,6 +1150,25 @@ describe("ReplicaCache", () => {
     },
   );
 
+  it("stores no checkpoint for a host evicted while a malformed row is repaired", async () => {
+    const { storage } = await cacheWithoutBackgroundVisibility();
+    const reader = createCache(storage, 8_192);
+    storage.onRead = () => {
+      if (!storage.reads.at(-1)?.kinds.includes("checkpoint")) return;
+      storage.onRead = null;
+      // Larger than the whole budget, so this persist evicts the host before the repair writes.
+      reader.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(16_384)));
+      void reader.flush();
+    };
+
+    expect(await reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    await reader.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.projects.size).toBe(0);
+    expect(restored.checkpoint).toBeUndefined();
+  });
+
   it("keeps an update queued behind the baseline that rebuilds an evicted host", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: 2_500 });

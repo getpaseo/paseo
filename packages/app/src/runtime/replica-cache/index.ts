@@ -1114,11 +1114,7 @@ export class ReplicaCache {
   private async deleteInvalidRow(row: ReplicaRow): Promise<void> {
     const invalidEntity = directoryEntityForRow(row);
     if (!invalidEntity) {
-      const changes = { upserts: [], deletes: [row] } satisfies ReplicaRowChanges;
-      await this.queueOperation(async () => {
-        await this.rowStore.apply(changes);
-        this.applyStoredChanges(changes);
-      });
+      await this.applyRepair(row.serverId, { upserts: [], deletes: [row] });
       return;
     }
 
@@ -1149,10 +1145,7 @@ export class ReplicaCache {
             ]
           : [],
     };
-    await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
-    });
+    await this.applyRepair(row.serverId, changes);
   }
 
   private async repairInvalidDirectoryRows(
@@ -1175,9 +1168,16 @@ export class ReplicaCache {
             ]
           : [],
     };
-    await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
+    await this.applyRepair(serverId, changes);
+  }
+
+  // A repair is queued behind writes that can evict its host. If one did, the host has no
+  // directory left for the repaired checkpoint to describe, so only the deletes still apply.
+  private applyRepair(serverId: string, changes: ReplicaRowChanges): Promise<void> {
+    return this.queueOperation(async () => {
+      const applied = this.invalidatedHosts.has(serverId) ? { ...changes, upserts: [] } : changes;
+      await this.rowStore.apply(applied);
+      this.applyStoredChanges(applied);
     });
   }
 
