@@ -13,12 +13,8 @@ import type { ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { FAQItem } from "~/components/faq-item";
-import {
-  HUB_AGENT_HARNESSES,
-  HUB_TRIGGER_SOURCES,
-  HubArchitectureDiagram,
-} from "~/components/hub-flow";
-import { HubSlackMockup } from "~/components/hub-slack-mockup";
+import { HubAutomationsShowcase } from "~/components/hub-automations";
+import { HUB_AGENT_HARNESSES, HubArchitectureDiagram } from "~/components/hub-flow";
 import { ChapterBand, HairlineGrid, PageHeaderBand, SectionOpener } from "~/components/page-frame";
 import { PaseoHubLockup } from "~/components/paseo-brand";
 import { SiteFooter } from "~/components/site-footer";
@@ -141,24 +137,7 @@ function AutomationsSection() {
         title={t("hub.automations.title")}
         description={t("hub.automations.description")}
       />
-      <div className="space-y-8">
-        <HairlineGrid columns="3">
-          {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
-            <div key={id} className="flex items-start gap-3.5 bg-background p-5">
-              <span className="mt-0.5 shrink-0 text-white/80">
-                <Icon className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 space-y-1">
-                <h3 className="text-sm font-medium text-white/90">{t(`hub.sources.${id}.name`)}</h3>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t(`hub.sources.${id}.description`)}
-                </p>
-              </div>
-            </div>
-          ))}
-        </HairlineGrid>
-        <HubSlackMockup />
-      </div>
+      <HubAutomationsShowcase />
     </section>
   );
 }
