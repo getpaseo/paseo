@@ -115,7 +115,7 @@ run:
 
 在 Hub 触发器编辑器中选择 daemon 和工作目录后，Hub 会向该 daemon 查询已配置的 Provider、模型、执行模式和思考选项。
 
-Hub 支持你在 Paseo daemon 上配置的任意 Provider，包括 Claude Code、Codex、OpenCode、Pi，以及自定义或插件 Provider。保存或部署触发器时，已连接的 daemon 会校验所选的 Provider 设置，确保无效值被立即拒绝。
+Hub 支持你在 Paseo daemon 上配置的任意 Provider，包括 Claude Code、Codex、OpenCode、Pi，以及自定义或插件 Provider。
 
 ## 恢复与归属 {#recovery-and-ownership}
 
@@ -132,6 +132,6 @@ Hub 支持你在 Paseo daemon 上配置的任意 Provider，包括 Claude Code�
 | Offline           | 已注册，但当前未连接。               |
 | Revoked           | 已在 Hub 中撤销访问权限。            |
 
-daemon 离线时，保存新触发器或修改触发器的目标与 Agent 会失败，因为 Hub 必须向该 daemon 校验 Agent 配置。仅编辑已有触发器的提示词、过滤条件或运行限制仍可保存。
+daemon 离线时，只要目标和 Agent 设置不变，你仍可在控制台保存修改，例如只改提示词。即使只改提示词，通过 CLI 部署或直接通过 API 安装也要求目标 daemon 已连接。请参阅[触发器校验](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon)。
 
 在 **Daemons → Revoke daemon** 中撤销连接会从 Hub 侧终止关系，同时保持本地 Agent 继续运行。

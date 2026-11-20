@@ -117,7 +117,7 @@ run:
 
 When you select a daemon and working directory in the Hub trigger editor, Hub asks that daemon for its configured providers, models, execution modes, and thinking options.
 
-Hub works with any provider configured on your Paseo daemon, including Claude Code, Codex, OpenCode, Pi, and custom or plugin providers. When you save or deploy a trigger, the connected daemon validates the chosen provider settings so invalid values fail immediately.
+Hub works with any provider configured on your Paseo daemon, including Claude Code, Codex, OpenCode, Pi, and custom or plugin providers.
 
 ## Recovery and ownership
 
@@ -134,6 +134,6 @@ If Hub loses the create response or the daemon restarts mid-run, Hub resends the
 | Offline           | Enrolled, but not currently connected.   |
 | Revoked           | Access was removed from Hub.             |
 
-When a daemon is offline, saving a new trigger or changing a trigger's target or agent fails because Hub must check the agent configuration against that daemon. Editing only the prompt, filters, or runtime limits of an existing trigger still succeeds.
+While the daemon is offline, you can save dashboard edits that keep the same target and agent settings, such as a prompt change. `paseo hub deploy` and direct API installs require a connected target daemon even for that edit. See [trigger validation](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
 
 Revoking from **Daemons → Revoke daemon** ends the relationship from Hub's side while leaving local agents running.

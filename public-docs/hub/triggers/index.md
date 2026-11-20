@@ -50,15 +50,15 @@ If the daemon is offline or needs a newer Paseo version, the agent selectors sho
 
 ## Saving checks the agent against the daemon
 
-When you save or deploy a trigger, Hub asks the target daemon to validate the provider, model, mode, thinking option, provider-native `options`, and any named `choices`. A value the daemon does not offer is rejected immediately with the field name:
+During daemon validation, Hub sends the provider, model, mode, thinking option, provider-native `options`, and named `choices` to the target daemon. If a value is unavailable, Hub rejects it and names the field.
 
 ```text
 run.agent.mode: Mode 'default' is not available for provider 'opencode'
 ```
 
-The target daemon must be connected when you create a trigger or change its daemon, working directory, or agent settings. Editing only the prompt, filters, or limits of an existing trigger saves even while the daemon is offline.
+If the target and agent settings stay the same, you can save edits through the dashboard while the daemon is offline. For example, you can edit only the prompt, filters, or limits. Creating a trigger or changing its daemon, working directory, or agent settings requires a connected target daemon.
 
-The same checks run in the dashboard form, the YAML editor, `POST /api/v1/triggers/install`, `paseo hub init`, and `paseo hub deploy`.
+Hub always validates agent settings against a connected target daemon for `paseo hub deploy` and direct API installs (`POST /api/v1/triggers/install`). This applies even if you change only the prompt. When `paseo hub init` validates a trigger, it also requires a connected target daemon.
 
 ## Continue the same agent
 

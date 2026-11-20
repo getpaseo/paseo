@@ -44,7 +44,9 @@ GitHub / Linear / Slack / Discord / Schedule / Webhook
 - 在 Hub 控制台的 **Triggers** 页面使用可视化表单或 YAML 编辑器。
 - 在仓库中保存 `.paseo/triggers/*.yml` 文件，并通过 `paseo hub deploy` 部署。
 
-两种方式使用相同的 YAML 结构和校验逻辑。保存或部署触发器时，Hub 会校验 YAML，并解析用于路由事件的连接和目标 daemon 的 slug。新建触发器或更改目标或 Agent 设置时，已连接的 daemon 会校验 Agent 设置。
+两种方式使用相同的 YAML 结构。保存或部署触发器时，Hub 会校验 YAML，并查找用于事件路由的连接和目标 daemon。
+
+只要目标和 Agent 设置不变，daemon 离线时也能在控制台保存修改。通过 CLI 部署或直接通过 API 安装时，目标 daemon 必须连接到 Hub。请参阅[触发器校验](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon)。
 
 Hub 在启动运行时解析 `run.github.connection`。如果连接不可用或 GitHub 拒绝签发令牌，运行就会启动失败。请参阅 [Agent 的 GitHub 访问权限](/docs/hub/github)。
 

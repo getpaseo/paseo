@@ -46,7 +46,9 @@ You can create and edit triggers in two ways:
 - In the Hub dashboard under **Triggers**, using the visual form or the YAML editor.
 - As `.paseo/triggers/*.yml` files in your repository, deployed with `paseo hub deploy`.
 
-Both paths use the same YAML schema and validation. At save or deploy time, Hub validates the YAML and resolves the connections used to route events and the target daemon slug. For a new trigger or a change to its target or agent settings, the connected daemon validates the agent settings.
+Both paths use the same YAML schema. When you save or deploy, Hub validates the YAML and looks up the connections for event routing and the target daemon.
+
+You can save dashboard edits while the daemon is offline if the target and agent settings stay the same. CLI deploys and direct API installs always require a connected target daemon. See [trigger validation](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
 
 Hub resolves `run.github.connection` when it launches the run. If the connection is unavailable or GitHub rejects the token request, the launch fails. See [GitHub access for agents](/docs/hub/github).
 

@@ -48,15 +48,15 @@ run:
 
 ## 保存时会对照 daemon 检查 Agent {#saving-checks-the-agent-against-the-daemon}
 
-保存或部署触发器时，Hub 会请目标 daemon 校验 Provider、模型、模式、思考选项、Provider 原生 `options` 以及具名 `choices`。daemon 不提供的值会被立即拒绝并指出具体字段：
+校验时，Hub 会将 Provider、模型、模式、思考选项、Provider 原生 `options` 和具名 `choices` 发送给目标 daemon。如果某个值不可用，Hub 会拒绝该值并指出对应的字段。
 
 ```text
 run.agent.mode: Mode 'default' is not available for provider 'opencode'
 ```
 
-创建新触发器或修改触发器的 daemon、工作目录或 Agent 设置时，目标 daemon 必须在线。仅编辑已有触发器的提示词、过滤条件或限制时，即使 daemon 离线也能保存。
+只要目标和 Agent 设置不变，即使 daemon 离线也能在控制台保存修改。例如，你可以只修改提示词、过滤条件或限制。创建触发器或修改 daemon、工作目录或 Agent 设置时，目标 daemon 必须连接到 Hub。
 
-控制台表单、YAML 编辑器、`POST /api/v1/triggers/install`、`paseo hub init` 和 `paseo hub deploy` 都会执行相同的校验。
+执行 `paseo hub deploy` 或直接通过 API（`POST /api/v1/triggers/install`）安装时，Hub 始终通过已连接的目标 daemon 校验 Agent 设置。即使只修改提示词，也需要校验。`paseo hub init` 校验触发器时也要求目标 daemon 已连接。
 
 ## 继续同一个 Agent {#continue-the-same-agent}
 
