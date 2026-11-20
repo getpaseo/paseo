@@ -2291,7 +2291,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (providerResult.handled) {
       this.currentMode = providerResult.currentModeId ?? modeId;
       if (providerResult.configOptions) {
-        this.configOptions = this.transformConfigOptions(providerResult.configOptions);
+        this.applyConfigOptions(providerResult.configOptions);
       }
       this.availableModes = this.modesFromConfig().modes;
       this.pushEvent({
@@ -2335,7 +2335,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (beforeModeWriter) {
       const beforeResult = await this.runACPRequest(() => beforeModeWriter(context));
       if (beforeResult?.configOptions) {
-        this.configOptions = this.transformConfigOptions(beforeResult.configOptions);
+        this.applyConfigOptions(beforeResult.configOptions);
       }
     }
 
@@ -2501,8 +2501,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modelId,
       label: "model",
     });
-    this.thinkingOptionId =
-      deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
     this.reportFeatureChanges(before);
     this.pushEvent({
       type: "model_changed",
@@ -2702,7 +2700,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     requestedValue: string;
     label: string;
   }): string {
-    this.configOptions = this.transformConfigOptions(response.configOptions);
+    this.applyConfigOptions(response.configOptions);
     const responseOption =
       category === undefined
         ? findSelectConfigOptionById({ configOptions: this.configOptions, id: configId })
@@ -3209,7 +3207,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       ? this.sessionResponseTransformer(response)
       : response;
 
-    this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
+    this.applyConfigOptions(transformed.configOptions ?? []);
     this.sessionModeState = transformed.modes ?? null;
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
@@ -3219,14 +3217,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModels = transformed.models?.availableModels ?? null;
     this.currentModel =
       transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
-    this.thinkingOptionId =
-      deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
   }
 
-  private transformConfigOptions(configOptions: SessionConfigOption[]): SessionConfigOption[] {
-    return this.configOptionsTransformer
+  private applyConfigOptions(configOptions: SessionConfigOption[]): string | null {
+    this.configOptions = this.configOptionsTransformer
       ? this.configOptionsTransformer(configOptions)
       : configOptions;
+    const thinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+    this.thinkingOptionId = thinkingOptionId ?? this.thinkingOptionId;
+    return thinkingOptionId;
   }
 
   private transformModeId(modeId: string): string | null {
@@ -3556,16 +3555,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
     const before = this.featureValues();
-    this.configOptions = this.transformConfigOptions(update.configOptions);
+    const nextThinkingOptionId = this.applyConfigOptions(update.configOptions);
     const modeInfo = this.modesFromConfig();
     const nextMode = modeInfo.currentModeId;
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
-    const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
 
     this.availableModes = modeInfo.modes;
     this.currentMode = nextMode ?? this.currentMode;
     this.currentModel = nextModel ?? this.currentModel;
-    this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
     this.reportFeatureChanges(before);
 
     const events: AgentStreamEvent[] = [];

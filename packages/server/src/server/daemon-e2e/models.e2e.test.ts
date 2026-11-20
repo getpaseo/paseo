@@ -577,9 +577,13 @@ test("bundled goose lists configured providers and switches models across provid
   }
 }, 60_000);
 
-test.each([{ loadModel: "second-model" }, { loadModel: "startup-model" }])(
-  "reopens an ACP chat with a rejected saved thinking level after loading $loadModel",
-  async ({ loadModel }) => {
+test.each([
+  { scenario: "the saved model loaded", loadModel: "second-model", savedMode: undefined },
+  { scenario: "the saved model restored", loadModel: "startup-model", savedMode: undefined },
+  { scenario: "the saved mode restored", loadModel: "second-model", savedMode: "plan" },
+])(
+  "reopens an ACP chat with a rejected saved thinking level with $scenario",
+  async ({ loadModel, savedMode }) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "paseo-acp-thinking-resume-"));
     const options = {
       paseoHomeRoot: root,
@@ -591,7 +595,10 @@ test.each([{ loadModel: "second-model" }, { loadModel: "startup-model" }])(
         "thinking-fixture": {
           extends: "acp" as const,
           label: "Thinking fixture",
-          env: { ACP_TEST_LOAD_MODEL: loadModel },
+          env: {
+            ACP_TEST_LOAD_MODEL: loadModel,
+            ACP_TEST_SAVED_MODE: savedMode ?? "",
+          },
           command: [
             process.execPath,
             path.join(import.meta.dirname, "acp-thinking-resume-fixture.cjs"),
@@ -607,6 +614,7 @@ test.each([{ loadModel: "second-model" }, { loadModel: "startup-model" }])(
           provider: "thinking-fixture",
           cwd: root,
           model: "second-model",
+          modeId: savedMode,
           thinkingOptionId: "max",
         });
         agentId = agent.id;

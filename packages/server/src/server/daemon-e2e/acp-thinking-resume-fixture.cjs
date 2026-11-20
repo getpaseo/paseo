@@ -4,6 +4,7 @@ const readline = require("node:readline");
 const sessionId = "thinking-resume-session";
 let model = "startup-model";
 let effort = "low";
+let mode = "agent";
 let loaded = false;
 
 const send = (message) =>
@@ -22,6 +23,7 @@ function select(id, category, currentValue, values) {
 
 function configOptions() {
   return [
+    select("mode", "mode", mode, ["agent", "plan"]),
     select("model", "model", model, ["startup-model", "second-model"]),
     select(
       "effort",
@@ -61,7 +63,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "session/load":
       loaded = true;
       model = process.env.ACP_TEST_LOAD_MODEL;
-      effort = model === "second-model" ? "high" : "low";
+      effort = model === "second-model" && !process.env.ACP_TEST_SAVED_MODE ? "high" : "low";
       assistantMessage("Response from the saved session");
       result = { configOptions: configOptions() };
       break;
@@ -69,6 +71,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (params.configId === "model") {
         model = params.value;
         if (loaded && model === "second-model") effort = "high";
+      } else if (params.configId === "mode") {
+        mode = params.value;
+        if (loaded && mode === process.env.ACP_TEST_SAVED_MODE) effort = "high";
       } else if (loaded && params.value === "max") {
         send({
           id,
