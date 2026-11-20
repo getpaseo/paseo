@@ -865,12 +865,16 @@ class ProviderRuntimeSession {
   connectionClosed(error = new Error("Provider connection closed")): void {
     // Closing fails only an interrupted turn. An idle session goes stale, and its next prompt
     // reopens it from persistence.
-    if (!this.terminal && this.activeTurnIds.size > 0) {
-      this.publish({
-        type: "session.runtime_failed",
-        sessionId: this.id,
-        error: { message: error.message },
-      });
+    if (!this.terminal) {
+      this.publish(
+        this.activeTurnIds.size > 0
+          ? {
+              type: "session.runtime_failed",
+              sessionId: this.id,
+              error: { message: error.message },
+            }
+          : { type: "session.closed", sessionId: this.id },
+      );
     }
     this.terminal = true;
     this.rejectPending(error);
@@ -1663,9 +1667,10 @@ class PluginAgentSession implements AgentSession {
         const retired: AgentStreamEvent[] = [
           { type: "background_work", provider: this.provider, items: null },
         ];
-        const turnId = this.currentTurnId ?? this.bridge.activeTurnId;
+        // Prompt acceptance can precede the provider's turn-start notification.
+        const turnId = this.bridge.activeTurnId ?? this.currentTurnId ?? undefined;
         if (event.error) {
-          retired.push(this.translateFailure(event.error));
+          retired.push(this.translateFailure(event.error, turnId));
         } else if (turnId) {
           retired.push({
             type: "turn_canceled",
@@ -1866,11 +1871,11 @@ class PluginAgentSession implements AgentSession {
     ];
   }
 
-  private translateFailure(error: ProviderError): AgentStreamEvent {
+  private translateFailure(error: ProviderError, turnId: string | undefined): AgentStreamEvent {
     return {
       type: "turn_failed",
       provider: this.provider,
-      turnId: this.currentTurnId ?? undefined,
+      turnId,
       error: error.message,
       code: error.code,
       diagnostic: error.diagnostic,

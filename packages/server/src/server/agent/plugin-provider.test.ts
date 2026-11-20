@@ -3063,95 +3063,108 @@ test("preserves a wakeup arriving while an idle prompt is refused", async () => 
 });
 
 test.each([
-  { type: "session.runtime_failed", foreground: false },
-  { type: "session.closed", foreground: false },
-  { type: "session.closed", foreground: true },
-] as const)(
-  "retires plugin work on $type (foreground: $foreground)",
-  async ({ type, foreground }) => {
-    const logger = createTestLogger();
-    const harness = createProviderHarness({
-      async handleInput(input, emit) {
-        if (!foreground || input.type !== "session.prompt") return false;
-        emit({
-          type: "session.prompt_result",
-          sessionId: input.sessionId,
-          clientMessageId: input.prompt.clientMessageId,
-          result: { type: "turn", turnId: "foreground" },
-        });
-        return true;
-      },
-    });
-    const registry = new PluginAgentClientRegistry(logger);
-    registry.replace([harness.registration]);
-    const manager = new AgentManager({ clients: registry.clients(), logger });
-    try {
-      const agent = await manager.createAgent(
-        { provider: harness.registration.id, cwd: tmpdir() },
-        undefined,
-        { workspaceId: undefined },
-      );
-      const opened = harness.inputs.find((input) => input.type === "session.open");
-      if (!opened) throw new Error("Expected the plugin session to open");
-      manager.setDaemonBackgroundWork({
-        agentId: agent.id,
-        namespace: "heartbeat",
-        id: "watch",
-        kind: "heartbeat",
-        description: "Daemon heartbeat",
-        startedAt: "2026-11-20T00:00:00.000Z",
-        stop: async () => {},
+  { type: "session.runtime_failed", phase: "wakeup" },
+  { type: "session.closed", phase: "wakeup" },
+  { type: "session.closed", phase: "foreground" },
+  { type: "session.closed", phase: "handoff" },
+  { type: "session.runtime_failed", phase: "handoff" },
+  { type: "connection.closed", phase: "idle" },
+] as const)("retires plugin work on $type during $phase", async ({ type, phase }) => {
+  const logger = createTestLogger();
+  const harness = createProviderHarness({
+    async handleInput(input, emit) {
+      if (phase === "wakeup" || input.type !== "session.prompt") return false;
+      emit({
+        type: "session.prompt_result",
+        sessionId: input.sessionId,
+        clientMessageId: input.prompt.clientMessageId,
+        result: { type: "turn", turnId: "foreground" },
       });
-      harness.emit({
-        type: "session.background_work",
-        sessionId: opened.sessionId,
-        items: [{ id: "command", kind: "shell", description: "Background command" }],
+      return true;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({ clients: registry.clients(), logger });
+  try {
+    const agent = await manager.createAgent(
+      { provider: harness.registration.id, cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const opened = harness.inputs.find((input) => input.type === "session.open");
+    if (!opened) throw new Error("Expected the plugin session to open");
+    manager.setDaemonBackgroundWork({
+      agentId: agent.id,
+      namespace: "heartbeat",
+      id: "watch",
+      kind: "heartbeat",
+      description: "Daemon heartbeat",
+      startedAt: "2026-11-20T00:00:00.000Z",
+      stop: async () => {},
+    });
+    harness.emit({
+      type: "session.background_work",
+      sessionId: opened.sessionId,
+      items: [{ id: "command", kind: "shell", description: "Background command" }],
+      canInterruptSession: true,
+    });
+    await expect
+      .poll(() => manager.getAgentBackgroundWorkSummary(agent.id))
+      .toEqual({
+        count: 2,
         canInterruptSession: true,
       });
-      await expect
-        .poll(() => manager.getAgentBackgroundWorkSummary(agent.id))
-        .toEqual({
-          count: 2,
-          canInterruptSession: true,
-        });
 
-      let run: ReturnType<AgentManager["runAgent"]> | undefined;
-      if (foreground) {
-        run = manager.runAgent(agent.id, "Start foreground");
-        void run.catch(() => undefined);
-      } else {
-        harness.emit({
-          type: "session.turn",
-          sessionId: opened.sessionId,
-          turnId: "wakeup",
-          state: "started",
-          acceptsFollowUp: true,
-        });
-      }
+    if (phase === "wakeup" || phase === "handoff") {
+      harness.emit({
+        type: "session.turn",
+        sessionId: opened.sessionId,
+        turnId: "wakeup",
+        state: "started",
+        acceptsFollowUp: true,
+      });
       await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    }
+    let run: ReturnType<AgentManager["runAgent"]> | undefined;
+    if (phase === "foreground" || phase === "handoff") {
+      run = manager.runAgent(agent.id, "Start foreground");
+      void run.catch(() => undefined);
+      await expect
+        .poll(() => manager.getAgent(agent.id)?.activeForegroundTurnId)
+        .toBe("foreground");
+    }
+    if (type === "connection.closed") {
+      registry.replace([]);
+      await harness.waitForClose();
+    } else {
       harness.emit(
         type === "session.runtime_failed"
           ? { type, sessionId: opened.sessionId, error: { message: "Provider process exited" } }
           : { type, sessionId: opened.sessionId },
       );
-      await expect
-        .poll(() => ({
-          lifecycle: manager.getAgent(agent.id)?.lifecycle,
-          summary: manager.getAgentBackgroundWorkSummary(agent.id),
-          inventory: manager.listAgentBackgroundWork(agent.id).map((item) => item.id),
-        }))
-        .toEqual({
-          lifecycle: type === "session.runtime_failed" ? "error" : "idle",
-          summary: { count: 1 },
-          inventory: ["heartbeat:watch"],
-        });
-      const stopped = await cancelAgentRunCommand({ agentManager: manager, logger }, agent.id);
-      expect(stopped.cancelled).toBe(false);
-      expect(harness.inputs.some((input) => input.type === "session.interrupt")).toBe(false);
-      if (run) await expect(run).resolves.toMatchObject({ canceled: true });
-    } finally {
-      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
-      await registry.shutdown();
     }
-  },
-);
+    await expect
+      .poll(() => ({
+        lifecycle: manager.getAgent(agent.id)?.lifecycle,
+        summary: manager.getAgentBackgroundWorkSummary(agent.id),
+        inventory: manager.listAgentBackgroundWork(agent.id).map((item) => item.id),
+      }))
+      .toEqual({
+        lifecycle: type === "session.runtime_failed" ? "error" : "idle",
+        summary: { count: 1 },
+        inventory: ["heartbeat:watch"],
+      });
+    const stopped = await cancelAgentRunCommand({ agentManager: manager, logger }, agent.id);
+    expect(stopped.cancelled).toBe(false);
+    expect(harness.inputs.some((input) => input.type === "session.interrupt")).toBe(false);
+    if (run && type === "session.runtime_failed") {
+      await expect(run).rejects.toThrow("Provider process exited");
+    } else if (run) {
+      await expect(run).resolves.toMatchObject({ canceled: true });
+    }
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+  }
+});
