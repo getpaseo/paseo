@@ -1590,7 +1590,7 @@ export class DaemonClient {
     return this.connectPromise;
   }
 
-  private async attemptConnect(): Promise<void> {
+  private attemptConnect(): void {
     if (this.connectionState.status === "disposed") {
       this.rejectConnect(new Error("Daemon client is disposed"));
       return;
@@ -1603,6 +1603,12 @@ export class DaemonClient {
     if (this.connectionState.status === "connecting") {
       return;
     }
+    void this.openConnectionAttempt("CONNECT_REQUEST");
+  }
+
+  private async openConnectionAttempt(
+    trigger: "CONNECT_REQUEST" | "STALE_CONNECT_ON_FOREGROUND",
+  ): Promise<void> {
     // This attempt supersedes any retry the last disconnect scheduled. Left
     // armed, that retry would tear down the connection this attempt opens.
     if (this.reconnectTimeout) {
@@ -1616,8 +1622,8 @@ export class DaemonClient {
       if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
       // Reconnect can overlap with browser close/error delivery ordering.
-      // Always dispose previous transport before constructing the next one.
-      this.disposeTransport();
+      // Dispose any previous transport before constructing the next one.
+      if (trigger === "CONNECT_REQUEST") this.disposeTransport();
       const baseTransportFactory =
         this.config.transportFactory ??
         createWebSocketTransportFactory(this.config.webSocketFactory ?? defaultWebSocketFactory);
@@ -1674,7 +1680,7 @@ export class DaemonClient {
           status: "connecting",
           attempt: this.reconnectAttempt,
         },
-        { event: "CONNECT_REQUEST" },
+        { event: trigger },
       );
       this.resetConnectTimeout();
       const timeoutMs = Math.max(1, this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
@@ -1871,15 +1877,12 @@ export class DaemonClient {
       if (
         options?.verify &&
         this.config.reconnect?.enabled !== false &&
+        this.transport &&
         Date.now() - this.connectAttemptStartedAt >= FOREGROUND_STALE_CONNECT_MS
       ) {
+        // Keep work queued while the client opens a fresh transport.
         this.disposeTransport(1001, "Stale connection attempt");
-        this.scheduleReconnect({
-          reason: "Stale connection attempt",
-          event: "STALE_CONNECT_ON_FOREGROUND",
-          reasonCode: "connect_timeout",
-          immediate: true,
-        });
+        void this.openConnectionAttempt("STALE_CONNECT_ON_FOREGROUND");
       }
       return;
     }

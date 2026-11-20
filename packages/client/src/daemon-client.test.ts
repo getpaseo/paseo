@@ -2712,6 +2712,24 @@ test("foreground replaces a stale connect attempt and retries at the base delay 
   expect(client.getConnectionState().status).toBe("connected");
 });
 
+test("foreground preserves RPCs waiting for a pending handshake", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const { client } = connectThroughReplacements("foreground-queued", [stalled, replacement]);
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  const ping = client.ping({ requestId: "queued-ping", timeoutMs: 10_000 });
+  void ping.catch(() => undefined);
+
+  await vi.advanceTimersByTimeAsync(5_000);
+  client.ensureConnected({ verify: true });
+  replacement.openConnection();
+
+  await connection;
+  await expect(ping).resolves.toMatchObject({ requestId: "queued-ping" });
+});
+
 test("foreground keeps a connect attempt that just started", async () => {
   useHeartbeatClock();
   const pending = new FakeDaemon();
