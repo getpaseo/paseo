@@ -789,6 +789,16 @@ export default function contribute(client: PluginClientContext) {
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
+If `navigation?.supportsFocusHost` is true, pass `focusHost: true` to `openAgent` or `openWorkspace`.
+Paseo selects only the destination host in the workspace sidebar, clears the project and label
+filters, and keeps the grouping mode. Omit the option to preserve the existing filters.
+
+```ts
+if (navigation?.supportsFocusHost) {
+  navigation.openAgent({ agentId, serverId, focusHost: true });
+}
+```
+
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
 
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
