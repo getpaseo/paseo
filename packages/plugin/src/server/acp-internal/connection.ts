@@ -751,7 +751,7 @@ class AcpRuntime {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) {
         this.finishTurnPermissions(active.turnId);
-        if (active.deferred && active.wirePromptsInFlight === 0) {
+        if (active.deferred) {
           this.finishDeferredTurn(active, { type: "cancel" });
         }
       }
