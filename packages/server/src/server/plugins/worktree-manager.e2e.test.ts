@@ -814,3 +814,132 @@ test("untrusted workspaces pass untrusted=true to worktree manager remove and re
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test("concurrent restores across two daemon clients wait for the in-flight manager restore and share its failure", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-restore-race-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const dirCreatedMarker = path.join(root, "restore-dir-created");
+  const releaseMarker = path.join(root, "release-restore");
+  const allowSucceedMarker = path.join(root, "allow-restore-succeed");
+
+  const pluginDir = path.join(root, "slow-restore-manager");
+  await mkdir(pluginDir);
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "slow-restore-manager", requirements: { paseo: ">=0.16.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `import { execFileSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create(request) {
+      const target = path.join(path.dirname(request.repoRoot), "managed-" + request.branch);
+      execFileSync("git", ["worktree", "add", "-b", request.branch, target, request.baseRef], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "created", path: target };
+    },
+    async remove(request) {
+      execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "removed" };
+    },
+    async restore(request) {
+      if (request.target.type !== "branch") return;
+      execFileSync("git", ["worktree", "add", request.path, request.target.branch], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      if (!existsSync(${JSON.stringify(allowSucceedMarker)})) {
+        writeFileSync(${JSON.stringify(dirCreatedMarker)}, "ready");
+        const deadline = Date.now() + 15_000;
+        while (!existsSync(${JSON.stringify(releaseMarker)})) {
+          if (Date.now() > deadline) throw new Error("test did not release restore");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+          cwd: request.repoRoot,
+          stdio: "pipe",
+        });
+        throw new Error("restore setup failed");
+      }
+      return { type: "restored", path: request.path };
+    },
+  });
+}
+`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client1 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const client2 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await Promise.all([client1.connect(), client2.connect()]);
+    await client1.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client1.installDirectoryPlugin(pluginDir)).status).toBe("running");
+
+    const created = await client1.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "race-branch" },
+    });
+    expect(created.error).toBeNull();
+    const workspaceId = created.workspace!.id;
+    const worktreePath = created.workspace!.workspaceDirectory;
+
+    const archived = await client1.archiveWorkspace(workspaceId);
+    expect(archived.error).toBeNull();
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // Start first restore and wait until the worktree directory exists on disk while setup is still paused.
+    const firstRestore = client1.restoreWorkspace(workspaceId);
+    await expect
+      .poll(() =>
+        stat(dirCreatedMarker).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+    expect((await stat(worktreePath)).isDirectory()).toBe(true);
+
+    // Second client restores while the first is still running: must wait instead of prematurely unarchiving.
+    let secondSettled = false;
+    const secondRestore = client2.restoreWorkspace(workspaceId);
+    void secondRestore.then(
+      () => {
+        secondSettled = true;
+        return undefined;
+      },
+      () => {
+        secondSettled = true;
+        return undefined;
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(secondSettled).toBe(false);
+
+    // Release the first restore to fail and roll back its partial directory: both callers must reject.
+    await writeFile(releaseMarker, "go");
+    await expect(firstRestore).rejects.toThrow("restore setup failed");
+    await expect(secondRestore).rejects.toThrow("restore setup failed");
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // Workspace remains archived and can be restored cleanly on retry.
+    const recovery = await client1.inspectWorkspaceRecovery(workspaceId);
+    expect(recovery.kind).toBe("recoverable");
+    await writeFile(allowSucceedMarker, "ok");
+    await client1.restoreWorkspace(workspaceId);
+    expect(git(worktreePath, ["branch", "--show-current"])).toBe("race-branch");
+  } finally {
+    await client1.close();
+    await client2.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);

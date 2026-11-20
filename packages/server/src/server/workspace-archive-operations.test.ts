@@ -273,4 +273,32 @@ describe("WorkspaceArchiveOperations", () => {
       kind: "archived",
     });
   });
+
+  test("concurrent restores join the in-flight restore and share its outcome", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+
+    const first = operations.restore("ws", async () => {
+      calls += 1;
+      await gate;
+      throw new Error("restore setup failed");
+    });
+    const second = operations.restore("ws", async () => {
+      calls += 1;
+    });
+
+    release();
+    await expect(first).rejects.toThrow("restore setup failed");
+    await expect(second).rejects.toThrow("restore setup failed");
+    expect(calls).toBe(1);
+
+    await operations.restore("ws", async () => {
+      calls += 1;
+    });
+    expect(calls).toBe(2);
+  });
 });

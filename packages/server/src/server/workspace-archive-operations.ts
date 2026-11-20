@@ -67,6 +67,23 @@ export class WorkspaceArchiveOperations {
     return done;
   }
 
+  /**
+   * Run a workspace recovery restore on the per-workspace lane so concurrent restores
+   * across daemon sessions share one outcome and wait for checkout + validation to settle.
+   */
+  restore(workspaceId: string, run: () => Promise<void>): Promise<void> {
+    const current = this.lanes.get(workspaceId);
+    if (current?.kind === "undoing") {
+      return current.done;
+    }
+    const done = (async () => {
+      await settled(current?.done);
+      await run();
+    })();
+    this.claim(workspaceId, { kind: "undoing", done });
+    return done;
+  }
+
   private claim(workspaceId: string, entry: LaneEntry): void {
     this.lanes.set(workspaceId, entry);
     const release = () => {

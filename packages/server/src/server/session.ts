@@ -6509,8 +6509,10 @@ export class Session {
   }
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
-    await this.workspaceRecovery.restore(workspaceId);
-    await this.publishRecoveredWorkspace(workspaceId);
+    await this.workspaceArchiveOperations.restore(workspaceId, async () => {
+      await this.workspaceRecovery.restore(workspaceId);
+      await this.publishRecoveredWorkspace(workspaceId);
+    });
   }
 
   private async publishRecoveredWorkspace(workspaceId: string): Promise<void> {
