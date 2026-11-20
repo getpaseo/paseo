@@ -14,7 +14,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { ensureSherpaOnnxModel, getSherpaOnnxModelDir } from "./model-downloader.js";
+import {
+  ensureSherpaOnnxModel,
+  getSherpaOnnxModelDir,
+  SherpaOnnxModelPreparationError,
+} from "./model-downloader.js";
 import { getSherpaOnnxModelSpec } from "./model-catalog.js";
 
 function makeTmpDir(): string {
@@ -109,5 +113,21 @@ describe("sherpa model downloader", () => {
     });
 
     expect(out).toBe(modelDir);
+  });
+
+  test("keeps model preparation context available as structured error fields", () => {
+    const cause = new Error("directory is read-only");
+    const error = new SherpaOnnxModelPreparationError({
+      modelId: "kokoro-en-v0_19",
+      modelsDir: "/models/local-speech",
+      cause,
+    });
+
+    expect(error).toMatchObject({
+      name: "SherpaOnnxModelPreparationError",
+      modelId: "kokoro-en-v0_19",
+      modelsDir: "/models/local-speech",
+      cause,
+    });
   });
 });
