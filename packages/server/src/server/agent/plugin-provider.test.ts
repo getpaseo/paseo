@@ -3030,12 +3030,10 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
     await expect.poll(() => heldSteerResponse).not.toBeNull();
     const promptsBeforeStop = promptCount;
 
-    // Stop must send session/cancel immediately without waiting behind steer 2,
-    // and releasing steer 1 must not dispatch steer 2 to ACP.
-    const stopPromise = manager.cancelAgentRun(agent.id);
-    await expect.poll(() => cancelCount, { timeout: 2_000 }).toBe(1);
-    heldSteerResponse!();
-    await stopPromise;
+    // Stop must send session/cancel immediately, retire the deferred session cleanly,
+    // and never dispatch the queued steer 2 to ACP.
+    await manager.cancelAgentRun(agent.id);
+    expect(cancelCount).toBe(1);
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
     expect(promptCount).toBe(promptsBeforeStop);
   } finally {

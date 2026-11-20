@@ -2914,19 +2914,9 @@ describe("deferTurnOnRunningTools", () => {
           event.turnId === "acp:cancel-turn" &&
           event.state === "canceled",
       );
+      await waitForEvent(events, (event) => event.type === "session.closed");
       expect(cancelCount).toBe(1);
-
-      // Trailing failure echo from the canceled tool must not overwrite its canceled state.
-      instances[1].notify("session/update", {
-        sessionId: "connector-session",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "cancel-me",
-          status: "failed",
-          rawOutput: { error: "cancelled" },
-        },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(instances[1].readsCanceled).toBe(true);
       const toolEvents = events.filter(
         (event) =>
           event.type === "timeline.item" &&
@@ -3450,43 +3440,8 @@ describe("deferTurnOnRunningTools", () => {
           event.turnId === "acp:echo-turn-1" &&
           event.state === "canceled",
       );
-
-      // Start a new prompt BEFORE the old tool's failure echo arrives.
-      await deferredConn.send({
-        type: "session.prompt",
-        sessionId: "session-1",
-        prompt: {
-          clientMessageId: "echo-turn-2",
-          delivery: "auto",
-          input: { type: "message", content: [{ type: "text", text: "second" }] },
-        },
-      });
-      await waitForEvent(
-        deferredEvents,
-        (event) =>
-          event.type === "session.turn" &&
-          event.turnId === "acp:echo-turn-2" &&
-          event.state === "completed",
-      );
-      deferred.instances[1].notify("session/update", {
-        sessionId: "connector-session",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "late-echo",
-          status: "failed",
-          rawOutput: { error: "cancelled" },
-        },
-      });
-      // A subsequent rawOutput-only partial update must also keep the canceled state.
-      deferred.instances[1].notify("session/update", {
-        sessionId: "connector-session",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "late-echo",
-          rawOutput: { stderr: "killed" },
-        },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await waitForEvent(deferredEvents, (event) => event.type === "session.closed");
+      expect(deferred.instances[1].readsCanceled).toBe(true);
       const toolEvents = deferredEvents.filter(
         (event) =>
           event.type === "timeline.item" &&
@@ -4263,7 +4218,7 @@ describe("deferTurnOnRunningTools", () => {
       label: "Deferred Lone Steer Reject",
       connector,
       acpOptions: {
-        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500, cancelTimeoutMs: 80 },
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
       },
     });
     const connection = await registration.connect({
@@ -4388,32 +4343,27 @@ describe("deferTurnOnRunningTools", () => {
           event.turnId === "acp:cancel-race-turn" &&
           event.state === "canceled",
       );
-      await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+      await waitForEvent(events, (event) => event.type === "session.closed");
       expect(instances[1].readsCanceled).toBe(true);
 
       // Direct prompts to the retired session must fail cleanly instead of reusing it.
-      await connection.send({
-        type: "session.prompt",
-        sessionId: "session-1",
-        prompt: {
-          clientMessageId: "after-retire",
-          delivery: "auto",
-          input: { type: "message", content: [{ type: "text", text: "should fail" }] },
-        },
-      });
-      await waitForEvent(
-        events,
-        (event) =>
-          event.type === "session.prompt_result" &&
-          event.clientMessageId === "after-retire" &&
-          event.result.type === "failed",
-      );
+      await expect(
+        connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "after-retire",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "should fail" }] },
+          },
+        }),
+      ).rejects.toThrow("Unknown session");
     } finally {
       await connection.close();
     }
   });
 
-  it("terminates a command-backed ACP child process when an interrupted steer times out", async () => {
+  it("terminates a command-backed ACP child process when an interrupted steer retires the session", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-wedged-steer-"));
     const pidFile = path.join(dir, "session.pid");
     const script = path.join(dir, "wedged-agent.cjs");
@@ -4452,7 +4402,7 @@ describe("deferTurnOnRunningTools", () => {
       label: "Wedged Command ACP",
       command: [process.execPath, script],
       acpOptions: {
-        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500, cancelTimeoutMs: 80 },
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
       },
     });
     const connection = await registration.connect({
@@ -4522,7 +4472,7 @@ describe("deferTurnOnRunningTools", () => {
           event.turnId === "acp:wedged-1" &&
           event.state === "canceled",
       );
-      await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+      await waitForEvent(events, (event) => event.type === "session.closed");
       await waitForEvent(
         events,
         (event) =>
