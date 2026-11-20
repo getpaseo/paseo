@@ -79,13 +79,17 @@ const giteaActionJobSchema = z.object({
   html_url: z.string().nullable().optional(),
 });
 
-const giteaActionJobsPageSchema = z.object({
-  jobs: z
-    .array(giteaActionJobSchema)
-    .nullable()
-    .transform((jobs) => jobs ?? []),
-  total_count: z.number(),
-});
+const giteaActionJobsPageSchema = z.union([
+  z.object({
+    jobs: z
+      .array(giteaActionJobSchema)
+      .nullable()
+      .transform((jobs) => jobs ?? []),
+    total_count: z.number(),
+  }),
+  // Forgejo returns the complete job list as an array.
+  z.array(giteaActionJobSchema),
+]);
 
 type GiteaActionJob = z.infer<typeof giteaActionJobSchema>;
 
@@ -642,17 +646,24 @@ export function createGiteaChangeRequestSource(
     const jobsByRun = new Map<string, GiteaActionJob[]>();
     for (const [run, runId] of [...runs].slice(0, GITEA_ACTION_RUN_LOOKUP_LIMIT)) {
       const endpoint = `${params.repoPrefix}/actions/runs/${runId}/jobs`;
-      const jobs: GiteaActionJob[] = [];
+      const jobs = new Map<number, GiteaActionJob>();
       for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
         try {
           const { data } = await params.get(
             `${endpoint}?limit=${GITEA_PAGE_SIZE}&page=${page}`,
             giteaActionJobsPageSchema,
           );
-          if (data.jobs.length === 0) break;
-          jobs.push(...data.jobs);
-          if (jobs.length >= data.total_count) {
-            jobsByRun.set(run, jobs);
+          const items = Array.isArray(data) ? data : data.jobs;
+          const totalCount = Array.isArray(data) ? data.length : data.total_count;
+          if (!items.length) break;
+          // The browser run number and API ID differ on some versions. Keep
+          // the original sources if any job belongs to another run.
+          if (items.some((job) => nativeActionUrl(job.html_url, params.origin)?.run !== run)) {
+            break;
+          }
+          for (const job of items) jobs.set(job.id, job);
+          if (jobs.size >= totalCount) {
+            jobsByRun.set(run, [...jobs.values()]);
             break;
           }
         } catch (error) {

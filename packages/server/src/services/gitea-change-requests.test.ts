@@ -145,76 +145,89 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     }
   });
 
-  it("uses job identities to keep failures that share a commit status context", async () => {
-    vi.useFakeTimers();
-    const origin = "https://codeberg.org";
-    const run = `${origin}/Org/Repo/actions/runs/100`;
-    const { runner } = createFakeTeaRunner((args) => {
-      if (args[0] === "login")
-        return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
-      const endpoint = args.at(-1)!;
-      if (endpoint.endsWith("/pulls/1"))
-        return teaHttp({ number: 1, state: "open", head: { sha: "head" } });
-      if (endpoint.includes("/status?")) {
-        return teaHttp({
-          statuses: [
-            { id: 1, status: "success", context: "CI / job", target_url: `${run}/jobs/1` },
-          ],
-        });
-      }
-      if (endpoint.includes("/actions/tasks?")) {
-        return teaHttp({
-          workflow_runs: [
-            { id: 55, name: "job", head_sha: "head", status: "failure", url: run },
-            { id: 56, name: "job", head_sha: "head", status: "success", url: run },
-          ],
-          total_count: 2,
-        });
-      }
-      if (endpoint.includes("/actions/runs/100/jobs?")) {
-        return teaHttp({
-          jobs: [
+  it.each(["Gitea page", "Forgejo array", "unrelated run"])(
+    "correlates Actions jobs from a %s response with the watched run",
+    async (shape) => {
+      vi.useFakeTimers();
+      const origin = "https://codeberg.org";
+      const run = `${origin}/Org/Repo/actions/runs/100`;
+      const responseRun = shape === "unrelated run" ? `${origin}/Org/Repo/actions/runs/99` : run;
+      const { runner } = createFakeTeaRunner((args) => {
+        if (args[0] === "login")
+          return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+        const endpoint = args.at(-1)!;
+        if (endpoint.endsWith("/pulls/1"))
+          return teaHttp({ number: 1, state: "open", head: { sha: "head" } });
+        if (endpoint.includes("/status?")) {
+          return teaHttp({
+            statuses: [
+              { id: 1, status: "success", context: "CI / job", target_url: `${run}/jobs/1` },
+            ],
+          });
+        }
+        if (endpoint.includes("/actions/tasks?")) {
+          return teaHttp({
+            workflow_runs: [
+              {
+                id: 55,
+                name: "job",
+                head_sha: "head",
+                status: shape === "unrelated run" ? "success" : "failure",
+                url: run,
+              },
+              { id: 56, name: "job", head_sha: "head", status: "success", url: run },
+            ],
+            total_count: 2,
+          });
+        }
+        if (endpoint.includes("/actions/runs/100/jobs?")) {
+          const jobs = [
             {
               id: 201,
               name: "job",
               status: "completed",
               conclusion: "failure",
-              html_url: `${run}/jobs/0`,
+              html_url: `${responseRun}/jobs/0`,
             },
             {
               id: 202,
               name: "job",
               status: "completed",
               conclusion: "success",
-              html_url: `${run}/jobs/1`,
+              html_url: `${responseRun}/jobs/1`,
             },
-          ],
-          total_count: 2,
-        });
-      }
-      return teaHttp([]);
-    });
-    const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
-    const snapshots: ChangeRequestSnapshot[] = [];
-    try {
-      service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, {
-        async snapshot(snapshot) {
-          snapshots.push(snapshot);
-        },
-        error(error) {
-          throw error;
-        },
+          ];
+          return teaHttp(shape === "Forgejo array" ? jobs : { jobs, total_count: jobs.length });
+        }
+        return teaHttp([]);
       });
-      await vi.advanceTimersByTimeAsync(25);
-      expect(snapshots[0]?.checksState).toBe("failed");
-      expect(snapshots[0]?.checks.map(({ state, url }) => [state, url])).toEqual([
-        ["failed", `${run}/jobs/0`],
-        ["passed", `${run}/jobs/1`],
-      ]);
-    } finally {
-      service.dispose?.();
-    }
-  });
+      const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      try {
+        service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error(error) {
+            throw error;
+          },
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        if (shape === "unrelated run") {
+          expect(snapshots[0]?.checksState).toBe("passed");
+          expect(snapshots[0]?.checks.map(({ url }) => url)).toEqual([`${run}/jobs/1`, run, run]);
+        } else {
+          expect(snapshots[0]?.checksState).toBe("failed");
+          expect(snapshots[0]?.checks.map(({ state, url }) => [state, url])).toEqual([
+            ["failed", `${run}/jobs/0`],
+            ["passed", `${run}/jobs/1`],
+          ]);
+        }
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
 
   it("refreshes the named tea login when the user changes its destination", async () => {
     vi.useFakeTimers();
