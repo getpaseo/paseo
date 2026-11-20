@@ -3062,11 +3062,26 @@ test("preserves a wakeup arriving while an idle prompt is refused", async () => 
   }
 });
 
-test.each(["session.runtime_failed", "session.closed"] as const)(
-  "retires plugin work on %s",
-  async (type) => {
+test.each([
+  { type: "session.runtime_failed", foreground: false },
+  { type: "session.closed", foreground: false },
+  { type: "session.closed", foreground: true },
+] as const)(
+  "retires plugin work on $type (foreground: $foreground)",
+  async ({ type, foreground }) => {
     const logger = createTestLogger();
-    const harness = createProviderHarness();
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (!foreground || input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "foreground" },
+        });
+        return true;
+      },
+    });
     const registry = new PluginAgentClientRegistry(logger);
     registry.replace([harness.registration]);
     const manager = new AgentManager({ clients: registry.clients(), logger });
@@ -3100,6 +3115,20 @@ test.each(["session.runtime_failed", "session.closed"] as const)(
           canInterruptSession: true,
         });
 
+      let run: ReturnType<AgentManager["runAgent"]> | undefined;
+      if (foreground) {
+        run = manager.runAgent(agent.id, "Start foreground");
+        void run.catch(() => undefined);
+      } else {
+        harness.emit({
+          type: "session.turn",
+          sessionId: opened.sessionId,
+          turnId: "wakeup",
+          state: "started",
+          acceptsFollowUp: true,
+        });
+      }
+      await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
       harness.emit(
         type === "session.runtime_failed"
           ? { type, sessionId: opened.sessionId, error: { message: "Provider process exited" } }
@@ -3116,6 +3145,10 @@ test.each(["session.runtime_failed", "session.closed"] as const)(
           summary: { count: 1 },
           inventory: ["heartbeat:watch"],
         });
+      const stopped = await cancelAgentRunCommand({ agentManager: manager, logger }, agent.id);
+      expect(stopped.cancelled).toBe(false);
+      expect(harness.inputs.some((input) => input.type === "session.interrupt")).toBe(false);
+      if (run) await expect(run).resolves.toMatchObject({ canceled: true });
     } finally {
       await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
       await registry.shutdown();

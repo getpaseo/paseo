@@ -682,6 +682,10 @@ class ProviderRuntimeSession {
     return this.capabilities;
   }
 
+  get activeTurnId(): string | undefined {
+    return [...this.activeTurnIds].at(-1);
+  }
+
   onEvent(listener: (event: ProviderEvent) => void): () => void {
     // This buffer bridges session.open and adapter attachment. Once replayed,
     // the adapter owns history; retaining live cumulative snapshots is quadratic.
@@ -1655,11 +1659,24 @@ class PluginAgentSession implements AgentSession {
           },
         ];
       case "session.runtime_failed":
-      case "session.closed":
-        return [
+      case "session.closed": {
+        const retired: AgentStreamEvent[] = [
           { type: "background_work", provider: this.provider, items: null },
-          ...(event.error ? [this.translateFailure(event.error)] : []),
         ];
+        const turnId = this.currentTurnId ?? this.bridge.activeTurnId;
+        if (event.error) {
+          retired.push(this.translateFailure(event.error));
+        } else if (turnId) {
+          retired.push({
+            type: "turn_canceled",
+            provider: this.provider,
+            turnId,
+            reason: "Provider closed the session",
+          });
+        }
+        this.currentTurnId = null;
+        return retired;
+      }
       default:
         return [];
     }
