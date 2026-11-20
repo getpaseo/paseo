@@ -215,45 +215,24 @@ export function latestGiteaActionTasksByWorkflow(tasks: GiteaActionTask[]): Gite
   });
 }
 
-export function findTeaLoginNameForHost(
-  stdout: string,
-  host: string,
-  hostWithPort?: string,
-): string | null {
-  let data: unknown;
+function parseTeaLogins(stdout: string): z.infer<typeof GiteaLoginSchema>[] {
   try {
-    data = JSON.parse(stdout);
+    return z.array(GiteaLoginSchema).safeParse(JSON.parse(stdout)).data ?? [];
   } catch {
-    return null;
+    return [];
   }
-  const parsed = z.array(GiteaLoginSchema).safeParse(data);
-  if (!parsed.success) {
-    return null;
-  }
+}
 
+export function findTeaLoginNameForOrigin(stdout: string, origin: string): string | null {
+  const match = parseTeaLogins(stdout).find(
+    (login) => login.name && getUrlOrigin(login.url) === origin,
+  );
+  return match?.name ?? null;
+}
+
+export function findTeaLoginNameForHost(stdout: string, host: string): string | null {
   const targetHost = normalizeHost(host);
-  const targetWithPort = hostWithPort ? hostWithPort.toLowerCase() : targetHost;
-  const hasPort = targetWithPort !== targetHost;
-
-  if (hasPort) {
-    for (const login of parsed.data) {
-      if (!login.name || !login.url) continue;
-      try {
-        const loginUrl = new URL(login.url);
-        const loginHostWithPort = loginUrl.port
-          ? `${normalizeHost(loginUrl.hostname)}:${loginUrl.port}`
-          : normalizeHost(loginUrl.hostname);
-        if (loginHostWithPort === targetWithPort) {
-          return login.name;
-        }
-      } catch {
-        // ignore malformed login url
-      }
-    }
-    return null;
-  }
-
-  const match = parsed.data.find((login) => {
+  const match = parseTeaLogins(stdout).find((login) => {
     const candidates = [login.ssh_host, login.name];
     if (login.url) {
       try {

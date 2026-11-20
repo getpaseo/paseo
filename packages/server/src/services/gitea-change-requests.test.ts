@@ -8,11 +8,7 @@ import { createChangeRequestWatches } from "../server/agent/change-request-watch
 import { createChangeRequestRouter } from "./change-request-router.js";
 import type { ChangeRequestSnapshot } from "./change-request-source.js";
 import { createForgeResolver } from "./forge-resolver.js";
-import {
-  describeGiteaChangeRequest,
-  giteaChangeRequestHost,
-  resolveGiteaChangeRequest,
-} from "./gitea-change-requests.js";
+import { describeGiteaChangeRequest, resolveGiteaChangeRequest } from "./gitea-change-requests.js";
 import {
   createGiteaService,
   TeaAuthenticationError,
@@ -79,9 +75,6 @@ describe("Gitea-family change request URL resolution and description", () => {
     expect(describeGiteaChangeRequest("https://forgejo.example.org:3000/Team/Tool/pulls/9")).toBe(
       "forgejo.example.org:3000/Team/Tool #9",
     );
-    expect(giteaChangeRequestHost("https://forgejo.example.org:3000/Team/Tool/pulls/9")).toBe(
-      "forgejo.example.org:3000",
-    );
   });
 
   it("rejects invalid Gitea-family PR URLs", () => {
@@ -101,6 +94,148 @@ describe("Gitea-family change request URL resolution and description", () => {
 });
 
 describe("Gitea-family ChangeRequestSource polling", () => {
+  it("selects the tea login for the exact web origin", async () => {
+    vi.useFakeTimers();
+    const { runner } = createFakeTeaRunner((args) => {
+      if (args[0] === "login") {
+        return {
+          stdout: JSON.stringify([
+            { name: "custom-port", url: "https://forge.example:3000" },
+            { name: "http", url: "http://forge.example" },
+            { name: "https", url: "https://forge.example:443" },
+          ]),
+          stderr: "",
+        };
+      }
+      const endpoint = args.at(-1)!;
+      if (endpoint === "repos/Org/Repo/pulls/1") {
+        return teaHttp({ number: 1, state: "open", head: { sha: args[2] } });
+      }
+      if (endpoint.includes("/status?")) return teaHttp({ statuses: [] });
+      if (endpoint.includes("/actions/tasks?")) return teaHttp({ workflow_runs: [] });
+      return teaHttp([]);
+    });
+    const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    try {
+      for (const origin of ["https://forge.example", "http://forge.example"]) {
+        service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error(error) {
+            throw error;
+          },
+        });
+      }
+      await vi.advanceTimersByTimeAsync(25);
+      expect(snapshots.map(({ headSha }) => headSha).sort()).toEqual(["http", "https"]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it("keeps a sibling's pending status when a task only identifies the run", async () => {
+    vi.useFakeTimers();
+    const origin = "https://codeberg.org";
+    const run = `${origin}/Org/Repo/actions/runs/100`;
+    const { runner } = createFakeTeaRunner((args) => {
+      if (args[0] === "login") {
+        return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+      }
+      const endpoint = args.at(-1)!;
+      if (endpoint === "repos/Org/Repo/pulls/1") {
+        return teaHttp({ number: 1, state: "open", head: { sha: "head" } });
+      }
+      if (endpoint.includes("/status?")) {
+        return teaHttp({
+          statuses: [
+            { id: 1, status: "success", context: "build", target_url: `${run}/jobs/0` },
+            { id: 2, status: "pending", context: "test", target_url: `${run}/jobs/1` },
+          ],
+        });
+      }
+      if (endpoint.includes("/actions/tasks?")) {
+        return teaHttp({
+          workflow_runs: [{ id: 55, head_sha: "head", status: "success", url: run }],
+          total_count: 1,
+        });
+      }
+      return teaHttp([]);
+    });
+    const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    try {
+      service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, {
+        async snapshot(snapshot) {
+          snapshots.push(snapshot);
+        },
+        error(error) {
+          throw error;
+        },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(snapshots).toEqual([
+        expect.objectContaining({
+          checksState: "pending",
+          checks: expect.arrayContaining([
+            expect.objectContaining({ id: "status:2", state: "pending" }),
+            expect.objectContaining({ id: "action:55", state: "passed" }),
+          ]),
+        }),
+      ]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it("pauses the host when a sibling request fails before an Actions rate limit arrives", async () => {
+    vi.useFakeTimers();
+    const origin = "https://codeberg.org";
+    const { runner, calls } = createFakeTeaRunner(async (args) => {
+      if (args[0] === "login") {
+        return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+      }
+      const endpoint = args.at(-1)!;
+      if (endpoint.endsWith("/pulls/1")) {
+        return teaHttp({ number: 1, state: "open", head: { sha: "head" } });
+      }
+      if (endpoint.includes("/status?")) {
+        return teaHttp({ message: "oops" }, { status: "500 Internal Server Error" });
+      }
+      if (endpoint.includes("/actions/tasks?")) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return teaHttp(
+          { message: "slow down" },
+          { status: "429 Too Many Requests", headers: { "Retry-After": "60" } },
+        );
+      }
+      return teaHttp({ message: "no PR" }, { status: "404 Not Found" });
+    });
+    const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    const observer = {
+      async snapshot(snapshot: ChangeRequestSnapshot) {
+        snapshots.push(snapshot);
+      },
+      error: (error: unknown) => errors.push(error),
+    };
+    try {
+      service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, observer);
+      await vi.advanceTimersByTimeAsync(75);
+      expect(errors[0]).toMatchObject({ status: 500 });
+      service.changeRequests!.observe(`${origin}/Org/Repo/pulls/2`, observer);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(calls.some(({ args }) => args.at(-1)?.endsWith("/pulls/2"))).toBe(false);
+      expect(snapshots).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls.some(({ args }) => args.at(-1)?.endsWith("/pulls/2"))).toBe(true);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
   it("uses cwd-free tea login list + tea api --login -i, combines statuses + Actions tasks + approval-held runs, and namespaces comments/reviews/inline", async () => {
     vi.useFakeTimers();
     const prUrl = "https://codeberg.org/Alice/App/pulls/12";
