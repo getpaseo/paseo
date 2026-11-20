@@ -350,6 +350,13 @@ export default function contribute(server) {
       appendFileSync(${JSON.stringify(eventsFile)}, JSON.stringify({ op: "create", branch: request.branch, target }) + "\\n");
       return { type: "created", path: target };
     },
+    async restore(request) {
+      execFileSync("git", ["worktree", "add", "-b", "wrong-restore", request.path, "main"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "restored", path: request.path };
+    },
     async remove(request) {
       appendFileSync(${JSON.stringify(eventsFile)}, JSON.stringify({ op: "remove", reason: request.reason, path: request.path }) + "\\n");
       execFileSync("git", ["worktree", "remove", request.path, "--force"], {
@@ -414,6 +421,13 @@ export default function contribute(server) {
     expect(archived.error).toBeNull();
     await expect(stat(managedPath)).rejects.toMatchObject({ code: "ENOENT" });
 
+    await client.enablePlugin("custom-manager");
+    await expect(client.restoreWorkspace(managed.workspace!.id)).rejects.toThrow(
+      "expected branch survive-disable",
+    );
+    await expect(stat(managedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await client.disablePlugin("custom-manager");
+
     await client.restoreWorkspace(managed.workspace!.id);
     expect(git(managedPath, ["branch", "--show-current"])).toBe("survive-disable");
     // Re-enabling the plugin must not route removal of a Git-restored worktree back to the plugin.
@@ -429,6 +443,7 @@ export default function contribute(server) {
       expect.objectContaining({ op: "create", branch: "abort-after" }),
       expect.objectContaining({ op: "remove", reason: "rollback" }),
       expect.objectContaining({ op: "create", branch: "survive-disable" }),
+      expect.objectContaining({ op: "remove", reason: "rollback" }),
     ]);
   } finally {
     await client.close();
@@ -485,16 +500,16 @@ export default function contribute(server) {
         });
         return { type: "created", path: target };
       }
-      if (request.branch === "throw-after-create") {
-        if (request.untrusted !== false) {
-          throw new Error("expected untrusted=false on branch-off create");
+      if (request.branch === "concurrent") {
+        const root = path.dirname(request.repoRoot);
+        const { writeFileSync, existsSync } = await import("node:fs");
+        writeFileSync(path.join(root, "manager-started"), "");
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(path.join(root, "reject-manager"))) {
+          if (Date.now() > deadline) throw new Error("test did not release manager");
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        const target = path.join(${JSON.stringify(root)}, "orphan-wt");
-        execFileSync("git", ["worktree", "add", "-b", request.branch, target, "main"], {
-          cwd: request.repoRoot,
-          stdio: "pipe",
-        });
-        throw new Error("timed out before returning path");
+        throw new Error("manager rejected checkout");
       }
       if (request.branch === "relative") {
         return { type: "created", path: "relative/path" };
@@ -518,7 +533,6 @@ export default function contribute(server) {
       ["plain-dir", "did not create a Git worktree"],
       ["other-repo", "outside the repository"],
       ["detached", "detached HEAD"],
-      ["throw-after-create", "timed out before returning path"],
       ["relative", "relative path"],
     ];
     for (const [branchName, expectedError] of cases) {
@@ -535,10 +549,26 @@ export default function contribute(server) {
     // The newly created detached worktree failed adoption and must be rolled back cleanly.
     await expect(stat(path.join(root, "detached-wt"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain("detached-wt");
-    // The worktree and new branch left behind when create threw before returning must be cleaned up.
-    await expect(stat(path.join(root, "orphan-wt"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain("orphan-wt");
-    expect(git(repository, ["branch", "--list", "throw-after-create"])).toBe("");
+    const pending = client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "concurrent" },
+    });
+    await expect
+      .poll(() =>
+        stat(path.join(root, "manager-started")).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+    const concurrent = path.join(root, "concurrent-manual");
+    git(repository, ["worktree", "add", "-b", "concurrent", concurrent, "main"]);
+    await writeFile(path.join(concurrent, "local.txt"), "uncommitted work");
+    await writeFile(path.join(root, "reject-manager"), "");
+    const rejected = await pending;
+    expect(rejected.workspace).toBeNull();
+    expect(rejected.error).toContain("manager rejected checkout");
+    expect(await readFile(path.join(concurrent, "local.txt"), "utf8")).toBe("uncommitted work");
+    expect(git(concurrent, ["branch", "--show-current"])).toBe("concurrent");
   } finally {
     await client.close();
     await daemon.close();
@@ -642,6 +672,19 @@ test("untrusted workspaces pass untrusted=true to worktree manager remove and re
     await client.connect();
     await client.patchDaemonConfig({ pluginsEnabled: true });
     expect((await client.installDirectoryPlugin(WORKTRUNK_EXAMPLE)).status).toBe("running");
+
+    git(repository, ["branch", "existing-topic"]);
+    git(repository, ["commit", "--allow-empty", "-m", "advance main"]);
+    const collision = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "existing-topic" },
+    });
+    expect(collision.error).toBeNull();
+    const collisionPath = collision.workspace!.workspaceDirectory;
+    expect(git(collisionPath, ["branch", "--show-current"])).not.toBe("existing-topic");
+    expect(git(collisionPath, ["rev-parse", "HEAD"])).toBe(
+      git(repository, ["rev-parse", "existing-topic"]),
+    );
+    await client.archiveWorkspace(collision.workspace!.id);
 
     const created = await client.createWorkspace({
       source: { kind: "worktree", cwd: repository, branchName: "fork-pr-branch" },

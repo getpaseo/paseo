@@ -3319,6 +3319,7 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "archive_workspace_response",
+      timeout: 150_000,
     });
   }
 

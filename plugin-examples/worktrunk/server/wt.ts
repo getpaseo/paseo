@@ -133,7 +133,7 @@ async function cleanupPartiallyCreatedWorktree(repoRoot: string, error: unknown)
       ? (error.cause as { stdout?: string }).stdout
       : undefined;
   const parsed = tryParseSwitchOutput(stdout);
-  if (!parsed || (parsed.action !== undefined && parsed.action !== "created")) return;
+  if (parsed?.action !== "created") return;
   await runWt([
     "-C",
     repoRoot,
@@ -152,6 +152,15 @@ export async function createWithWorktrunk(
 ): Promise<{ type: "created"; path: string } | undefined> {
   const args = buildCreateArgs(request);
   if (!args) return undefined;
+  if (request.kind === "branch-off") {
+    const ref = `refs/heads/${request.branch}`;
+    const { stdout } = await execCommand("git", ["for-each-ref", "--format=%(refname)", ref], {
+      cwd: request.repoRoot,
+      signal,
+    });
+    // Paseo branches from the existing branch tip and chooses a new name on collision.
+    if (stdout.trim().split(/\r?\n/).includes(ref)) return undefined;
+  }
   let stdout: string;
   try {
     stdout = await runWt(args, { signal });

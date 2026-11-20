@@ -1623,6 +1623,39 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   await expect(responsePromise).rejects.toThrow("No response to fetch_agent_request after 60000ms");
 });
 
+test("keeps archive pending through the worktree manager's removal budget", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "archive-timeout-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+
+  const result = client.archiveWorkspace("workspace-1").catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(149_999);
+  let settled = false;
+  void result.then(() => {
+    settled = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await result).toMatchObject({
+    code: "DAEMON_REQUEST_TIMEOUT",
+    message: "No response to archive_workspace_request after 150000ms",
+  });
+});
+
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

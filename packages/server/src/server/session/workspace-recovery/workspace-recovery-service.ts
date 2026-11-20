@@ -276,15 +276,11 @@ export function createWorkspaceRecoveryService(deps: {
     const managerPluginId = workspace.worktreeManagerPluginId;
     const untrusted = Boolean(workspace.untrustedSource);
     if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
-      const restoreBranch = source.kind === "restore-commit" ? null : source.branchName;
       const adopted = await runPluginWorktreeManagerCheckout({
         cwd: sourceRepoRoot,
         source,
         operation: "restore",
         preferredPluginId: managerPluginId,
-        expectedPath: previousWorktreePath,
-        expectedBranch: restoreBranch,
-        trackNewBranch: source.kind === "restore-from-base",
         untrusted,
         paseoHome: deps.paseoHome,
         worktreesBaseRoot: deps.worktreesRoot,

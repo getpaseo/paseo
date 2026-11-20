@@ -773,11 +773,10 @@ export default function contribute(server: PluginServerContext) {
   example, a fork change request), skip repository-defined hooks. Paseo verifies that `path` is a
   safe, newly created Git worktree of the same repository on a named branch, then records the
   checked-out `HEAD` branch (managers may normalize or uniquely name the branch, and should create a
-  new branch for `branch-off`), writes comparison-base metadata, and seeds `paseo.json`. If
-  adoption, a later creation step, or `create` itself fails (including timeout or abort) after a new
-  worktree was created at the requested path or branch, Paseo rolls it back; managers should still
-  clean up any custom-named partial worktree when throwing or when `signal` aborts. First-agent
-  branch auto-rename is skipped for manager-created worktrees.
+  new branch for `branch-off`), writes comparison-base metadata, and seeds `paseo.json`. Paseo uses the
+  returned path to roll back a failed adoption or later creation step. If the callback throws or
+  its signal aborts before it returns, the manager is responsible for cleaning up any worktree it
+  created. First-agent branch auto-rename is skipped for manager-created worktrees.
 - **Remove** is optional and runs on workspace archive and creation rollback, after Paseo runs
   `paseo.json` teardown and saves `refs/paseo/kept-commits/<sha>` for restore. Return
   `{ type: "removed" }` after removing the directory, or `undefined` to fall back to Git. When
@@ -787,7 +786,9 @@ export default function contribute(server: PluginServerContext) {
 - **Restore** is optional and runs when unarchiving a workspace whose worktree directory was deleted.
   It receives the recorded `path` that the recreated worktree must occupy, `target` (`branch`,
   `commit`, or `from-base`), and `untrusted`. Return `{ type: "restored", path }` or `undefined` to
-  fall back to Git. When `restore` falls back to Git, Paseo clears the workspace's manager ownership
+  fall back to Git. Paseo verifies the checkout matches the requested branch, detached commit, or
+  new branch at the requested base commit. The same cleanup rules apply as for create. When
+  `restore` falls back to Git, Paseo clears the workspace's manager ownership
   so subsequent archives also use Git.
 
 See the complete [worktrunk example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk).

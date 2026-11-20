@@ -1679,9 +1679,6 @@ export interface RunPluginWorktreeManagerCheckoutOptions<
   source: Source;
   operation: "create" | "restore";
   preferredPluginId?: string;
-  expectedPath?: string;
-  expectedBranch?: string | null;
-  trackNewBranch?: boolean;
   untrusted: boolean;
   paseoHome?: string;
   worktreesBaseRoot?: string;
@@ -1692,8 +1689,8 @@ export interface RunPluginWorktreeManagerCheckoutOptions<
 
 /**
  * Run a worktree manager plugin's `create` or `restore` callback with a single
- * shared sequence: capability guard, pre-call snapshot, rejection rollback,
- * path validation, Git postcondition adoption, and adoption rollback.
+ * shared sequence: capability guard, pre-call snapshot, Git validation and
+ * adoption, and rollback of a checkout reported by the manager.
  * Returns `null` without spawning Git when no eligible manager is registered
  * or when the manager declines.
  */
@@ -1713,9 +1710,6 @@ export async function runPluginWorktreeManagerCheckout(
     source,
     operation,
     preferredPluginId,
-    expectedPath,
-    expectedBranch,
-    trackNewBranch = false,
     untrusted,
     paseoHome,
     worktreesBaseRoot,
@@ -1727,23 +1721,7 @@ export async function runPluginWorktreeManagerCheckout(
     return null;
   }
   const existingWorktreePaths = await listGitWorktreePaths(cwd);
-  const branchExistedBefore =
-    trackNewBranch && expectedBranch ? await localBranchExists(cwd, expectedBranch) : true;
-  let managed: { pluginId: string; path: string } | null;
-  try {
-    managed = await run();
-  } catch (error) {
-    await cleanupOrphanedPluginWorktreeOnReject({
-      cwd,
-      existingWorktreePaths,
-      expectedPath,
-      expectedBranch,
-      branchExistedBefore,
-      paseoHome,
-      worktreesBaseRoot,
-    }).catch(() => {});
-    throw error;
-  }
+  const managed = await run();
   if (!managed) return null;
   try {
     const validatedPath = await validateWorktreePath({
@@ -1771,64 +1749,6 @@ export async function runPluginWorktreeManagerCheckout(
       worktreesBaseRoot,
     }).catch(() => {});
     throw error;
-  }
-}
-
-/**
- * Roll back a newly created worktree when a worktree manager's `create` or
- * `restore` call rejects (timeout, abort, crash, or thrown error) without
- * returning a path. Only removes worktrees absent from `existingWorktreePaths`
- * whose path matches `expectedPath` or whose checked-out branch matches
- * `expectedBranch`, so concurrent worktree creations are never touched.
- */
-async function cleanupOrphanedPluginWorktreeOnReject(options: {
-  cwd: string;
-  existingWorktreePaths: ReadonlySet<string>;
-  expectedPath?: string;
-  expectedBranch?: string | null;
-  branchExistedBefore?: boolean;
-  paseoHome?: string;
-  worktreesBaseRoot?: string;
-}): Promise<void> {
-  const {
-    cwd,
-    existingWorktreePaths,
-    expectedPath,
-    expectedBranch,
-    branchExistedBefore = true,
-    paseoHome,
-    worktreesBaseRoot,
-  } = options;
-  const normalizedExpectedPath = expectedPath
-    ? await normalizePathForOwnership(expectedPath)
-    : null;
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  }).catch(() => ({ stdout: "" }));
-  let removedWorktree = false;
-  for (const entry of parseWorktreeList(stdout)) {
-    const entryPath = await normalizePathForOwnership(entry.path);
-    if (existingWorktreePaths.has(entryPath)) continue;
-    const matchesPath = normalizedExpectedPath !== null && entryPath === normalizedExpectedPath;
-    const matchesBranch = Boolean(expectedBranch && entry.branchName === expectedBranch);
-    if (!matchesPath && !matchesBranch) continue;
-    await deletePaseoWorktree({
-      cwd,
-      worktreePath: entryPath,
-      teardownCwds: [],
-      paseoHome,
-      worktreesBaseRoot,
-      registryProven: true,
-    }).catch(() => {});
-    removedWorktree = true;
-  }
-  if (
-    expectedBranch &&
-    !branchExistedBefore &&
-    (removedWorktree || (await localBranchExists(cwd, expectedBranch)))
-  ) {
-    await runGitCommand(["branch", "-D", expectedBranch], { cwd }).catch(() => {});
   }
 }
 
@@ -1866,7 +1786,10 @@ async function cleanupFailedPluginWorktree(options: {
   } catch {
     return;
   }
-  if (existingWorktreePaths?.has(rootPath)) {
+  if (
+    existingWorktreePaths?.has(rootPath) ||
+    rootPath !== (await normalizePathForOwnership(candidatePath))
+  ) {
     return;
   }
   const [worktreeCommonDir, repoCommonDir] = await Promise.all([
@@ -1946,6 +1869,14 @@ async function adoptPluginWorktree(
   }
   const branchName = detached ? null : rawBranch;
 
+  await verifyPluginRestoreTarget({
+    cwd,
+    source,
+    worktreePath: normalizedPath,
+    branchName,
+    worktreeManagerPluginId,
+  });
+
   const metadata = await resolveWorktreeMetadata({ cwd, source, branchName });
   await writePaseoWorktreeMetadata(normalizedPath, {
     baseRefName: metadata.metadataBaseRefName,
@@ -1963,6 +1894,42 @@ async function adoptPluginWorktree(
     comparisonBaseRef: metadata.metadataBaseRef ?? metadata.metadataBaseRefName,
     worktreeManagerPluginId,
   };
+}
+
+async function verifyPluginRestoreTarget(options: {
+  cwd: string;
+  source: WorktreeSource;
+  worktreePath: string;
+  branchName: string | null;
+  worktreeManagerPluginId: string;
+}): Promise<void> {
+  const { cwd, source, worktreePath, branchName, worktreeManagerPluginId } = options;
+  if (source.kind === "restore" || source.kind === "restore-from-base") {
+    if (branchName !== source.branchName) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} restored ${branchName ?? "detached HEAD"}, expected branch ${source.branchName}`,
+      );
+    }
+  }
+  if (source.kind === "restore-commit" || source.kind === "restore-from-base") {
+    const target =
+      source.kind === "restore-commit"
+        ? source.commit
+        : await resolveBaseBranchForWorktree(cwd, source.baseRef);
+    const [head, expected] = await Promise.all([
+      runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], { cwd: worktreePath }),
+      runGitCommand(["rev-parse", "--verify", `${target}^{commit}`], { cwd }),
+    ]);
+    if (
+      head.stdout.trim() !== expected.stdout.trim() ||
+      (source.kind === "restore-commit" && branchName !== null)
+    ) {
+      const description = source.kind === "restore-commit" ? "detached commit" : "base commit";
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} did not restore the expected ${description} ${expected.stdout.trim()}`,
+      );
+    }
+  }
 }
 
 async function tryResolveExactBaseRef(cwd: string, ref: string): Promise<string | undefined> {
