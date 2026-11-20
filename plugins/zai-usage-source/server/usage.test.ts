@@ -105,6 +105,25 @@ describe("zai usage source", () => {
               ],
             }),
         ],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              data: {
+                limits: [
+                  {
+                    type: "CREDIT_LIMIT",
+                    unit: 3,
+                    usage: 12000,
+                    currentValue: 960,
+                    percentage: 8,
+                    nextResetTime: 1794976691131,
+                  },
+                ],
+                level: "max",
+              },
+            }),
+        ],
       ]),
     );
 
@@ -114,6 +133,122 @@ describe("zai usage source", () => {
       status: "available",
       planLabel: "GLM Coding Max",
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
+    });
+  });
+
+  it("emits credit windows from the quota endpoint", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.z.ai/api/biz/subscription/list",
+          () => jsonResponse({ data: [{ productName: "GLM Coding Pro", status: "VALID" }] }),
+        ],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              data: {
+                limits: [
+                  {
+                    type: "CREDIT_LIMIT",
+                    unit: 3,
+                    usage: 12000,
+                    currentValue: 960,
+                    percentage: 8,
+                    nextResetTime: 1794976691131,
+                  },
+                  {
+                    type: "CREDIT_LIMIT",
+                    unit: 6,
+                    usage: 60000,
+                    currentValue: 46200,
+                    percentage: 77,
+                    nextResetTime: 1795376493984,
+                  },
+                ],
+                level: "pro",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(zai.windows).toEqual([
+      {
+        id: "credits_5h",
+        label: "5-hour credit pool",
+        usedPct: 8,
+        remainingPct: 92,
+        resetsAt: new Date(1794976691131).toISOString(),
+      },
+      {
+        id: "credits_weekly",
+        label: "Weekly credit pool",
+        usedPct: 77,
+        remainingPct: 23,
+        resetsAt: new Date(1795376493984).toISOString(),
+      },
+    ]);
+    expect(zai.details).toEqual(
+      expect.arrayContaining([
+        { id: "credits_5h_used", label: "5-hour credit pool used", value: "960 / 12000" },
+        { id: "credits_weekly_used", label: "Weekly credit pool used", value: "46200 / 60000" },
+        { id: "plan_level", label: "Plan level", value: "pro" },
+      ]),
+    );
+  });
+
+  it("keeps a freshly reset pool visible when percentage and nextResetTime are omitted", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.z.ai/api/biz/subscription/list",
+          () => jsonResponse({ data: [{ productName: "GLM Coding Pro", status: "VALID" }] }),
+        ],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              data: { limits: [{ type: "CREDIT_LIMIT", unit: 3, usage: 12000, currentValue: 0 }] },
+            }),
+        ],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(zai.windows).toEqual([
+      { id: "credits_5h", label: "5-hour credit pool", usedPct: 0, remainingPct: 100, resetsAt: null },
+    ]);
+    expect(zai.details).toEqual(
+      expect.arrayContaining([
+        { id: "credits_5h_used", label: "5-hour credit pool used", value: "0 / 12000" },
+      ]),
+    );
+  });
+
+  it("still reports plan status when the quota endpoint fails", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.z.ai/api/biz/subscription/list",
+          () => jsonResponse({ data: [{ productName: "GLM Coding Pro", status: "VALID" }] }),
+        ],
+        ["https://api.z.ai/api/monitor/usage/quota/limit", () => new Response(null, { status: 500 })],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(zai).toMatchObject({
+      status: "available",
+      planLabel: "GLM Coding Pro",
+      windows: [],
     });
   });
 });
@@ -148,6 +283,34 @@ describe("account discovery", () => {
       process.env.USERPROFILE = directory;
       if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
       expect(await discover()).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, original);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers the ZCode CLI login under ~/.zcode/v2/config.json", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const directory = await mkdtemp(join(tmpdir(), "usage-zcode-"));
+    const original = { ...process.env };
+    try {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      process.env.HOME = directory;
+      process.env.USERPROFILE = directory;
+      await mkdir(join(directory, ".zcode", "v2"), { recursive: true });
+      await writeFile(
+        join(directory, ".zcode", "v2", "config.json"),
+        JSON.stringify({
+          provider: { "builtin:zai-coding-plan": { options: { apiKey: "id.secret" } } },
+        }),
+      );
+      expect(await discover()).toEqual([
+        {
+          key: "default",
+          input: { store: "file", locator: join(directory, ".zcode", "v2", "config.json") },
+        },
+      ]);
     } finally {
       for (const key of Object.keys(process.env)) delete process.env[key];
       Object.assign(process.env, original);
