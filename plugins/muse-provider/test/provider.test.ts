@@ -1427,15 +1427,19 @@ for (const ending of ["split-crlf", "eof"] as const) {
       event.type === "timeline.item" &&
       event.item.type === "assistant_message" &&
       event.item.text === text;
-    await h.wait(isFinalMessage);
-    if (ending === "split-crlf") {
+    if (ending === "eof") {
+      await h.wait((event) => event.type === "session.turn" && event.state === "started");
+      await h.send({ type: "session.close", sessionId: "paseo-session" });
+      await h.wait((event) => event.type === "session.closed");
+    } else {
+      await h.wait(isFinalMessage);
       await h.wait(
         (event) =>
           (event.type === "session.turn" && event.state === "completed") ||
           event.type === "session.runtime_failed",
       );
+      await h.connection.close();
     }
-    await h.connection.close();
     expect(h.events.filter(isFinalMessage)).toHaveLength(1);
     expect(h.events.filter((event) => event.type === "session.runtime_failed")).toEqual([]);
   });

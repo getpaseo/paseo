@@ -30,6 +30,7 @@ const catalogRows = readFixture("catalog-controls");
 const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
+let wroteFinalFrame = false;
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
@@ -460,14 +461,16 @@ function replace(value) {
   return value;
 }
 function send(frame) {
-  if (process.stdout.writableEnded) return;
+  if (wroteFinalFrame) return;
   if (frame.method === "item/completed" && process.env.MUSE_TEST_HISTORY) {
     appendFileSync(process.env.MUSE_TEST_HISTORY, JSON.stringify(frame.params.item) + "\n");
   }
   const text = JSON.stringify(frame);
   if (frame.method === "item/completed" && frame.params.item.kind === "agentMessage") {
     if (process.env.MUSE_TEST_FRAME_ENDING === "eof") {
-      process.stdout.end(text);
+      // Leave stdout open until the session closes stdin and this process exits.
+      wroteFinalFrame = true;
+      process.stdout.write(text);
       return;
     }
     if (process.env.MUSE_TEST_FRAME_ENDING === "split-crlf") {
