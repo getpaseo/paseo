@@ -2,7 +2,7 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 49
+order: 50
 category: Plugins
 ---
 
@@ -440,6 +440,64 @@ It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
 is never inline SVG or a URL.
 
+#### Provider installation
+
+**Requires Paseo 0.17.** Older versions ignore `installation`.
+`ProviderRegistration.installation` fills the **Installation** section of the provider's settings.
+Every member is optional. Paseo hides the section when you declare neither `inspect` nor
+`installUrl`. [Report installation and updates](/docs/plugins/providers#report-installation-and-updates)
+has a complete example. Import the types from `@getpaseo/plugin/server/provider`.
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| Member            | Called                                                       | Deadline | Answer kept                                      |
+| ----------------- | ------------------------------------------------------------ | -------- | ------------------------------------------------ |
+| `inspect`         | When the provider list or a provider's page shows            | 20 s     | 30 s                                             |
+| `checkForUpdates` | After `inspect` answers `installed`, or without `inspect`    | 25 s     | 1 hour for `current` or `available`, else 30 s   |
+| `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
+
+**Refresh** in the provider's settings skips the kept answers and clears a failed update. Paseo
+never calls these members before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
+
+`installUrl` and `updateUrl` are `http` or `https` pages that Paseo opens in the browser. The
+plugin fails to start when either is another kind of URL.
+
+The context:
+
+| Field              | Type                                      | Meaning                                                                                                                         |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | The launch a session would use, with `resolved`. Absent when the registration declares no `command`.                            |
+| `signal`           | `AbortSignal`                             | Aborts when Paseo stops waiting or the daemon stops.                                                                            |
+| `installedVersion` | `string \| undefined`                     | `checkForUpdates` only. The `version` `inspect` reported, as written. Absent when it reported none or you declare no `inspect`. |
+| `report`           | `(event: ProviderUpdateReport) => void`   | `update` only. Shows `{ type: "stdout" \| "stderr" \| "message", text }` to the user in order.                                  |
+
+`ProviderInstallationLaunch` is `{ command, args, env, resolved }`. With `resolved: true`, `command`
+is the executable's path. With `resolved: false`, Paseo did not find the executable and `command`
+is the configured name.
+
+Answers:
+
+| Type                   | Values                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` or `{ status: "not_installed" }`                                                            |
+| `ProviderUpdateCheck`  | `{ status: "current" }`, `{ status: "available", versions?: string[], message?: string }`, or `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` or `{ status: "failed", message: string }`                                                  |
+
+Paseo shows `version`, `versions` and `message` as written and does not parse or sort them. It
+reuses a `current` or `available` answer for up to an hour while `inspect` reports the same
+`version`. It keeps the last 65,536 characters of `report` output. An answer that does not match these
+shapes is an error. **Update** appears once `inspect` reports the CLI installed and you declare
+`update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
+offers `updateUrl` on the same terms.
+
 ### Usage sources
 
 **Requires Paseo 0.11.** Register a source from your server entry with
@@ -551,10 +609,10 @@ window IDs across all accounts, so users must select the corrected window again.
 effective selection for cards, the sidebar, and toggles. The first edit snapshots those defaults;
 an explicit empty selection stays empty.
 
-Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
-refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
-and rewriting parsed files can discard fields you do not model. If the store disappeared after
-discovery, throw; the card shows the error until the next discovery removes it.
+Re-read the selected store in `fetch()` so the CLI's token rotations take effect. If you discover
+a specific account, pass its identity in the input and verify it before returning usage.
+Throw if the store disappears or the login changes accounts. The next discovery updates the card.
+Only the CLI should redeem its refresh tokens or write its credential stores.
 
 Use `unavailable(problem)` to explain why an existing login cannot supply quota. It requires a
 problem; there is no zero-argument form. `expiresAt` is an ISO timestamp. A rejected login carries
@@ -604,10 +662,11 @@ hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT 
 metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
 `node:sqlite`.
 
-`usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
-accounts without rediscovering identity. If a store switches accounts, the existing card shows the
-new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`usage.list_reports` discovers accounts for the requested agent. A host-wide request discovers
+the defaults and revisits the agents whose usage Paseo has already queried. A request with report
+IDs fetches known reports using their existing discovery inputs. Reports are cached for five minutes.
+Set `forceRefresh` to bypass that cache. Entries carry `id`, `account.label`, and `fetchedAt`.
+Failed accounts also carry optional
 `loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
@@ -2228,13 +2287,13 @@ export default function contribute(client: PluginClientContext) {
 
 `useNewWorkspace()` returns the setup the item sits in:
 
-| Field or command            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `host`, `project`           | The user's choices, `{ id, label }` and `{ id, name } \| null`. Read-only: an item cannot switch host or project.                                                                                                                                                                                                                                                                                                                                     |
-| `isolation`, `setIsolation` | `"local"` or `"worktree"`. A project that cannot make worktrees reads `"local"`, and `setIsolation("worktree")` rejects.                                                                                                                                                                                                                                                                                                                              |
-| `baseRef`, `setBaseRef`     | What a new worktree starts from: `{ type: "branch", name }`, `{ type: "change-request", number }`, or `null` until the default is known. A branch's `name` is the exact ref creation uses, such as `refs/remotes/origin/main`, so `setBaseRef(newWorkspace.baseRef)` changes nothing. `setBaseRef` takes any ref the Base picker offers, or a bare branch name, which Paseo resolves as it does anywhere else. It rejects while no project is chosen. |
-| `branch`, `setBranch`       | The name of the branch a new worktree is created on. `null` lets Paseo pick one. It is kept while isolation is local or the base is a change request, and it names the new branch of any worktree that cuts one, from the default base or a chosen branch. It does not apply to a worktree that checks out an existing branch or change request.                                                                                                      |
-| `metadata`, `setMetadata`   | The created workspace's [metadata](/docs/plugins/hooks#metadata), not the first agent's. Top-level keys replace; `null` removes a key. Rejects on a host that does not support metadata with "Update the host to use metadata."                                                                                                                                                                                                                       |
+| Field or command            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`, `project`           | The user's choices, `{ id, label }` and `{ id, name } \| null`. Read-only: an item cannot switch host or project.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `isolation`, `setIsolation` | `"local"` or `"worktree"`. **Existing worktree** reads `"local"`, since the workspace is a local one at the worktree's directory, and `setIsolation` leaves it. A project that cannot make worktrees reads `"local"`, and `setIsolation("worktree")` rejects.                                                                                                                                                                                                                                                                         |
+| `baseRef`, `setBaseRef`     | What a new worktree starts from: `{ type: "branch", name }`, `{ type: "change-request", number }`, or `null` until the default is known. A branch's `name` is the exact ref creation uses, such as `refs/remotes/origin/main`, so `setBaseRef(newWorkspace.baseRef)` changes nothing. `setBaseRef` takes any ref the Base picker offers, or a bare branch name, which Paseo resolves as it does anywhere else. The new worktree branches off it, and the Branches list switches to Branch off. It rejects while no project is chosen. |
+| `branch`, `setBranch`       | The name of the branch a new worktree is created on. `null` lets Paseo pick one. It is kept while isolation is local or the base is a change request, and it names the new branch of any worktree that cuts one, from the default base or a chosen branch. It does not apply to a worktree that checks out an existing branch or change request.                                                                                                                                                                                      |
+| `metadata`, `setMetadata`   | The created workspace's [metadata](/docs/plugins/hooks#metadata), not the first agent's. Top-level keys replace; `null` removes a key. Rejects on a host that does not support metadata with "Update the host to use metadata."                                                                                                                                                                                                                                                                                                       |
 
 Commands follow the [composer item](#composer-items) rules: each one acts on the screen's state
 when it runs, so `await newWorkspace.setBranch(name)` followed by `newWorkspace.setMetadata(patch)`

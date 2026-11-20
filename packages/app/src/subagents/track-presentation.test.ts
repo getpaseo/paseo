@@ -202,6 +202,14 @@ describe("buildSubagentRowPresentationData", () => {
     ).toBe("running");
   });
 
+  it("shows an idle child with only passive background work as done", () => {
+    expect(
+      buildSubagentRowPresentationData(
+        row({ id: "a", status: "idle", backgroundWork: { count: 1, runningCount: 0 } }),
+      ).statusBucket,
+    ).toBe("done");
+  });
+
   it("keeps a failed child marked failed while it has background work", () => {
     expect(
       buildSubagentRowPresentationData(

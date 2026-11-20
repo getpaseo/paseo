@@ -1,63 +1,53 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
-import { openSettingsSection } from "./settings";
+import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
 
-const APP_SETTINGS_KEY = "@paseo:app-settings";
+type ContentWidthOption = "Default" | "Wide" | "Full";
 
-function contentWidthInput(page: Page): Locator {
-  return page.getByLabel("Content width in pixels", { exact: true });
+function contentWidthOption(page: Page, option: ContentWidthOption): Locator {
+  return page
+    .getByTestId("content-width-options")
+    .getByRole("button", { name: option, exact: true });
 }
 
-function resetContentWidthButton(page: Page): Locator {
-  return page.getByRole("button", { name: "Reset content width to default", exact: true });
-}
-
-export async function openAppearanceSettings(page: Page): Promise<void> {
+export async function chooseContentWidth(page: Page, option: ContentWidthOption): Promise<void> {
   await openSettings(page);
   await openSettingsSection(page, "appearance");
+  const button = contentWidthOption(page, option);
+  await button.click();
+  await expect(button).toHaveAttribute("aria-selected", "true");
+  await clickSettingsBackToWorkspace(page);
 }
 
-export async function setContentWidth(page: Page, width: number): Promise<void> {
-  const input = contentWidthInput(page);
-  await input.fill(String(width));
-  await input.press("Tab");
-}
-
-export async function resetContentWidth(page: Page): Promise<void> {
-  await resetContentWidthButton(page).click();
-}
-
-export async function expectDefaultContentWidthSetting(page: Page, width: number): Promise<void> {
-  await expect(contentWidthInput(page)).toHaveValue(String(width));
-  await expect(resetContentWidthButton(page)).toHaveCount(0);
-  await expect.poll(() => readStoredContentWidth(page)).toBeNull();
-}
-
-export async function expectCustomContentWidthSetting(page: Page, width: number): Promise<void> {
-  await expect(contentWidthInput(page)).toHaveValue(String(width));
-  await expect(resetContentWidthButton(page)).toBeVisible();
-  await expect.poll(() => readStoredContentWidth(page)).toBe(width);
-}
-
-/** Asserts the rendered width of a content-column element stays within `max` and above `min`. */
+/** Checks the rendered content width, allowing for padding inside the column. */
 export async function expectContentColumnWidth(
   element: Locator,
-  bounds: { min?: number; max: number },
+  bounds: { min: number; max: number },
 ): Promise<void> {
   await expect(element).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(async () => (await element.boundingBox())?.width ?? 0)
-    .toBeLessThanOrEqual(bounds.max);
+    .toBeGreaterThanOrEqual(bounds.min);
   await expect
-    .poll(async () => (await element.boundingBox())?.width ?? 0)
-    .toBeGreaterThan(bounds.min ?? 0);
+    .poll(async () => (await element.boundingBox())?.width ?? Infinity)
+    .toBeLessThanOrEqual(bounds.max);
 }
 
-async function readStoredContentWidth(page: Page): Promise<unknown> {
-  return page.evaluate((key) => {
-    const raw = localStorage.getItem(key);
-    return raw === null
-      ? undefined
-      : (JSON.parse(raw) as { contentMaxWidth?: unknown }).contentMaxWidth;
-  }, APP_SETTINGS_KEY);
+export async function expectColumnClearOfOutline(column: Locator, outline: Locator): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [content, rail] = await Promise.all([column.boundingBox(), outline.boundingBox()]);
+      return content && rail ? content.x - (rail.x + rail.width) : -1;
+    })
+    .toBeGreaterThanOrEqual(8);
+}
+
+export async function expectColumnAtLeftGutter(page: Page, column: Locator): Promise<void> {
+  const viewport = page.getByTestId("agent-chat-scroll");
+  await expect
+    .poll(async () => {
+      const [content, scroll] = await Promise.all([column.boundingBox(), viewport.boundingBox()]);
+      return content && scroll ? content.x - scroll.x : Infinity;
+    })
+    .toBeLessThanOrEqual(24);
 }

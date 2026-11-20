@@ -1687,10 +1687,10 @@ export async function resolveRepositoryDefaultBranch(
     // A stale origin/HEAD must fall through to the available local branches.
   }
 
-  const { stdout } = await getRunGitCommand(context)(["branch", "--format=%(refname:short)"], {
-    cwd: repoRoot,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await getRunGitCommand(context)(
+    ["branch", "--list", "--format=%(refname:short)", "main", "master"],
+    { cwd: repoRoot, envOverlay: READ_ONLY_GIT_ENV },
+  );
   const branches = new Set(
     stdout
       .split("\n")

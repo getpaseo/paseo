@@ -10,6 +10,8 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
 } from "./index.js";
+import { createObserverPaths } from "./internal/paths.js";
+import { FileObserverService } from "./internal/service.js";
 
 const roots = new Set<string>();
 const observers = new Set<FileObserver>();
@@ -360,6 +362,66 @@ test("aborting a pending subscription stops its startup scan and rejects", async
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(callback).not.toHaveBeenCalled();
 }, 20_000);
+
+test.each([false, true])(
+  "closing waits for a starting backend to release its watcher (aborted: %s)",
+  async (abortBeforeClose) => {
+    const root = await createRoot();
+    const started = Promise.withResolvers<void>();
+    const finishStartup = Promise.withResolvers<void>();
+    let watcherOpen = false;
+    const observer = new FileObserverService(
+      () => ({
+        start() {
+          watcherOpen = true;
+          started.resolve();
+          return finishStartup.promise;
+        },
+        async close() {
+          await finishStartup.promise;
+          watcherOpen = false;
+        },
+        async updateIgnore() {},
+        getDiagnostics: () => ({
+          nativeHandleCount: Number(watcherOpen),
+          nativeTrackedFileCount: 0,
+          pendingReconciliationWorkCount: 0,
+          pendingClassificationCount: 0,
+          reconciliationInFlight: false,
+        }),
+      }),
+      createObserverPaths(process.platform),
+    );
+    const controller = new AbortController();
+    const reason = new Error("startup canceled");
+    const subscription = observer.subscribe(root, () => {}, { signal: controller.signal });
+    const outcome = subscription.catch((error: Error) => error);
+
+    await started.promise;
+    if (abortBeforeClose) controller.abort(reason);
+    const watcherOpenAfterClose = observer.close().then(() => watcherOpen);
+
+    // Give close a turn to run while the backend is still draining startup.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishStartup.resolve();
+
+    const subscriptionResult = await outcome;
+    expect(await watcherOpenAfterClose).toBe(false);
+    expect(subscriptionResult).toEqual(
+      abortBeforeClose ? reason : new Error("File observer is closed"),
+    );
+  },
+);
+
+test("a failed root lookup releases the observation", async () => {
+  const root = await createRoot();
+  const observer = createObserver();
+
+  await expect(observer.subscribe(join(root, "missing"), () => {})).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(observer.getDiagnostics().activeObservationCount).toBe(0);
+});
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();

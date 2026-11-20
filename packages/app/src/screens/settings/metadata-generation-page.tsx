@@ -102,13 +102,15 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(serverId);
   const snapshot = useProvidersSnapshot(serverId);
-  const providers = useMemo(
-    () => buildSelectableProviderSelectorProviders(snapshot.entries),
-    [snapshot.entries],
-  );
   const configuredProviders = config?.metadataGeneration.providers;
   const configuredProvider = configuredProviders?.[0] ?? null;
-  const titleLanguage = config?.metadataGeneration.titleLanguage ?? "en";
+  const providers = useMemo(
+    () =>
+      buildSelectableProviderSelectorProviders(snapshot.entries, {
+        selectedProvider: configuredProvider?.provider ?? null,
+      }),
+    [configuredProvider?.provider, snapshot.entries],
+  );
   const savedMode: SelectionMode = configuredProvider ? "preferred" : "automatic";
   const [draftMode, setDraftMode] = useState<SelectionMode | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -257,7 +259,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
           </View>
         ) : null}
         <TitleLanguageRow
-          value={titleLanguage}
+          value={config.metadataGeneration.titleLanguage ?? "en"}
           disabled={isSaving}
           onSave={handleTitleLanguageSave}
         />

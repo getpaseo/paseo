@@ -81,6 +81,9 @@ import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import { createWatcherLivenessCanary } from "./watcher-liveness-canary.js";
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
+// A target outlives its last listener this long, so a reconnecting client reuses its snapshot
+// and watchers instead of re-reading every checkout.
+const WORKSPACE_GIT_RELEASE_GRACE_MS = 90_000;
 export const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 const FETCH_METADATA_ECHO_TTL_MS = 5_000;
 export const WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS = 60_000;
@@ -441,6 +444,8 @@ interface WorkspaceGitServiceOptions {
   worktreesRoot?: string;
   fileObserver?: FileObserver;
   deps?: Partial<WorkspaceGitServiceDependencies>;
+  /** How long a workspace target outlives its last listener; 0 releases it immediately. */
+  releaseGraceMs?: number;
 }
 
 class WorkspaceGitServiceDisposedError extends Error {
@@ -463,6 +468,7 @@ interface WorkspaceGitTarget {
   gitDirPaths: GitObservationPaths | null;
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
+  releaseTimer: NodeJS.Timeout | null;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
   debounceTimer: NodeJS.Timeout | null;
   pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
@@ -657,6 +663,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
+  private readonly releaseGraceMs: number;
   private readonly fileObserver: FileObserver;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
@@ -710,6 +717,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
+    this.releaseGraceMs = options.releaseGraceMs ?? WORKSPACE_GIT_RELEASE_GRACE_MS;
     this.fileObserver = options.fileObserver ?? createFileObserver();
     this.deps = resolveWorkspaceGitServiceDeps(
       this.fileObserver.subscribe.bind(this.fileObserver),
@@ -733,6 +741,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.assertNotDisposed();
     const cwd = resolve(params.cwd);
     const target = this.ensureWorkspaceTarget(cwd);
+    this.cancelWorkspaceRelease(target);
     target.listeners.add(listener);
     if (target.folderMissing) {
       void this.resumeWorkspaceIfFolderRestored(target);
@@ -825,11 +834,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd = resolve(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot");
     const target = this.ensureWorkspaceTarget(cwd);
-    if (!request.force && target.latestSnapshot) {
-      return target.latestSnapshot;
-    }
+    // The snapshot cached while the folder was gone can say "not git". Resume
+    // first, so a restored folder is read again instead of served from it.
     if (target.folderMissing) {
       await this.resumeWorkspaceIfFolderRestored(target);
+    }
+    if (!request.force && target.latestSnapshot) {
+      return target.latestSnapshot;
     }
 
     return this.requestWorkspaceSnapshot(target, request);
@@ -1318,6 +1329,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       gitDirPaths: null,
       cwd,
       listeners: new Set(),
+      releaseTimer: null,
       workingTreeWatchTarget: null,
       debounceTimer: null,
       pendingDebounceRequest: null,
@@ -3065,6 +3077,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!target || target.closed || this.workspaceTargets.get(target.cwd) !== target) {
       return;
     }
+    if (options.origin === "observation" && this.releaseChangedWarmTarget(target)) {
+      return;
+    }
 
     const request = this.buildScheduledRefreshRequest(options);
     target.pendingDebounceRequest = this.mergeRefreshRequests(
@@ -3349,6 +3364,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     request: WorkspaceGitRefreshRequest,
   ): Promise<void> {
     if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+      return;
+    }
+    if (request.origin === "observation" && this.releaseChangedWarmTarget(target)) {
       return;
     }
     try {
@@ -4104,7 +4122,52 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
+    if (this.releaseGraceMs <= 0 || !this.isWorkspaceObservationEstablished(target)) {
+      this.removeWorkspaceTarget(target);
+      return;
+    }
+    // Keep the snapshot and watchers warm for a reconnecting client; stop forge polling now.
+    this.stopForgePrStatusPollForTarget(target);
+    this.cancelWorkspaceRelease(target);
+    target.releaseTimer = setTimeout(() => {
+      target.releaseTimer = null;
+      if (
+        !target.closed &&
+        target.listeners.size === 0 &&
+        this.workspaceTargets.get(target.cwd) === target
+      ) {
+        this.removeWorkspaceTarget(target);
+      }
+    }, this.releaseGraceMs);
+    target.releaseTimer.unref?.();
+  }
+
+  /** Only a fully watched target stays warm; one still recovering a watcher is released now. */
+  private isWorkspaceObservationEstablished(target: WorkspaceGitTarget): boolean {
+    const repoTarget = target.repoGitRoot ? this.repoTargets.get(target.repoGitRoot) : undefined;
+    return Boolean(
+      target.latestSnapshot &&
+      !target.folderMissing &&
+      target.workingTreeWatchTarget?.subscription &&
+      repoTarget?.subscription,
+    );
+  }
+
+  /** A change seen while nobody listens ends the grace: the next consumer re-reads, nobody pays now. */
+  private releaseChangedWarmTarget(target: WorkspaceGitTarget): boolean {
+    if (target.listeners.size > 0 || !target.releaseTimer) {
+      return false;
+    }
+    this.cancelWorkspaceRelease(target);
     this.removeWorkspaceTarget(target);
+    return true;
+  }
+
+  private cancelWorkspaceRelease(target: WorkspaceGitTarget): void {
+    if (target.releaseTimer) {
+      clearTimeout(target.releaseTimer);
+      target.releaseTimer = null;
+    }
   }
 
   private removeWorkspaceTarget(target: WorkspaceGitTarget): void {
@@ -4171,6 +4234,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private closeWorkspaceTarget(target: WorkspaceGitTarget): void {
     target.closed = true;
+    this.cancelWorkspaceRelease(target);
     this.stopWorkspaceObservation(target);
     target.listeners.clear();
   }

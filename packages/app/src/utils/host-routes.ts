@@ -584,6 +584,13 @@ export function buildProjectSettingsRoute(serverId: string, projectId: string) {
   return `/settings/hosts/${encodeSegment(serverId)}/projects/${encodeSegment(projectId)}` as const;
 }
 
+export function buildProviderSettingsRoute(serverId: string, providerId: string) {
+  if (!serverId.trim() || !providerId.trim()) {
+    throw new Error("buildProviderSettingsRoute requires a serverId and providerId");
+  }
+  return `/settings/hosts/${encodeSegment(serverId)}/providers/${encodeSegment(providerId)}` as const;
+}
+
 export function normalizeProjectSettingsRouteId(value: string | string[] | undefined): string {
   const id = Array.isArray(value) ? value[0] : value;
   return typeof id === "string" ? id : "";

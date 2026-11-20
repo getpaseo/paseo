@@ -1,3 +1,5 @@
+import type { ChangeRequestWatches } from "../change-request-watches/index.js";
+import { changeRequestStatusSchema } from "../../../services/change-request-source.js";
 import { registerPluginTools } from "./plugin-tools.js";
 import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
@@ -33,7 +35,7 @@ import {
   toAgentPayload,
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
-import type { AgentStorage } from "../agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "../agent-storage.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -120,6 +122,7 @@ import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
+  changeRequestWatches?: ChangeRequestWatches;
   finishSubscriptions?: () => FinishSubscriptions;
   serverId?: string;
   hosts?: () => ToolHosts;
@@ -2106,6 +2109,15 @@ function createToolCatalog(
     return backgroundWork ? { ...snapshot, backgroundWork } : snapshot;
   }
 
+  function projectStoredAgent(record: StoredAgentRecord) {
+    return buildStoredAgentPayload(
+      record,
+      new Set(providerSnapshotManager.listRegisteredProviderIds()),
+      (provider, own) => agentManager.effectiveOptionsFor(provider, own),
+      agentManager.getAgentBackgroundWorkSummary(record.id),
+    );
+  }
+
   registerTool(
     "get_agent_status",
     {
@@ -2138,11 +2150,7 @@ function createToolCatalog(
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
 
-      const structuredSnapshot = buildStoredAgentPayload(
-        record,
-        new Set(providerSnapshotManager.listRegisteredProviderIds()),
-        (provider, own) => agentManager.effectiveOptionsFor(provider, own),
-      );
+      const structuredSnapshot = projectStoredAgent(record);
       return {
         content: [],
         structuredContent: ensureValidJson({
@@ -2192,12 +2200,7 @@ function createToolCatalog(
         storage: agentStorage,
         workspaces: options.workspaceRegistry,
         projectLive: projectLiveAgent,
-        projectStored: (record) =>
-          buildStoredAgentPayload(
-            record,
-            new Set(providerSnapshotManager.listRegisteredProviderIds()),
-            (provider, own) => agentManager.effectiveOptionsFor(provider, own),
-          ),
+        projectStored: projectStoredAgent,
         isProviderVisible: () => true,
         isStoredProviderAvailable: (record) =>
           isStoredAgentProviderAvailable(
@@ -2722,6 +2725,61 @@ function createToolCatalog(
       };
     },
   );
+
+  if (options.changeRequestWatches) {
+    const watches = options.changeRequestWatches;
+    const inputSchema = { url: z.string().trim().min(1).describe("URL of a GitHub pull request.") };
+    registerTool(
+      "subscribe_change_request",
+      {
+        title: "Watch change request",
+        description:
+          "Watch a pull request for check failures, passing checks, new comments, reviews, and closure. Returns the current state and sends future updates after your current turn.",
+        inputSchema,
+        outputSchema: {
+          url: z.string(),
+          ...changeRequestStatusSchema.shape,
+          subscribed: z.boolean(),
+          stale: z
+            .boolean()
+            .describe("The last stored status is shown because a fresh read is pending or failed."),
+        },
+      },
+      async ({ url }) => {
+        if (!callerAgentId) {
+          throw new PaseoToolInputError(
+            "subscribe_change_request requires an agent-scoped session",
+          );
+        }
+        resolveCallerAgent();
+        return {
+          content: [],
+          structuredContent: ensureValidJson(await watches.subscribe(callerAgentId, url)),
+        };
+      },
+    );
+    registerTool(
+      "unsubscribe_change_request",
+      {
+        title: "Stop watching change request",
+        description: "Stop your watch and discard its unsent updates.",
+        inputSchema,
+        outputSchema: { url: z.string(), removed: z.boolean() },
+      },
+      async ({ url }) => {
+        if (!callerAgentId) {
+          throw new PaseoToolInputError(
+            "unsubscribe_change_request requires an agent-scoped session",
+          );
+        }
+        resolveCallerAgent();
+        return {
+          content: [],
+          structuredContent: ensureValidJson(await watches.unsubscribe(callerAgentId, url)),
+        };
+      },
+    );
+  }
 
   registerTool(
     "create_heartbeat",

@@ -865,3 +865,114 @@ test("a command with an explicit mode waits for turn end without an out-of-band 
   expect(parseAgentMessages(String(dispatched[0]!.prompt))![0]!.text).toBe("/handled");
   await delivery.close();
 });
+
+test.each([false, true])(
+  "withdraws during dispatch preparation and retries the peer when busy is %s",
+  async (rejectBusy) => {
+    const clock = createClock();
+    const preparing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const starts: string[][] = [];
+    let attempts = 0;
+    const delivery = createAgentMessageDelivery({
+      schedule: clock.schedule,
+      async dispatch(batch) {
+        if (++attempts === 1) {
+          preparing.resolve();
+          await release.promise;
+          if (rejectBusy) throw new AgentTurnBusyError("parent already has a turn");
+        }
+        if (!batch.admit()) {
+          throw new Error("batch was withdrawn");
+        }
+        starts.push(parseAgentMessages(String(batch.prompt))!.map(({ text }) => text));
+        return "turn_started";
+      },
+      onError(error) {
+        throw error;
+      },
+    });
+    const peer = delivery.enqueue({
+      recipientId: "parent",
+      prompt: "Child report",
+      source: { kind: "agent-message", agentId: "child" },
+    });
+    const update = delivery.enqueue({
+      recipientId: "parent",
+      prompt: "PR digest",
+      source: { kind: "change-request-update", url: "https://github.com/owner/repo/pull/1" },
+      unarchive: false,
+    });
+    try {
+      clock.advance(2_000);
+      await preparing.promise;
+      expect(
+        delivery.withdrawPending("parent", ({ kind }) => kind === "change-request-update"),
+      ).toBe(1);
+      release.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      clock.advance(2_000);
+      await expect(peer.dispatched).resolves.toBe("turn_started");
+      await expect(update.dispatched).rejects.toMatchObject({ name: "AbortError" });
+      expect(starts).toEqual([["Child report"]]);
+    } finally {
+      release.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await delivery.close();
+    }
+  },
+);
+
+test("a declined child command offer cannot bring back a withdrawn digest", async () => {
+  const clock = createClock();
+  const offer = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const starts: string[][] = [];
+  let busy = true;
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => busy,
+    async tryRunOutOfBand(batch) {
+      if (String(batch.prompt).includes("Child report")) {
+        offer.resolve();
+        await release.promise;
+      }
+      return false;
+    },
+    async dispatch(batch) {
+      if (!batch.admit()) throw new Error("batch was withdrawn");
+      starts.push(parseAgentMessages(String(batch.prompt))!.map(({ text }) => text));
+      return "turn_started";
+    },
+    onError(error) {
+      throw error;
+    },
+  });
+  const update = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "PR digest",
+    source: { kind: "change-request-update", url: "https://github.com/owner/repo/pull/1" },
+  });
+  const peer = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "Child report",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  try {
+    clock.advance(2_000);
+    await offer.promise;
+    expect(delivery.withdrawPending("parent", ({ kind }) => kind === "change-request-update")).toBe(
+      1,
+    );
+    release.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    busy = false;
+    clock.advance(2_000);
+    await expect(peer.dispatched).resolves.toBe("turn_started");
+    await expect(update.dispatched).rejects.toMatchObject({ name: "AbortError" });
+    expect(starts).toEqual([["Child report"]]);
+  } finally {
+    release.resolve();
+    await delivery.close();
+  }
+});

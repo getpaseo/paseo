@@ -26,6 +26,16 @@ describe("highlightDiffLines", () => {
     expect(add?.tokens?.some((token) => token.style === "keyword")).toBe(true);
   });
 
+  it("highlights a Dockerfile diff using the filename", () => {
+    const diff = buildLineDiff("FROM alpine:3.21", "FROM alpine:3.22");
+    const result = highlightDiffLines(diff, "/repo/docker/Dockerfile");
+
+    expect(result.find((line) => line.type === "add")?.tokens).toContainEqual({
+      text: "FROM",
+      style: "keyword",
+    });
+  });
+
   it("highlights a Codex-style unified diff with bare @@ headers (no line ranges)", () => {
     const unified = ["@@", "-const x = 1;", "+const x = 2;", " const y = 3;"].join("\n");
     const result = highlightDiffLines(parseUnifiedDiff(unified), "/repo/a.ts");
