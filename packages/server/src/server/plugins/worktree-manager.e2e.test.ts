@@ -943,3 +943,187 @@ export default function contribute(server) {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test("restore waits for an in-flight CLI worktree archive remove before recreating the checkout", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-cli-archive-race-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const removeStartedMarker = path.join(root, "remove-started");
+  const releaseRemoveMarker = path.join(root, "release-remove");
+
+  const pluginDir = path.join(root, "slow-remove-manager");
+  await mkdir(pluginDir);
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "slow-remove-manager", requirements: { paseo: ">=0.16.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `import { execFileSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create(request) {
+      const target = path.join(path.dirname(request.repoRoot), "managed-" + request.branch);
+      execFileSync("git", ["worktree", "add", "-b", request.branch, target, request.baseRef], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "created", path: target };
+    },
+    async remove(request) {
+      writeFileSync(${JSON.stringify(removeStartedMarker)}, "paused");
+      const deadline = Date.now() + 15_000;
+      while (!existsSync(${JSON.stringify(releaseRemoveMarker)})) {
+        if (Date.now() > deadline) throw new Error("test did not release remove");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "removed" };
+    },
+    async restore(request) {
+      if (request.target.type !== "branch") return;
+      execFileSync("git", ["worktree", "add", request.path, request.target.branch], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "restored", path: request.path };
+    },
+  });
+}
+`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client1 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const client2 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await Promise.all([client1.connect(), client2.connect()]);
+    await client1.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client1.installDirectoryPlugin(pluginDir)).status).toBe("running");
+
+    const created = await client1.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "cli-race-branch" },
+    });
+    expect(created.error).toBeNull();
+    const workspaceId = created.workspace!.id;
+    const worktreePath = created.workspace!.workspaceDirectory;
+
+    // Client 1 starts a CLI worktree archive; pause inside manager.remove after the record is archived.
+    const cliArchive = client1.archivePaseoWorktree({ worktreePath });
+    await expect
+      .poll(() =>
+        stat(removeStartedMarker).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+
+    // Client 2 restores while manager.remove still holds the checkout: restore must wait, not unarchive early.
+    let restoreSettled = false;
+    const restorePromise = client2.restoreWorkspace(workspaceId);
+    void restorePromise.then(
+      () => {
+        restoreSettled = true;
+        return undefined;
+      },
+      () => {
+        restoreSettled = true;
+        return undefined;
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(restoreSettled).toBe(false);
+
+    // Release manager.remove to delete the checkout; restore then runs and recreates it cleanly.
+    await writeFile(releaseRemoveMarker, "go");
+    const archiveResult = await cliArchive;
+    expect(archiveResult.success).toBe(true);
+    await restorePromise;
+
+    expect((await stat(worktreePath)).isDirectory()).toBe(true);
+    expect(git(worktreePath, ["branch", "--show-current"])).toBe("cli-race-branch");
+  } finally {
+    await client1.close();
+    await client2.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("undo after a restore queued behind a running archive still cancels before checkout removal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-restore-undo-race-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const teardownStartedMarker = path.join(root, "teardown-started");
+  const releaseTeardownMarker = path.join(root, "release-teardown");
+  const teardownScript = path.join(root, "wait-teardown.mjs");
+  await writeFile(
+    teardownScript,
+    `import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(teardownStartedMarker)}, "paused");
+const deadline = Date.now() + 15_000;
+while (!existsSync(${JSON.stringify(releaseTeardownMarker)})) {
+  if (Date.now() > deadline) throw new Error("test did not release teardown");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+`,
+  );
+  await writeFile(
+    path.join(repository, "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        teardown: [`"${process.execPath}" "${teardownScript}"`],
+      },
+    }),
+  );
+  git(repository, ["add", "paseo.json"]);
+  git(repository, ["commit", "-m", "add teardown hook"]);
+
+  const daemon = await createTestPaseoDaemon();
+  const client1 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const client2 = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await Promise.all([client1.connect(), client2.connect()]);
+    const created = await client1.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "undo-race-branch" },
+    });
+    expect(created.error).toBeNull();
+    const workspaceId = created.workspace!.id;
+    const worktreePath = created.workspace!.workspaceDirectory;
+    const uncommittedFile = path.join(worktreePath, "uncommitted.txt");
+    await writeFile(uncommittedFile, "keep-me");
+
+    const archivePromise = client1.archiveWorkspace(workspaceId);
+    await expect
+      .poll(() =>
+        stat(teardownStartedMarker).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+
+    // Send Restore, then Undo while teardown is still running.
+    const restorePromise = client2.restoreWorkspace(workspaceId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const undoPromise = client1.undoWorkspaceArchive(workspaceId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await writeFile(releaseTeardownMarker, "go");
+    const archiveResult = await archivePromise;
+    expect(archiveResult.canceled).toBe(true);
+    await Promise.all([restorePromise, undoPromise]);
+
+    expect(await readFile(uncommittedFile, "utf8")).toBe("keep-me");
+  } finally {
+    await client1.close();
+    await client2.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);

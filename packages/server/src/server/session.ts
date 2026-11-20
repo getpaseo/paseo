@@ -287,7 +287,11 @@ import {
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
-import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
+import {
+  archiveByScope,
+  resolveWorkspaceBackingPath,
+  type ActiveWorkspaceRef,
+} from "./workspace-archive-service.js";
 import {
   WorkspaceArchiveOperations,
   type WorkspaceArchiveUndoInput,
@@ -1256,10 +1260,13 @@ export class Session {
         ),
       logger: this.sessionLogger,
     });
+    this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       worktreeManagers: this.pluginRuntime,
+      workspaceArchiveOperations: this.workspaceArchiveOperations,
+      getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       github: this.github,
@@ -1298,7 +1305,6 @@ export class Session {
       },
     );
     this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
-    this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
@@ -5787,11 +5793,13 @@ export class Session {
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
         worktreeManagers: this.pluginRuntime,
+        workspaceArchiveOperations: this.workspaceArchiveOperations,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+        getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
         archiveWorkspaceRecord: (workspaceId, archivedAt) =>
           this.archiveWorkspaceRecord(workspaceId, archivedAt),
@@ -6508,11 +6516,25 @@ export class Session {
     };
   }
 
-  private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
-    await this.workspaceArchiveOperations.restore(workspaceId, async () => {
-      await this.workspaceRecovery.restore(workspaceId);
-      await this.publishRecoveredWorkspace(workspaceId);
+  private async withWorkspaceCheckout<T>(workspaceId: string, run: () => Promise<T>): Promise<T> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      return run();
+    }
+    const checkoutPath = await resolveWorkspaceBackingPath(workspace, {
+      paseoHome: this.paseoHome,
+      paseoWorktreesBaseRoot: this.worktreesRoot,
     });
+    return this.workspaceArchiveOperations.withCheckout(checkoutPath, run);
+  }
+
+  private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
+    await this.workspaceArchiveOperations.restore(workspaceId, () =>
+      this.withWorkspaceCheckout(workspaceId, async () => {
+        await this.workspaceRecovery.restore(workspaceId);
+        await this.publishRecoveredWorkspace(workspaceId);
+      }),
+    );
   }
 
   private async publishRecoveredWorkspace(workspaceId: string): Promise<void> {
@@ -8141,6 +8163,7 @@ export class Session {
               paseoHome: this.paseoHome,
               paseoWorktreesBaseRoot: this.worktreesRoot,
               worktreeManagers: this.pluginRuntime,
+              workspaceArchiveOperations: this.workspaceArchiveOperations,
               github: this.github,
               workspaceGitService: this.workspaceGitService,
               agentManager: this.agentManager,
@@ -8219,7 +8242,9 @@ export class Session {
   ): Promise<void> {
     try {
       await this.workspaceArchiveOperations.undo(request.workspaceId, (input) =>
-        this.restoreArchivedWorkspaceAndAgents(request.workspaceId, input),
+        this.withWorkspaceCheckout(request.workspaceId, () =>
+          this.restoreArchivedWorkspaceAndAgents(request.workspaceId, input),
+        ),
       );
       this.emit({
         type: "workspace.archive.undo.response",

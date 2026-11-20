@@ -78,7 +78,7 @@ export function isPathInsideRoot(root: string, candidate: string): boolean {
 }
 
 export function normalizePathForIdentity(value: string): string {
-  const canonicalPath = resolveRealpathVariants(value)[0] ?? value;
+  const canonicalPath = resolveNearestExistingAncestorRealpath(value);
   return normalizePathForComparison(canonicalPath, looksLikeDefiniteWindowsPath(canonicalPath));
 }
 
@@ -148,6 +148,26 @@ function resolveRealpathVariants(value: string): string[] {
     // Keep string-only comparison as the fallback.
   }
   return variants;
+}
+
+function resolveNearestExistingAncestorRealpath(value: string): string {
+  if (process.platform !== "win32" && looksLikeDefiniteWindowsPath(value)) {
+    return value;
+  }
+  const tail: string[] = [];
+  let current = value;
+  while (true) {
+    const resolved = resolveRealpathVariants(current)[0];
+    if (resolved) {
+      return tail.length === 0 ? resolved : nodePath.join(resolved, ...tail.toReversed());
+    }
+    const parent = nodePath.dirname(current);
+    if (parent === current) {
+      return value;
+    }
+    tail.push(nodePath.basename(current));
+    current = parent;
+  }
 }
 
 function shouldCompareAsWindows(left: string, right: string): boolean {

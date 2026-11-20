@@ -6,6 +6,7 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
+  type ArchiveDependencies,
   killTerminalsForWorkspace,
 } from "../workspace-archive-service.js";
 import type {
@@ -22,6 +23,8 @@ export interface AutoArchiveArchiveOptions {
   paseoHome: string;
   paseoWorktreesBaseRoot?: string;
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  getWorkspace?: ArchiveDependencies["getWorkspace"];
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: ForgeService;
@@ -102,11 +105,13 @@ export async function archiveIfSafe(input: {
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
         worktreeManagers: options.worktreeManagers,
+        workspaceArchiveOperations: options.workspaceArchiveOperations,
         github: options.github,
         workspaceGitService: options.workspaceGitService,
         agentManager: options.agentManager,
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+        getWorkspace: options.getWorkspace,
         listActiveWorkspaces: options.listActiveWorkspaces,
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           options.archiveWorkspaceRecord(
