@@ -2775,10 +2775,16 @@ describe("ACP out-of-turn background activity", () => {
 
       // The canceled tool's terminal echo can arrive after the next prompt finishes.
       const turnCountAfterCancel = events.filter((event) => event.type === "session.turn").length;
+      const output = {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", rawOutput: "late line" },
+      };
+      agent.notify("session/update", output);
       agent.notify("session/update", {
         sessionId: "connector-session",
         update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", status: "failed" },
       });
+      agent.notify("session/update", output);
       await new Promise((resolve) => setTimeout(resolve, 60));
       expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
         turnCountAfterCancel,

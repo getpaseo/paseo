@@ -748,7 +748,14 @@ export type ProviderEvent =
       /** The session's interrupt operation also stops its background work. */
       canInterruptSession?: boolean;
     }
-  | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
+  | {
+      type: "timeline.item";
+      sessionId: string;
+      item: ProviderTimelineItem;
+      timestamp?: string;
+      /** Original turn of the item when an update arrives in a later turn. */
+      turnId?: string;
+    };
 
 export function negotiateProviderCapabilities(
   offered: readonly string[],
@@ -1627,6 +1634,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       sessionId: idSchema,
       item: timelineItemSchema,
       timestamp: z.string().optional(),
+      turnId: idSchema.optional(),
     })
     .strip(),
 ]);

@@ -2897,6 +2897,12 @@ test.each(["steer", "stop"] as const)(
         await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
       };
       await send("Start two commands");
+      const toolStatuses = (callId: string) =>
+        manager
+          .getTimeline(agent.id)
+          .flatMap((item) =>
+            item.type === "tool_call" && item.callId === callId ? [item.status] : [],
+          );
       expect(manager.listAgentBackgroundWork(agent.id)).toMatchObject([
         { id: "cmd-1", kind: "shell" },
         { id: "cmd-2", kind: "shell" },
@@ -2910,6 +2916,7 @@ test.each(["steer", "stop"] as const)(
         expect(manager.listAgentBackgroundWork(agent.id)).toEqual([
           { id: "cmd-2", kind: "shell", description: "cmd-2", startedAt: expect.any(String) },
         ]);
+        expect(toolStatuses("cmd-1")).toEqual(["completed"]);
       } else {
         const { cancelled } = await cancelAgentRunCommand(
           { agentManager: manager, logger },
@@ -2919,6 +2926,7 @@ test.each(["steer", "stop"] as const)(
         await expect.poll(() => calls).toEqual(["Start two commands", "session/cancel"]);
         expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
         expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+        expect(toolStatuses("cmd-2")).toEqual(["canceled"]);
       }
     } finally {
       await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));

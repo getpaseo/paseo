@@ -70,6 +70,12 @@ interface AcpBoundarySession {
   mutationLane: Promise<void>;
 }
 
+interface AcpToolCallRecord {
+  snapshot: AcpToolCallSnapshot;
+  turnId?: string;
+  canceled?: boolean;
+}
+
 export async function createAcpProviderConnection(
   options: RunAcpProviderOptions,
   request: ProviderConnectRequest,
@@ -388,7 +394,7 @@ class AcpRuntime {
   private readonly child: ChildProcessWithoutNullStreams | null;
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
-  private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
+  private readonly toolCalls = new Map<string, AcpToolCallRecord>();
   // Running tool rows published by transformers; the turn's terminal closes any left open.
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
@@ -424,7 +430,6 @@ class AcpRuntime {
   private autoAccept = false;
   private readonly outOfTurnActivity: { settleDelayMs: number; quietLimitMs: number } | null;
   private readonly backgroundToolCalls = new Set<string>();
-  private readonly canceledToolCalls = new Set<string>();
   private publishedBackgroundWork = false;
   private autonomousTurnSequence = 0;
   private autonomousTurn: {
@@ -1250,14 +1255,8 @@ class AcpRuntime {
   private reduceLiveToolUpdate(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
   ): void {
-    if (
-      update.sessionUpdate === "tool_call_update" &&
-      this.canceledToolCalls.has(update.toolCallId) &&
-      (update.status === "failed" || update.status === "completed")
-    ) {
-      this.canceledToolCalls.delete(update.toolCallId);
-      return;
-    }
+    // A stopped tool can still report output and terminal echoes after the next prompt.
+    if (this.toolCalls.get(update.toolCallId)?.canceled) return;
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
     const outOfTurn = this.isOutOfTurnLive();
     if (outOfTurn) this.ensureAutonomousTurn();
@@ -1388,7 +1387,8 @@ class AcpRuntime {
     state: "completed" | "failed" | "canceled",
     options?: { preserveInProgressTools?: boolean; preserveBackgroundTools?: boolean },
   ): void {
-    for (const [id, snapshot] of this.toolCalls) {
+    for (const [id, record] of this.toolCalls) {
+      const { snapshot, turnId } = record;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (options?.preserveBackgroundTools && this.backgroundToolCalls.has(id)) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
@@ -1396,13 +1396,8 @@ class AcpRuntime {
         ...snapshot,
         status: state === "completed" ? "completed" : "failed",
       };
-      this.toolCalls.set(id, completed);
-      if (state === "canceled") this.canceledToolCalls.add(id);
-      this.emit({
-        type: "timeline.item",
-        sessionId: this.options.boundarySessionId,
-        item: terminalToolItem(toolTimelineItem(snapshot), state),
-      });
+      this.toolCalls.set(id, { snapshot: completed, turnId, canceled: state === "canceled" });
+      this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
     }
     for (const item of this.vendorToolCalls.values()) {
       this.emit({
@@ -1424,19 +1419,27 @@ class AcpRuntime {
 
   private reduceToolCall(update: ToolCall | ToolCallUpdate): void {
     const current = this.toolCalls.get(update.toolCallId);
-    let snapshot = mergeToolCallSnapshot(update, current);
+    let snapshot = mergeToolCallSnapshot(update, current?.snapshot);
     const context = { sessionId: this.options.boundarySessionId };
     for (const transformer of this.transformers)
       snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
-    this.toolCalls.set(snapshot.id, snapshot);
+    // Tool snapshots can keep changing after the turn that first published the row.
+    const activeTurnId = this.activePrompt?.turnId ?? this.autonomousTurn?.turnId;
+    const turnId = this.outOfTurnActivity ? (current?.turnId ?? activeTurnId) : undefined;
+    this.toolCalls.set(snapshot.id, { snapshot, turnId });
     if (this.backgroundToolCalls.has(snapshot.id) && snapshot.status !== "in_progress") {
       this.backgroundToolCalls.delete(snapshot.id);
       this.publishBackgroundWork();
     }
+    this.emitToolCall(toolTimelineItem(snapshot), turnId);
+  }
+
+  private emitToolCall(item: ToolCallTimelineItem, turnId: string | undefined): void {
     this.emit({
       type: "timeline.item",
       sessionId: this.options.boundarySessionId,
-      item: toolTimelineItem(snapshot),
+      item,
+      ...(turnId ? { turnId } : {}),
     });
   }
 
@@ -1543,7 +1546,7 @@ class AcpRuntime {
 
   private syncBackgroundWorkFromInProgressTools(): void {
     const next = new Set<string>();
-    for (const [id, snapshot] of this.toolCalls) {
+    for (const [id, { snapshot }] of this.toolCalls) {
       if (snapshot.status === "in_progress") next.add(id);
     }
     if (
@@ -1573,7 +1576,7 @@ class AcpRuntime {
   private publishBackgroundWork(): void {
     const items: ProviderBackgroundWorkItem[] = [];
     for (const id of this.backgroundToolCalls) {
-      const snapshot = this.toolCalls.get(id);
+      const snapshot = this.toolCalls.get(id)?.snapshot;
       if (snapshot && snapshot.status === "in_progress") {
         items.push(toBackgroundWorkItem(snapshot));
       }
@@ -1661,7 +1664,6 @@ class AcpRuntime {
   private settlePendingWork(): void {
     this.cancelAutonomousSettle();
     this.autonomousTurn = null;
-    this.canceledToolCalls.clear();
     if (this.backgroundToolCalls.size > 0 || this.publishedBackgroundWork) {
       this.backgroundToolCalls.clear();
       this.publishedBackgroundWork = false;

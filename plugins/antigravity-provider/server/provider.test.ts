@@ -302,13 +302,13 @@ it("tracks backgrounded run_command work and out-of-turn wakeups", async () => {
     expect(events).toContainEqual({
       type: "session.background_work",
       sessionId: "test",
+      canInterruptSession: true,
       items: [
         {
           id: "bg-1",
           kind: "shell",
           description: "Typecheck",
           command: "npm run typecheck",
-          canStop: false,
         },
       ],
     });

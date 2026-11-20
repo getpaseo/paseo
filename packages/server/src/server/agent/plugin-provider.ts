@@ -1705,7 +1705,7 @@ class PluginAgentSession implements AgentSession {
             type: "timeline",
             provider: this.provider,
             item,
-            turnId: this.currentTurnId ?? undefined,
+            turnId: event.turnId ?? this.currentTurnId ?? undefined,
             timestamp: event.timestamp,
           },
         ]
