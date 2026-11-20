@@ -61,6 +61,7 @@ import type {
   SearchIssuesAndPrsOptions,
   SearchResult,
 } from "./forge-service.js";
+import { createGiteaChangeRequestSource } from "./gitea-change-requests.js";
 import { isGiteaStatusFacts, type GiteaStatusFacts } from "./gitea-facts.js";
 
 const TEA_ENV = {
@@ -142,6 +143,8 @@ export interface CreateGiteaServiceOptions {
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
   resolveCurrentBranch?: (cwd: string) => Promise<string | null>;
   now?: () => number;
+  watchPollMs?: number;
+  watchInitialDelayMs?: number;
 }
 
 /**
@@ -1409,18 +1412,35 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   const now = options.now ?? Date.now;
   const currentPrHeadShaCache = new Map<string, { sha: string; expiresAt: number }>();
 
-  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
+  async function runRaw(
+    args: string[],
+    runOptions: TeaCommandRunnerOptions,
+  ): Promise<TeaCommandResult> {
     const teaPath = await resolveTea();
     if (!teaPath) {
       throw new TeaCliMissingError();
     }
     try {
-      const result = await runner(args, runOptions);
-      return result.stdout.trim();
+      return await runner(args, runOptions);
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });
     }
   }
+
+  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
+    const result = await runRaw(args, runOptions);
+    return result.stdout.trim();
+  }
+
+  const changeRequests = createGiteaChangeRequestSource({
+    runCommand: runRaw,
+    isAuthError: (error) => error instanceof TeaAuthenticationError,
+    createAuthError: (stderr) => new TeaAuthenticationError({ stderr }),
+    createCommandError: (params) => new TeaCommandError(params),
+    now,
+    pollIntervalMs: options.watchPollMs,
+    initialDelayMs: options.watchInitialDelayMs,
+  });
 
   function runJsonParse<T>(
     args: string[],
@@ -2359,6 +2379,8 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       return notSupported("disablePullRequestAutoMerge");
     },
 
+    changeRequests,
+
     invalidate(input: { cwd: string }): void {
       const prefix = `${input.cwd}:`;
       for (const key of currentPrHeadShaCache.keys()) {
@@ -2366,6 +2388,10 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
           currentPrHeadShaCache.delete(key);
         }
       }
+    },
+
+    dispose(): void {
+      changeRequests.dispose();
     },
   };
 }
