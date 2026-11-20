@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/plus-jakarta-sans";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -107,7 +108,7 @@
 
 /* Title font - centralized for easy changes */
 .font-title {
-  font-family: inherit;
+  font-family: var(--font-display);
 }
 
 /* Inline code styling - scoped to prose content */
@@ -712,6 +713,8 @@
 
 @theme {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    "Plus Jakarta Sans Variable", "Geist Variable", ui-sans-serif, system-ui, sans-serif;
 
   --color-background: #101615;
   --color-foreground: #fafafa;

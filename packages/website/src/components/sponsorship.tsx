@@ -30,7 +30,7 @@ function SectionHeading({
   return (
     <div className="mb-10 space-y-2.5">
       <div className="flex items-center gap-3">
-        <Heading className="text-3xl font-medium tracking-[-0.03em] md:text-[42px]">
+        <Heading className="font-display text-3xl font-semibold tracking-[-0.025em] md:text-[42px]">
           {title}
         </Heading>
         {badge ? (

@@ -140,7 +140,7 @@ export function SectionOpener({
         <div className={`flex flex-wrap items-center gap-3 ${centered ? "justify-center" : ""}`}>
           <h2
             id={headingId}
-            className="text-3xl font-medium tracking-[-0.03em] leading-[1.08] text-foreground sm:text-4xl md:text-[42px]"
+            className="font-display text-3xl font-semibold tracking-[-0.025em] leading-[1.1] text-foreground sm:text-4xl md:text-[42px]"
           >
             {mutedLead ? (
               <>
