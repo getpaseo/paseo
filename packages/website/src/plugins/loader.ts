@@ -30,7 +30,7 @@ export const getRegistryPlugin = createServerFn({ method: "GET" })
   .validator((id: string) => id)
   .handler(({ data }) => loadRegistryPlugin(registryBase(), data, getWebsiteCacheContext()));
 
-/** Listed plugin count from the published registry, or null when the registry is unreachable. */
+/** Listed plugin count from the cached registry index. */
 export const getPluginCount = createServerFn({ method: "GET" }).handler(() =>
   loadPluginCount(registryBase(), getWebsiteCacheContext()),
 );

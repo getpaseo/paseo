@@ -227,8 +227,16 @@ function AuthoringYamlCard() {
         <YamlLine k="mode" v="full-access" indent={4} />
         <YamlLine k="continuation" v="{ mode: conversation }" indent={2} />
         <YamlLine k="prompt" v="|" indent={2} />
-        <span className="block text-emerald-300/80">{"    Answer the thread, then call"}</span>
-        <span className="block text-emerald-300/80">{"    hub.finish_execution."}</span>
+        <span className="block text-emerald-300/80">
+          {"    Answer with hub.reply, then call hub.finish_execution."}
+        </span>
+        <span className="block text-emerald-300/80">{"    <user-prompt>"}</span>
+        <span className="block text-emerald-300/80">{"    ${{ paseo.prompt }}"}</span>
+        <span className="block text-emerald-300/80">{"    </user-prompt>"}</span>
+        <YamlKey k="outputs" indent={2} />
+        <YamlKey k="slack.reply" indent={4} />
+        <YamlLine k="max" v="1" indent={6} />
+        <YamlLine k="required" v="true" indent={6} />
       </pre>
       <div className="space-y-1 border-t border-white/[0.08] bg-white/[0.02] px-5 py-3.5 font-mono text-xs text-white/65">
         <div>
@@ -400,7 +408,7 @@ function PricingSection({ plans }: { plans: HubPlans | null }) {
         title={t("hub.pricing.title")}
         description={t("hub.pricing.seatNote")}
       />
-      <HairlineGrid columns="3">
+      <HairlineGrid columns="3" clipContents={false}>
         <PlanCard
           name={t("hub.pricing.selfHosted")}
           price={t("hub.pricing.free")}
@@ -492,7 +500,7 @@ function PlanCard({
 }) {
   return (
     <article
-      className={`flex flex-col p-6 md:p-7 ${featured ? "bg-brand-green/[0.08]" : "bg-background"}`}
+      className={`flex flex-col p-6 first:rounded-t-[inherit] last:rounded-b-[inherit] md:p-7 md:first:rounded-tr-none md:first:rounded-bl-[inherit] md:last:rounded-tr-[inherit] md:last:rounded-bl-none ${featured ? "bg-brand-green/[0.08]" : "bg-background"}`}
     >
       <h3 className="text-lg font-medium text-white/90">{name}</h3>
       <div className="mt-5 flex items-end gap-2">

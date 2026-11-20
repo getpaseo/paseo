@@ -62,7 +62,7 @@ export function ChapterBand({
   return (
     <div
       id={id}
-      className={`${ruled ? "border-t border-white/[0.07]" : ""} ${
+      className={`overflow-x-clip ${ruled ? "border-t border-white/[0.07]" : ""} ${
         tint === "subtle" ? "bg-white/[0.014]" : ""
       } ${className}`}
     >
@@ -213,14 +213,16 @@ export function HairlineGrid({
   children,
   columns = "3",
   className = "",
+  clipContents = true,
 }: {
   children: React.ReactNode;
   columns?: keyof typeof GRID_COLUMNS;
   className?: string;
+  clipContents?: boolean;
 }) {
   return (
     <div
-      className={`grid gap-px overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.08] ${GRID_COLUMNS[columns]} ${className}`}
+      className={`grid gap-px rounded-xl border border-white/[0.08] bg-white/[0.08] ${clipContents ? "overflow-hidden" : ""} ${GRID_COLUMNS[columns]} ${className}`}
     >
       {children}
     </div>
