@@ -6,6 +6,7 @@ export interface SelectedFile {
   fileName: string;
   mimeType: string;
   readBytes(): Promise<Uint8Array>;
+  dispose?(): Promise<void> | void;
 }
 
 function base64ToUint8Array(base64: string): Uint8Array {

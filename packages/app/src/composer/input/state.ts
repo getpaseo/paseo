@@ -65,6 +65,7 @@ interface DictationTranscriptContext {
   attachments: MessagePayload["attachments"];
   cwd: string;
   autoSend: boolean;
+  isSubmitDisabled: boolean;
 }
 
 export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
@@ -72,7 +73,7 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
   const shouldPad = ctx.value.length > 0 && !/\s$/.test(ctx.value);
   const nextValue = `${ctx.value}${shouldPad ? " " : ""}${text}`;
 
-  if (!ctx.autoSend) {
+  if (!ctx.autoSend || ctx.isSubmitDisabled) {
     ctx.replaceText(nextValue);
     return;
   }
