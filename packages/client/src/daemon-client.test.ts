@@ -2683,13 +2683,15 @@ test("foreground tears down a silently dead socket after two fresh five-second w
   expect(second.closesFromClient()).toEqual([]);
 });
 
-test("foreground replaces a stale connect attempt", async () => {
+test("foreground replaces a stale connect attempt and retries at the base delay if it fails", async () => {
   useHeartbeatClock();
   const stalled = new FakeDaemon();
   const replacement = new FakeDaemon();
+  const healthy = new FakeDaemon();
   const { client, attempts } = connectThroughReplacements("foreground-stalled", [
     stalled,
     replacement,
+    healthy,
   ]);
   const connection = client.connect();
   void connection.catch(() => undefined);
@@ -2700,7 +2702,12 @@ test("foreground replaces a stale connect attempt", async () => {
   expect(attempts()).toBe(2);
   expect(stalled.closesFromClient()).toHaveLength(1);
 
-  replacement.openConnection();
+  replacement.daemonClosesWith("network still waking");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  healthy.openConnection();
   await connection;
   expect(client.getConnectionState().status).toBe("connected");
 });

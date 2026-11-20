@@ -1878,8 +1878,8 @@ export class DaemonClient {
           reason: "Stale connection attempt",
           event: "STALE_CONNECT_ON_FOREGROUND",
           reasonCode: "connect_timeout",
+          immediate: true,
         });
-        void this.attemptConnect();
       }
       return;
     }
