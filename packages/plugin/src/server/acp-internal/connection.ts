@@ -350,6 +350,7 @@ async function openSession(
       capabilities,
       mutationLane: Promise.resolve(),
     });
+    runtime.startLiveUpdates();
     state.emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
   } catch (error) {
     await runtime.close();
@@ -417,7 +418,7 @@ class AcpRuntime {
   >();
   /**
    * Replay updates count as history until the session reports ready.
-   * Once ready, suppress late replay rows until the first prompt.
+   * Adapters without autonomous activity can suppress late replay until their first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
   private lastLoadUpdateAt = 0;
@@ -427,6 +428,7 @@ class AcpRuntime {
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
+  private interruptWrite: { sent: boolean } | null = null;
   private autoAccept = false;
   private readonly outOfTurnActivity: { settleDelayMs: number; quietLimitMs: number } | null;
   private readonly backgroundToolCalls = new Set<string>();
@@ -520,8 +522,12 @@ class AcpRuntime {
       : null;
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
-      sessionUpdate: (notification) =>
-        this.enqueueNotification(() => this.sessionUpdate(notification)),
+      sessionUpdate: (notification) => {
+        const interrupt = this.interruptWrite;
+        return this.enqueueNotification(() =>
+          this.sessionUpdate(notification, interrupt?.sent === true),
+        );
+      },
     };
     this.connection = new ClientSideConnection(
       () => client,
@@ -616,6 +622,10 @@ class AcpRuntime {
       this.replayWindow = "skip";
     }
     return sessionCapabilities;
+  }
+
+  startLiveUpdates(): void {
+    if (this.outOfTurnActivity) this.replayWindow = null;
   }
 
   async discover(cwd?: string): Promise<ProviderCatalog> {
@@ -760,8 +770,11 @@ class AcpRuntime {
         autonomous.cancelling = true;
         this.cancelAutonomousSettle();
       }
+      const write = { sent: false };
+      if (this.outOfTurnActivity) this.interruptWrite = write;
       try {
         await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+        write.sent = true;
       } catch (error) {
         if (active) active.cancelling = false;
         if (autonomous && this.autonomousTurn === autonomous) {
@@ -769,6 +782,8 @@ class AcpRuntime {
           this.syncAutonomousTimer();
         }
         throw error;
+      } finally {
+        this.interruptWrite = null;
       }
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) this.finishTurnPermissions(active.turnId);
@@ -1120,10 +1135,12 @@ class AcpRuntime {
   private async requestPermission(
     request: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
+    const interrupt = this.interruptWrite;
     await this.notificationLane;
     if (
       this.closing ||
       this.processFailed ||
+      interrupt?.sent ||
       this.toolCalls.get(request.toolCall.toolCallId)?.canceled ||
       this.activePrompt?.cancelling ||
       this.autonomousTurn?.cancelling
@@ -1175,10 +1192,10 @@ class AcpRuntime {
     });
   }
 
-  private sessionUpdate(notification: SessionNotification): void {
+  private sessionUpdate(notification: SessionNotification, interrupted: boolean): void {
     if (notification.sessionId !== this.nativeSessionId || this.processFailed) return;
     if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
-    if (this.replayWindow === "skip") {
+    if (this.replayWindow === "skip" || interrupted) {
       const update = notification.update;
       if (
         update.sessionUpdate === "available_commands_update" ||

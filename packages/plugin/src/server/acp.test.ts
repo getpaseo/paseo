@@ -229,9 +229,14 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
-  it.each(["replay", "skip"] as const)(
-    "handles trailing load updates with %s history",
-    async (history) => {
+  it.each([
+    ["replay", false],
+    ["skip", false],
+    ["replay", true],
+    ["skip", true],
+  ] as const)(
+    "handles trailing load updates with %s history and out-of-turn activity %s",
+    async (history, outOfTurnActivity) => {
       const sessionId = "connector-session";
       const notifyUpdate = (runtime: ConnectorInstance, update: unknown) =>
         runtime.notify("session/update", { sessionId, update });
@@ -265,6 +270,7 @@ describe("runAcpProvider", () => {
           waitForInitialCommands: true,
           initialCommandsTimeoutMs: 10_000,
           loadReplayQuietPeriodMs: 200,
+          outOfTurnActivity,
         },
       }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
       const events: ProviderEvent[] = [];
@@ -276,9 +282,10 @@ describe("runAcpProvider", () => {
           persistence: { version: 1, data: { sessionId } },
         });
         await waitForEvent(events, (event) => event.type === "session.ready");
+        const postReadyText = "Update after readiness";
         notifyUpdate(instances[1], {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "stale history outside the replay window" },
+          content: { type: "text", text: postReadyText },
         });
         notifyUpdate(instances[1], {
           sessionUpdate: "available_commands_update",
@@ -291,15 +298,32 @@ describe("runAcpProvider", () => {
         const items = events
           .filter((event) => event.type === "timeline.item")
           .map((event) => event.item);
-        expect(items).toEqual(
-          history === "skip"
-            ? []
-            : [
+        const replayedItems =
+          history === "replay"
+            ? [
                 expect.objectContaining({ type: "user_message", text: "previous question" }),
                 expect.objectContaining({ type: "assistant_message", text: "previous answer" }),
-              ],
+              ]
+            : [];
+        expect(items).toEqual([
+          ...replayedItems,
+          ...(outOfTurnActivity
+            ? [expect.objectContaining({ type: "assistant_message", text: postReadyText })]
+            : []),
+        ]);
+        expect(events.filter((event) => event.type === "session.turn")).toEqual(
+          outOfTurnActivity
+            ? [
+                {
+                  type: "session.turn",
+                  sessionId: "session-1",
+                  turnId: "acp:autonomous:1",
+                  state: "started",
+                  acceptsFollowUp: true,
+                },
+              ]
+            : [],
         );
-        expect(events.some((event) => event.type === "session.turn")).toBe(false);
       } finally {
         await connection.close();
       }
@@ -2796,6 +2820,14 @@ describe("ACP out-of-turn background activity", () => {
 
   it("cancels an active out-of-turn wakeup and clears background work on interrupt", async () => {
     const { connector, instances } = connectorHarness({
+      async afterMessage(instance, message) {
+        if (!("method" in message) || message.method !== "session/cancel") return;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Reply chunk during Stop"),
+        });
+        await nextTurn();
+      },
       promptUpdates: (text) =>
         text === "Start"
           ? [
