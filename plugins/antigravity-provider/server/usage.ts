@@ -48,6 +48,28 @@ function accountKey(env: ProviderLaunch["env"]): string {
   );
 }
 
+function shortWindow(window: string): string {
+  const trimmed = window.trim();
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "weekly") return "wk";
+  if (normalized === "monthly") return "mo";
+  return trimmed;
+}
+
+function shortGroupName(name: string): string {
+  return name
+    .trim()
+    .replace(/\s+models$/i, "")
+    .trim();
+}
+
+function formatShortLabel(groupName: string, window: string, includeGroup: boolean): string {
+  const period = shortWindow(window);
+  if (!includeGroup) return period;
+  const scope = shortGroupName(groupName);
+  return scope ? `${scope} ${period}` : period;
+}
+
 export class Usage {
   private readonly launches = new Map<string, ProviderLaunch>();
 
@@ -94,7 +116,9 @@ export class Usage {
           throw new Error(data.error || data.response || `agy usage returned ${data.status}`);
         }
         if (!data.command) throw new Error("agy did not return usage data");
-        const windows = data.command.data.groups.flatMap((group) =>
+        const groups = data.command.data.groups;
+        const includeGroup = groups.length > 1;
+        const windows = groups.flatMap((group) =>
           group.buckets.flatMap((bucket) => {
             if (!bucket.disabled && bucket.remaining_fraction == null) return [];
             const used = bucket.disabled ? null : (1 - bucket.remaining_fraction!) * 100;
@@ -102,7 +126,7 @@ export class Usage {
               windowFromUsedPct({
                 id: bucket.id,
                 label: `${group.name} · ${bucket.name}${bucket.disabled ? " · Disabled" : ""}`,
-                shortLabel: `${group.name} ${bucket.window}`,
+                shortLabel: formatShortLabel(group.name, bucket.window, includeGroup),
                 summary: !bucket.disabled && bucket.window === "weekly",
                 utilizationPct: used,
                 resetsAt: bucket.disabled ? null : bucket.reset_time,
