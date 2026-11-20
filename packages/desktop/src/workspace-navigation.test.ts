@@ -10,7 +10,7 @@ describe("desktop workspace navigation", () => {
       parseWorkspaceDeepLinkFromArgv([
         "/Applications/Paseo.app/Contents/MacOS/Paseo",
         "--no-sandbox",
-        "paseo://h/srv_devbox/open-project?path=%2Fhome%2Fmo%2Fworktree",
+        "paseo://h/srv_devbox/open-workspace?path=%2Fhome%2Fmo%2Fworktree",
       ]),
     ).toEqual({ serverId: "srv_devbox", path: "/home/mo/worktree" });
   });

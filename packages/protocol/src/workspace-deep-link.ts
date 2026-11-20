@@ -48,12 +48,12 @@ export function buildWorkspaceDeepLink(target: WorkspaceDeepLinkTarget): string 
   if (!normalized)
     throw new Error("Workspace deep links require a valid server ID and absolute path.");
   const search = new URLSearchParams({ path: normalized.path });
-  return `paseo://h/${encodeURIComponent(normalized.serverId)}/open-project?${search}`;
+  return `paseo://h/${encodeURIComponent(normalized.serverId)}/open-workspace?${search}`;
 }
 
 export function parseWorkspaceDeepLink(input: string): WorkspaceDeepLinkTarget | null {
   if (input.length > MAX_LINK_LENGTH || hasControlCharacters(input)) return null;
-  const match = /^paseo:\/\/h\/(srv_[A-Za-z0-9_-]+)\/open-project\?path=([^&# ]+)$/.exec(input);
+  const match = /^paseo:\/\/h\/(srv_[A-Za-z0-9_-]+)\/open-workspace\?path=([^&# ]+)$/.exec(input);
   if (!match) return null;
 
   try {
