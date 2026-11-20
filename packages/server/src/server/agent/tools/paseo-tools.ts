@@ -1,3 +1,4 @@
+import type { HostInstructionsRuntime } from "../../host-instructions/runtime.js";
 import type { ChangeRequestWatches } from "../change-request-watches/index.js";
 import { changeRequestStatusSchema } from "../../../services/change-request-source.js";
 import { registerPluginTools } from "./plugin-tools.js";
@@ -126,6 +127,7 @@ export interface PaseoToolHostDependencies {
   finishSubscriptions?: () => FinishSubscriptions;
   serverId?: string;
   hosts?: () => ToolHosts;
+  hostInstructions?: HostInstructionsRuntime;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
@@ -1381,6 +1383,87 @@ function createToolCatalog(
       callerAgentId,
       resolveCallerAgent,
     });
+  }
+
+  const instructions = options.hostInstructions;
+  if (instructions) {
+    registerTool(
+      "list_instruction_targets",
+      {
+        title: "List instruction targets",
+        description:
+          "List conversations on other hosts that have granted this daemon permission to send instructions.",
+        inputSchema: {},
+      },
+      async () => ({
+        content: [],
+        structuredContent: ensureValidJson({ targets: instructions.listDestinations() }),
+      }),
+    );
+    registerTool(
+      "send_host_instruction",
+      {
+        title: "Send host instruction",
+        description:
+          "Send a queued instruction to a granted conversation. The receiving host may require approval.",
+        inputSchema: {
+          serverId: z.string().min(1),
+          agentId: z.string().min(1),
+          prompt: z.string().min(1).max(32768),
+        },
+      },
+      async ({ serverId, agentId, prompt }) => ({
+        content: [],
+        structuredContent: ensureValidJson(await instructions.submit(serverId, agentId, prompt)),
+      }),
+    );
+    registerTool(
+      "get_host_instruction_status",
+      {
+        title: "Get host instruction status",
+        description:
+          "Check whether a previously submitted host instruction was approved and delivered.",
+        inputSchema: { id: z.uuid() },
+      },
+      async ({ id }) => ({
+        content: [],
+        structuredContent: ensureValidJson(await instructions.outbox.status(id)),
+      }),
+    );
+    registerTool(
+      "cancel_host_instruction",
+      {
+        title: "Cancel host instruction",
+        description:
+          "Cancel an instruction that has not started. Cancellation may be pending while the receiving host is offline.",
+        inputSchema: { id: z.uuid() },
+      },
+      async ({ id }) => ({
+        content: [],
+        structuredContent: ensureValidJson(await instructions.outbox.cancel(id)),
+      }),
+    );
+    if (callerAgentId) {
+      registerTool(
+        "reply_host_instruction",
+        {
+          title: "Reply to host instruction",
+          description:
+            "Send an explicit text reply from this conversation to the source of its running host instruction.",
+          inputSchema: {
+            id: z.uuid(),
+            sourceId: z.string().min(1).max(256),
+            text: z.string().min(1).max(32768),
+          },
+        },
+        async ({ id, sourceId, text }) => ({
+          content: [],
+          structuredContent: ensureValidJson(
+            await instructions.reply(callerAgentId, sourceId, id, text),
+          ),
+        }),
+      );
+    }
   }
 
   registerTool(

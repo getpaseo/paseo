@@ -9,7 +9,7 @@ import {
   type HostInstruction,
 } from "./inbox.js";
 
-const Receipt = z.object({
+export const HostInstructionReceiptSchema = z.object({
   id: z.uuid(),
   state: HostInstructionStateSchema,
   reply: z.string().max(32_768).optional(),
@@ -19,17 +19,17 @@ const Outgoing = z.object({
   instruction: HostInstructionSchema,
   attempted: z.boolean(),
   cancellationPending: z.boolean(),
-  receipt: Receipt.optional(),
+  receipt: HostInstructionReceiptSchema.optional(),
 });
 const OutboxFile = z.array(Outgoing);
 
 type OutgoingInstruction = z.infer<typeof Outgoing>;
-type InstructionReceipt = z.infer<typeof Receipt>;
+type InstructionReceipt = z.infer<typeof HostInstructionReceiptSchema>;
 
 export interface HostInstructionTransport {
   // A missing receipt indicates that the target cannot confirm the operation yet.
   submit(registrationId: string, instruction: HostInstruction): Promise<InstructionReceipt | null>;
-  status(registrationId: string, id: string): Promise<InstructionReceipt | null>;
+  status(registrationId: string, id: string, expiresAt: number): Promise<InstructionReceipt | null>;
   // A confirmed cancellation must also prevent late submissions with the same id.
   cancel(registrationId: string, instruction: HostInstruction): Promise<InstructionReceipt | null>;
 }
@@ -107,6 +107,16 @@ export class HostInstructionOutbox {
     return this.status(id);
   }
 
+  pendingRegistrations(): string[] {
+    return [
+      ...new Set(
+        this.requests
+          .filter((request) => !terminal(request.receipt?.state))
+          .map((request) => request.registrationId),
+      ),
+    ];
+  }
+
   flush(registrationId: string): Promise<void> {
     const pending = this.flushing.get(registrationId);
     if (pending) return pending;
@@ -130,14 +140,14 @@ export class HostInstructionOutbox {
       if (current.cancellationPending) {
         receipt = await this.transport.cancel(registrationId, current.instruction);
       } else if (current.receipt || this.now() >= current.instruction.expiresAt) {
-        receipt = await this.transport.status(registrationId, id);
+        receipt = await this.transport.status(registrationId, id, current.instruction.expiresAt);
       } else {
         if (!current.attempted) await this.update(id, { attempted: true });
         receipt = await this.transport.submit(registrationId, current.instruction);
       }
 
       if (receipt) {
-        const confirmed = Receipt.parse(receipt);
+        const confirmed = HostInstructionReceiptSchema.parse(receipt);
         if (confirmed.id !== id) throw new Error("Response belongs to a different instruction");
         const cancellationPending =
           this.requireRequest(id).cancellationPending &&

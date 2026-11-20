@@ -64,6 +64,23 @@ failure even if the destination already created the child; inspect it before ret
 See [finish notification lifetime](agent-lifecycle.md#relationships) for registration, acknowledgment,
 and duplicate-delivery semantics. Concurrent prompts gain no turn attribution.
 
+## Allow instructions from another host
+
+On the receiving host, open **Settings → Hosts → [host] → Connections → Allow instructions from another host**.
+Choose a connected sending host and an existing workspace conversation. **Ask each time** holds the
+prompt for approval on this page. **Allow unattended** queues it as soon as it arrives. Both daemons
+need a build with host instructions, and the receiving host must have relay enabled.
+
+Ask an agent on the sending host to use `list_instruction_targets` and `send_host_instruction`.
+Use the receipt with `get_host_instruction_status` or `cancel_host_instruction`. The sending daemon
+retries delivery when the receiver wakes. The receiving daemon waits for a busy conversation to finish
+its current turn. The receiving agent can use `reply_host_instruction` to return an explicit reply.
+
+The destination owns the grant and can revoke it while the source is offline. The instruction relay
+uses its own endpoint identity and accepts only instruction traffic. The workspace conversation
+grant applies to anyone who can direct agents on the sending daemon. Review any ordinary connected-host
+registrations separately if the machines also use general host routing.
+
 ## Connections and recovery
 
 The shared Node connector owns the target grammar and each connection attempt, including a fresh

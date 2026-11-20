@@ -1,3 +1,6 @@
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { createHostClient } from "@getpaseo/client/node";
 import { hashSync } from "bcryptjs";
@@ -398,6 +401,146 @@ async function waitForCapturedLog(
     process.kill("SIGTERM");
     await withTimeout(exited, 10000, "Local relay did not stop");
   };
+
+  test(
+    "connected hosts deliver a restricted relay instruction only after approval",
+    { timeout: 90000 },
+    async () => {
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const sent: string[] = [];
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destination = await createTestPaseoDaemon({
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({
+            onStartTurn: (prompt) => {
+              sent.push(JSON.stringify(prompt));
+            },
+          }),
+        });
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+        const sourceId = sourceClient.getLastServerInfoMessage()!.serverId;
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          title: "Local checks",
+        });
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "grant",
+          sourceId,
+          agentId: agent.id,
+          policy: "ask",
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          agentId: agent.id,
+          workspaceId: registration.workspaceId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+        const mcp = new McpClient({ name: "instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const result = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, prompt: "Run the local check" },
+        });
+        const id = result.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("No submission receipt");
+        await expect
+          .poll(
+            async () =>
+              (await destinationClient.manageHostInstructions({ action: "list" })).requests,
+            { timeout: 20000 },
+          )
+          .toEqual([
+            expect.objectContaining({
+              id,
+              sourceId,
+              agentId: agent.id,
+              prompt: "Run the local check",
+            }),
+          ]);
+        expect(sent).toEqual([]);
+        await destinationClient.manageHostInstructions({
+          action: "decide",
+          sourceId,
+          id,
+          approve: true,
+        });
+        await expect.poll(() => sent.length, { timeout: 15000 }).toBe(1);
+        expect(sent[0]).toContain("Run the local check");
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("completed");
+        const ordinary = createHostClient(registration.offer, {
+          clientId: crypto.randomUUID(),
+          connectTimeoutMs: 3000,
+          reconnect: { enabled: false },
+        });
+        cleanup.push(() => ordinary.close());
+        await expect(ordinary.connect()).rejects.toThrow();
+        await destinationClient.manageHostInstructions({ action: "revoke", id: registration.id });
+        const revoked = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, prompt: "Try again after revocation" },
+        });
+        const revokedId = revoked.structuredContent?.id;
+        if (typeof revokedId !== "string")
+          throw new Error("No submission receipt after revocation");
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id: revokedId },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("revoked");
+        expect(sent).toHaveLength(1);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+      }
+    },
+  );
 
   // Needs to stop and restart the relay, which only the spawned wrangler relay allows.
   test.skipIf(usesExternalRelay)(

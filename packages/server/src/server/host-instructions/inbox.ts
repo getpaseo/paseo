@@ -127,6 +127,11 @@ export class HostInstructionInbox {
     return { id: grant.id, sourceId: grant.sourceId };
   }
 
+  async listGrants(): Promise<HostInstructionGrant[]> {
+    await this.writer.settled();
+    return this.data.grants.map(({ tokenDigest: _secret, ...grant }) => structuredClone(grant));
+  }
+
   async revoke(grantId: string): Promise<void> {
     await this.commit({
       grants: this.data.grants.filter((grant) => grant.id !== grantId),
@@ -227,13 +232,18 @@ export class HostInstructionInbox {
     return structuredClone(this.data.requests);
   }
 
-  async claim(sourceId: string, instructionId: string, currentTarget: HostInstruction["target"]) {
+  async claim(
+    sourceId: string,
+    instructionId: string,
+    currentTarget: HostInstruction["target"] | null,
+  ) {
     await this.expire();
     const request = this.requireRequest(sourceId, instructionId);
     if (request.state !== "queued") return null;
     const grant = this.requireGrant({ id: request.grantId, sourceId });
-    const target = Target.parse(currentTarget);
+    const target = currentTarget === null ? null : Target.parse(currentTarget);
     if (
+      !target ||
       JSON.stringify(target) !== JSON.stringify(request.instruction.target) ||
       !targetPermission(grant, target)
     ) {

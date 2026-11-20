@@ -2870,6 +2870,7 @@ export const ja: TranslationResources = {
         removeErrorMessage: "接続を削除できません",
         timeout: "タイムアウト",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         title: "デバイスをペアリング",
         rowTitle: "デバイスをペアリング",

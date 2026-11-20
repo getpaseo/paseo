@@ -3554,7 +3554,69 @@ export const SubscriptionReleaseResponseSchema = z.object({
   payload: z.object({ requestId: z.string(), subscriptionId: z.string() }),
 });
 
+export const HostInstructionsCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("list") }),
+  z.object({
+    action: z.literal("grant"),
+    sourceId: z.string().min(1).max(256),
+    agentId: z.string().min(1).max(256),
+    policy: z.enum(["ask", "unattended"]),
+  }),
+  z.object({
+    action: z.literal("register"),
+    destinationId: z.string().min(1).max(256),
+    offer: z.string().max(16_384),
+    token: z.string().max(128),
+    agentId: z.string().min(1).max(256),
+    workspaceId: z.string().min(1).max(256),
+  }),
+  z.object({
+    action: z.literal("decide"),
+    sourceId: z.string(),
+    id: z.uuid(),
+    approve: z.boolean(),
+  }),
+  z.object({ action: z.literal("revoke"), id: z.uuid() }),
+]);
+export type HostInstructionsCommand = z.infer<typeof HostInstructionsCommandSchema>;
+export const HostInstructionsRequestSchema = z.object({
+  type: z.literal("host.instructions.manage.request"),
+  requestId: z.string(),
+  command: HostInstructionsCommandSchema,
+});
+export const HostInstructionsResponseSchema = z.object({
+  type: z.literal("host.instructions.manage.response"),
+  payload: z.object({
+    requestId: z.string(),
+    registration: z
+      .object({ id: z.string(), offer: z.string(), token: z.string(), workspaceId: z.string() })
+      .optional(),
+    grants: z
+      .array(
+        z.object({
+          id: z.string(),
+          sourceId: z.string(),
+          agentId: z.string(),
+          policy: z.enum(["ask", "unattended"]),
+        }),
+      )
+      .optional(),
+    requests: z
+      .array(
+        z.object({
+          id: z.string(),
+          sourceId: z.string(),
+          agentId: z.string(),
+          workspaceId: z.string(),
+          prompt: z.string(),
+        }),
+      )
+      .optional(),
+  }),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  HostInstructionsRequestSchema,
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -3981,6 +4043,7 @@ export const ServerInfoStatusPayloadSchema = z
         backgroundAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
+        hostInstructions: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
@@ -7626,6 +7689,7 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  HostInstructionsResponseSchema,
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,

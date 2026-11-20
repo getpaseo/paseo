@@ -57,6 +57,10 @@ test.describe("Settings host page", () => {
     await test.step("connections section shows the seeded connection endpoint", async () => {
       await expectSettingsHeader(page, "Connections");
       await expectHostConnectionsCard(page, port);
+      const instructions = page.getByTestId("host-instructions-section");
+      await expect(instructions).toBeVisible();
+      await expect(instructions.getByText("Ask each time")).toBeVisible();
+      await expect(instructions.getByRole("button", { name: "Allow instructions" })).toBeDisabled();
     });
     await test.step("agents section shows the inject MCP toggle", async () => {
       await openHostSection(page, serverId, "agents");

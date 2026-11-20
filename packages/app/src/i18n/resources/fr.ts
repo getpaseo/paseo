@@ -2905,6 +2905,7 @@ export const fr: TranslationResources = {
         removeErrorMessage: "Impossible de supprimer la connexion",
         timeout: "Délai dépassé",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         title: "Associer des appareils",
         rowTitle: "Associer un appareil",

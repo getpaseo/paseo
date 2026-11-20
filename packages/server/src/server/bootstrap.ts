@@ -1,3 +1,4 @@
+import { HostInstructionsRuntime } from "./host-instructions/runtime.js";
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
@@ -563,6 +564,18 @@ function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger:
 
 function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | string[] {
   return config.trustedProxies ?? ["loopback"];
+}
+
+function resolveRelayRuntimeConfig(config: PaseoDaemonConfig) {
+  const endpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+  const useTls = config.relayUseTls ?? endpoint === "relay.paseo.sh:443";
+  return {
+    enabled: config.relayEnabled ?? true,
+    endpoint,
+    publicEndpoint: config.relayPublicEndpoint ?? endpoint,
+    useTls,
+    publicUseTls: config.relayPublicUseTls ?? useTls,
+  };
 }
 
 function createInitialRelayConfig(config: ResolvedDaemonSettings): MutableDaemonConfig["relay"] {
@@ -1554,6 +1567,20 @@ export async function createPaseoDaemon(
     idleRuntimeCleanup,
   );
 
+  const relayConfig = resolveRelayRuntimeConfig(config);
+  const hostInstructions = await HostInstructionsRuntime.open({
+    paseoHome: config.paseoHome,
+    serverId,
+    logger,
+    agentManager,
+    agentStorage,
+    workspaceRegistry,
+    relay: () => ({
+      ...relayConfig,
+      enabled: daemonConfigStore.get().relay?.enabled ?? relayConfig.enabled,
+    }),
+  });
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -1564,6 +1591,7 @@ export async function createPaseoDaemon(
       return wsServer.agentMessages;
     },
     serverId,
+    hostInstructions,
     hosts: () => {
       if (!wsServer) throw new Error("Daemon is not accepting host operations");
       return wsServer.toolHosts();
@@ -1822,11 +1850,6 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
             });
-            const relayEnabled = config.relayEnabled ?? true;
-            const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
-            const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-            const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
-            const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
             if (boundListenTarget.type === "tcp") {
               logger.info(
                 {
@@ -1867,6 +1890,7 @@ export async function createPaseoDaemon(
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
+                hostInstructions,
               },
               workspaceAutoName,
               workspaceRuntimeStore,
@@ -1907,11 +1931,8 @@ export async function createPaseoDaemon(
                 desktopManaged: config.desktopManaged === true,
                 getRelayConfig: () => ({
                   ...(relayRuntime?.getConfig() ?? {
-                    enabled: daemonConfigStore.get().relay?.enabled ?? relayEnabled,
-                    endpoint: relayEndpoint,
-                    publicEndpoint: relayPublicEndpoint,
-                    useTls: relayUseTls,
-                    publicUseTls: relayPublicUseTls,
+                    ...relayConfig,
+                    enabled: daemonConfigStore.get().relay?.enabled ?? relayConfig.enabled,
                   }),
                   requireProtectedSecurity:
                     daemonConfigStore.get().relay?.requireProtectedSecurity === true,
@@ -1934,13 +1955,7 @@ export async function createPaseoDaemon(
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
-              config: {
-                enabled: relayEnabled,
-                endpoint: relayEndpoint,
-                publicEndpoint: relayPublicEndpoint,
-                useTls: relayUseTls,
-                publicUseTls: relayPublicUseTls,
-              },
+              config: relayConfig,
               logger,
               attachSocket: (ws, metadata) =>
                 admitSecuredRelaySocket(
@@ -2052,6 +2067,7 @@ export async function createPaseoDaemon(
     }
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
+    await hostInstructions.close().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();
