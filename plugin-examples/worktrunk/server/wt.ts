@@ -82,11 +82,15 @@ function tryParseSwitchOutput(stdout: string | undefined): SwitchJsonOutput | nu
       action?: unknown;
       branch?: unknown;
       created_branch?: unknown;
+      from_remote?: unknown;
     };
     if (typeof parsed.path !== "string" || parsed.path.length === 0) return null;
     return {
       path: parsed.path,
-      createdBranch: parsed.created_branch === true,
+      // Worktrunk sets from_remote when switch creates a branch that tracks a remote.
+      createdBranch:
+        parsed.created_branch === true ||
+        (typeof parsed.from_remote === "string" && parsed.from_remote.length > 0),
       ...(typeof parsed.branch === "string" && parsed.branch ? { branch: parsed.branch } : {}),
       ...(typeof parsed.action === "string" ? { action: parsed.action } : {}),
     };

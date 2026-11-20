@@ -10,7 +10,6 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
-  isUntrustedWorktreeCreationIntent,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
@@ -126,17 +125,7 @@ async function createPaseoWorktreeWithPriority(
       expectsInitialAgent: Boolean(input.firstAgentContext),
       background: input.background,
       callerWorkspaceId: input.callerWorkspaceId,
-      ...(createdWorktree.intent.kind === "checkout-change-request" &&
-      createdWorktree.intent.headRepository
-        ? {
-            untrustedSource: {
-              kind: "change_request" as const,
-              forge: createdWorktree.intent.forge,
-              number: createdWorktree.intent.changeRequestNumber,
-              headRepository: createdWorktree.intent.headRepository,
-            },
-          }
-        : {}),
+      untrustedSource: createdWorktree.untrustedSource,
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
@@ -162,7 +151,7 @@ async function createPaseoWorktreeWithPriority(
         worktreeManagers: deps.worktreeManagers,
         worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
         removeReason: "rollback",
-        untrusted: isUntrustedWorktreeCreationIntent(createdWorktree.intent),
+        untrusted: Boolean(createdWorktree.untrustedSource),
       },
       error,
     );

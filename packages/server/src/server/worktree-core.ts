@@ -23,10 +23,13 @@ import {
   type ResolveWorktreeCreationIntentInput,
   UnsupportedForgeCheckoutTargetError,
   type WorktreeCreationIntent,
+  worktreeUntrustedSource,
 } from "./resolve-worktree-creation-intent.js";
 import type { ChangeRequestCheckoutSource, FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
+
+import type { UntrustedWorkspaceSource } from "./workspace-automation-gate.js";
 
 export interface CreateWorktreeCoreInput {
   cwd: string;
@@ -58,6 +61,7 @@ export interface CreateWorktreeCoreDeps {
 export interface CreateWorktreeCoreResult {
   worktree: CreatedWorktree;
   intent: WorktreeCreationIntent;
+  untrustedSource?: UntrustedWorkspaceSource;
   repoRoot: string;
   created: boolean;
 }
@@ -157,13 +161,16 @@ async function createWorktreeCoreWithPriority(
   const transformed = deps.lifecycle
     ? await deps.lifecycle.before("worktree.create.before", request)
     : request;
+  const originalUntrustedSource = worktreeUntrustedSource(intent);
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
+  const untrustedSource = originalUntrustedSource ?? worktreeUntrustedSource(intent);
 
   const { worktree: managedWorktree, preparedBranchOff } = await tryCreateWithWorktreeManager({
     repoRoot,
     transformed,
     intent,
+    untrusted: Boolean(untrustedSource),
     input,
     deps,
   });
@@ -171,6 +178,7 @@ async function createWorktreeCoreWithPriority(
     return {
       worktree: managedWorktree,
       intent,
+      untrustedSource,
       repoRoot,
       created: true,
     };
@@ -187,24 +195,21 @@ async function createWorktreeCoreWithPriority(
       worktreesRoot: input.worktreesRoot,
     }),
     intent,
+    untrustedSource,
     repoRoot,
     created: true,
   };
-}
-
-export function isUntrustedWorktreeCreationIntent(intent: WorktreeCreationIntent): boolean {
-  return intent.kind === "checkout-change-request" && Boolean(intent.headRepository);
 }
 
 async function tryCreateWithWorktreeManager(options: {
   repoRoot: string;
   transformed: PluginWorktreeCreateRequest;
   intent: WorktreeCreationIntent;
+  untrusted: boolean;
   input: Pick<CreateWorktreeCoreInput, "paseoHome" | "worktreesRoot">;
   deps: Pick<CreateWorktreeCoreDeps, "worktreeManagers">;
 }): Promise<{ worktree: CreatedWorktree | null; preparedBranchOff?: PreparedWorktreeBranchOff }> {
-  const { repoRoot, transformed, intent, input, deps } = options;
-  const untrusted = isUntrustedWorktreeCreationIntent(intent);
+  const { repoRoot, transformed, intent, untrusted, input, deps } = options;
   let preparedBranchOff: PreparedWorktreeBranchOff | undefined;
   const worktree = await runPluginWorktreeManagerCheckout({
     cwd: repoRoot,
