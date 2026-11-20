@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
+import { useInView, useReducedMotion } from "framer-motion";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -40,10 +40,6 @@ const SOURCE_MOCKUPS: Record<HubTriggerSourceId, React.ComponentType<SourceMocku
   webhooks: WebhooksSourceMockup,
 };
 
-const PANEL_INITIAL = { opacity: 0, y: 4 } as const;
-const PANEL_ANIMATE = { opacity: 1, y: 0 } as const;
-const PANEL_EXIT = { opacity: 0, y: -4 } as const;
-const PANEL_TRANSITION = { duration: 0.16, ease: "easeOut" } as const;
 const STAGE_IN_VIEW_OPTIONS = { once: true, margin: "-60px" } as const;
 const PANEL_ID = "hub-source-panel";
 
@@ -121,18 +117,7 @@ export function HubAutomationsShowcase() {
           tabIndex={0}
           className="relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:h-[528px]"
         >
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={selected}
-              initial={reduceMotion ? false : PANEL_INITIAL}
-              animate={PANEL_ANIMATE}
-              exit={reduceMotion ? undefined : PANEL_EXIT}
-              transition={PANEL_TRANSITION}
-              className="h-full"
-            >
-              <ActiveMockup active={isInView} reduceMotion={reduceMotion} />
-            </motion.div>
-          </AnimatePresence>
+          <ActiveMockup active={isInView} reduceMotion={reduceMotion} />
         </div>
 
         <figcaption className="min-h-[1.25rem] text-sm text-muted-foreground">

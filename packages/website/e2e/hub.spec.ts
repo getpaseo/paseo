@@ -13,6 +13,20 @@ async function tabIntoNextPreview(page: Page) {
   await page.keyboard.press("Tab");
 }
 
+async function readPreviewOnFocus(page: Page) {
+  return page.getByRole("tabpanel").evaluateHandle((panel) => {
+    const atFocus = { label: "" };
+    panel.addEventListener(
+      "focus",
+      () => {
+        atFocus.label = panel.querySelector('[role="img"]')?.getAttribute("aria-label") ?? "";
+      },
+      { once: true },
+    );
+    return atFocus;
+  });
+}
+
 async function expectSourceLabelFits(page: Page, name: string) {
   const label = page.getByRole("tab", { name }).getByText(name, { exact: true });
   await expect(label).toBeVisible();
@@ -54,10 +68,12 @@ test("the Slack starter forwards the mention and declares a thread reply", async
   await expect(starter).toContainText("slack.reply:");
 });
 
-test("keyboard focus enters the selected preview during its transition", async ({ page }) => {
+test("keyboard focus enters the selected preview with its current content", async ({ page }) => {
   await openHub(page);
+  const atFocus = await readPreviewOnFocus(page);
   await tabIntoNextPreview(page);
   await expect(page.getByRole("tabpanel", { name: /^GitHub/ })).toBeFocused();
+  expect((await atFocus.jsonValue()).label).toMatch(/^GitHub issue/);
 });
 
 test("source names fit on a narrow phone", async ({ page }) => {
