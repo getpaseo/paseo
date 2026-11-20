@@ -6,6 +6,7 @@ import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { runAcpProvider, type AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type {
   ProviderConnection,
   ProviderLaunch,
@@ -13,6 +14,7 @@ import type {
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { sendPreparedPromptToAgent } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -2812,5 +2814,194 @@ test("resumes a goose session saved by the generic ACP provider", async () => {
     await session.close();
   } finally {
     await plugins.shutdown();
+  }
+});
+
+test("preserves a deferred ACP background job on steer and cancels it on explicit Stop through AgentManager", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-deferred-daemon-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  let cancelCount = 0;
+  let promptCount = 0;
+  let notifyAgent: ((message: AcpStreamMessage) => void) | null = null;
+  const registration = runAcpProvider({
+    id: "deferred-acp-daemon",
+    label: "Deferred ACP Daemon",
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+    connector() {
+      let controller!: ReadableStreamDefaultController<AcpStreamMessage>;
+      const readable = new ReadableStream<AcpStreamMessage>({
+        start(ctrl) {
+          controller = ctrl;
+        },
+      });
+      const send = (message: AcpStreamMessage) => controller.enqueue(message);
+      notifyAgent = send;
+      const writable = new WritableStream<AcpStreamMessage>({
+        write(message) {
+          if (!("method" in message)) return;
+          if (message.method === "session/cancel") {
+            cancelCount += 1;
+            return;
+          }
+          if (!("id" in message)) return;
+          if (message.method === "initialize") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { protocolVersion: 1, agentCapabilities: {} },
+            });
+            return;
+          }
+          if (message.method === "session/new") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { sessionId: "acp-s1", configOptions: [] },
+            });
+            return;
+          }
+          if (message.method === "session/prompt") {
+            promptCount += 1;
+            if (promptCount === 1) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-1",
+                    name: "run_command",
+                    title: "Background job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            } else if (promptCount === 2) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "Steered reply" },
+                  },
+                },
+              });
+            } else {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-2",
+                    name: "run_command",
+                    title: "Cancelable job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            }
+            send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+            return;
+          }
+          if (message.method === "session/close") {
+            send({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+        },
+      });
+      return { readable, writable };
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start background job",
+      logger,
+    });
+    expect(first.disposition).toBe("turn_started");
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Follow-up steer through AgentManager preserves the background job without session/cancel.
+    const followUp = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "still working?",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(followUp.disposition).toBe("steered");
+    expect(cancelCount).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Completing the job + reply + usage_update settles the turn cleanly.
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-job-1", status: "completed" },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Background job finished." },
+        },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "usage_update", used: 120, size: 1000 },
+      },
+    });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(cancelCount).toBe(0);
+
+    // Start a second deferred job and explicitly Stop it through AgentManager.
+    const second = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start cancelable job",
+      logger,
+    });
+    if (second.disposition === "turn_started") await second.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    await manager.cancelAgentRun(agent.id);
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(cancelCount).toBe(1);
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
   }
 });

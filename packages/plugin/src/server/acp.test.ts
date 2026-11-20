@@ -3007,4 +3007,489 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("steers a deferred turn without session/cancel and refuses steering while a wire prompt is in flight", async () => {
+    let promptCount = 0;
+    let cancelCount = 0;
+    let holdFirstPrompt: (() => void) | null = null;
+    const { connector, instances } = connectorHarness({
+      handleMessage(_instance, message) {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-steer",
+              name: "run_command",
+              title: "Long background job",
+              status: "in_progress",
+            },
+          });
+          holdFirstPrompt = () => instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Steered ACK"),
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-steer",
+      label: "Deferred Steer",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    expect(connection.capabilities).toContain("prompt.steer");
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "turn-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-steer",
+      );
+
+      // Steering while the wire prompt is still in flight is rejected so callers can fall back.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-too-early",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "early steer" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "steer-too-early" &&
+          event.result.type === "failed",
+      );
+
+      // Resolve the wire prompt so the turn enters deferred mode.
+      holdFirstPrompt!();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // Steering while deferred succeeds in-turn without sending session/cancel.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-1",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "status?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "steer-1" &&
+          event.result.type === "steer" &&
+          event.result.turnId === "acp:turn-1",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "Steered ACK",
+      );
+      expect(cancelCount).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:turn-1" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Background job finishes and replies: the single turn completes cleanly.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-steer", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Job complete."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 300, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:turn-1" &&
+          event.state === "completed",
+      );
+      expect(cancelCount).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps the turn open if a new qualifying tool arrives as the settle timer expires", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            name: "run_command",
+            title: "First job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-race",
+      label: "Deferred Race",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "race-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run jobs" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "tool-1",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // First tool completes and arms the 30ms settle timer.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Starting second job."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 100, size: 1000 },
+      });
+
+      // Right as the 30ms timer fires, a second qualifying tool starts.
+      await new Promise((resolve) => setTimeout(resolve, 28));
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-2",
+          name: "run_command",
+          title: "Second job",
+          status: "in_progress",
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "tool-2" &&
+          event.item.status === "running",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:race-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Once tool-2 finishes and the model replies, the turn completes.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "tool-2", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Second job done."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:race-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("suppresses deferred cancel echoes across a new prompt without filtering opt-out providers", async () => {
+    // Part 1: Opt-out provider (no deferTurnOnRunningTools) still receives late tool updates after cancel.
+    let optOutPrompt: AcpRequestMessage | null = null;
+    const optOut = connectorHarness({
+      handleMessage(instance, message) {
+        if ("method" in message && message.method === "session/cancel" && optOutPrompt) {
+          instance.respond(optOutPrompt, { stopReason: "cancelled" });
+          optOutPrompt = null;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        optOutPrompt = request;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "optout-tool",
+            name: "run_command",
+            title: "Opt-out tool",
+            status: "in_progress",
+          },
+        });
+        return true;
+      },
+    });
+    const optOutReg = runAcpProvider({
+      id: "optout-cancel",
+      label: "Opt-out Cancel",
+      connector: optOut.connector,
+    });
+    const optOutConn = await optOutReg.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const optOutEvents: ProviderEvent[] = [];
+    optOutConn.onEvent((event) => optOutEvents.push(event));
+    try {
+      await optOutConn.send(openInput());
+      await waitForEvent(optOutEvents, (event) => event.type === "session.ready");
+      await optOutConn.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "optout-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "go" }] },
+        },
+      });
+      await waitForEvent(
+        optOutEvents,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "optout-tool",
+      );
+      await optOutConn.send({
+        type: "session.interrupt",
+        requestId: "optout-stop",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        optOutEvents,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:optout-1" &&
+          event.state === "canceled",
+      );
+      optOut.instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "optout-tool",
+          status: "completed",
+          rawOutput: { ok: true },
+        },
+      });
+      await waitForEvent(
+        optOutEvents,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "optout-tool" &&
+          event.item.status === "completed",
+      );
+    } finally {
+      await optOutConn.close();
+    }
+
+    // Part 2: Deferred-canceled tool echo arriving AFTER a new prompt starts is still suppressed.
+    let promptNum = 0;
+    const deferred = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptNum += 1;
+        if (promptNum === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "late-echo",
+              name: "run_command",
+              title: "Canceled tool",
+              status: "in_progress",
+            },
+          });
+        } else {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: textChunk("Second turn"),
+          });
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const deferredReg = runAcpProvider({
+      id: "deferred-echo",
+      label: "Deferred Echo",
+      connector: deferred.connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const deferredConn = await deferredReg.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const deferredEvents: ProviderEvent[] = [];
+    deferredConn.onEvent((event) => deferredEvents.push(event));
+    try {
+      await deferredConn.send(openInput());
+      await waitForEvent(deferredEvents, (event) => event.type === "session.ready");
+      await deferredConn.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "echo-turn-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "first" }] },
+        },
+      });
+      await waitForEvent(
+        deferredEvents,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "late-echo",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await deferredConn.send({
+        type: "session.interrupt",
+        requestId: "echo-stop",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        deferredEvents,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:echo-turn-1" &&
+          event.state === "canceled",
+      );
+
+      // Start a new prompt BEFORE the old tool's failure echo arrives.
+      await deferredConn.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "echo-turn-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "second" }] },
+        },
+      });
+      await waitForEvent(
+        deferredEvents,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:echo-turn-2" &&
+          event.state === "completed",
+      );
+      deferred.instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-echo",
+          status: "failed",
+          rawOutput: { error: "cancelled" },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const toolEvents = deferredEvents.filter(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "late-echo",
+      );
+      expect(toolEvents.at(-1)).toMatchObject({
+        type: "timeline.item",
+        item: { id: "late-echo", status: "canceled" },
+      });
+    } finally {
+      await deferredConn.close();
+    }
+  });
 });
