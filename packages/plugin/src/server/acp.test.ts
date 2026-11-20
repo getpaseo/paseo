@@ -3071,6 +3071,17 @@ describe("ACP out-of-turn background activity", () => {
             : [],
         ),
       ).toEqual(["running", "completed"]);
+
+      const permission = agent.request("session/request_permission", {
+        sessionId: "connector-session",
+        toolCall: { toolCallId: "pending-before-stop", title: "Pending command", rawInput: {} },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      });
+      await expect(permission).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+      expect(events.some((event) => event.type === "session.permission")).toBe(false);
+      expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
+        turnCountAfterCancel,
+      );
     } finally {
       await connection.close();
     }

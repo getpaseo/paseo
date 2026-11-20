@@ -1149,7 +1149,7 @@ class AcpRuntime {
       this.closing ||
       this.processFailed ||
       interrupt?.sent ||
-      this.toolCalls.get(request.toolCall.toolCallId)?.settlement === "canceled" ||
+      this.toolCalls.get(request.toolCall.toolCallId)?.stopped ||
       this.activePrompt?.cancelling ||
       this.autonomousTurn?.cancelling
     ) {
@@ -1278,7 +1278,7 @@ class AcpRuntime {
   ): void {
     const previous = this.toolCalls.get(update.toolCallId);
     // A stopped tool can still report output and terminal echoes after the next prompt.
-    if (previous?.stopped || previous?.settlement === "canceled") return;
+    if (previous?.stopped) return;
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
     const previousStatus = previous?.snapshot.status;
     const backgroundProgress =
@@ -1420,19 +1420,20 @@ class AcpRuntime {
     options?: { preserveInProgressTools?: boolean; turnId?: string },
   ): void {
     for (const [id, record] of this.toolCalls) {
-      const { snapshot, turnId, settlement } = record;
+      const { snapshot, turnId, settlement, stopped } = record;
+      if (stopped) continue;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (options?.turnId && options.turnId !== turnId) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
-      if (settlement) {
-        // Antigravity can acknowledge Stop for a tool whose row already settled.
-        if (state === "canceled" && this.outOfTurnActivity && settlement !== "canceled") {
-          this.toolCalls.set(id, { ...record, stopped: true });
-        }
-        continue;
-      }
-      this.toolCalls.set(id, { ...record, settlement: state });
-      this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
+      // Antigravity can send more tool input after Stop even if its row already settled.
+      if (settlement && (state !== "canceled" || !this.outOfTurnActivity)) continue;
+      this.toolCalls.set(id, {
+        ...record,
+        settlement: settlement ?? state,
+        stopped: state === "canceled",
+      });
+      if (!settlement)
+        this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
     }
     for (const item of this.vendorToolCalls.values()) {
       this.emit({
