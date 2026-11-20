@@ -3188,6 +3188,9 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
+      // Opening a path whose checkout is currently archiving waits on the daemon checkout gate;
+      // wait for the terminal response or transport disconnect instead of timing out while queued.
+      timeout: 0,
     });
   }
 

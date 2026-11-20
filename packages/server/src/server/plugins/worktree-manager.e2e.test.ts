@@ -519,6 +519,7 @@ test("worktree manager rejects pre-existing worktrees, detached HEAD, wrong repo
   await writeFile(
     path.join(pluginDir, "index.server.ts"),
     `import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 export default function contribute(server) {
@@ -651,6 +652,7 @@ test("worktree manager rejects duplicate registration and fails removal when the
   await writeFile(
     path.join(leakyRemoveDir, "index.server.ts"),
     `import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 export default function contribute(server) {
@@ -1237,6 +1239,110 @@ while (!existsSync(${JSON.stringify(releaseTeardownMarker)})) {
   } finally {
     await client1.close();
     await client2.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("worktree manager rejects nested and enclosing secondary worktrees without deleting existing work", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-nested-reject-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const worktreesBase = path.join(root, "wt-layout");
+
+  const pluginDir = path.join(root, "nested-layout-manager");
+  await mkdir(pluginDir);
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "nested-layout-manager", requirements: { paseo: ">=0.17.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create(request) {
+      let target;
+      if (request.branch === "team") {
+        target = path.join(${JSON.stringify(worktreesBase)}, "team");
+      } else if (request.branch === "topic") {
+        target = path.join(${JSON.stringify(worktreesBase)}, "team", "topic");
+      } else if (request.branch === "inner") {
+        target = path.join(${JSON.stringify(worktreesBase)}, "outer", "inner");
+      } else if (request.branch === "outer") {
+        target = path.join(${JSON.stringify(worktreesBase)}, "outer");
+        const staged = path.join(${JSON.stringify(worktreesBase)}, "outer-staged");
+        execFileSync("git", ["worktree", "add", "-b", request.branch, staged, request.baseRef], {
+          cwd: request.repoRoot,
+          stdio: "pipe",
+        });
+        fs.cpSync(staged, target, { recursive: true, force: true });
+        fs.rmSync(staged, { recursive: true, force: true });
+        execFileSync("git", ["worktree", "repair", target], {
+          cwd: request.repoRoot,
+          stdio: "pipe",
+        });
+        return { type: "created", path: target };
+      } else {
+        return;
+      }
+      execFileSync("git", ["worktree", "add", "-b", request.branch, target, request.baseRef], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "created", path: target };
+    },
+    async remove(request) {
+      execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "removed" };
+    },
+  });
+}
+`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(pluginDir)).status).toBe("running");
+
+    // 1. Reject creating a secondary worktree nested inside an existing secondary worktree.
+    const team = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "team" },
+    });
+    expect(team.error).toBeNull();
+    const teamPath = team.workspace!.workspaceDirectory;
+    await writeFile(path.join(teamPath, "team-dirty.txt"), "team-work");
+
+    const nested = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "topic" },
+    });
+    expect(nested.error).toContain("nested inside an existing worktree");
+    await expect(stat(path.join(teamPath, "topic"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(teamPath, "team-dirty.txt"), "utf8")).toBe("team-work");
+
+    // 2. Reject creating a worktree enclosing an existing worktree without deleting the inner worktree.
+    const inner = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "inner" },
+    });
+    expect(inner.error).toBeNull();
+    const innerPath = inner.workspace!.workspaceDirectory;
+    await writeFile(path.join(innerPath, "inner-dirty.txt"), "inner-work");
+
+    const outer = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "outer" },
+    });
+    expect(outer.error).toContain("enclosing an existing worktree");
+    expect(await readFile(path.join(innerPath, "inner-dirty.txt"), "utf8")).toBe("inner-work");
+  } finally {
+    await client.close();
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

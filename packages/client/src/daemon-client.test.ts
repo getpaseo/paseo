@@ -1662,6 +1662,14 @@ test.each([
     }),
   ],
   [
+    "open_project_request",
+    (client: DaemonClient) => client.openProject("/repo/worktree"),
+    (requestId: string) => ({
+      type: "open_project_response" as const,
+      payload: { requestId, workspace: null, error: null },
+    }),
+  ],
+  [
     "create_paseo_worktree_request",
     (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
     (requestId: string) => ({

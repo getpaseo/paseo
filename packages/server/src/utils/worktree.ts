@@ -1835,9 +1835,12 @@ async function cleanupFailedPluginWorktree(
   } catch {
     throw cause;
   }
+  const rootIdentity = normalizePathForIdentity(rootPath);
   if (
-    existingWorktreePaths?.has(normalizePathForIdentity(rootPath)) ||
-    !createRealpathAwarePathMatcher(rootPath)(candidatePath)
+    !createRealpathAwarePathMatcher(rootPath)(candidatePath) ||
+    Array.from(existingWorktreePaths ?? []).some(
+      (existing) => existing === rootIdentity || isPathInsideRoot(rootIdentity, existing),
+    )
   ) {
     throw cause;
   }
@@ -1869,6 +1872,37 @@ async function cleanupFailedPluginWorktree(
   );
 }
 
+async function assertNonOverlappingWorktreePath(input: {
+  worktreeManagerPluginId: string;
+  normalizedPath: string;
+  normalizedIdentity: string;
+  repoCommonDir: string;
+  existingWorktreePaths: ReadonlySet<string> | undefined;
+}): Promise<void> {
+  const {
+    worktreeManagerPluginId,
+    normalizedPath,
+    normalizedIdentity,
+    repoCommonDir,
+    existingWorktreePaths,
+  } = input;
+  if (!existingWorktreePaths) return;
+  const mainRepoRoot = await resolveRepoRootFromGitCommonDir(repoCommonDir).catch(() => undefined);
+  const mainRepoIdentity = mainRepoRoot ? normalizePathForIdentity(mainRepoRoot) : null;
+  for (const existing of existingWorktreePaths) {
+    if (isPathInsideRoot(normalizedIdentity, existing)) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} created a worktree enclosing an existing worktree (${existing}): ${normalizedPath}`,
+      );
+    }
+    if (existing !== mainRepoIdentity && isPathInsideRoot(existing, normalizedIdentity)) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} created a worktree nested inside an existing worktree (${existing}): ${normalizedPath}`,
+      );
+    }
+  }
+}
+
 /**
  * Verify and adopt a worktree created or restored by a worktree manager plugin.
  * Paseo validates Git worktree postconditions and writes `paseo/worktree.json`
@@ -1886,7 +1920,8 @@ async function adoptPluginWorktree(
     expectedChangeRequestHeadSha,
   } = options;
   const normalizedPath = await normalizePathForOwnership(worktreePath);
-  if (existingWorktreePaths?.has(normalizePathForIdentity(normalizedPath))) {
+  const normalizedIdentity = normalizePathForIdentity(normalizedPath);
+  if (existingWorktreePaths?.has(normalizedIdentity)) {
     throw new Error(
       `Plugin ${worktreeManagerPluginId} returned an already-existing worktree: ${normalizedPath}`,
     );
@@ -1912,6 +1947,13 @@ async function adoptPluginWorktree(
       `Plugin ${worktreeManagerPluginId} created a worktree outside the repository: ${normalizedPath}`,
     );
   }
+  await assertNonOverlappingWorktreePath({
+    worktreeManagerPluginId,
+    normalizedPath,
+    normalizedIdentity,
+    repoCommonDir,
+    existingWorktreePaths,
+  });
   const { stdout: branchStdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: normalizedPath,
   });

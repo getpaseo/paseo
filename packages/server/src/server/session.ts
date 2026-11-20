@@ -250,6 +250,7 @@ import {
   createRealpathAwarePathMatcher,
   expandTilde,
   isRealpathInsideRoot,
+  normalizePathForIdentity,
 } from "../utils/path.js";
 import {
   searchDirectoryEntries,
@@ -6555,12 +6556,22 @@ export class Session {
     const normalizedCwd = resolve(cwd);
     const matchesCwd = createRealpathAwarePathMatcher(normalizedCwd);
     const workspaces = await this.workspaceRegistry.listAll();
-    const matchingWorkspace = workspaces.find(
-      (workspace) =>
-        matchesCwd(workspace.cwd) ||
-        (workspace.worktreeRoot !== null &&
-          isRealpathInsideRoot(workspace.worktreeRoot, normalizedCwd)),
-    );
+    let matchingWorkspace = workspaces.find((workspace) => matchesCwd(workspace.cwd));
+    if (!matchingWorkspace) {
+      let bestDepth = -1;
+      for (const workspace of workspaces) {
+        if (
+          workspace.worktreeRoot !== null &&
+          isRealpathInsideRoot(workspace.worktreeRoot, normalizedCwd)
+        ) {
+          const depth = normalizePathForIdentity(workspace.worktreeRoot).length;
+          if (depth > bestDepth) {
+            bestDepth = depth;
+            matchingWorkspace = workspace;
+          }
+        }
+      }
+    }
     let checkoutPath = normalizedCwd;
     if (matchingWorkspace) {
       checkoutPath = await resolveWorkspaceBackingPath(matchingWorkspace, {

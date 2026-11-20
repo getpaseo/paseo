@@ -19,7 +19,7 @@ import type {
   WorkspaceArchiveContext,
   WorkspaceRegistry,
 } from "./workspace-registry.js";
-import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
@@ -687,7 +687,7 @@ export async function archiveWorkspaceContents(
 }
 
 // True when, after archiving
-// the in-scope records, no active workspace still points at targetDir. Derived
+// the in-scope records, no active workspace still points at or inside targetDir. Derived
 // from records each call — no stored counter.
 async function isDirectoryUnreferenced(
   activeWorkspaces: ActiveWorkspaceRef[],
@@ -700,7 +700,13 @@ async function isDirectoryUnreferenced(
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
     const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
-    if (matchesTarget(backingDirectory.path)) return false;
+    if (
+      matchesTarget(backingDirectory.path) ||
+      isRealpathInsideRoot(target, backingDirectory.path) ||
+      isRealpathInsideRoot(target, workspace.cwd)
+    ) {
+      return false;
+    }
   }
   return true;
 }
