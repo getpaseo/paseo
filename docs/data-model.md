@@ -582,12 +582,17 @@ host, kinds, and ids. Opening a cached workspace uses exact workspace and projec
 directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
-checkpoint are also applied in one transaction. Reads wait for accepted changes to reach storage,
+checkpoint are also applied in one transaction. A stored checkpoint carries a version. When a writer
+bug could have stored a checkpoint without its directory, bump the version: older checkpoints are
+rejected on read, cached rows still paint, and each host re-syncs its directory once. Reads wait for
+accepted changes to reach storage,
 then retry only when a requested row changes during the read. Unrelated agent streams do not
 invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
 the affected reads.
 
-The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
+The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. After an
+eviction, only a baseline replacement stores that host's directory again. Mutations queued around
+the eviction are dropped when they are written, so a checkpoint never outlives its rows. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
