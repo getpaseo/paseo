@@ -83,13 +83,26 @@ describe("resolveUsageView", () => {
     expect(resolveUsageView({ ...base, query: undefined })).toEqual({ kind: "loading" });
     expect(
       resolveUsageView({ ...base, query: { data: [], error: null, isFetching: true } }),
-    ).toEqual({ kind: "ready", reports: [], isRefreshing: true });
+    ).toEqual({ kind: "ready", reports: [], isRefreshing: true, refreshFailed: false });
     expect(
       resolveUsageView({
         ...base,
         query: { data: undefined, error: new Error("boom"), isFetching: false },
       }),
     ).toEqual({ kind: "error", message: "boom" });
+  });
+
+  it("shows a failed Refresh all alongside the reports still on screen", () => {
+    const reports = [entry({})];
+    expect(
+      resolveUsageView({
+        hostLabel: "Laptop",
+        isConnected: true,
+        supportsUsage: true,
+        query: ready(reports),
+        refreshState: "failed",
+      }),
+    ).toEqual({ kind: "ready", reports, isRefreshing: false, refreshFailed: true });
   });
 });
 
@@ -203,22 +216,13 @@ describe("displayPercent", () => {
 });
 
 describe("resolveUsageRefresh", () => {
-  const cached = entry({});
-  const failed: UsageReportEntry = { ...cached, refreshFailure: "card" };
-
   it("is pending while a refresh runs, even after an earlier failure", () => {
-    expect(resolveUsageRefresh(true, failed)).toBe("pending");
+    expect(resolveUsageRefresh({ isPending: true, isError: true })).toBe("pending");
   });
 
-  it("shows a card error for a failed card refresh", () => {
-    expect(resolveUsageRefresh(false, failed)).toBe("failed");
-    expect(resolveUsageRefresh(false, { ...cached, refreshFailure: "list" })).toBe("idle");
-  });
-
-  it("clears the card error when another surface refreshes the report successfully", () => {
-    const newer = { ...cached, fetchedAt: "2026-01-01T00:06:00.000Z" };
-    const [recovered] = upsertReport([failed], newer);
-    expect(resolveUsageRefresh(false, recovered!)).toBe("idle");
+  it("reports the request outcome independently of the reading", () => {
+    expect(resolveUsageRefresh({ isPending: false, isError: true })).toBe("failed");
+    expect(resolveUsageRefresh({ isPending: false, isError: false })).toBe("idle");
   });
 });
 
@@ -395,7 +399,7 @@ it("uses the quota observation time for pace and keeps the reading after a faile
     successfulAt,
     forecastAt: observedAt,
   });
-  expect(resolveUsageReport({ ...report, refreshFailure: "card" }, i18n.t)).toMatchObject({
+  expect(resolveUsageReport({ ...report, forecastStale: true }, i18n.t)).toMatchObject({
     windows: success.report.windows,
     successfulAt,
     forecastAt: null,
@@ -408,7 +412,7 @@ it("keeps cached quota and hides its forecast when Refresh all fails before a ne
   const refreshedAt = "2026-01-01T00:06:00.000Z";
   const streamed = { ...other, fetchedAt: refreshedAt };
   const attempted = [before, other];
-  const failed = markUsageRefreshFailure([before, streamed], attempted, "list")!;
+  const failed = markUsageRefreshFailure([before, streamed], attempted)!;
 
   expect(resolveUsageReport(failed[0]!, i18n.t)).toMatchObject({
     forecastAt: null,

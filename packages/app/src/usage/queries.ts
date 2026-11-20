@@ -108,7 +108,7 @@ async function listReports(
   try {
     return await streamReports({ queryClient, queryKey, serverId, forceRefresh });
   } catch (error) {
-    recordUsageRefreshFailure(queryClient, queryKey, attempted, "list");
+    recordUsageRefreshFailure(queryClient, queryKey, attempted);
     throw error;
   }
 }
@@ -117,12 +117,11 @@ function recordUsageRefreshFailure(
   queryClient: QueryClient,
   queryKey: QueryKey,
   attempted: readonly UsageReportEntry[],
-  failure: NonNullable<UsageReportEntry["refreshFailure"]>,
 ): void {
   const { dataUpdatedAt } = queryClient.getQueryState(queryKey) ?? {};
   queryClient.setQueryData<UsageReportEntry[]>(
     queryKey,
-    (current) => markUsageRefreshFailure(current, attempted, failure),
+    (current) => markUsageRefreshFailure(current, attempted),
     { updatedAt: dataUpdatedAt },
   );
 }
@@ -175,9 +174,12 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  const refresh = useCallback(() => {
-    void refreshReports(queryClient, serverId).catch(() => undefined);
-  }, [queryClient, serverId]);
+  const mutation = useMutation({
+    mutationKey: [...usageReportsQueryKey(serverId), "refresh"],
+    mutationFn: (hostId: string) => refreshReports(queryClient, hostId),
+  });
+  const { mutate, variables } = mutation;
+  const refresh = useCallback(() => mutate(serverId), [mutate, serverId]);
   const { t } = useTranslation();
   const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
   const view = resolveUsageView(
@@ -187,6 +189,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
       isConnected,
       supportsUsage: isSupported,
       query: toQueryState(query),
+      refreshState: variables === serverId ? resolveUsageRefresh(mutation) : "idle",
     },
     t,
   );
@@ -292,16 +295,16 @@ export function useReportRefresh(
       ? usageReportsQueryKey(serverId)
       : agentUsageQueryKey(serverId, agentId, usageScopeKey);
   const mutation = useMutation({
+    mutationKey: [...queryKey, "refresh", entry.id],
     mutationFn: (attempted: UsageReportEntry) => getReport(serverId, attempted.id, true, agentId),
     onSuccess: (report, attempted) => {
       queryClient.setQueryData<UsageReportEntry[]>(queryKey, (reports) =>
         reports ? replaceReport(reports, attempted.id, report) : reports,
       );
     },
-    onError: (_error, attempted) =>
-      recordUsageRefreshFailure(queryClient, queryKey, [attempted], "card"),
+    onError: (_error, attempted) => recordUsageRefreshFailure(queryClient, queryKey, [attempted]),
   });
-  const { mutate, isPending } = mutation;
+  const { mutate } = mutation;
   const refresh = useCallback(() => mutate(entry), [mutate, entry]);
-  return { refresh, refreshState: resolveUsageRefresh(isPending, entry) };
+  return { refresh, refreshState: resolveUsageRefresh(mutation) };
 }

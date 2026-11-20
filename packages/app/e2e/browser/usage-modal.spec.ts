@@ -879,15 +879,52 @@ test("Refresh all keeps quota visible and restores the forecast after a timeout"
 
     await timeOutUsageRefresh(page, transport);
     await expectQuota(page, "40% used", null);
+    await expectUsageRefreshError(page).toBeVisible();
 
     await login.setReport(usageReading(reading, 10));
     transport.releaseHeldClientRequest();
     await refreshAllUsage(page);
     await expectQuota(page, "10% used", "~50% left at reset");
+    await expectUsageRefreshError(page).toBeHidden();
   } finally {
     await login.cleanup();
   }
 });
+
+test("a card refresh timeout is visible alongside a newer quota forecast", async ({ page }) => {
+  const reading = new Date();
+  const login = await installLoginUsage(usageReading(reading, 40));
+  try {
+    const transport = await installDaemonWebSocketGate(page);
+    await openCompactUsageWithClock(page, reading);
+    await expectQuota(page, "40% used", /runs out in /);
+
+    await delayCardRefreshResponse(page, transport);
+    await login.setReport(usageReading(reading, 10));
+    await refreshAllUsage(page);
+    await expectQuota(page, "10% used", "~50% left at reset");
+
+    await advanceUsageClock(page, 61_000);
+    await expectUsageRefreshError(page).toBeVisible();
+    await expectQuota(page, "10% used", "~50% left at reset");
+  } finally {
+    await login.cleanup();
+  }
+});
+
+function expectUsageRefreshError(page: Page) {
+  return expect(usageModal(page).getByText("Unable to refresh usage", { exact: true }));
+}
+
+async function delayCardRefreshResponse(
+  page: Page,
+  transport: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+) {
+  await expect(page.getByRole("button", { name: "Refresh all", exact: true })).toBeEnabled();
+  transport.holdNextServerMessage("usage.list_reports.response");
+  await refreshLoginUsage(page);
+  await transport.waitForHeldServerMessage("usage.list_reports.response");
+}
 
 function usageReading(observed: Date, usedPct: number): UsageReport {
   return {

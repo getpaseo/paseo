@@ -5,7 +5,7 @@ import type {
 
 export interface UsageReportEntry extends WireUsageReportEntry {
   /** A refresh failed while this reading was cached. */
-  refreshFailure?: "card" | "list";
+  forecastStale?: true;
 }
 export type UsageReport = UsageReportEntry["report"];
 export type UsageTone = ProviderUsageTone;
@@ -20,4 +20,4 @@ export type UsageView =
   | { kind: "unavailable"; message: string }
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; reports: UsageReportEntry[]; isRefreshing: boolean };
+  | { kind: "ready"; reports: UsageReportEntry[]; isRefreshing: boolean; refreshFailed: boolean };

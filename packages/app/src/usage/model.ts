@@ -38,12 +38,15 @@ export function usageWindowRowLabel(input: {
   return `${input.pinLabel}, ${summary}`;
 }
 
-/** A user-requested refresh of one report. The previous report stays on screen throughout. */
+/** The outcome of a user-requested usage refresh. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 
-export function resolveUsageRefresh(isPending: boolean, entry: UsageReportEntry): UsageRefresh {
-  if (isPending) return "pending";
-  if (entry.refreshFailure === "card") return "failed";
+export function resolveUsageRefresh(mutation: {
+  isPending: boolean;
+  isError: boolean;
+}): UsageRefresh {
+  if (mutation.isPending) return "pending";
+  if (mutation.isError) return "failed";
   return "idle";
 }
 
@@ -51,12 +54,11 @@ export function resolveUsageRefresh(isPending: boolean, entry: UsageReportEntry)
 export function markUsageRefreshFailure(
   current: UsageReportEntry[] | undefined,
   attempted: readonly UsageReportEntry[],
-  failure: NonNullable<UsageReportEntry["refreshFailure"]>,
 ): UsageReportEntry[] | undefined {
   const attemptedAt = new Map(attempted.map((entry) => [entry.id, entry.fetchedAt]));
   return current?.map((entry) =>
-    attemptedAt.get(entry.id) === entry.fetchedAt && entry.refreshFailure !== "card"
-      ? { ...entry, refreshFailure: failure }
+    attemptedAt.get(entry.id) === entry.fetchedAt && !entry.forecastStale
+      ? { ...entry, forecastStale: true }
       : entry,
   );
 }
@@ -83,9 +85,7 @@ export function replaceReport(
 function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
   const shownAt = Date.parse(shown.fetchedAt);
   const arrivingAt = Date.parse(arriving.fetchedAt);
-  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.refreshFailure)
-    ? shown
-    : arriving;
+  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.forecastStale) ? shown : arriving;
 }
 
 /**
@@ -134,10 +134,11 @@ export function resolveUsageView(
     isConnected: boolean;
     supportsUsage: boolean;
     query: UsageQueryState | undefined;
+    refreshState?: UsageRefresh;
   },
   t: TFunction = i18n.t,
 ): UsageView {
-  const { hostLabel, isConnected, supportsUsage, query } = input;
+  const { hostLabel, isConnected, supportsUsage, query, refreshState } = input;
   if (!isConnected)
     return {
       kind: "unavailable",
@@ -152,7 +153,12 @@ export function resolveUsageView(
   if (input.enabled === false)
     return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
   if (query?.data) {
-    return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
+    return {
+      kind: "ready",
+      reports: query.data,
+      isRefreshing: query.isFetching || refreshState === "pending",
+      refreshFailed: refreshState === "failed",
+    };
   }
   if (query?.error) {
     return {
@@ -268,7 +274,7 @@ export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
     else messages.push(usageProblemText(entry.report, t));
   }
   const forecastAt =
-    snapshot && !snapshot.retained && !entry.refreshFailure
+    snapshot && !snapshot.retained && !entry.forecastStale
       ? (snapshot.report.observedAt ?? snapshot.successfulAt)
       : null;
   return {
