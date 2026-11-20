@@ -421,7 +421,6 @@ export interface CreateGitLabChangeRequestSourceOptions {
     args: string[],
     options: { cwd: string; envOverlay?: Record<string, string> },
   ): Promise<{ stdout: string; stderr: string }>;
-  isAuthError(error: unknown): boolean;
   isCommandError(error: unknown): error is Error & { stderr: string; stdout?: string };
   createAuthError(stderr: string): Error;
   createCommandError(params: {
@@ -440,7 +439,6 @@ export function createGitLabChangeRequestSource(
   options: CreateGitLabChangeRequestSourceOptions,
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
-  const profiles = new Map<string, { host: string; prefix: string }>();
 
   async function readConfig(host: string, key: string): Promise<string> {
     const config = await options.runCommand(["config", "get", key, "--host", host], {
@@ -452,31 +450,36 @@ export function createGitLabChangeRequestSource(
 
   async function resolveWatchProfile(identity: GitLabMergeRequestIdentity) {
     const { host, hostWithPort } = identity;
-    const cached = profiles.get(hostWithPort);
-    if (cached) return cached;
     if (hostWithPort === GITLAB_CLOUD_HOST) return { host, prefix: "" };
 
-    // glab login records the API host under the profile key. A port in the web
-    // URL can have its own profile or use a bare-host profile with an API port.
-    const exactApiHost = hostWithPort !== host ? await readConfig(hostWithPort, "api_host") : "";
-    const profileHost = exactApiHost ? hostWithPort : host;
-    await options.runCommand(["auth", "status", "--hostname", profileHost], {
-      cwd: process.cwd(),
-      envOverlay: { GITLAB_HOST: profileHost },
-    });
+    async function verifyProfile(profileHost: string): Promise<void> {
+      await options.runCommand(["auth", "status", "--hostname", profileHost], {
+        cwd: process.cwd(),
+        envOverlay: { GITLAB_HOST: profileHost },
+      });
+    }
+
+    // Config values can come from environment overrides even when a profile is
+    // absent. Check authentication before selecting the port-specific profile.
+    let profileHost = hostWithPort;
+    try {
+      await verifyProfile(profileHost);
+    } catch (error) {
+      if (hostWithPort === host) throw error;
+      profileHost = host;
+      await verifyProfile(profileHost);
+    }
 
     const trimSlashes = /^\/+|\/+$/g;
     let prefix = (await readConfig(profileHost, "subfolder")).replace(trimSlashes, "");
     if (!prefix) {
-      const apiHost = exactApiHost || (await readConfig(profileHost, "api_host"));
+      const apiHost = await readConfig(profileHost, "api_host");
       if (apiHost) {
         const apiUrl = new URL(apiHost.includes("://") ? apiHost : `https://${apiHost}`);
         prefix = apiUrl.pathname.replace(trimSlashes, "");
       }
     }
-    const profile = { host: profileHost, prefix: decodeURI(prefix) };
-    profiles.set(hostWithPort, profile);
-    return profile;
+    return { host: profileHost, prefix: decodeURI(prefix) };
   }
 
   function parseJsonResponseBody<T>(params: {
@@ -897,11 +900,6 @@ export function createGitLabChangeRequestSource(
     now,
     pollIntervalMs: options.pollIntervalMs,
     initialDelayMs: options.initialDelayMs,
-    onError(error, host) {
-      if (options.isAuthError(error)) {
-        profiles.delete(host);
-      }
-    },
   });
 
   return {
@@ -911,7 +909,6 @@ export function createGitLabChangeRequestSource(
       return poller.observe(url, callbacks);
     },
     dispose() {
-      profiles.clear();
       poller.dispose();
     },
   };

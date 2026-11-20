@@ -524,7 +524,7 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("verifies self-hosted auth once, honors 429 Retry-After, and skips remaining pages on release", async () => {
+  it("honors a self-hosted rate limit before checking authentication again", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_700_000_000_000);
     const mrUrl = "https://git.corp.internal/team/app/-/merge_requests/3";
@@ -591,9 +591,9 @@ describe("GitLab ChangeRequestSource polling", () => {
       await vi.advanceTimersByTimeAsync(44_999);
       expect(mrCalls).toBe(1);
 
-      // Resumes at 45s without re-running auth status, and tolerates 404 on /approvals (CE)
+      // Resumes at 45s and checks the current CLI profile.
       await vi.advanceTimersByTimeAsync(1);
-      expect(authChecks).toBe(1);
+      expect(authChecks).toBe(2);
       expect(mrCalls).toBe(2);
       expect(snapshots).toHaveLength(1);
       expect(snapshots[0]!.headSha).toBe("xyz");
@@ -978,7 +978,47 @@ describe("GitLab ChangeRequestSource polling", () => {
     },
   );
 
-  it.each(["bare", "port"])(
+  it("rereads the profile's subfolder when the installer changes it", async () => {
+    vi.useFakeTimers();
+    let folder = "gitlab";
+    const mrUrl = () => `https://gitlab.example.org/${folder}/team/app/-/merge_requests/1`;
+    const { runner } = createFakeGlabRunner((args) => {
+      if (args[0] === "auth") return { stdout: "", stderr: "" };
+      if (args[0] === "config")
+        return { stdout: args[2] === "subfolder" ? folder : "", stderr: "" };
+      const endpoint = args.at(-1)!;
+      if (endpoint === "projects/team%2Fapp/merge_requests/1") {
+        return httpJson({ iid: 1, state: "opened", web_url: mrUrl(), sha: folder });
+      }
+      if (endpoint.startsWith("projects/team%2Fapp/merge_requests/1/discussions?")) {
+        return httpJson([]);
+      }
+      return httpJson({ message: "Project not found" }, {}, "404 Not Found");
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    const observer = {
+      async snapshot(snapshot: ChangeRequestSnapshot) {
+        snapshots.push(snapshot);
+      },
+      error: (error: unknown) => errors.push(error),
+    };
+    try {
+      const release = service.changeRequests!.observe(mrUrl(), observer);
+      await vi.advanceTimersByTimeAsync(25);
+      release();
+      folder = "new";
+      service.changeRequests!.observe(mrUrl(), observer);
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([]);
+      expect(snapshots.map(({ headSha }) => headSha)).toEqual(["gitlab", "new"]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it.each(["bare", "bare with API host override", "port"])(
     "watches a custom-port instance with a %s CLI profile",
     async (profile) => {
       vi.useFakeTimers();
@@ -992,11 +1032,16 @@ describe("GitLab ChangeRequestSource polling", () => {
 
       const { runner, calls } = createFakeGlabRunner((args, options) => {
         if (args[0] === "auth" && args[1] === "status") {
+          if (args.at(-1) !== profileHost) {
+            throw new Error("There is no authenticated profile for this hostname");
+          }
           expect(args).toEqual(["auth", "status", "--hostname", profileHost]);
           return { stdout: "Logged in", stderr: "" };
         }
         if (args[0] === "config") {
-          const apiHost = args[2] === "api_host" && args.at(-1) === profileHost ? authority : "";
+          const override = profile === "bare with API host override";
+          const apiHost =
+            args[2] === "api_host" && (override || args.at(-1) === profileHost) ? authority : "";
           return { stdout: apiHost, stderr: "" };
         }
         const expected =
@@ -1054,12 +1099,9 @@ describe("GitLab ChangeRequestSource polling", () => {
         await vi.advanceTimersByTimeAsync(10_000);
         await vi.advanceTimersByTimeAsync(10_000);
         expect(snapshots.map((s) => s.state)).toEqual(["open", "open", "merged"]);
-        expect(calls.find(({ args }) => args[0] === "auth")?.args).toEqual([
-          "auth",
-          "status",
-          "--hostname",
-          profileHost,
-        ]);
+        expect(
+          calls.find(({ args }) => args[0] === "auth" && args.at(-1) === profileHost)?.args,
+        ).toEqual(["auth", "status", "--hostname", profileHost]);
         release();
       } finally {
         forgeResolver.dispose();
