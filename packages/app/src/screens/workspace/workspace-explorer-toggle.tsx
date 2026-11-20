@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { PanelRight } from "lucide-react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { WINDOW_NO_DRAG_DATASET } from "@/components/desktop/titlebar-drag-region";
 import { HeaderToggleButton, headerIconSlotStyle } from "@/components/headers/header-toggle-button";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import {
@@ -85,15 +86,25 @@ export function useWorkspaceExplorerControls({
     };
 
     if (inDesktopTitlebar) {
-      // The button stays at the window edge while the rail beneath it changes.
+      // Keep the button in the header Tab order. The active rail carves its slot out of the drag region.
       const headerSlot = expanded ? null : (
-        <View pointerEvents="none" style={[headerIconSlotStyle.slot, styles.headerAction]} />
+        <View
+          pointerEvents="none"
+          style={[headerIconSlotStyle.slot, styles.headerAction]}
+          dataSet={WINDOW_NO_DRAG_DATASET}
+        />
       );
       return {
         inDesktopTitlebar,
         headerAction: headerSlot,
         compactAction: headerSlot,
-        dockAction: <View pointerEvents="none" style={headerIconSlotStyle.slot} />,
+        dockAction: (
+          <View
+            pointerEvents="none"
+            style={[headerIconSlotStyle.slot, styles.dockAction]}
+            dataSet={WINDOW_NO_DRAG_DATASET}
+          />
+        ),
         titlebarAction: (
           <View pointerEvents="box-none" style={styles.titlebarSlot}>
             <WorkspaceExplorerToggle {...props} mobile={false} />
@@ -124,6 +135,10 @@ export function useWorkspaceExplorerControls({
 const styles = StyleSheet.create((theme) => ({
   headerAction: {
     marginRight: { xs: 0, md: -theme.spacing[2] },
+  },
+  dockAction: {
+    // The dock divider is absolutely positioned. Match the other headers' content center.
+    marginBottom: theme.borderWidth[1],
   },
   titlebarSlot: {
     position: "absolute",

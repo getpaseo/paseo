@@ -76,31 +76,38 @@ async function recordExplorerToggle(button: Locator) {
   }
 }
 
-async function expectExplorerToggleAboveDragRegions(toggle: Locator) {
-  const dragRegions = await toggle.evaluate((button) => {
+async function expectExplorerToggleHasNativeClickArea(toggle: Locator) {
+  const regions = await toggle.evaluate((button) => {
     const rect = button.getBoundingClientRect();
     const x = rect.x + rect.width / 2;
     const y = rect.y + rect.height / 2;
-    const overlapping = [...document.querySelectorAll('[style*="app-region"]')].filter((region) => {
-      if (getComputedStyle(region).getPropertyValue("-webkit-app-region") !== "drag") return false;
-      const bounds = region.getBoundingClientRect();
-      return bounds.left <= x && x < bounds.right && bounds.top <= y && y < bounds.bottom;
-    });
-    return {
-      overlapping: overlapping.length,
-      afterToggle: overlapping.filter(
-        (region) => button.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).length,
-    };
+    return [
+      ...document.querySelectorAll('[style*="app-region"], [data-window-no-drag], [role="button"]'),
+    ]
+      .filter((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.left <= x && x < bounds.right && bounds.top <= y && y < bounds.bottom;
+      })
+      .map((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region"))
+      .filter((region) => region === "drag" || region === "no-drag");
   });
-  expect(dragRegions.overlapping).toBeGreaterThan(0);
-  expect(dragRegions.afterToggle).toBe(0);
+  expect(regions).toContain("drag");
+  expect(regions.at(-1)).toBe("no-drag");
+}
+
+async function expectExplorerToggleInHeaderTabOrder(page: Page, expanded: boolean) {
+  const toggle = explorerToggle(page, expanded);
+  await toggle.focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Workspace actions", exact: true })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(toggle).toBeFocused();
 }
 
 async function expectExplorerToggleToHoldPosition(page: Page, expanded: boolean) {
   const toggle = explorerToggle(page, expanded);
   await expect(toggle).toBeVisible();
-  await expectExplorerToggleAboveDragRegions(toggle);
+  await expectExplorerToggleHasNativeClickArea(toggle);
   const { before, frames } = await recordExplorerToggle(toggle);
   await expect(explorerToggle(page, !expanded)).toBeVisible();
   expect(before.width).toBeGreaterThan(0);
@@ -116,7 +123,9 @@ test("keeps the Mac Explorer toggle in place across open and close", async ({
 
   const { workspaceId } = await withWorkspace();
   await gotoWorkspace(page, workspaceId);
+  await expectExplorerToggleInHeaderTabOrder(page, false);
   await expectExplorerToggleToHoldPosition(page, false);
+  await expectExplorerToggleInHeaderTabOrder(page, true);
   await expectExplorerToggleToHoldPosition(page, true);
 
   await page.setViewportSize({ width: 930, height: 900 });
