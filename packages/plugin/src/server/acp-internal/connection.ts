@@ -376,6 +376,7 @@ type DeferredTurnOutcome =
 
 interface DeferredTurnState {
   replyOpen: boolean;
+  replySettled: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   resolve(outcome: DeferredTurnOutcome): void;
 }
@@ -807,7 +808,7 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       permissionId,
     });
-    if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
+    if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
   }
 
   async configure(
@@ -1116,7 +1117,7 @@ class AcpRuntime {
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     return new Promise((resolve) => {
       this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
-      if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
       this.emit({
         type: "session.permission",
         sessionId: this.options.boundarySessionId,
@@ -1199,7 +1200,8 @@ class AcpRuntime {
         if (update.sessionUpdate === "agent_message_chunk") {
           this.activePrompt.deferred.replyOpen = true;
         }
-        this.scheduleDeferredSettle("quiet");
+        this.activePrompt.deferred.replySettled = false;
+        this.scheduleDeferredSettle();
       }
       return;
     }
@@ -1310,7 +1312,10 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
-      if (this.activePrompt?.deferred?.replyOpen) this.scheduleDeferredSettle("reply");
+      if (this.activePrompt?.deferred?.replyOpen) {
+        this.activePrompt.deferred.replySettled = true;
+        this.scheduleDeferredSettle();
+      }
       return;
     }
     if (update.sessionUpdate === "compaction_update") {
@@ -1325,7 +1330,7 @@ class AcpRuntime {
           status: update.status === "completed" ? "completed" : "loading",
         },
       });
-      if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
     }
   }
 
@@ -1399,8 +1404,9 @@ class AcpRuntime {
     if (this.activePrompt?.deferred) {
       if (isOpen && this.toolKeepsTurnOpen(snapshot)) {
         this.activePrompt.deferred.replyOpen = false;
+        this.activePrompt.deferred.replySettled = false;
       }
-      this.scheduleDeferredSettle("quiet");
+      this.scheduleDeferredSettle();
     }
   }
 
@@ -1520,54 +1526,58 @@ class AcpRuntime {
   private steerDeferredPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
     const active = this.activePrompt;
     const deferred = active?.deferred;
-    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
+    const rejectSteer = (message: string) => {
       this.emit({
         type: "session.prompt_result",
         sessionId: this.options.boundarySessionId,
         clientMessageId: input.prompt.clientMessageId,
-        result: {
-          type: "failed",
-          error: {
-            message: "ACP session can only steer while waiting on deferred background tools",
-          },
-        },
+        result: { type: "failed", error: { message } },
       });
+    };
+    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
+      rejectSteer("ACP session can only steer while waiting on deferred background tools");
       return;
     }
-    if (input.prompt.clearPendingPermissions) {
-      this.finishTurnPermissions(active.turnId);
-    }
-    if (deferred.timer) {
-      clearTimeout(deferred.timer);
-      deferred.timer = null;
-    }
-    deferred.replyOpen = false;
-    active.wirePromptsInFlight += 1;
     const prompt = toAcpPrompt(input.prompt);
-    this.replayWindow = null;
-    this.fallbackChunkIds.clear();
-    this.emit({
-      type: "timeline.item",
-      sessionId: this.options.boundarySessionId,
-      item: {
-        type: "user_message",
-        id: input.prompt.clientMessageId,
-        text: prompt
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n"),
-        clientMessageId: input.prompt.clientMessageId,
-      },
-    });
-    this.emit({
-      type: "session.prompt_result",
-      sessionId: this.options.boundarySessionId,
-      clientMessageId: input.prompt.clientMessageId,
-      result: { type: "steer", turnId: active.turnId },
-    });
+    active.wirePromptsInFlight += 1;
+    this.scheduleDeferredSettle();
     const runSteer = async (): Promise<void> => {
       try {
-        if (this.closing || active.cancelling || active.deferred !== deferred) return;
+        if (
+          this.closing ||
+          this.processFailed ||
+          active.cancelling ||
+          active.deferred !== deferred
+        ) {
+          rejectSteer("Deferred ACP turn ended before steer could be sent");
+          return;
+        }
+        if (input.prompt.clearPendingPermissions) {
+          this.finishTurnPermissions(active.turnId);
+        }
+        deferred.replyOpen = false;
+        deferred.replySettled = false;
+        this.replayWindow = null;
+        this.fallbackChunkIds.clear();
+        this.emit({
+          type: "timeline.item",
+          sessionId: this.options.boundarySessionId,
+          item: {
+            type: "user_message",
+            id: input.prompt.clientMessageId,
+            text: prompt
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n"),
+            clientMessageId: input.prompt.clientMessageId,
+          },
+        });
+        this.emit({
+          type: "session.prompt_result",
+          sessionId: this.options.boundarySessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "steer", turnId: active.turnId },
+        });
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
@@ -1605,16 +1615,7 @@ class AcpRuntime {
         }
       } finally {
         active.wirePromptsInFlight -= 1;
-        if (
-          !this.closing &&
-          !this.processFailed &&
-          active.deferred === deferred &&
-          !active.cancelling &&
-          active.wirePromptsInFlight === 0 &&
-          !this.hasDeferredBlockers()
-        ) {
-          this.scheduleDeferredSettle("reply");
-        }
+        this.scheduleDeferredSettle();
       }
     };
     active.wirePromptLane = active.wirePromptLane.then(runSteer);
@@ -1623,7 +1624,7 @@ class AcpRuntime {
   private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
     this.fallbackChunkIds.clear();
     const outcome = await new Promise<DeferredTurnOutcome>((resolve) => {
-      active.deferred = { replyOpen: false, timer: null, resolve };
+      active.deferred = { replyOpen: false, replySettled: false, timer: null, resolve };
     });
     if (this.closing) return;
     if (outcome.type === "fail") {
@@ -1678,7 +1679,7 @@ class AcpRuntime {
     deferred.resolve(outcome);
   }
 
-  private scheduleDeferredSettle(mode: "quiet" | "reply"): void {
+  private scheduleDeferredSettle(): void {
     const active = this.activePrompt;
     const deferred = active?.deferred;
     const config = this.options.options.acpOptions?.deferTurnOnRunningTools;
@@ -1688,10 +1689,9 @@ class AcpRuntime {
       deferred.timer = null;
     }
     if (this.hasDeferredBlockers()) return;
-    const delayMs =
-      mode === "reply"
-        ? (config.settleDelayMs ?? DEFAULT_DEFERRED_SETTLE_DELAY_MS)
-        : (config.quietLimitMs ?? DEFAULT_DEFERRED_QUIET_LIMIT_MS);
+    const delayMs = deferred.replySettled
+      ? (config.settleDelayMs ?? DEFAULT_DEFERRED_SETTLE_DELAY_MS)
+      : (config.quietLimitMs ?? DEFAULT_DEFERRED_QUIET_LIMIT_MS);
     deferred.timer = setTimeout(() => {
       deferred.timer = null;
       void this.trySettleDeferredTurn(active, deferred);

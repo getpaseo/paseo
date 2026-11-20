@@ -3619,7 +3619,7 @@ describe("deferTurnOnRunningTools", () => {
       label: "Deferred Multi Steer",
       connector,
       acpOptions: {
-        deferTurnOnRunningTools: { settleDelayMs: 120, quietLimitMs: 500 },
+        deferTurnOnRunningTools: { settleDelayMs: 50, quietLimitMs: 1_500 },
       },
     });
     const connection = await registration.connect({
@@ -3672,14 +3672,21 @@ describe("deferTurnOnRunningTools", () => {
         events,
         (event) =>
           event.type === "session.prompt_result" &&
-          event.clientMessageId === "steer-b" &&
+          event.clientMessageId === "steer-a" &&
           event.result.type === "steer",
       );
       expect(cancelCount).toBe(0);
 
-      // Release steer 1; steer 2 runs next and completes bg-multi while starting its reply.
+      // Release steer 1; steer 2 runs next, gets accepted, and completes bg-multi while starting its reply.
       await expect.poll(() => finishFirstSteer).not.toBeNull();
       finishFirstSteer!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "steer-b" &&
+          event.result.type === "steer",
+      );
       await waitForEvent(
         events,
         (event) =>
@@ -3688,8 +3695,8 @@ describe("deferTurnOnRunningTools", () => {
           event.item.text.includes("Background reply part 1"),
       );
 
-      // Turn must remain open while part 2 of the background reply streams in after end_turn.
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      // Turn must remain open past settleDelayMs (50ms) until part 2 and usage_update arrive.
+      await new Promise((resolve) => setTimeout(resolve, 150));
       expect(
         events.some(
           (event) =>
@@ -3723,6 +3730,111 @@ describe("deferTurnOnRunningTools", () => {
           }),
         }),
       );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("rejects a queued steer instead of dropping it when an earlier steer ends the deferred turn", async () => {
+    let promptCount = 0;
+    let finishFirstSteer: (() => void) | null = null;
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-drop",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          finishFirstSteer = () => instance.respond(request, { stopReason: "max_turn_requests" });
+          return true;
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-steer-reject",
+      label: "Deferred Steer Reject",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "drop-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-drop",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-1",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "first steer" }] },
+        },
+      });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-2",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "second steer" }] },
+        },
+      });
+      await expect.poll(() => finishFirstSteer).not.toBeNull();
+      // steer-2 must not have been reported as accepted before steer-1 finishes.
+      expect(
+        events.some(
+          (event) => event.type === "session.prompt_result" && event.clientMessageId === "steer-2",
+        ),
+      ).toBe(false);
+
+      // steer-1 ends the turn with max_turn_requests -> steer-2 fails explicitly instead of being dropped.
+      finishFirstSteer!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "steer-2" &&
+          event.result.type === "failed",
+      );
+      expect(promptCount).toBe(2);
     } finally {
       await connection.close();
     }
