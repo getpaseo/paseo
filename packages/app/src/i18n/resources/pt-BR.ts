@@ -2339,6 +2339,9 @@ export const ptBR: TranslationResources = {
       resetsIn: "redefine em {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
+      projectedLeftAtReset: "~{{percentage}} restará na renovação",
+      limitReached: "Limite atingido",
+      mayHaveRunOut: "A cota pode ter se esgotado",
       runsOutNow: "esgota agora",
       runsOutIn: "esgota em {{duration}}",
       justNow: "agora mesmo",
@@ -2897,7 +2900,7 @@ export const ptBR: TranslationResources = {
         updateTitle: "Atualizar Paseo skills?",
         uninstallTitle: "Desinstalar Paseo skills?",
         uninstallMessage:
-          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
+          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config.",
         choose: "Escolher skills",
         chooseAll: "Todas as skills",
         chooseAllHint:
@@ -2906,7 +2909,7 @@ export const ptBR: TranslationResources = {
         chooseEmpty: "Esta versão não inclui skills.",
         removeTitle: "Remover as skills desmarcadas?",
         removeMessage:
-          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
         saveFailed: "Não foi possível salvar sua seleção de skills.",
         statusFailed: "Não foi possível verificar o status das skills de orquestração.",
         updateFailed: "Não foi possível atualizar as skills de orquestração.",

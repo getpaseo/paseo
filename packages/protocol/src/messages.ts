@@ -4151,6 +4151,8 @@ export const ServerInfoStatusPayloadSchema = z
         hopliteProvider: z.boolean().optional(),
         // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
         fxProvider: z.boolean().optional(),
+        // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
+        gooseProvider: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
@@ -6990,6 +6992,7 @@ export const ProviderUsageWindowSchema = z.object({
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),
+  durationSeconds: z.number().optional(),
   runsOutAt: z.string().nullable().optional(),
   shortfallPct: z.number().nullable().optional(),
   tone: ProviderUsageToneSchema.optional(),
@@ -7052,6 +7055,7 @@ export const UsageProblemSchema = z.discriminatedUnion("kind", [
 const AvailableUsageReportSchema = z.object({
   status: z.literal("available"),
   planLabel: z.string().optional(),
+  observedAt: z.string().optional(),
   windows: z.array(ProviderUsageWindowSchema),
   balances: z.array(ProviderUsageBalanceSchema).optional(),
   details: z.array(ProviderUsageDetailSchema).optional(),

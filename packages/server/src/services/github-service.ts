@@ -2639,26 +2639,34 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         return parseRepositoryList(stdout, cloneProtocol);
       }
 
-      const [stdout, cloneProtocol] = await Promise.all([
-        run(
-          [
-            "search",
-            "repos",
-            query,
-            "--json",
-            "id,name,fullName,description,isPrivate,updatedAt,url",
-            "--sort",
-            "updated",
-            "--order",
-            "desc",
-            "--limit",
-            String(limit),
-          ],
-          { cwd: input.cwd },
-        ),
+      const searchArgs = [
+        "search",
+        "repos",
+        query,
+        "--json",
+        "id,name,fullName,description,isPrivate,updatedAt,url",
+        "--limit",
+        String(limit),
+      ];
+      const hasVisibilityFilter = /(?:^|\s)-?is:(?:public|private|internal)(?=\s|$)/i.test(query);
+      // The general search can hit its limit before returning a single private match.
+      const [stdout, privateStdout, cloneProtocol] = await Promise.all([
+        run([...searchArgs, "--sort", "updated", "--order", "desc"], { cwd: input.cwd }),
+        hasVisibilityFilter
+          ? "[]"
+          : run([...searchArgs, "--visibility=private"], { cwd: input.cwd }),
         resolveConfiguredCloneProtocol(input.cwd, run),
       ]);
-      return parseRepositorySearch(stdout, cloneProtocol);
+      const repositories = parseRepositorySearch(stdout, cloneProtocol);
+      const privateMatches = parseRepositorySearch(privateStdout, cloneProtocol);
+      const ranked = new Map(
+        [
+          ...privateMatches,
+          ...repositories.filter((repository) => repository.visibility === "private"),
+          ...repositories,
+        ].map((repository) => [repository.id, repository]),
+      );
+      return [...ranked.values()].slice(0, limit);
     },
 
     async searchIssuesAndPrs(input) {

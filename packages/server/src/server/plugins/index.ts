@@ -669,12 +669,39 @@ export class PluginService {
     const registered: string[] = [];
     try {
       for (const source of metadata) {
+        if (
+          source.provider &&
+          !this.runtime
+            .getProviderRegistrations?.(pluginId)
+            .some((provider) => provider.id === source.provider)
+        ) {
+          throw new Error(
+            `Usage source ${source.id} references a provider outside plugin ${pluginId}`,
+          );
+        }
         this.usageSources.register({
           id: source.id,
           label: source.label,
           icon: source.icon,
           discover: async (scope) => {
-            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
+            const launch =
+              scope.kind === "global" && source.provider
+                ? await this.dependencies.usageAgents?.resolveLaunch?.(source.provider)
+                : undefined;
+            const scoped =
+              scope.kind === "session" && source.provider !== scope.provider
+                ? {
+                    kind: "session" as const,
+                    provider: scope.provider,
+                    model: scope.model,
+                    env: scope.env,
+                  }
+                : scope;
+            const result = await this.runtime.discoverUsage(
+              pluginId,
+              source.id,
+              scoped.kind === "global" && launch ? { ...scoped, launch } : scoped,
+            );
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;

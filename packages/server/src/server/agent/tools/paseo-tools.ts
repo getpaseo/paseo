@@ -2728,13 +2728,19 @@ function createToolCatalog(
 
   if (options.changeRequestWatches) {
     const watches = options.changeRequestWatches;
-    const inputSchema = { url: z.string().trim().min(1).describe("URL of a GitHub pull request.") };
+    const inputSchema = {
+      url: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("URL of a pull request or merge request on a supported forge."),
+    };
     registerTool(
       "subscribe_change_request",
       {
         title: "Watch change request",
         description:
-          "Watch a pull request for check failures, passing checks, new comments, reviews, and closure. Returns the current state and sends future updates after your current turn.",
+          "Watch a pull request or merge request for check failures, passing checks, new comments, reviews, approvals, and closure. Returns the current state and sends future updates after your current turn.",
         inputSchema,
         outputSchema: {
           url: z.string(),

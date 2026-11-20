@@ -2354,6 +2354,9 @@ export const es: TranslationResources = {
       resetsIn: "se restablece en {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
+      projectedLeftAtReset: "~{{percentage}} restante al restablecerse",
+      limitReached: "Límite alcanzado",
+      mayHaveRunOut: "Puede que ya se haya agotado",
       runsOutNow: "se agota ahora",
       runsOutIn: "se agota en {{duration}}",
       justNow: "ahora mismo",
@@ -2916,7 +2919,7 @@ export const es: TranslationResources = {
         updateTitle: "¿Actualizar las habilidades dePaseo?",
         uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
         uninstallMessage:
-          "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
+          "Elimina todas las habilidades de orquestación Paseo de ~/.agents, ~/.claude, ~/.codex y ~/.gemini/config.",
         choose: "Elegir habilidades",
         chooseAll: "Todas las habilidades",
         chooseAllHint:
@@ -2925,7 +2928,7 @@ export const es: TranslationResources = {
         chooseEmpty: "Esta versión no incluye habilidades.",
         removeTitle: "¿Eliminar las habilidades deseleccionadas?",
         removeMessage:
-          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
+          "{{skills}} se eliminarán de ~/.agents, ~/.claude, ~/.codex y ~/.gemini/config. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
         saveFailed: "No se pudo guardar tu selección de habilidades.",
         statusFailed: "No se puede comprobar el estado de las habilidades de orquestación.",
         updateFailed: "No se pueden actualizar las habilidades de orquestación.",

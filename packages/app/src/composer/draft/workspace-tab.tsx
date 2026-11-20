@@ -4,6 +4,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { Keyboard, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
@@ -524,7 +525,10 @@ export function WorkspaceDraftComposer({
   return (
     <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
       {formErrorMessage ? (
-        <View style={styles.formErrorRow}>
+        <View
+          style={styles.formErrorRow}
+          dataSet={isComposerFullscreen ? undefined : CHAT_COLUMN_RAIL_DATASET}
+        >
           <View style={styles.formError}>
             <Text style={styles.errorText}>{formErrorMessage}</Text>
           </View>
