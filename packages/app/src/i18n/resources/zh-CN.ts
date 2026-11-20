@@ -2826,7 +2826,8 @@ export const zhCN: TranslationResources = {
         updateAvailable: "有更新可用",
         updateTitle: "更新 Paseo skills？",
         uninstallTitle: "卸载 Paseo skills？",
-        uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
+        uninstallMessage:
+          "会从 ~/.agents、~/.claude、~/.codex、~/.gemini/config 移除所有 Paseo 编排 skills。",
         choose: "选择 skills",
         chooseAll: "全部 skills",
         chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
@@ -2834,7 +2835,7 @@ export const zhCN: TranslationResources = {
         chooseEmpty: "此版本未内置 skills。",
         removeTitle: "移除取消勾选的 skills？",
         removeMessage:
-          "将从 ~/.agents、~/.claude、~/.codex 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
+          "将从 ~/.agents、~/.claude、~/.codex、~/.gemini/config 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
         saveFailed: "无法保存你的 skills 选择。",
         statusFailed: "无法检查编排 skills 状态。",
         updateFailed: "无法更新编排 skills。",
