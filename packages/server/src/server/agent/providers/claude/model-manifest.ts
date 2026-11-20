@@ -59,6 +59,17 @@ export const CLAUDE_MODEL_MANIFEST = [
     supportsFastMode: true,
   },
   {
+    id: "claude-mythos-5-2",
+    label: "Mythos 5.2",
+    requiresDiscovery: true,
+    description: "Mythos 5.2 · Requires verified access",
+    minimumClaudeCodeVersion: "2.1.321",
+    defaultThinkingOptionId: "medium",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsFastMode: true,
+  },
+  {
     id: "claude-mythos-5-1",
     label: "Mythos 5.1",
     requiresDiscovery: true,
@@ -67,9 +78,19 @@ export const CLAUDE_MODEL_MANIFEST = [
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
   },
   {
+    id: "claude-fable-5-2",
+    label: "Fable 5.2",
+    description: "Fable 5.2 · Most powerful model",
+    minimumClaudeCodeVersion: "2.1.321",
+    defaultThinkingOptionId: "medium",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsFastMode: true,
+  },
+  {
     id: "claude-fable-5-1",
     label: "Fable 5.1",
-    description: "Fable 5.1 · Most powerful model",
+    description: "Fable 5.1 · Previous release",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
   },
@@ -205,25 +226,27 @@ function buildThinkingOptions(
   effortLevels: readonly ClaudeEffortLevel[] | undefined,
   supportsThinkingDisabled: boolean,
   defaultThinkingOptionId: ClaudeEffortLevel,
+  independentUltracode: boolean,
 ): AgentSelectOption[] | undefined {
   if (!effortLevels) {
     return undefined;
   }
 
-  const options: AgentSelectOption[] = [
+  return [
     ...(supportsThinkingDisabled ? [{ id: CLAUDE_DISABLED_THINKING_OPTION_ID, label: "Off" }] : []),
     ...effortLevels.map((id) => ({
       id,
       label: CLAUDE_EFFORT_LABELS[id],
       ...(id === defaultThinkingOptionId ? { isDefault: true } : {}),
+      // COMPAT(claudeUltracodeThinkingOption): added in v0.17.0, remove after 2027-05-18.
+      ...(independentUltracode && id === "xhigh"
+        ? { metadata: { replacesThinkingOptionId: CLAUDE_ULTRACODE_THINKING_OPTION_ID } }
+        : {}),
     })),
+    ...(!independentUltracode && effortLevels.includes("xhigh")
+      ? [{ id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" }]
+      : []),
   ];
-
-  if (effortLevels.includes("xhigh")) {
-    options.push({ id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" });
-  }
-
-  return options;
 }
 
 export function getClaudeManifestModels(
@@ -249,6 +272,7 @@ export function getClaudeManifestModels(
       model.effortLevels,
       model.supportsThinkingDisabled === true,
       getDefaultThinkingOptionId(model),
+      supportsIndependentClaudeUltracode(claudeCodeVersion),
     );
     const definition: AgentModelDefinition = {
       provider: "claude",
@@ -319,6 +343,10 @@ export function parseClaudeCodeVersion(value: string): [number, number, number] 
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
+export function supportsIndependentClaudeUltracode(version: string | undefined): boolean {
+  return version === undefined || compareVersions(version, "2.1.284") >= 0;
+}
+
 export interface ClaudeDisabledThinkingResolution {
   supported: boolean;
   fallbackThinkingOptionId: string | undefined;
@@ -358,6 +386,14 @@ export function claudeManifestModelSupportsFastMode(modelId: string | null | und
       "supportsFastMode" in model &&
       model.supportsFastMode === true,
   );
+}
+
+export function claudeManifestModelSupportsUltracode(modelId: string | null | undefined): boolean {
+  const normalized = normalizeClaudeRuntimeModelId(modelId);
+  const model: ClaudeModelManifestEntry | undefined = CLAUDE_MODEL_MANIFEST.find(
+    (candidate) => candidate.id === normalized,
+  );
+  return model?.effortLevels?.includes("xhigh") === true;
 }
 
 /**

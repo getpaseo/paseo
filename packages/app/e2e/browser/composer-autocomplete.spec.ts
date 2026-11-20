@@ -787,9 +787,22 @@ test.describe("Composer autocomplete", () => {
       await input.press("ArrowDown");
       await input.press("ArrowDown");
       await input.press("h");
-      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
+      // On web the search reads the cursor after paint, so the input's value runs ahead of
+      // the list. Wait on the list itself. The list mounts only the rows near its scroll
+      // position, so one missing row proves nothing: right after the arrows wrap to the top,
+      // /tdd at the bottom is unmounted while the search is still "". With the search at "",
+      // the list always mounts the bottom row (/tdd) or the chosen one (/exit); only the
+      // search "h" leaves both out. Check them in one query so no frame falls between them.
+      await expect(
+        popover.filter({
+          has: page.getByText("/help", { exact: true }),
+          hasNot: page.getByText(/^\/(tdd|exit)$/),
+        }),
+      ).toBeVisible();
       await input.press("Backspace");
       await expect(input).toHaveValue("/");
+      // /tdd is back only once the search is "" again.
+      await expect(popover.getByText("/tdd", { exact: true }).first()).toBeVisible();
       await input.press("Enter");
 
       await expect(input).toHaveValue("/tdd ");

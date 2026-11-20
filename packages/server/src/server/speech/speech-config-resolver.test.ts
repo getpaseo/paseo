@@ -168,6 +168,122 @@ describe("resolveSpeechConfig", () => {
     },
   );
 
+  test("includes local provider config for local turn detection with OpenAI voice STT/TTS", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { enabled: false },
+        voiceMode: {
+          enabled: true,
+          stt: { provider: "openai", apiKey: "test-key", model: "gpt-4o-transcribe" },
+          tts: { provider: "openai", apiKey: "test-key", model: "gpt-4o-mini-tts", voice: "alloy" },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.providers.voiceTurnDetection).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: true,
+    });
+    expect(result.speech.providers.voiceStt).toEqual({
+      provider: "openai",
+      explicit: true,
+      enabled: true,
+    });
+    expect(result.speech.providers.voiceTts).toEqual({
+      provider: "openai",
+      explicit: true,
+      enabled: true,
+    });
+    expect(result.speech.providers.dictationStt).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: false,
+    });
+    // Turn detection is always local, so the local provider config must be
+    // present even when no speech site uses the local provider and no
+    // models directory is configured; otherwise voice mode reports
+    // turn_detection_unavailable.
+    expect(result.speech.local).toEqual({
+      modelsDir: path.join("/tmp/paseo-home", "models", "local-speech"),
+      models: {
+        dictationStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceTts: "kokoro-en-v0_19",
+        voiceTtsSpeakerId: 0,
+      },
+    });
+  });
+
+  test("includes local provider config for local turn detection with dictation on OpenAI", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          enabled: true,
+          stt: { provider: "openai", apiKey: "test-key", model: "gpt-4o-transcribe" },
+        },
+        voiceMode: {
+          enabled: true,
+          stt: { provider: "openai", apiKey: "test-key", model: "gpt-4o-transcribe" },
+          tts: { provider: "openai", apiKey: "test-key", model: "gpt-4o-mini-tts", voice: "alloy" },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.providers.voiceTurnDetection).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: true,
+    });
+    expect(result.speech.local).toEqual({
+      modelsDir: path.join("/tmp/paseo-home", "models", "local-speech"),
+      models: {
+        dictationStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceTts: "kokoro-en-v0_19",
+        voiceTtsSpeakerId: 0,
+      },
+    });
+  });
+
+  test("omits local provider config when voice mode is off and no speech site is local", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { enabled: false },
+        voiceMode: {
+          enabled: false,
+          stt: { provider: "openai", apiKey: "test-key", model: "gpt-4o-transcribe" },
+          tts: { provider: "openai", apiKey: "test-key", model: "gpt-4o-mini-tts", voice: "alloy" },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.providers.voiceTurnDetection).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: false,
+    });
+    expect(result.speech.local).toBeUndefined();
+  });
+
   test("respects disabled dictation and voice mode feature flags", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {

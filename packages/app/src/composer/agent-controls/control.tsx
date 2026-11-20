@@ -2,7 +2,7 @@ import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { TOUCH_ICON_SIZE, toolbarContentSlot, toolbarSlot } from "@/components/ui/control-geometry";
+import { toolbarContentSlot, toolbarSlot } from "@/components/ui/control-geometry";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import type { AgentControlIcon } from "@/agent-controls/icons";
@@ -73,6 +73,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         chevron={showCaret ? undefined : null}
+        block={isSheet}
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
@@ -105,12 +106,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(theme.spacing[2]),
+    ...toolbarContentSlot(),
     borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
   },
   toolbarIconOnly: {
-    ...toolbarSlot(TOUCH_ICON_SIZE.md),
+    ...toolbarSlot(),
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",

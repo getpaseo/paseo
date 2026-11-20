@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { ACP_PROVIDER_CATALOG, type AcpProviderCatalogEntry } from "@/data/acp-provider-catalog";
+import type { HostFeatureName } from "@/runtime/host-features";
 
 export type AcpProviderCatalogItem = AcpProviderCatalogEntry;
 
@@ -8,14 +9,26 @@ export function getAcpProviderCatalog(): AcpProviderCatalogItem[] {
   return ACP_PROVIDER_CATALOG;
 }
 
+/** The catalog's install guide for a provider added from it, or null for any other provider. */
+export function readAcpProviderInstallGuide(provider: string): string | null {
+  return ACP_PROVIDER_CATALOG.find((entry) => entry.id === provider)?.installLink ?? null;
+}
+
 export function buildAcpProviderConfigPatch(
   entry: AcpProviderCatalogItem,
-  supportsHopliteProvider = false,
+  hostSupports: (feature: HostFeatureName) => boolean = () => false,
 ): MutableDaemonConfigPatch {
   if (entry.bundledProvider) {
+    const feature = entry.bundledProvider.hostFeature;
+    if (hostSupports(feature)) {
+      return { providers: { [entry.id]: { enabled: true } } };
+    }
+    // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
     // COMPAT(hopliteProvider): added after v0.11.2, remove after 2027-04-15 once host floor includes the bundled adapter.
-    if (!supportsHopliteProvider) throw new Error("Update the host to add Hoplite.");
-    return { providers: { [entry.id]: { enabled: true } } };
+    // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
+    if (feature !== "gooseProvider") {
+      throw new Error(`Update the host to add ${entry.title}.`);
+    }
   }
   return {
     providers: {

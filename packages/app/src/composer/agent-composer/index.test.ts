@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { resolveAgentModelSelection } from "@/composer/agent-controls/utils";
@@ -142,8 +142,25 @@ function runtimeModel(model: string): Agent["runtimeInfo"] {
   return { provider: "claude", sessionId: null, model };
 }
 
-function composer() {
-  return createAgentComposer(serverId, agentId, { queryClient });
+function composer(deps: { reveal?: () => void } = {}) {
+  return createAgentComposer(serverId, agentId, { queryClient, reveal: () => {}, ...deps });
+}
+
+/** A mounted input that records the focus it takes. */
+function mountedInput(on: { revealed: boolean }) {
+  const focused: unknown[] = [];
+  return {
+    focused,
+    input: {
+      isLive: () => on.revealed,
+      setText() {},
+      insertText() {},
+      isRevealed: () => on.revealed,
+      focus: async (options?: unknown) => {
+        focused.push(options);
+      },
+    },
+  };
 }
 
 beforeEach(() => {
@@ -155,6 +172,143 @@ beforeEach(() => {
 
 afterEach(() => {
   useSessionStore.getState().clearSession(serverId);
+});
+
+describe("agent composer focus", () => {
+  it("only focuses an input that is already on screen", async () => {
+    openSession(agent());
+    let reveals = 0;
+    const model = composer({ reveal: () => (reveals += 1) });
+    const { input, focused } = mountedInput({ revealed: true });
+    model.attachInput(input);
+
+    await model.focus({ selection: { start: 1, end: 3 } });
+
+    expect(focused).toEqual([{ selection: { start: 1, end: 3 } }]);
+    expect(reveals).toBe(0);
+  });
+
+  it("reveals an agent with no mounted composer and focuses the input that arrives", async () => {
+    openSession(agent());
+    let reveals = 0;
+    const model = composer({ reveal: () => (reveals += 1) });
+
+    const focusing = model.focus();
+    expect(reveals).toBe(1);
+
+    const { input, focused } = mountedInput({ revealed: true });
+    model.attachInput(input);
+    await focusing;
+    expect(focused).toEqual([undefined]);
+  });
+
+  it("focuses after the commit that revealed the input has applied a pending prompt", async () => {
+    openSession(agent());
+    const model = composer({ reveal() {} });
+    const focusing = model.focus({ selection: { start: 0, end: 5 } });
+    let text = "";
+    const textWhenFocused: string[] = [];
+    model.attachInput({
+      ...mountedInput({ revealed: true }).input,
+      focus: async () => {
+        textWhenFocused.push(text);
+      },
+    });
+    text = "HELLO";
+
+    await focusing;
+
+    expect(textWhenFocused).toEqual(["HELLO"]);
+  });
+
+  it("waits for a retained input to come on screen before focusing it", async () => {
+    openSession(agent());
+    let reveals = 0;
+    const model = composer({ reveal: () => (reveals += 1) });
+    const on = { revealed: false };
+    const { input, focused } = mountedInput(on);
+    const detach = model.attachInput(input);
+
+    const focusing = model.focus();
+    expect(reveals).toBe(1);
+    expect(focused).toEqual([]);
+
+    // The mounted composer re-attaches when it comes on screen.
+    on.revealed = true;
+    detach();
+    model.attachInput(input);
+    await focusing;
+    expect(focused).toEqual([undefined]);
+  });
+
+  it("applies only the latest of two focus requests", async () => {
+    openSession(agent());
+    const model = composer();
+    const first = model.focus({ selection: { start: 0, end: 0 } });
+    const second = model.focus({ selection: { start: 2, end: 2 } });
+    const { input, focused } = mountedInput({ revealed: true });
+    model.attachInput(input);
+    await Promise.all([first, second]);
+    expect(focused).toEqual([{ selection: { start: 2, end: 2 } }]);
+  });
+
+  it("lets a call made while an arriving input is being focused decide the selection", async () => {
+    openSession(agent());
+    const model = composer();
+    const first = model.focus({ selection: { start: 0, end: 1 } });
+    const { input, focused } = mountedInput({ revealed: true });
+    model.attachInput(input);
+    const second = model.focus({ selection: { start: 2, end: 4 } });
+    await Promise.all([first, second]);
+    expect(focused.at(-1)).toEqual({ selection: { start: 2, end: 4 } });
+  });
+
+  it("settles a replaced focus request with the request that replaced it", async () => {
+    vi.useFakeTimers();
+    try {
+      openSession(agent());
+      const model = composer();
+      const settled: string[] = [];
+      const record = (name: string, request: Promise<void>) =>
+        request.then(
+          () => settled.push(`${name} focused`),
+          () => settled.push(`${name} failed`),
+        );
+      const first = record("first", model.focus());
+      const second = record("second", model.focus());
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.all([first, second]);
+      expect(settled).toEqual(["second failed", "first failed"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects when the composer never comes on screen, and a later mount does not take focus", async () => {
+    vi.useFakeTimers();
+    try {
+      openSession(agent());
+      const model = composer();
+      const focusing = model.focus();
+      const failed = expect(focusing).rejects.toThrow("did not come on screen");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await failed;
+
+      const { input, focused } = mountedInput({ revealed: true });
+      model.attachInput(input);
+      expect(focused).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects for an archived agent without navigating to it", async () => {
+    openSession(agent({ archivedAt: new Date() }));
+    let reveals = 0;
+    const model = composer({ reveal: () => (reveals += 1) });
+    await expect(model.focus()).rejects.toThrow("archived");
+    expect(reveals).toBe(0);
+  });
 });
 
 describe("agent composer", () => {
@@ -169,8 +323,8 @@ describe("agent composer", () => {
         [other.id, other],
       ]),
     );
-    const watched = createAgentComposer(serverId, running.id, { queryClient });
-    const reader = createAgentComposer(serverId, other.id, { queryClient });
+    const watched = createAgentComposer(serverId, running.id, { queryClient, reveal: () => {} });
+    const reader = createAgentComposer(serverId, other.id, { queryClient, reveal: () => {} });
     let notifications = 0;
     const stop = watched.subscribe(() => {
       notifications += 1;
@@ -201,6 +355,8 @@ describe("agent composer", () => {
       isLive: () => true,
       setText: (text) => mounted.push(`set:${text}`),
       insertText: (text) => mounted.push(`insert:${text}`),
+      isRevealed: () => false,
+      focus: async () => {},
     });
     model.insertText("at the cursor");
     model.setPrompt("replaced");
@@ -219,6 +375,8 @@ describe("agent composer", () => {
       isLive: () => false,
       setText: (text) => mounted.push(`set:${text}`),
       insertText: (text) => mounted.push(`insert:${text}`),
+      isRevealed: () => false,
+      focus: async () => {},
     });
     model.insertText("while away");
     expect(mounted).toEqual([]);
@@ -396,7 +554,7 @@ describe("agent composer", () => {
   it("is shared while its agent is in the session, across closing and reopening its tab", () => {
     openSession(agent());
     const shared = agentComposer(serverId, agentId);
-    const detach = shared.attachInput({ isLive: () => true, setText() {}, insertText() {} });
+    const detach = shared.attachInput(mountedInput({ revealed: true }).input);
     detach();
     expect(agentComposer(serverId, agentId)).toBe(shared);
     const stop = shared.subscribe(() => {});
@@ -407,7 +565,7 @@ describe("agent composer", () => {
   it("is released when the last holder lets go of a composer whose agent was removed meanwhile", () => {
     openSession(agent());
     const mounted = agentComposer(serverId, agentId);
-    const detach = mounted.attachInput({ isLive: () => true, setText() {}, insertText() {} });
+    const detach = mounted.attachInput(mountedInput({ revealed: true }).input);
     useSessionStore.getState().setAgents(serverId, new Map());
     // Held, so the session change did not release it, and nothing changes in the session after.
     expect(agentComposer(serverId, agentId)).toBe(mounted);

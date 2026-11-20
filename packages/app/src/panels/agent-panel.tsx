@@ -22,6 +22,7 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import { CHAT_COLUMN_RAIL_DATASET, ChatColumnRailSurface } from "@/chat-rail";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -39,9 +40,17 @@ import {
   resolveComposerTrackTailClearance,
 } from "@/composer/pill-styles";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
-import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
+import {
+  RewindCommandCenterRegistration,
+  RewindComposerRestoreProvider,
+} from "@/components/rewind";
 import { useAgentDescriptor } from "@/agent-presentation";
-import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
+import {
+  useToastHost,
+  type DismissToastById,
+  type ToastApi,
+  type ToastState,
+} from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -57,6 +66,7 @@ import {
   type AgentScreenReadySyncState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import { TimelineSyncStatus } from "@/timeline/sync-status";
@@ -81,12 +91,13 @@ import {
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
+import { OverlayDismissalScope } from "@/components/ui/overlay-dismissal";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import {
   selectAgentTimelineState,
-  selectAgentTurnPresentation,
+  selectAgentTimelineTurnPresentation,
   type Agent,
   useSessionStore,
 } from "@/stores/session-store";
@@ -726,13 +737,11 @@ function ChatAgentContent({
     (listener: () => void) => viewedTimelineSync?.subscribe(listener) ?? (() => {}),
     [viewedTimelineSync],
   );
-  const readTimelineStatus = useCallback(
-    () =>
-      !agentId || !viewedTimelineSync
-        ? ("ready" as const)
-        : viewedTimelineSync.getAgentTimelineStatus(agentId),
-    [agentId, viewedTimelineSync],
-  );
+  const readTimelineStatus = useCallback((): ViewedTimelineStatus => {
+    if (!agentId) return "ready";
+    // Until the owner is published nothing has confirmed this chat, so its check has not begun.
+    return viewedTimelineSync?.getAgentTimelineStatus(agentId) ?? "checking";
+  }, [agentId, viewedTimelineSync]);
   const timelineStatus = useSyncExternalStore(
     subscribeToVisibilityCatchUp,
     readTimelineStatus,
@@ -763,7 +772,7 @@ function ChatAgentContent({
   });
   const reportAttentionError = useCallback(
     (error: unknown) => {
-      toastApi.show(String(error), { variant: "error", durationMs: null });
+      toastApi.error(toErrorMessage(error));
     },
     [toastApi],
   );
@@ -864,10 +873,6 @@ function ChatAgentContent({
     }
     streamViewRef.current?.scrollToBottom("message-sent");
   }, [agentId]);
-
-  const handleRewindComplete = useCallback(() => {
-    streamViewRef.current?.scrollToBottom("rewind");
-  }, []);
 
   const retryAgentLoad = useCallback(() => {
     setMissingAgentState({ kind: "idle" });
@@ -1023,7 +1028,6 @@ function ChatAgentContent({
       streamViewRef={streamViewRef}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
-      handleRewindComplete={handleRewindComplete}
       timelineSync={isPaneVisible && viewState.tag === "ready" ? viewState.sync : null}
       showHistorySyncOverlay={showHistorySyncOverlay}
       showHistorySyncError={showHistorySyncError}
@@ -1055,7 +1059,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   streamViewRef,
   handleComposerHeightChange,
   handleMessageSent,
-  handleRewindComplete,
   timelineSync,
   showHistorySyncOverlay,
   showHistorySyncError,
@@ -1080,11 +1083,10 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   hasCachedHistory: boolean;
   toastApi: ToastApi;
   toast: ToastState | null;
-  dismiss: () => void;
+  dismiss: DismissToastById;
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
-  handleRewindComplete: () => void;
   timelineSync: AgentScreenReadySyncState | null;
   showHistorySyncOverlay: boolean;
   showHistorySyncError: boolean;
@@ -1103,6 +1105,22 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const composerEditingSession = useComposerEditingSession("chat");
   const isComposerFullscreen = useComposerFullscreen(composerEditingSession);
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  const focusRestoredComposer = useStableEvent(() => {
+    if (isPaneFocused && showsComposer && hasActiveComposer) {
+      composerEditingSession.focus();
+    }
+  });
+  const handleRewindComplete = useCallback(
+    (restoredComposerText: boolean) => {
+      streamViewRef.current?.scrollToBottom("rewind");
+      if (restoredComposerText) {
+        // Defer focus so the editor can apply the restored draft and the menu can start closing.
+        requestAnimationFrame(focusRestoredComposer);
+      }
+    },
+    [focusRestoredComposer, streamViewRef],
+  );
+  const hasAgentComposer = showsComposer && hasActiveComposer && !draft;
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
@@ -1250,7 +1268,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   );
 
   const dock = (
-    <ChatSurface disabled={isArchivingCurrentAgent} fullscreen={isComposerFullscreen}>
+    <ChatSurface
+      serverId={serverId}
+      disabled={isArchivingCurrentAgent}
+      fullscreen={isComposerFullscreen}
+    >
       {dockContent}
       {composerSection}
       {dockOverlay}
@@ -1263,6 +1285,15 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
+      {hasAgentComposer ? (
+        <RewindCommandCenterRegistration
+          serverId={serverId}
+          agentId={agentId}
+          capabilities={agentState.capabilities}
+          timelineSync={timelineSync}
+          enabled={isPaneFocused}
+        />
+      ) : null}
       <View style={styles.root}>
         {dock}
 
@@ -1277,7 +1308,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </RewindComposerRestoreProvider>
   );
   return wrapAgentCommandProvider({
-    enabled: showsComposer && hasActiveComposer && !draft,
+    enabled: hasAgentComposer,
     serverId,
     agentId,
     editingSession: composerEditingSession,
@@ -1311,18 +1342,26 @@ function wrapAgentCommandProvider({
 }
 
 function ChatSurface({
+  serverId,
   children,
   disabled,
   fullscreen,
 }: {
+  serverId: string;
   children: [ReactNode, ReactNode, ReactNode];
   disabled: boolean;
   fullscreen: boolean;
 }) {
+  // The tracks above the composer open their pages from outside it, so focusing the composer
+  // closes everything the chat opened.
   return (
-    <FileDropZone style={styles.container} disabled={disabled}>
-      <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
-    </FileDropZone>
+    <OverlayDismissalScope>
+      <ChatColumnRailSurface serverId={serverId}>
+        <FileDropZone style={styles.container} disabled={disabled}>
+          <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
+        </FileDropZone>
+      </ChatColumnRailSurface>
+    </OverlayDismissalScope>
   );
 }
 
@@ -1335,7 +1374,7 @@ function TimelineSyncErrorCallout({
 }) {
   const { t } = useTranslation();
   return (
-    <View style={styles.timelineSyncCalloutRail}>
+    <View style={styles.timelineSyncCalloutRail} dataSet={CHAT_COLUMN_RAIL_DATASET}>
       <View style={styles.timelineSyncCalloutContent}>
         <View style={styles.timelineSyncCallout} testID="agent-timeline-sync-error">
           <Text style={styles.timelineSyncCalloutText}>
@@ -1411,7 +1450,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const turnPresentation = useSessionStore(
     useShallow((state) =>
       agentId
-        ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
+        ? selectAgentTimelineTurnPresentation(state.sessions[serverId], agentId)
         : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
     ),
   );

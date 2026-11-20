@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -129,7 +129,7 @@ availability and a diagnostic after the daemon resolves the executable. Configur
 environment, or enablement overrides under `agents.providers.muse`. Omit `extends` to keep
 the bundled integration; an entry with `extends` shadows it with a custom provider. See
 [provider contributions](#contribute-a-provider) for the contract and
-[Muse Code](../public-docs/muse-code.md) for setup, per-agent options, and version limitations.
+[Muse Code](../public-docs/supported-providers/muse-code.md) for setup, per-agent options, and version limitations.
 
 ## Install from a registry
 
@@ -510,6 +510,18 @@ before calling status; it exposes your diagnostic through the normal provider di
 A command-backed provider without status is available when its executable resolves. Providers with
 neither command nor status retain connection-based availability.
 
+Implement optional `installation` to fill the **Installation** section of provider settings. The
+bridge sends each callback as a `provider.installation.*` request carrying the launch `status`
+receives plus `resolved`. `resolved: false` means the executable was not found and `command` is
+the configured name, so answer `not_installed` instead of spawning it. Inspect and update-check
+requests use the 30 s plugin request timeout; the daemon's 25 s update-check deadline sits below
+it, so a slow check reports that deadline. `update` has no request timeout and streams output
+through `provider.installation.report`. When the daemon stops waiting on any of the three, it
+sends `provider.installation.cancel`, which aborts the callback's `signal`.
+The rules shared with built-ins are in [providers.md](providers.md#installation-and-updates); the
+author contract is in the
+[public provider guide](../public-docs/plugins/providers.md#report-installation-and-updates).
+
 A same-ID config entry without `extends` overrides the plugin's `enabled`, `command`, `env`, label,
 description, and model configuration through the normal provider registry. `enabled: false` disables
 selection and discovery. An entry with `extends` defines the user's own provider, shadows the plugin,
@@ -624,6 +636,21 @@ one section's order from built-ins, plugin groups, and the section's preference
   remembers under its own key. It shares header ids and the `plugin:<pluginId>:<id>` settings key
   with new-API items.
 
+## Contribute workspace row badge items
+
+The [public reference](../public-docs/plugins/reference.md#workspace-row-badge-items) owns the author API.
+The host lives in `packages/app/src/plugins/workspace-row-badge-items/`; `WorkspaceMetaRow` draws a host's
+items after its own.
+
+- Plugin items render with no wrapper view. The meta line spaces children with `gap`, so an empty
+  wrapper would leave a gap on rows the plugin has nothing to say about. That is also why
+  the row adds no separator around plugin items; a plugin renders its slot.
+- A row only renders items from plugins on its own host. The Show menu coalesces items across hosts
+  by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting, and places them in
+  their own group below a separator. A missing key is visible.
+- Previews (Settings > Host appearance) pass no `workspace` to `WorkspaceMetaRow`, so plugin items
+  stay off them.
+
 ## Contribute file panels
 
 Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
@@ -712,6 +739,29 @@ implementations provide it:
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
 
+`focus` differs per implementation on purpose. A running agent's model reveals the agent with
+`navigateToAgent` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
+input that is revealed attaches. `isRevealed` is stricter than `isLive`: a compact overlay panel and
+an unfocused pane leave the input live but unable to take the keyboard, so the agent is revealed
+first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change
+re-runs `attachInput`, which is what tells the pending request the input is on screen. The draft
+half has nothing to navigate to and does not pull the user back to a draft they left, so it rejects
+when not revealed. Sheets, menus, pickers and modals the composer opens over itself do not count
+against `revealed`: `takeInputFocus` closes them through the `OverlayDismissalScope` in
+`components/ui/overlay-dismissal.tsx`, and places the cursor only after the commit that removes
+them. A web modal hands focus back to the button that opened it in that commit, so placing the
+cursor earlier loses it. The overlay primitives register while open: every controlled bottom
+sheet through `useIsolatedBottomSheetVisibility`, `AdaptiveModalSheet`'s desktop dialog, `MenuRoot`,
+`Combobox`, and `Modal` through its `onRequestClose`. Their close must close; a surface built on none
+of them must call `useDismissibleOverlay`. Overlapping requests share each overlay's close, and the
+latest request places the cursor while the earlier ones settle with it. A native input reports
+focus synchronously and refuses it while not editable, such as during dictation, so the native
+branch checks `isFocused()` instead of trusting the call. The agent panel opens the scope around its whole chat
+because the tracks above the composer render outside `Composer`, and the composer's own scope
+joins it. `toPluginComposer` clears the Command Center's focus restore, which would
+otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so
+the app's web-only `focusInput` stays separate and plugins go through `takeInputFocus`.
+
 `ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
 implementations and `toPluginComposer`; never branch on `context` in the host.
 
@@ -750,14 +800,15 @@ is the [New workspace items reference](../public-docs/plugins/reference.md#new-w
 
 The screen's choices that a plugin may change live in one plain store,
 `createNewWorkspaceSetup` (`packages/app/src/screens/new-workspace/setup-model.ts`): the base
-picker selection, the manual isolation, the branch name and the workspace metadata. The pickers and
+picker selection, the manual isolation, the chosen existing worktree, the Branch off or Check out
+action per ref list, the branch name and the workspace metadata. The pickers and
 the plugin commands write to it, so a command sees what an earlier command left. Project and host
 stay in the screen's hooks (`useNewWorkspaceHostSelector` reconciles them against each other), and
 they are read-only to plugins; a command that switched them would unmount the item that called it.
 
 The store is built in the render that creates the screen, with what the screen derives from its
 hooks (the lock, the project, whether the project can make worktrees, whether the host supports
-metadata), so a command is valid from a child's first effect, which runs before the screen's own
+metadata and ref actions, the project's git worktrees), so a command is valid from a child's first effect, which runs before the screen's own
 effects. `syncInputs` refreshes those inputs in a layout effect on every commit, and commands read
 them when they run, never from the render that built them. The pickers and the commands pick
 through the same `chooseBase` and `chooseIsolation`, so a plugin command has the effects of a
@@ -835,9 +886,10 @@ await paseo.agents.ref(agentId).timeline.append({
 The daemon stamps the runtime `pluginId`; plugin code never supplies it. Reusing the same `id`
 replaces the previous row from that plugin on live clients and fresh timeline fetches. Rows live in
 the daemon's in-memory timeline and survive scroll, refetch, and reconnect, but not a daemon
-restart. A row without an installed renderer shows an unavailable placeholder. Serialized `data`
-must be at most 64 KiB; the daemon rejects a larger append instead of storing a payload that cannot
-be rendered intact. The daemon advertises this RPC through
+restart. A row without an installed renderer shows an unavailable placeholder. `kind` must match
+`/^[a-z][a-z0-9-]*$/`, the rule `addTimelineRenderer` enforces; the daemon rejects any other kind.
+Serialized `data` must be at most 64 KiB; the daemon rejects a larger append instead of storing a
+payload that cannot be rendered intact. The daemon advertises this RPC through
 `server_info.features.pluginTimelineItems`.
 
 ## Contribute client slash commands

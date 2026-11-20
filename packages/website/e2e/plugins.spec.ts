@@ -1,5 +1,5 @@
 import securityPlugin from "./overview.fixture.json" with { type: "json" };
-import { expect, test, type Page, type Locator } from "./fixtures";
+import { expect, test, waitForHydration, type Page, type Locator } from "./fixtures";
 import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
 import copy from "../src/i18n/resources/en.json" with { type: "json" };
@@ -78,15 +78,18 @@ test("browses from the directory into a category, a plugin, and its author", asy
     });
   });
   await openPlugins(page);
+  await waitForHydration(page);
 
   await page.getByRole("region", { name: "Categories" }).getByRole("link", { name: /Git/ }).click();
   await expect(page).toHaveURL(/\/plugins\/category\/git$/);
   await expect(page.getByRole("heading", { level: 1, name: /^Git/ })).toBeVisible();
+  await waitForHydration(page);
   await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
+  await waitForHydration(page);
   await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
     page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
@@ -183,7 +186,7 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
 
 test("submits the visible search term when its input event was missed", async ({ page }) => {
   await page.goto("/plugins?window=month");
-  await expect(page.getByRole("button", { name: "Language: English" }).first()).toBeEnabled();
+  await waitForHydration(page);
   await fillSearchWithMissedInputEvent(page, "graphite");
 
   await page.keyboard.press("Enter");

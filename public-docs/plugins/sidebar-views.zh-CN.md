@@ -1,3 +1,9 @@
+---
+title: 构建侧边栏视图
+description: 用你自己的 React Native 视图替换 Paseo 侧边栏的内容。
+nav: 侧边栏视图
+---
+
 # 构建侧边栏视图 {#build-a-sidebar-view}
 
 侧边栏视图替换 Paseo 页眉与页脚之间的内容。插件接收主题令牌、当前实体引用和导航方法，使用 React Native 绘制自己的界面。安装[侧边栏视图示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/sidebar-views)，体验项目列表、按任务分组的 Agent、嵌套 Agent 和标签文件夹。
@@ -86,7 +92,7 @@ const selected = useWorkspace(ref, selector, equals);
 
 没有选择器时，自定义相等比较函数接收快照；有选择器时接收选择结果。现有工作区面板仍可向 `useWorkspace` 和 `useAgent` 传入主机本地的字符串 ID。跨主机视图应使用引用。`useHosts()` 保留现有的 `serverId`、`label` 和连接 `status` 字段。
 
-工作区快照包含 `project`、`pinnedAt`、`labels`、`background`、`branch`、`lastPromptAt`、`parentAgent` 和 `createdAt`（旧主机上为 null）。使用 `indicator` 和本地化的 `indicatorLabel` 显示 Paseo 的状态。`status` 保持 daemon 原始状态。Agent 快照包含工作区和父 Agent 引用。项目快照提供 `displayName`、`rootPath`、`kind` 和 `iconRevision`。
+工作区快照包含 `project`、`pinnedAt`、`labels`、`background`、`branch`、`lastPromptAt`、`parentAgent` 和 `createdAt`（旧主机上为 null）。使用 `indicator` 和本地化的 `indicatorLabel` 显示 Paseo 的状态。`status` 保持 daemon 原始状态。Agent 快照包含工作区和父 Agent 引用、`background` 和 `backgroundWork.count`。项目快照提供 `displayName`、`rootPath`、`kind` 和 `iconRevision`。
 
 ## 列出终端 {#list-terminals}
 

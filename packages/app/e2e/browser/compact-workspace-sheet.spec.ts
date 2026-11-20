@@ -19,6 +19,7 @@ import {
   openSheetAsTab,
   expectDeclinedDiscardPrompt,
   expectSheetAtSnap,
+  promptMentioning,
   replaceSheetFileText,
   selectTabFromSwitcher,
   sheet,
@@ -27,17 +28,6 @@ import {
 } from "../support/helpers/sheet";
 
 const FILE_LINK = "linked.ts:3";
-
-function promptMentioning(target: string): string {
-  return [
-    "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
-    "Return JSON only with fields 'title' and 'branch'.",
-    "",
-    "<user-prompt>",
-    `Open \`${target}\` now`,
-    "</user-prompt>",
-  ].join("\n");
-}
 
 test("compact opens files and subagents in a sheet, leaving the tabs for agents", async ({
   page,

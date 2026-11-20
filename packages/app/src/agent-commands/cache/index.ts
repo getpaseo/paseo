@@ -5,7 +5,7 @@ import equal from "fast-deep-equal";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const AGENT_COMMANDS_QUERY_ROOT = "agentCommands";
-export const sessionCommandQueryPolicy = {
+export const agentCommandQueryPolicy = {
   staleTime: 600_000,
   gcTime: 1_800_000,
   refetchOnMount: true,
@@ -102,14 +102,12 @@ export function draftAgentCommandsQueryKey(input: {
   ] as const;
 }
 
-// Draft commands include project skills read from the checkout. When the checkout moves to
-// another branch the cached list describes files that are gone, so it is dropped rather than
-// shown while a refetch runs.
-export function resetDraftAgentCommandsForCheckout(
+// Refresh checkout skills after branch changes while keeping the previous catalog usable.
+export function invalidateDraftAgentCommandsForCheckout(
   queryClient: QueryClient,
   input: { serverId: string; cwd: string },
 ): Promise<void> {
-  return queryClient.resetQueries({ queryKey: draftAgentCommandsCheckoutScope(input) });
+  return queryClient.invalidateQueries({ queryKey: draftAgentCommandsCheckoutScope(input) });
 }
 
 export function agentCommandsQueryKey(input: {

@@ -56,11 +56,20 @@ function inFlightTurn(page: Page) {
   return page.getByTestId("turn-working-indicator");
 }
 
+/**
+ * Presses a fork trigger until its menu shows.
+ *
+ * The in-flight turn's trigger sits below text that is still streaming in. While the chat is
+ * shorter than the viewport, each new line moves the trigger down. A line that arrives between
+ * the press and the release moves the trigger away from the pointer, so the press opens nothing,
+ * and the next press lands on the trigger where it is now.
+ */
 async function openForkMenu(page: Page, trigger: ReturnType<Page["getByRole"]>): Promise<void> {
-  await trigger.click();
-  await expect(page.getByRole("menuitem", { name: "Fork in a new tab" })).toBeVisible({
-    timeout: 10_000,
-  });
+  const forkInNewTab = page.getByRole("menuitem", { name: "Fork in a new tab" });
+  await expect(async () => {
+    await trigger.click({ timeout: 5_000 });
+    await expect(forkInNewTab).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 export async function openMostRecentAssistantForkMenu(page: Page): Promise<void> {

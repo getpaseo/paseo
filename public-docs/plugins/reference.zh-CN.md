@@ -363,9 +363,61 @@ Provider 选项是一个记录，即 `session.open` 中的 `ProviderSessionConfi
 
 Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前的配置和持久化值打开它。Provider 在 `session.open` 期间重新读取外部状态。
 
-使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。只针对厂商在发现、配置、通知或工具调用方面的差异添加转换器钩子。
+使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。使用转换器钩子处理厂商特有的行为。参见[适配 ACP Agent](/docs/plugins/providers#adapt-an-acp-agent)。
+
+在 `discover` 和 `configure` 中，调用 `context.request(method, params)` 发送 ACP 扩展请求。
+Promise 返回 JSON 值，或以 Agent 的 JSON-RPC 错误拒绝。
+
+使用 `config(state, context)` 返回 Paseo 显示的配置快照。
+Paseo 在会话就绪、收到配置通知或提交配置更改时调用此同步钩子。
+使用 `configure` 向 Agent 发送更改。
 
 `ProviderRegistration.icon` 是相对于插件目录的文件路径，例如 `icon.svg`。它必须解析到该目录内一个遵循 [SVG 图标规则](#svg-rules)的普通文件。Paseo 在插件启动时读取并校验该文件；这个字符串从不是内联 SVG 或 URL。
+
+#### Provider 安装 {#provider-installation}
+
+**需要 Paseo 0.17**。较旧的版本会忽略 `installation`。`ProviderRegistration.installation` 填充 Provider 设置中的 **安装** 部分。每个成员都是可选的。`inspect` 和 `installUrl` 都没有声明时，Paseo 会隐藏这个部分。完整示例见[报告安装与更新](/docs/plugins/providers#report-installation-and-updates)。类型从 `@getpaseo/plugin/server/provider` 导入。
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| 成员              | 调用时机                                          | 期限  | 结果保留时间                                    |
+| ----------------- | ------------------------------------------------- | ----- | ----------------------------------------------- |
+| `inspect`         | 打开 Provider 设置时                              | 20 秒 | 30 秒                                           |
+| `checkForUpdates` | `inspect` 回答 `installed` 之后，或没有 `inspect` | 25 秒 | `current` 或 `available` 为一小时，其他为 30 秒 |
+| `update`          | 用户选择 **更新** 时，每个 Provider 同一时间一个  | 无    | `succeeded` 之后 Paseo 重新读取两个结果         |
+
+Provider 设置中的 **刷新** 会跳过保留的结果，并清除失败的更新。Paseo 从不在会话开始前或按计划调用这些成员。超过期限或抛出异常会变成显示该消息的错误。
+
+`installUrl` 和 `updateUrl` 是 Paseo 在浏览器中打开的 `http` 或 `https` 页面。其中任何一个是其他类型的 URL 时，插件无法启动。
+
+上下文：
+
+| 字段               | 类型                                      | 含义                                                                                                                      |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | 会话将使用的启动配置，带有 `resolved`。注册没有声明 `command` 时不存在。                                                  |
+| `signal`           | `AbortSignal`                             | 当 Paseo 停止等待或 daemon 停止时中止。                                                                                   |
+| `installedVersion` | `string \| undefined`                     | 仅用于 `checkForUpdates`。`inspect` 报告的 `version`，按原样传入。`inspect` 没有报告版本或你没有声明 `inspect` 时不存在。 |
+| `report`           | `(event: ProviderUpdateReport) => void`   | 仅用于 `update`。按顺序向用户显示 `{ type: "stdout" \| "stderr" \| "message", text }`。                                   |
+
+`ProviderInstallationLaunch` 是 `{ command, args, env, resolved }`。`resolved: true` 时，`command` 是可执行文件的路径。`resolved: false` 时，Paseo 没有找到可执行文件，`command` 是配置中写的名称。
+
+结果：
+
+| 类型                   | 取值                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` 或 `{ status: "not_installed" }`                                                           |
+| `ProviderUpdateCheck`  | `{ status: "current" }`、`{ status: "available", versions?: string[], message?: string }` 或 `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` 或 `{ status: "failed", message: string }`                                                 |
+
+Paseo 按原样显示 `version`、`versions` 和 `message`，不解析或排序它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
 
 ### 用量来源 {#usage-sources}
 
@@ -705,6 +757,51 @@ function hideAlerts() {
 }
 ```
 
+### 工作区行徽章项 {#workspace-row-badge-items}
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` 在侧边栏每个工作区标题下方的那一行中添加一项，位于该行自带的各项（主机、拉取请求、检查、服务、标签）之后。`title` 和 `icon` 用于标注该项在侧边栏 **Show** 菜单中的开关，插件开关位于分隔线下方的独立分组中。各项默认可见。
+
+`Component` 为插件所在主机上的每个工作区行渲染一次，并接收 `PluginWorkspaceRowBadgeItemProps`：`theme`、`host`、`layout` 和 `workspaceId`。渲染 `@getpaseo/plugin/client/ui` 中的 `WorkspaceRowBadge`；工作区没有需要说明的内容时返回 `null`：
+
+| 属性                 | 含义                                                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `icon`               | 可选。任意[图标](#icons)形式，以该行的图标尺寸绘制。                  |
+| `label`              | 可选。一个简短的词。既没有 `icon` 也没有 `label` 的徽章不绘制。       |
+| `tone`               | `"muted"`（默认）、`"success"`、`"warning"`、`"danger"` 或 `"info"`。 |
+| `accessibilityLabel` | 默认为 `label`，其次是该项的 `title`。                                |
+
+该行不会在你的徽章周围添加分隔符，返回 `null` 不会留下空隙。可以渲染任意数量的徽章。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
+
+参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
+
 ## 宿主 UI {#host-ui}
 
 在客户端代码中从 `@getpaseo/plugin/client/ui` 导入由 Paseo 提供的 UI。下面的示例会打开一个受控的弹窗、渲染一个宿主图标，并用 toast 确认操作：
@@ -1015,7 +1112,9 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 | `version` | 正整数     | 是       | 选择渲染器契约的版本。                       |
 | `data`    | 兼容 JSON  | 是       | 渲染器负载，JSON 序列化后最多 64 KiB。       |
 
-daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
+daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。
+
+`kind` 以小写字母开头，只包含小写字母、数字或连字符，与 `addTimelineRenderer` 使用的规则相同。daemon 会拒绝其他任何 `kind`。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
 
 ## 主题与布局 {#theme-and-layout}
 
@@ -1064,6 +1163,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1072,16 +1177,26 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色                   | 用作                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `background`           | 应用、工作区和终端的背景                                        |
+| `foreground`           | 主要文字、终端前景色和光标                                      |
+| `raised`               | 卡片和弹出框                                                    |
+| `control`              | 输入框、次要填充，以及未设置 `sidebar` 时浅色主题的侧边栏       |
+| `border`               | 边框                                                            |
+| `accent`               | 按钮、选中和焦点。可选；省略时使用 `foreground`。               |
+| `mutedForeground`      | 次要文字                                                        |
+| `ring`                 | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
+| `sidebar`              | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
+| `sidebarHover`         | 可选的侧边栏行悬停背景                                          |
+| `sidebarSelected`      | 可选的侧边栏行选中背景                                          |
+| `surface3`             | 可选的消息气泡、次要按钮和芯片中性填充                          |
+| `surface4`             | 可选的轨道和其他状态的较强中性填充                              |
+| `foregroundExtraMuted` | 可选的三级文字颜色，包括侧边栏时间戳                            |
+
+可选覆盖颜色按原值使用。省略的状态、填充和三级文字颜色分别由调色板推导。覆盖颜色时，请确保它与对应的背景或文字有足够对比度。
+
+`sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 
@@ -1331,6 +1446,8 @@ Agent 快照字段：
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO 时间戳                                                     |
 | `updatedAt`         | ISO 时间戳                                                     |
 | `lastActivityAt`    | ISO 时间戳                                                     |
@@ -1343,6 +1460,20 @@ Agent 快照字段：
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+
+`backgroundWork.count` 是 Agent 在回合结束后仍在运行的 shell 和监视器数量，没有时为 `0`。Agent 可能处于 `idle` 且 `attentionReason: "finished"`，同时这些工作仍在运行，因此请按插件的需要组合这些字段：
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // Agent 不可用。
+```
+
+要列出或停止这些工作本身，使用 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle)。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 的 `background` 为 `true`，它是不出现在标签页、列表和提醒中的辅助 Agent，在创建时确定。后台工作区中的 Agent 除非本身以后台 Agent 创建，否则 `background` 为 `false`；要判断工作区，读取工作区自己的 `background`。`backgroundWork` 和 `background` 需要 Paseo 0.16.0 或更高版本。
 
 标签页的焦点、拆分、关闭、持久化、查询状态、API/RPC Provider 以及渲染错误边界都由 Paseo 负责。如果恢复的标签页所对应的插件、面板、上下文、工作区或 Agent 不可用，该标签页会保持打开并显示“不可用”消息，而不会让工作区崩溃。
 
@@ -1650,6 +1781,7 @@ export default function contribute(client: PluginClientContext) {
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
 | `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `focus(options?)`                                   | 把光标放进这个 composer，准备输入，光标就位后完成。`selection: { start, end }` 放置光标或选中文本，为 `prompt` 中的偏移量，并限制在其长度内；省略时光标保持原位。参见[聚焦 composer](#focus-a-composer)。                                                    |
 | `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
 | `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
 | `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
@@ -1669,9 +1801,26 @@ export default function contribute(client: PluginClientContext) {
 
 [Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`，还有一个资源管理器面板和一个 Command Center 条目，它们按引用访问 composer。
 
+### 聚焦 composer {#focus-a-composer}
+
+`insertText` 和 `setPrompt` 不会移动光标。在它们之后调用 `focus()`，用户就可以继续输入：
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
+
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板、菜单、选择器和图片预览，例如手机上放置你的项的控件面板。手机会弹出键盘。
+
+composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点（例如手机上正在听写时）。多次调用重叠时，由最后一次决定光标位置，之前的调用随其一起完成。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
+
+草稿和新建工作区 composer 只能从其中的项访问，所以 `focus()` 不会导航到它们。composer 在屏幕上时可用，用户已离开时会以 “The composer is not on screen.” 拒绝。锁定的 composer 接受聚焦。
+
 ### 按引用访问 composer {#reach-a-composer-by-reference}
 
-运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`，以及每个命令上下文中的 `composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent：
+运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`、每个命令上下文中的 `composers(selector)`，以及客户端上下文中的 `client.composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent。在不接收上下文的回调中（例如[胶囊的 `onPress`](#composer-pills)）使用 `client.composers`：
 
 ```tsx
 import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
@@ -1721,6 +1870,7 @@ export default function contribute(client: PluginClientContext) {
 - 运行中 Agent 的 composer 从不锁定。
 - `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
 - `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `focus()` 会先让 composer 显示出来，如[上文所述](#focus-a-composer)。
 - 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
 
 ## 新建工作区项 {#new-workspace-items}
@@ -1758,13 +1908,13 @@ export default function contribute(client: PluginClientContext) {
 
 `useNewWorkspace()` 返回该项所在的设置：
 
-| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                              |
-| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                                                                         |
-| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。未选择项目时会被拒绝。 |
-| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                          |
-| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                          |
+| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                                                                                    |
+| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。**已有 worktree** 读取为 `"local"`，因为工作区是该 worktree 目录上的本地工作区；调用 `setIsolation` 会离开它。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                 |
+| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。新 worktree 会从它新建分支，分支列表会切换到新建分支。未选择项目时会被拒绝。 |
+| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                                                                                |
+| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                                                                                |
 
 命令遵循 [Composer 项](#composer-items)的规则：每个命令都按界面运行时的状态执行，所以 `await newWorkspace.setBranch(name)` 之后再调用 `newWorkspace.setMetadata(patch)` 会同时生效，命令的 Promise 在更改生效后完成。命令从组件的第一个 effect 起即可使用，包括挂载时的 effect。载荷是 JSON 值。你的项针对某一台主机上的某一个项目挂载。用户更改其中任何一个时，Paseo 会重新挂载你的项并清除 `branch` 和 `metadata`，因此上一个项目的状态和 `Combobox` 结果不会保留；在挂载 effect 中做初始化的项会针对新项目再次初始化。在其项目或主机已被离开之后才调用的命令（例如用户切换项目时被放弃的查询最终返回）会以 "The New workspace screen moved to another project or host; this item belongs to the previous one." 拒绝，并且不做任何更改；为新项目挂载的项不受影响。`host`、`project`、`baseRef` 和 `metadata` 是冻结的。界面创建工作区期间会被锁定：你的字段显示为禁用，所有命令都会以 "The New workspace screen is locked while the workspace is being created." 拒绝。返回 Promise 的回调在完成之前会让控件保持禁用，被拒绝时会以错误提示向用户显示。
 
@@ -1799,6 +1949,30 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+胶囊的 `onPress` 不接收参数。通过 [`client.composers`](#reach-a-composer-by-reference) 访问其 Agent 的 composer：
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },

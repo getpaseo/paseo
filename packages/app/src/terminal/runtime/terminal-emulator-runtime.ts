@@ -124,6 +124,7 @@ interface TerminalEmulatorRuntimeDisposables {
   clearFitTimeouts: () => void;
   removeFontListeners: () => void;
   removeFilePasteListener: () => void;
+  removeUserInputListeners: () => void;
   restoreDocumentStyles: () => void;
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
@@ -157,6 +158,10 @@ const isAppleHandheld =
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
+// DOM events xterm turns into typed data on its textarea. Pastes stay suppressed during a
+// replay: until the snapshot restores bracketed paste mode, a multi-line paste would run
+// line by line in the shell.
+const USER_INPUT_EVENT_TYPES = ["keydown", "keypress", "input"] as const;
 const RESET_TERMINAL_OUTPUT = new Uint8Array([0x1b, 0x63]);
 const terminalOutputEncoder = new TextEncoder();
 
@@ -313,6 +318,8 @@ export class TerminalEmulatorRuntime {
   private hasUngatedWrites = false;
   private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
+  // The latest user input event the host saw; its eventPhase is NONE once dispatch ends.
+  private userInputEvent: Event | null = null;
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
@@ -739,8 +746,17 @@ export class TerminalEmulatorRuntime {
 
     fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
 
+    // xterm reports what the user types and the replies it generates while parsing
+    // through the same onData. Replies only come out of parsing a write, never while a
+    // user input event is dispatching, so typing survives a replay that suppresses them.
+    const recordUserInputEvent = (event: Event): void => {
+      this.userInputEvent = event;
+    };
+    for (const type of USER_INPUT_EVENT_TYPES) {
+      input.host.addEventListener(type, recordUserInputEvent, true);
+    }
     const inputDisposable = terminal.onData((data) => {
-      if (this.suppressInput) {
+      if (this.suppressInput && !this.isDispatchingUserInput()) {
         return;
       }
       this.callbacks.onInput?.(data);
@@ -844,6 +860,12 @@ export class TerminalEmulatorRuntime {
       removeFilePasteListener: () => {
         input.host.removeEventListener("paste", filePasteHandler, true);
       },
+      removeUserInputListeners: () => {
+        for (const type of USER_INPUT_EVENT_TYPES) {
+          input.host.removeEventListener(type, recordUserInputEvent, true);
+        }
+        this.userInputEvent = null;
+      },
       restoreDocumentStyles,
       restoreViewportStyles,
       disposeFitAddon: () => {
@@ -873,6 +895,7 @@ export class TerminalEmulatorRuntime {
       disposables.clearFitTimeouts();
       disposables.removeFontListeners();
       disposables.removeFilePasteListener();
+      disposables.removeUserInputListeners();
       disposables.disposeFitAddon();
       disposables.disposeWebglAddon();
       disposables.disposeTerminal();
@@ -911,6 +934,10 @@ export class TerminalEmulatorRuntime {
 
   paste(text: string): void {
     this.terminal?.paste(text);
+  }
+
+  private isDispatchingUserInput(): boolean {
+    return (this.userInputEvent?.eventPhase ?? Event.NONE) !== Event.NONE;
   }
 
   private pasteClipboard(terminal: Pick<Terminal, "paste">): void {

@@ -40,12 +40,12 @@ import {
   type ToolbarGlyph,
   toolbarSlot,
 } from "@/components/ui/control-geometry";
+import { bySizing } from "@/components/ui/control-sizing";
 import {
   COMPOSER_PADDING_BOTTOM,
   COMPOSER_PADDING_HORIZONTAL,
   COMPOSER_CORNER_RADIUS,
   COMPOSER_PADDING_TOP,
-  COMPOSER_TOOLBAR_SHAPES,
   composerToolbarOverhang,
   resolveComposerLeadingEdge,
 } from "@/composer/input/toolbar-rails";
@@ -97,7 +97,7 @@ import {
 } from "@/components/ui/text-input";
 
 const ComposerTextInput = withUnistyles(EditingTextInput, (theme) => ({
-  placeholderTextColor: theme.colors.surface4,
+  placeholderTextColor: theme.colors.foregroundExtraMuted,
 }));
 import {
   resolveSendTooltipLabel,
@@ -204,7 +204,7 @@ export interface MessageInputProps {
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
   onKeyPress?: (event: ComposerKeyPressEvent) => boolean;
-  /** Reports cursor selection updates from the underlying input. */
+  /** Reports selection updates from user input and programmatic replacements. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
@@ -225,9 +225,12 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  isFocused: () => boolean;
   getText: () => string;
   getInputSnapshot: () => ComposerInputSnapshot;
   replaceText: (text: string, selection?: { start: number; end: number }) => void;
+  /** Clamped to the text the input holds. */
+  setSelection: (selection: { start: number; end: number }) => void;
   runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
    * Web-only: return the underlying DOM element for focus assertions/retries.
@@ -1465,11 +1468,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         if (nextText === "") {
           textInputRef.current?.reset();
         } else {
-          textInputRef.current?.replaceText(nextText, selection);
+          textInputRef.current?.replaceText(nextText, selectionRef.current);
         }
         onChangeText(nextText);
+        // iOS does not emit a selection event for a programmatic text replacement.
+        onSelectionChangeCallback?.(selectionRef.current);
       },
-      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
+      [
+        onChangeText,
+        onSelectionChangeCallback,
+        updateComposerHeightForText,
+        updateLiveTextPresence,
+      ],
     );
 
     useLayoutEffect(
@@ -1486,6 +1496,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       focus: () => {
         textInputRef.current?.focus();
       },
+      isFocused: () => textInputRef.current?.isFocused() ?? false,
       blur: () => {
         textInputRef.current?.blur();
       },
@@ -1493,6 +1504,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getInputSnapshot: () =>
         getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
       replaceText,
+      setSelection: (selection) => {
+        const text = textInputRef.current?.getText() ?? valueRef.current;
+        const clamped = resolveRetainedSelection(selection, text.length);
+        selectionRef.current = clamped;
+        textInputRef.current?.setSelection(clamped);
+      },
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
           focusInput: () => textInputRef.current?.focus(),
@@ -1607,6 +1624,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       volume: dictationVolume,
       duration: dictationDuration,
       error: dictationError,
+      startError: dictationStartError,
+      clearStartError: clearDictationStartError,
       status: dictationStatus,
       startDictation,
       cancelDictation,
@@ -1643,17 +1662,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       sendAfterTranscriptRef.current = false;
     }, [dictationStatus, isDictating, isDictationProcessing]);
 
-    const startDictationIfAvailable = useCallback(
-      () =>
-        startDictationIfAvailableImpl({
-          dictationUnavailableMessage,
-          canStartDictation,
-          toast,
-          startDictation,
-          exitFullscreen,
-        }),
-      [canStartDictation, dictationUnavailableMessage, startDictation, toast, exitFullscreen],
-    );
+    useEffect(() => {
+      if (showRealtimeOverlay) {
+        clearDictationStartError();
+      }
+    }, [showRealtimeOverlay, clearDictationStartError]);
+
+    const startDictationIfAvailable = useCallback(() => {
+      clearDictationStartError();
+      return startDictationIfAvailableImpl({
+        dictationUnavailableMessage,
+        canStartDictation,
+        toast,
+        startDictation,
+        exitFullscreen,
+      });
+    }, [
+      canStartDictation,
+      clearDictationStartError,
+      dictationUnavailableMessage,
+      startDictation,
+      toast,
+      exitFullscreen,
+    ]);
 
     const handleVoicePress = useCallback(
       () =>
@@ -1983,7 +2014,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const voiceButtonStyle = useCallback(
       ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
         styles.voiceButton,
-        isDictating && styles.voiceButtonRecording,
         Boolean(hovered || pressed) && !isDictating && styles.iconButtonHovered,
         Boolean(pressed) && isDictating && styles.discPressed,
         !isDictationStartEnabled && styles.buttonDisabled,
@@ -2208,42 +2238,54 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
     const toolbar = useMemo(
       () => (
-        <View style={buttonRowStyle}>
-          {/* Toolbar left: attachment button + agent controls */}
-          <View style={styles.leftButtonGroup}>
-            <AttachmentDropdown
-              visible={mode.showAttachments}
-              isConnected={isConnected}
-              disabled={disabled}
-              attachButtonStyle={attachButtonStyle}
-              renderAttachButtonIcon={renderAttachButtonIcon}
-              attachmentMenuItems={attachmentMenuItems}
-              addAttachmentLabel={t("composer.input.addAttachment")}
-            />
-            {leftContent}
-          </View>
+        <>
+          {!isFullscreen && !showOverlay && dictationStartError ? (
+            <Text accessibilityRole="alert" style={styles.dictationStartError}>
+              {t(`message.dictation.${dictationStartError}`)}
+            </Text>
+          ) : null}
+          <View style={isFullscreen ? styles.hiddenToolbar : buttonRowStyle}>
+            {/* Toolbar left: attachment button + agent controls */}
+            <View style={styles.leftButtonGroup}>
+              {!isFullscreen && (
+                <AttachmentDropdown
+                  visible={mode.showAttachments}
+                  isConnected={isConnected}
+                  disabled={disabled}
+                  attachButtonStyle={attachButtonStyle}
+                  renderAttachButtonIcon={renderAttachButtonIcon}
+                  attachmentMenuItems={attachmentMenuItems}
+                  addAttachmentLabel={t("composer.input.addAttachment")}
+                />
+              )}
+              {leftContent}
+            </View>
 
-          {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
-          <View style={styles.rightButtonGroup}>
-            {beforeVoiceContent}
-            <VoiceButtonTooltip
-              visible={mode.showVoice}
-              onVoicePress={handleVoicePress}
-              isDictationStartEnabled={isDictationStartEnabled}
-              voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-              voiceButtonStyle={voiceButtonStyle}
-              renderVoiceButtonIcon={renderVoiceButtonIcon}
-              voiceTooltipText={voiceTooltipText}
-              isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-              voiceMuteToggleKeys={voiceMuteToggleKeys}
-              dictationToggleKeys={dictationToggleKeys}
-            />
-            {sendButton}
+            {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
+            {!isFullscreen && (
+              <View style={styles.rightButtonGroup}>
+                {beforeVoiceContent}
+                <VoiceButtonTooltip
+                  visible={mode.showVoice}
+                  onVoicePress={handleVoicePress}
+                  isDictationStartEnabled={isDictationStartEnabled}
+                  voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+                  voiceButtonStyle={voiceButtonStyle}
+                  renderVoiceButtonIcon={renderVoiceButtonIcon}
+                  voiceTooltipText={voiceTooltipText}
+                  isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+                  voiceMuteToggleKeys={voiceMuteToggleKeys}
+                  dictationToggleKeys={dictationToggleKeys}
+                />
+                <View style={styles.trailingDisc}>{sendButton}</View>
+              </View>
+            )}
           </View>
-        </View>
+        </>
       ),
       [
         buttonRowStyle,
+        isFullscreen,
         mode.showAttachments,
         isConnected,
         disabled,
@@ -2254,6 +2296,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         leftContent,
         beforeVoiceContent,
         mode.showVoice,
+        showOverlay,
+        dictationStartError,
         handleVoicePress,
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
@@ -2330,7 +2374,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <ComposerInputPresentation
           fullscreen={isFullscreen}
           controlSizing={controlSizing}
-          sendIconSize={toolbarGlyph.size}
           surface={textSurface}
           toolbar={toolbar}
           send={sendButton}
@@ -2448,6 +2491,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  hiddenToolbar: { display: "none" },
   // The row keeps a full touch target's height; its disc-sized controls centre in it.
   buttonRow: {
     minHeight: TOOLBAR_CONTROL_HEIGHT,
@@ -2455,6 +2499,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  dictationStartError: {
+    alignSelf: "flex-end",
+    textAlign: "right",
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   leftButtonGroup: {
     minWidth: 0,
@@ -2470,8 +2520,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     gap: TOOLBAR_CONTROL_GAP,
   },
+  // Touch-sized the row's highlights touch, but the disc is always painted, so a pressed neighbour
+  // keeps clear of it instead of merging with it.
+  trailingDisc: {
+    marginLeft: bySizing({ touch: theme.spacing[1.5], pointer: 0 }),
+  },
+  // Touch-sized the plus is all thin arms, so beside the picker's glyph the same gap reads wider.
+  // Its highlight can overlap the picker's: only one control is ever pressed.
   attachButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.attach),
+    ...toolbarSlot(),
+    marginRight: bySizing({ touch: -2, pointer: 0 }),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -2483,13 +2541,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
   },
   voiceButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.dictation),
+    ...toolbarSlot(),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  voiceButtonRecording: {
-    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
   },
   voiceButtonRecordingDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2501,7 +2556,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   sendButton: {
     minWidth: TOOLBAR_DISC_SIZE,
-    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
     height: TOOLBAR_DISC_SIZE,
     alignItems: "center",
     justifyContent: "center",

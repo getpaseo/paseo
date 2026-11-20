@@ -49,9 +49,17 @@ Large unbounded timeline responses can exceed relay frame limits, so catch-up us
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
-responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
-recovery is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"` its end cursor. If
+the daemon responds with `hasNewer: true`, the app immediately fetches the next page from
+`endCursor`. Gap recovery is complete only when `hasNewer: false`.
+
+A chat that was empty when it last caught up has no end cursor to compare a live row against. Such a
+row starts coverage only if it is the epoch's first row, seq 1. A later row means the chat missed the
+rows before it, such as a prompt sent while the app was offline, so the app drops it and recovers
+after seq 0. Coverage started at that later row would make the resume page look already applied, and
+the chat and its replica cache would keep only the end of the reply. A recovery that waits behind a
+running catch-up starts after whatever that catch-up applied, because the app applies a forward page
+row by row and an older cursor repeats rows.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
@@ -95,22 +103,55 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
 The daemon validates the epoch and locates the projected item at the selected position. A fork
-includes projected items through that checkpoint. If an item the fork copies spans the checkpoint
-and changed afterward, the daemon refuses that fork with an actionable error: discarded historical
-payloads cannot be reconstructed from sequence metadata. Plugin cards are not copied, so a card
-updated after the checkpoint does not block it. Forking the current context remains available.
+includes projected items through that checkpoint. A tool call that started before the checkpoint
+and changed after it, such as background work that outlives a reply, is copied as still running:
+the projection keeps only its latest payload, so its state at the checkpoint can't be read back.
+Plugin cards are not copied. A position from another epoch, or one that is gone, is refused;
+forking the current context remains available.
 
 ## Resume behavior
 
-Opening, reconnecting, and returning from app background establish the current timeline through
-bounded catch-up. Switching between continuously subscribed open chats needs no fetch.
-Focus alone does not mutate timeline state; the response is compared with the local
-authoritative range first.
+Opening, reconnecting, and returning from app background establish whether the chat is current.
+Switching between continuously subscribed open chats needs no fetch. Focus alone does not mutate
+timeline state; the response is compared with the local authoritative range first.
 
-Cached history remains readable during recovery. The chat shows Reconnecting to host while the host is
-offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
-certify that the displayed conversation is current. The timeline owner publishes freshness; the
-view renders it without a toast timer or a separate resume workflow.
+A chat with a cached cursor asks the daemon first. The `agent.timeline.set_subscription.request`
+that attaches the chat carries its `{ epoch, seq }`, and the response answers `current` or `behind`
+per chat. The daemon attaches before it compares, so an entry committed in between arrives live or
+counts as behind. `current` means the agent is loaded, the epoch matches, and the cursor is at the
+head; it completes catch-up with no fetch. The response carries the agent row for each `current`
+chat, because the timeline fetch is also what refreshes that row and the replica cache stores only
+part of it. `behind`, or no entry, runs the bounded catch-up. The subscribe handler never loads an
+agent, so an agent the daemon has not loaded answers `behind` and resumes in that fetch. Hosts without `features.timelineFreshnessCheck` get no cursors and always fetch.
+
+Cached history remains readable during recovery. The chat shows Reconnecting to host while the host
+is offline and until a reconnected chat's check answers, so an unchanged chat never shows a second
+toast. Returning from background on a socket that stayed connected shows nothing until the check
+answers: the chat stayed subscribed, so a slow answer is no reason to doubt it, and a socket that
+died without closing fails the foreground liveness probe and becomes a reconnect. Updating messages
+appears for a chat that is behind, until the fetch completes, and for an opened chat whose check is
+still unanswered `FRESHNESS_CHECK_QUIET_MS` after it was sent. That delay measures the daemon, so it
+starts at the request: on a cold start the cache read alone can take longer. Socket connectivity
+alone cannot certify that the displayed conversation is current. The timeline owner publishes freshness; the view renders it without a toast timer or a
+separate resume workflow.
+
+The turn footer in a chat follows its messages, not the agent status. Turn activity comes from the
+agent directory and messages from the chat's own catch-up, and either can land first. So the
+timeline owner keeps an unsettled turn per chat: the turn its messages were captured during. It is
+set when a check or catch-up becomes owed while the turn is open, or when cached messages are
+painted that were saved while one was, and it is saved with those messages in the replica. It
+carries the turn's start time. While it is set and the agent reads idle, the chat keeps showing that
+running turn, with its loader and elapsed timer unchanged, and there is no separate catching-up
+footer. The commit that brings the chat current clears it, in the same store write as the rows, so
+the final messages and the completed footer land together. A `current` answer is that commit with no
+rows. A check in flight keeps the hold, and `behind` keeps it until the fetched rows land. A failed
+catch-up clears it too, and the footer takes the true status. Losing the connection is not a failed
+catch-up: none can run or fail until the host returns, so the running footer stays beside
+"Reconnecting to host" and the check on reconnect resolves it. Releasing it offline would put a
+completed footer under messages known to be behind. Surfaces outside the timeline (the sidebar,
+tabs, the composer's stop and send controls) read the true status and never see this state. Live
+delivery needs no hold because `applyStreamEvent` commits queued rows before it applies turn
+liveness.
 
 The draft-create handoff has the same lifetime: the viewed-timeline owner releases it when the sync
 stops owing that chat a catch-up, not when the first authoritative page lands. Releasing it at the
