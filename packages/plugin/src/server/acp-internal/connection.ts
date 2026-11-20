@@ -800,7 +800,11 @@ class AcpRuntime {
     // update arriving during cancel preserves their canceled state.
     for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
     try {
-      await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+      await withTimeout(
+        this.call(this.connection.cancel({ sessionId: this.nativeSessionId })),
+        1_000,
+        `ACP session ${this.nativeSessionId} did not accept cancel`,
+      ).catch(() => undefined);
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       this.finishTurnPermissions(active.turnId);

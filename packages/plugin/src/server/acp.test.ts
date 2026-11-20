@@ -5913,4 +5913,124 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("tears down a deferred ACP child when stdin stalls behind a large steer", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-stalled-stdin-"));
+    temporaryDirectories.push(dir);
+    const scriptPath = path.join(dir, "stalled-stdin-acp.mjs");
+    const pidFile = path.join(dir, "child.pid");
+    await writeFile(
+      scriptPath,
+      [
+        `import { writeFileSync } from "node:fs";`,
+        `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+        `const write = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");`,
+        `let buffer = "";`,
+        `const onData = (chunk) => {`,
+        `  buffer += chunk.toString("utf8");`,
+        `  let idx;`,
+        `  while ((idx = buffer.indexOf("\\n")) !== -1) {`,
+        `    const line = buffer.slice(0, idx).trim();`,
+        `    buffer = buffer.slice(idx + 1);`,
+        `    if (!line) continue;`,
+        `    const msg = JSON.parse(line);`,
+        `    if (msg.method === "initialize") {`,
+        `      write({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });`,
+        `    } else if (msg.method === "session/new") {`,
+        `      write({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "stalled-session" } });`,
+        `    } else if (msg.method === "session/prompt") {`,
+        `      write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "stalled-session", update: { sessionUpdate: "tool_call", toolCallId: "stalled-bg", name: "run_command", title: "Job", status: "in_progress" } } });`,
+        `      write({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });`,
+        `      // Stop reading stdin so a large follow-up steer fills the pipe buffer.`,
+        `      process.stdin.off("data", onData);`,
+        `      process.stdin.pause();`,
+        `      setInterval(() => {}, 10_000);`,
+        `      return;`,
+        `    }`,
+        `  }`,
+        `};`,
+        `process.stdin.on("data", onData);`,
+      ].join("\n"),
+      "utf8",
+    );
+    const registration = runAcpProvider({
+      id: "deferred-stalled-stdin",
+      label: "Deferred Stalled Stdin",
+      command: [process.execPath, scriptPath],
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 5_000 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "stalled-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "stalled-bg",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // Fill the child's stdin pipe buffer with a 2 MB steer while the child is paused.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "stalled-steer",
+          delivery: "steer",
+          input: {
+            type: "message",
+            content: [{ type: "text", text: "x".repeat(2 * 1024 * 1024) }],
+          },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" && event.clientMessageId === "stalled-steer",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const childPid = Number((await readFile(pidFile, "utf8")).trim());
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stalled-int",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stalled-int",
+        3_000,
+      );
+      expect(() => process.kill(childPid, 0)).toThrow();
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:stalled-turn" &&
+            event.state === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
+    } finally {
+      await connection.close();
+    }
+  });
 });
