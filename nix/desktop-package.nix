@@ -11,7 +11,7 @@
   electron,
   libuv,
   buildVersion,
-  # Reuse the daemon's prebuilt npm-deps FOD. Same lockfile, same content —
+  # Reuse the daemon's prebuilt npm-deps FOD. Same lockfile, same content -
   # without this, the desktop drv produces a separately-named store path
   # (`paseo-desktop-<v>-npm-deps`) and refetches the entire registry. Override
   # the upstream hash via `paseo.override { npmDepsHash = "..."; }`.
@@ -128,7 +128,7 @@ buildNpmPackage {
         # disable the hardened runtime that requires a matching signature.
         CSC_IDENTITY_AUTO_DISCOVERY=false \
           npm exec --offline -- electron-builder \
-            --config electron-builder.yml \
+            --config electron-builder.config.cjs \
             --dir \
             --mac \
             --publish never \
