@@ -42,7 +42,7 @@ async function createFakeWorktrunkCli(dir: string, logFile: string): Promise<str
     scriptPath,
     `#!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const rawArgs = process.argv.slice(2);
@@ -98,8 +98,8 @@ if (command === "switch") {
     ${JSON.stringify(logFile)},
     JSON.stringify({ command: "switch", cwd, branch, base, create, explicitPath, target, args }) + "\\n",
   );
-  process.stdout.write(JSON.stringify({ path: target, branch, action: "created" }) + "\\n");
-  if (branch.endsWith("fail-pre-start")) {
+  process.stdout.write(JSON.stringify({ path: target, branch, action: "created", created_branch: create }) + "\\n");
+  if (branch.endsWith("fail-pre-start") && !existsSync(path.join(cwd, ".setup-fixed"))) {
     console.error("pre-start hook failed");
     process.exit(1);
   }
@@ -233,6 +233,15 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
       stat(path.join(path.dirname(repository), "repo.team-fail-pre-start")),
     ).rejects.toMatchObject({ code: "ENOENT" });
 
+    await writeFile(path.join(repository, ".setup-fixed"), "");
+    const retried = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, worktreeSlug: "fail-pre-start" },
+    });
+    expect(retried.error).toBeNull();
+    const retriedPath = retried.workspace!.workspaceDirectory;
+    expect(git(retriedPath, ["branch", "--show-current"])).toBe("team/fail-pre-start");
+    expect(await readFile(path.join(retriedPath, ".wt-hook-ran"), "utf8")).toBe("pre-start");
+
     // Archive delegates removal to `wt remove` (run from repoRoot) AFTER Paseo writes refs/paseo/kept-commits/*.
     const archived = await client.archiveWorkspace(workspaceId);
     expect(archived.error).toBeNull();
@@ -269,7 +278,7 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
       expect.objectContaining({
         command: "switch",
         branch: "team/feat-one",
-        base: "release",
+        base: "refs/heads/release",
         create: true,
       }),
       expect.objectContaining({
@@ -292,6 +301,11 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
           "--no-hooks",
           "--force",
         ]),
+      }),
+      expect.objectContaining({
+        command: "switch",
+        branch: "team/fail-pre-start",
+        create: true,
       }),
       expect.objectContaining({
         command: "remove",
@@ -686,12 +700,28 @@ test("untrusted workspaces pass untrusted=true to worktree manager remove and re
     );
     await client.archiveWorkspace(collision.workspace!.id);
 
+    const remote = await createRepo(path.join(root, "remote"));
+    git(repository, ["remote", "add", "origin", remote]);
+    git(repository, ["fetch", "origin", "main"]);
+    const cached = git(repository, ["rev-parse", "refs/remotes/origin/main"]);
+    git(remote, ["commit", "--allow-empty", "-m", "advance remote main"]);
+    const remoteTip = git(remote, ["rev-parse", "HEAD"]);
+    expect(cached).not.toBe(remoteTip);
+
     const created = await client.createWorkspace({
-      source: { kind: "worktree", cwd: repository, branchName: "fork-pr-branch" },
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        action: "branch-off",
+        baseBranch: "refs/remotes/origin/main",
+        branchName: "fork-pr-branch",
+      },
     });
     expect(created.error).toBeNull();
     const workspaceId = created.workspace!.id;
     const worktreePath = created.workspace!.workspaceDirectory;
+
+    expect(git(worktreePath, ["rev-parse", "HEAD"])).toBe(remoteTip);
 
     // Mark the persisted workspace record as originating from an untrusted fork PR and reload daemon.
     await client.close();

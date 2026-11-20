@@ -15,6 +15,8 @@ export const WAITING_MARKER = "💬";
 interface SwitchJsonOutput {
   path: string;
   action?: string;
+  branch?: string;
+  createdBranch: boolean;
 }
 
 /**
@@ -73,10 +75,17 @@ async function runWt(
 function tryParseSwitchOutput(stdout: string | undefined): SwitchJsonOutput | null {
   if (!stdout?.trim()) return null;
   try {
-    const parsed = JSON.parse(stdout) as { path?: unknown; action?: unknown };
+    const parsed = JSON.parse(stdout) as {
+      path?: unknown;
+      action?: unknown;
+      branch?: unknown;
+      created_branch?: unknown;
+    };
     if (typeof parsed.path !== "string" || parsed.path.length === 0) return null;
     return {
       path: parsed.path,
+      createdBranch: parsed.created_branch === true,
+      ...(typeof parsed.branch === "string" && parsed.branch ? { branch: parsed.branch } : {}),
       ...(typeof parsed.action === "string" ? { action: parsed.action } : {}),
     };
   } catch {
@@ -127,23 +136,30 @@ export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | 
 }
 
 async function cleanupPartiallyCreatedWorktree(repoRoot: string, error: unknown): Promise<void> {
-  // Worktrunk prints `{ path, action: "created" }` on stdout even when a later hook exits non-zero.
+  // Worktrunk reports the checkout and whether it created the branch even if a hook fails.
   const stdout =
     error instanceof Error && error.cause && typeof error.cause === "object"
       ? (error.cause as { stdout?: string }).stdout
       : undefined;
   const parsed = tryParseSwitchOutput(stdout);
   if (parsed?.action !== "created") return;
-  await runWt([
-    "-C",
-    repoRoot,
-    "remove",
-    "--foreground",
-    "--no-delete-branch",
-    "--no-hooks",
-    "--force",
-    parsed.path,
-  ]).catch(() => {});
+  try {
+    await runWt([
+      "-C",
+      repoRoot,
+      "remove",
+      "--foreground",
+      "--no-delete-branch",
+      "--no-hooks",
+      "--force",
+      parsed.path,
+    ]);
+    if (parsed.createdBranch && parsed.branch) {
+      await execCommand("git", ["branch", "-D", "--", parsed.branch], { cwd: repoRoot });
+    }
+  } catch {
+    // Keep the original setup error.
+  }
 }
 
 export async function createWithWorktrunk(

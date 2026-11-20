@@ -231,10 +231,17 @@ export type WorktreeSource =
       trackOriginHead?: boolean;
     };
 
+export interface PreparedWorktreeBranchOff {
+  baseRef: string;
+  checkoutRef: string;
+  branchExists: boolean;
+}
+
 export interface CreateWorktreeOptions {
   cwd: string;
   worktreeSlug: string;
   source: WorktreeSource;
+  preparedBranchOff?: PreparedWorktreeBranchOff;
   paseoHome?: string;
   worktreesRoot?: string;
   worktreePath?: string;
@@ -1589,6 +1596,7 @@ export function createWorktree(
 export async function createWorktree({
   cwd,
   source,
+  preparedBranchOff,
   worktreeSlug,
   paseoHome,
   worktreesRoot,
@@ -1602,7 +1610,12 @@ export async function createWorktree({
     source.kind === "checkout-github-pr"
       ? await listLocalBranchNames(cwd)
       : new Set<string>();
-  const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const sourcePlan = await resolveWorktreeSourcePlan({
+    cwd,
+    source,
+    desiredSlug: worktreeSlug,
+    preparedBranchOff,
+  });
   const fetchedBranch = planCreatedLocalBranch(source, sourcePlan);
   const fetchedTip =
     fetchedBranch && !branchesBefore.has(fetchedBranch)
@@ -2033,6 +2046,7 @@ interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
   source: WorktreeSource;
   desiredSlug: string;
+  preparedBranchOff?: PreparedWorktreeBranchOff;
 }
 
 interface WorktreeSourcePlan {
@@ -2105,30 +2119,46 @@ async function resolveRestoredWorktreeFromBasePlan(
   };
 }
 
+export async function prepareWorktreeBranchOff(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "branch-off" }>,
+  previous?: PreparedWorktreeBranchOff,
+): Promise<PreparedWorktreeBranchOff> {
+  const baseRef = previous?.baseRef ?? (await resolveBaseBranchForWorktree(cwd, source.baseBranch));
+  const branchExists = await localBranchExists(cwd, source.branchName);
+  const checkoutRef = branchExists ? source.branchName : (source.startPoint ?? baseRef);
+  if (checkoutRef !== previous?.checkoutRef) {
+    await refreshRemoteTrackingBaseRef(cwd, checkoutRef);
+  }
+  return { baseRef, branchExists, checkoutRef };
+}
+
 async function resolveBranchOffWorktreeSourcePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "branch-off" }>,
   desiredSlug: string,
+  preparedBranchOff?: PreparedWorktreeBranchOff,
 ): Promise<WorktreeSourcePlan> {
   const branchName = source.branchName;
   await validateGitBranchName(cwd, branchName);
-  const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
-  const branchExists = await localBranchExists(cwd, branchName);
-  const base = branchExists ? branchName : (source.startPoint ?? resolvedBaseBranch);
-  await refreshRemoteTrackingBaseRef(cwd, base);
+  const { baseRef, branchExists, checkoutRef } = await prepareWorktreeBranchOff(
+    cwd,
+    source,
+    preparedBranchOff,
+  );
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
   const metadata = await resolveWorktreeMetadata({
     cwd,
     source,
     branchName: newBranchName,
-    resolvedBaseRef: resolvedBaseBranch,
+    resolvedBaseRef: baseRef,
   });
 
   return {
     branchName: newBranchName,
     ...metadata,
-    addArguments: ["-b", newBranchName, "--no-track", base],
+    addArguments: ["-b", newBranchName, "--no-track", checkoutRef],
   };
 }
 
@@ -2136,10 +2166,11 @@ async function resolveWorktreeSourcePlan({
   cwd,
   source,
   desiredSlug,
+  preparedBranchOff,
 }: ResolveWorktreeSourcePlanOptions): Promise<WorktreeSourcePlan> {
   switch (source.kind) {
     case "branch-off":
-      return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
+      return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug, preparedBranchOff);
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "restore-commit":

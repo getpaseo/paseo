@@ -769,7 +769,9 @@ export default function contribute(server: PluginServerContext) {
 
 - **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`, with a
   120-second timeout. Return `{ type: "created", path }` to claim creation, or `undefined` to decline
-  so the next manager or Paseo's built-in Git checkout runs. When `request.untrusted` is `true` (for
+  so the next manager or Paseo's built-in Git checkout runs. For branch-off, Paseo resolves
+  `baseRef` and refreshes a remote-tracking starting ref before calling the manager, using the
+  cached ref if the fetch fails. When `request.untrusted` is `true` (for
   example, a fork change request), skip repository-defined hooks. Paseo verifies that `path` is a
   safe, newly created Git worktree of the same repository on a named branch, then records the
   checked-out `HEAD` branch (managers may normalize or uniquely name the branch, and should create a

@@ -10,6 +10,8 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   createWorktree,
   fetchFirstAvailableRef,
+  prepareWorktreeBranchOff,
+  type PreparedWorktreeBranchOff,
   resolveDefaultWorktreePath,
   runPluginWorktreeManagerCheckout,
   slugify,
@@ -158,7 +160,7 @@ async function createWorktreeCoreWithPriority(
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
 
-  const managedWorktree = await tryCreateWithWorktreeManager({
+  const { worktree: managedWorktree, preparedBranchOff } = await tryCreateWithWorktreeManager({
     repoRoot,
     transformed,
     intent,
@@ -180,6 +182,7 @@ async function createWorktreeCoreWithPriority(
       worktreeSlug: normalizedSlug,
       worktreePath: transformed.path,
       source: intent,
+      preparedBranchOff,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
     }),
@@ -199,11 +202,11 @@ async function tryCreateWithWorktreeManager(options: {
   intent: WorktreeCreationIntent;
   input: Pick<CreateWorktreeCoreInput, "paseoHome" | "worktreesRoot">;
   deps: Pick<CreateWorktreeCoreDeps, "worktreeManagers">;
-}): Promise<CreatedWorktree | null> {
+}): Promise<{ worktree: CreatedWorktree | null; preparedBranchOff?: PreparedWorktreeBranchOff }> {
   const { repoRoot, transformed, intent, input, deps } = options;
   const untrusted = isUntrustedWorktreeCreationIntent(intent);
-  const createRequest: PluginWorktreeCreateInput = { ...transformed, untrusted };
-  return runPluginWorktreeManagerCheckout({
+  let preparedBranchOff: PreparedWorktreeBranchOff | undefined;
+  const worktree = await runPluginWorktreeManagerCheckout({
     cwd: repoRoot,
     source: intent,
     operation: "create",
@@ -211,8 +214,16 @@ async function tryCreateWithWorktreeManager(options: {
     paseoHome: input.paseoHome,
     worktreesBaseRoot: input.worktreesRoot,
     worktreeManagers: deps.worktreeManagers,
-    run: () => deps.worktreeManagers!.createWorktree(createRequest),
+    run: async () => {
+      let request: PluginWorktreeCreateInput = { ...transformed, untrusted };
+      if (request.kind === "branch-off" && intent.kind === "branch-off") {
+        preparedBranchOff = await prepareWorktreeBranchOff(repoRoot, intent);
+        request = { ...request, baseRef: preparedBranchOff.baseRef };
+      }
+      return deps.worktreeManagers!.createWorktree(request);
+    },
   });
+  return { worktree, preparedBranchOff };
 }
 
 function describeCreationRequest(
