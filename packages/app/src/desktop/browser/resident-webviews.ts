@@ -55,27 +55,44 @@ function registerBrowserWhenAttached(
 ): void {
   // Reparenting a webview can replace its guest WebContents without replacing
   // this DOM element, so every attachment needs a fresh main-process registration.
-  const register = () => {
-    const webContentsId = webview.getWebContentsId();
-    void browser
-      .registerAttachedBrowser({
-        partition: identity.partition,
-        browserId: identity.browserId,
-        workspaceId: identity.workspaceId,
-        webContentsId,
-      })
-      .then(() => {
-        webview.dataset.registeredPartition = identity.partition;
-        return webview.dispatchEvent(new Event("paseo-profile-registered"));
-      })
-      .catch((error) => {
-        useBrowserStore.getState().updateBrowser(identity.browserId, { lastError: String(error) });
-        console.error("[browser-webview] attached registration failed", error);
-      });
-  };
+  let attachment = 0;
   webview.addEventListener("did-attach", () => {
-    // Electron may dispatch did-attach before getWebContentsId() is available.
-    webview.addEventListener("dom-ready", register, { once: true });
+    const current = ++attachment;
+    const isCurrent = () => webview.isConnected && current === attachment;
+    delete webview.dataset.registeredPartition;
+    const register = async () => {
+      // Electron dispatches did-attach before publishing the guest ID on the renderer element.
+      // A slow first document need never become ready for the guest to be usable by ID.
+      const deadline = Date.now() + 5000;
+      while (isCurrent()) {
+        let webContentsId: number;
+        try {
+          webContentsId = webview.getWebContentsId();
+          if (!Number.isInteger(webContentsId) || webContentsId <= 0)
+            throw new Error("Missing attached guest ID");
+        } catch (error) {
+          if (Date.now() >= deadline) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 16));
+          continue;
+        }
+        await browser.registerAttachedBrowser({
+          partition: identity.partition,
+          browserId: identity.browserId,
+          workspaceId: identity.workspaceId,
+          webContentsId,
+        });
+        if (isCurrent()) {
+          webview.dataset.registeredPartition = identity.partition;
+          webview.dispatchEvent(new Event("paseo-profile-registered"));
+        }
+        return;
+      }
+    };
+    void register().catch((error) => {
+      if (!isCurrent()) return;
+      useBrowserStore.getState().updateBrowser(identity.browserId, { lastError: String(error) });
+      console.error("[browser-webview] attached registration failed", error);
+    });
   });
 }
 

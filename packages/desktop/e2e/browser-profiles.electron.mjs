@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createServer } from "node:http";
 import path from "node:path";
 import { expect } from "@playwright/test";
 
@@ -23,6 +24,54 @@ export function accountFixture(requestCookie) {
       const name = button.textContent; document.cookie = "account=" + name + "; Path=/; Max-Age=86400; SameSite=Lax";
       localStorage.setItem("account", name); show();
     }; show();</script>`;
+}
+
+async function checkDelayedRegistration(tool) {
+  const before = new Set((await tool("browser_list_tabs", {})).tabs.map((tab) => tab.browserId));
+  let requestAt, responseAt;
+  const server = createServer((request, response) => {
+    if (request.url !== "/slow") {
+      response.writeHead(404).end();
+      return;
+    }
+    requestAt = Date.now();
+    setTimeout(() => {
+      responseAt = Date.now();
+      response
+        .writeHead(200, { "Content-Type": "text/html" })
+        .end("<title>Slow fixture</title><p>Slow page loaded</p>");
+    }, 8000);
+  });
+  await new Promise((resolve, reject) =>
+    server.once("error", reject).listen(0, "127.0.0.1", resolve),
+  );
+  const url = `http://127.0.0.1:${server.address().port}/slow`;
+  const newIds = async () =>
+    (await tool("browser_list_tabs", {})).tabs
+      .map((tab) => tab.browserId)
+      .filter((id) => !before.has(id));
+  const start = Date.now();
+  try {
+    const { browserId } = await tool("browser_new_tab", { url });
+    const returnedAt = Date.now();
+    const pending = await newIds();
+    expect(pending).toEqual([browserId]);
+    expect(responseAt).toBeUndefined();
+    await tool("browser_wait", { browserId, text: "Slow page loaded", timeoutMs: 15000 });
+    const loaded = await newIds();
+    expect(loaded).toEqual([browserId]);
+    return {
+      browserId,
+      requestedMs: requestAt - start,
+      returnedMs: returnedAt - start,
+      respondedMs: responseAt - start,
+      pending,
+      loaded,
+    };
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
 export async function runProfileJourney({
@@ -156,6 +205,19 @@ export async function runProfileJourney({
       }
     });
     await screenshot("pristine-menu");
+    await menuGroup(project).getByText("Create new workspace profile…", { exact: true }).click();
+    await page.getByTestId("browser-create-profile-input").fill("Desktop browser workspace 1");
+    await page.getByTestId("browser-create-profile-submit").click();
+    const duplicate = page.getByTestId("browser-create-profile-error");
+    await expect(duplicate).toHaveText("A profile with this name already exists in this group.");
+    evidence.duplicate = { error: await duplicate.innerText(), automatic };
+    await screenshot("duplicate-rejected");
+    await page.getByTestId("browser-create-profile-cancel").click();
+    await expect(picker()).toContainText(automatic);
+    await picker().click();
+    await expect(
+      menuGroup(project).getByText("Desktop browser workspace 1", { exact: true }),
+    ).toHaveCount(1);
     await page.keyboard.press("Escape");
     await create("Shared", "Work", shared);
     await go("file:///unsupported");
@@ -174,6 +236,9 @@ export async function runProfileJourney({
     await guest(bob, "document.querySelectorAll('button')[1].click()");
     await verify(alice, shared, "Alice", "before");
     await verify(bob, named, "Bob", "before");
+
+    evidence.delayedRegistration = await checkDelayedRegistration(tool);
+    save();
 
     // Use the same first-request fixture to distinguish workspace and opener sessions.
     const agent = await tool("browser_new_tab", {});
@@ -205,7 +270,14 @@ export async function runProfileJourney({
       await blank();
       await picker().click();
       await expect(menuGroup("Shared").getByText("Work", { exact: true })).toBeVisible();
-      await expect(menuGroup(project).getByText("Customer", { exact: true })).toBeVisible();
+      const currentProject = i === 1 ? project : "Desktop browser project 3";
+      const groupLabels = await page
+        .locator('[data-menu-surface="true"]:visible [role="group"]')
+        .evaluateAll((groups) => groups.map((row) => row.getAttribute("aria-label")));
+      expect(groupLabels).toEqual(["Shared", currentProject]);
+      await expect(menuGroup(currentProject).getByText("Customer", { exact: true })).toHaveCount(
+        i === 1 ? 1 : 0,
+      );
       await expect(page.locator('[aria-checked="true"]:visible')).toContainText(
         "Desktop browser workspace " + (i + 1),
       );
@@ -213,7 +285,8 @@ export async function runProfileJourney({
         workspace: workspaceIds[i],
         selected: await picker().getAttribute("aria-label"),
         shared: await menuGroup("Shared").innerText(),
-        project: await menuGroup(project).innerText(),
+        groupLabels,
+        project: await menuGroup(currentProject).innerText(),
         checked: await page.locator('[aria-checked="true"]:visible').innerText(),
       });
       await page.keyboard.press("Escape");

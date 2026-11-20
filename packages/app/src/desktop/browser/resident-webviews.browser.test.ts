@@ -1,5 +1,5 @@
 import { useBrowserStore } from "@/desktop/browser/store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyInactiveBrowserWebviewViewport,
   type BrowserWebviewProfileHost,
@@ -239,7 +239,7 @@ describe("resident browser webviews", () => {
     ).toBe(partition);
   });
 
-  it("shares one profile and registers attached guests with explicit identity", () => {
+  it("registers each attached guest when its ID becomes readable before DOM readiness", async () => {
     const firstWebview = ensureTestBrowser({
       browserId: "browser-first",
       workspaceId: "workspace-a",
@@ -254,13 +254,18 @@ describe("resident browser webviews", () => {
       throw new Error("Expected resident webviews");
     }
     Object.assign(firstWebview, { getWebContentsId: () => 101 });
-    Object.assign(secondWebview, { getWebContentsId: () => 202 });
+    const readSecondId = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Guest ID pending");
+      })
+      .mockReturnValue(202);
+    Object.assign(secondWebview, { getWebContentsId: readSecondId });
 
     firstWebview.dispatchEvent(new Event("did-attach"));
     secondWebview.dispatchEvent(new Event("did-attach"));
-    expect(attachedBrowsers).toEqual([]);
-    firstWebview.dispatchEvent(new Event("dom-ready"));
-    secondWebview.dispatchEvent(new Event("dom-ready"));
+    expect(attachedBrowsers).toHaveLength(1);
+    await vi.waitFor(() => expect(attachedBrowsers).toHaveLength(2));
 
     expect(firstWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(secondWebview.getAttribute("partition")).toBe("persist:paseo-browser");

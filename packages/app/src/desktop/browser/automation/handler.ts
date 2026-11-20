@@ -296,16 +296,25 @@ async function closeBrowserTabForRequest(params: {
     });
   }
 
-  useWorkspaceLayoutStore.getState().closeTab(workspaceTab.workspaceKey, workspaceTab.tabId);
-  useBrowserStore.getState().removeBrowser(browserId);
-  removeResidentBrowserWebview(browserId);
-  await browserHost?.unregisterWorkspaceBrowser?.(browserId);
+  await discardBrowserTab(workspaceTab.workspaceKey, workspaceTab.tabId, browserId, browserHost);
 
   return {
     requestId: request.requestId,
     ok: true,
     result: { command: "close_tab", browserId },
   };
+}
+
+async function discardBrowserTab(
+  workspaceKey: string,
+  tabId: string | null,
+  browserId: string,
+  browserHost: DesktopHostBridge["browser"] | undefined,
+) {
+  if (tabId) useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
+  useBrowserStore.getState().removeBrowser(browserId);
+  removeResidentBrowserWebview(browserId);
+  await browserHost?.unregisterWorkspaceBrowser?.(browserId);
 }
 
 function findWorkspaceBrowserTab(input: {
@@ -381,8 +390,6 @@ async function openBrowserTabForRequest(params: {
   );
   const partition = await profilePartition(profile);
   const url = command.args.url ?? "about:blank";
-  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
-  useBrowserStore.getState().updateBrowser(browserId, { profile });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {
     return browserAutomationFailure({
@@ -391,24 +398,33 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTab({
+  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
+  useBrowserStore.getState().updateBrowser(browserId, { profile });
+  const tabId = useWorkspaceLayoutStore.getState().openTab({
     workspaceKey,
     target: { kind: "browser", browserId },
     intent: "background",
   });
 
   if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({ browserId, workspaceId, partition, url: normalizedUrl });
-    const registered = await waitForBrowserRegistration({
-      request,
-      browserId,
-      workspaceId,
-      executeAutomationCommand: browserHost.executeAutomationCommand,
-      ...(registrationWaitTimeoutMs !== undefined ? { timeoutMs: registrationWaitTimeoutMs } : {}),
-      ...(registrationPollIntervalMs !== undefined
-        ? { pollIntervalMs: registrationPollIntervalMs }
-        : {}),
-    });
+    let registered = false;
+    try {
+      ensureResidentBrowserWebview({ browserId, workspaceId, partition, url: normalizedUrl });
+      registered = await waitForBrowserRegistration({
+        request,
+        browserId,
+        workspaceId,
+        executeAutomationCommand: browserHost.executeAutomationCommand,
+        ...(registrationWaitTimeoutMs !== undefined
+          ? { timeoutMs: registrationWaitTimeoutMs }
+          : {}),
+        ...(registrationPollIntervalMs !== undefined
+          ? { pollIntervalMs: registrationPollIntervalMs }
+          : {}),
+      });
+    } finally {
+      if (!registered) await discardBrowserTab(workspaceKey, tabId, browserId, browserHost);
+    }
     if (!registered) {
       return browserAutomationFailure({
         requestId: request.requestId,

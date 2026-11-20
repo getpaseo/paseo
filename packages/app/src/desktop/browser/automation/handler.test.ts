@@ -433,6 +433,10 @@ describe("mountBrowserAutomationHandler", () => {
         },
       },
     ]);
+    const failedId = browser.resident.ensuredWebviews[0].browserId;
+    expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([failedId]);
+    expect(workspaceBrowserTabs("server-1:wks_workspace_a", failedId)).toEqual([]);
+    expect(currentBrowserTabs()).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       expect.objectContaining({
         workspaceId: "wks_workspace_a",
@@ -449,6 +453,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.receive(browserNewTabRequest());
     await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
 
+    expect(currentBrowserTabs()).toEqual([]);
     expect(browser.client.sentResponses).toEqual([
       {
         type: "browser.automation.execute.response",
