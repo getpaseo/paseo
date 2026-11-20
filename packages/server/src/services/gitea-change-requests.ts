@@ -403,6 +403,13 @@ type TeaApiGet = <T>(
   schema: z.ZodType<T>,
 ) => Promise<{ data: T; headers: ReadonlyMap<string, string> }>;
 
+interface TeaPollApi {
+  get: TeaApiGet;
+  all<T extends readonly unknown[]>(
+    reads: T,
+  ): Promise<{ -readonly [Key in keyof T]: Awaited<T[Key]> }>;
+}
+
 interface CachedReviewComments {
   count: number;
   items: ChangeRequestSnapshot["activity"];
@@ -473,9 +480,11 @@ export function createGiteaChangeRequestSource(
     return parsed.data;
   }
 
-  function bindTeaApi(context: PerHostReadContext, loginName: string): TeaApiGet {
-    return async (endpoint, schema) => {
-      if (!context.isObserved()) throw new Error("Change request observation ended");
+  function bindTeaApi(context: PerHostReadContext, loginName: string): TeaPollApi {
+    let active = true;
+
+    const get: TeaApiGet = async (endpoint, schema) => {
+      if (!active || !context.isObserved()) throw new Error("Change request observation ended");
       context.assertHostAvailable();
       const args = ["api", "--login", loginName, "-i", endpoint];
       const cwd = process.cwd();
@@ -516,6 +525,19 @@ export function createGiteaChangeRequestSource(
 
       const data = parseJsonBody({ args, cwd, body: parsed.body, schema });
       return { data, headers: parsed.headers };
+    };
+
+    return {
+      get,
+      all(reads) {
+        return Promise.all(reads).catch(async (error: unknown) => {
+          // Stop admitting reads from this poll and hold its host slot until
+          // requests already sent (including late rate limits) settle.
+          active = false;
+          await Promise.allSettled(reads);
+          throw error;
+        });
+      },
     };
   }
 
@@ -686,16 +708,17 @@ export function createGiteaChangeRequestSource(
   }
 
   async function readChecks(params: {
-    get: TeaApiGet;
+    api: TeaPollApi;
     origin: string;
     repoPrefix: string;
     prEndpoint: string;
     headSha: string;
     isObserved(): boolean;
   }): Promise<ChangeRequestSnapshot["checks"]> {
-    const [statusResult, tasksResult] = await Promise.all([
-      readCommitStatuses(params),
-      readBoundedActionTasks(params),
+    const { get, all } = params.api;
+    const [statusResult, tasksResult] = await all([
+      readCommitStatuses({ ...params, get }),
+      readBoundedActionTasks({ ...params, get }),
     ]);
     if (!params.isObserved()) {
       throw new Error("Change request observation ended");
@@ -708,11 +731,12 @@ export function createGiteaChangeRequestSource(
 
     const jobsByRun = await readActionJobs({
       ...params,
+      get,
       tasks: latestTasks,
       statuses: statusResult.statuses,
     });
     if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1 || jobsByRun.size > 0) {
-      const { data: recheck } = await params.get(params.prEndpoint, giteaWatchPrSchema);
+      const { data: recheck } = await get(params.prEndpoint, giteaWatchPrSchema);
       if (recheck.head.sha !== params.headSha) {
         throw new Error("The pull request head changed during pagination.");
       }
@@ -723,21 +747,22 @@ export function createGiteaChangeRequestSource(
 
   async function readActivity(params: {
     url: string;
-    get: TeaApiGet;
+    api: TeaPollApi;
     repoPrefix: string;
     number: number;
     prWebUrl: string;
     knownActivity(): ReadonlySet<string> | undefined;
     isObserved(): boolean;
   }): Promise<ChangeRequestSnapshot["activity"]> {
-    const [comments, reviews] = await Promise.all([
+    const { get, all } = params.api;
+    const [comments, reviews] = await all([
       teaApiGetAllPages({
-        get: params.get,
+        get,
         endpoint: `${params.repoPrefix}/issues/${params.number}/comments`,
         itemSchema: giteaIssueCommentSchema,
       }),
       teaApiGetAllPages({
-        get: params.get,
+        get,
         endpoint: `${params.repoPrefix}/pulls/${params.number}/reviews`,
         itemSchema: giteaReviewSchema,
       }),
@@ -787,13 +812,13 @@ export function createGiteaChangeRequestSource(
 
     // Gitea's review-comments endpoint returns all comments for a review in one
     // response and ignores page/limit, so fetch it once without a pagination loop.
-    const fetchedGroups = await Promise.all(
+    const fetchedGroups = await all(
       reviewsNeedingFetch.map((review) =>
         reviewCommentLimit(async () => {
           if (!params.isObserved()) {
             return { reviewId: review.id, count: review.comments_count, items: [] };
           }
-          const { data: inlineComments } = await params.get(
+          const { data: inlineComments } = await get(
             `${params.repoPrefix}/pulls/${params.number}/reviews/${review.id}/comments`,
             z.array(giteaReviewCommentSchema),
           );
@@ -827,11 +852,11 @@ export function createGiteaChangeRequestSource(
     const identity = parseGiteaPullRequestUrl(context.url);
     const { baseUrl, owner, repo, number } = identity;
     const loginName = await resolveLogin(baseUrl);
-    const get = bindTeaApi(context, loginName);
+    const api = bindTeaApi(context, loginName);
     const repoPrefix = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const prEndpoint = `${repoPrefix}/pulls/${number}`;
 
-    const { data: pr } = await get(prEndpoint, giteaWatchPrSchema);
+    const { data: pr } = await api.get(prEndpoint, giteaWatchPrSchema);
     if (!pr.head.sha) {
       throw new Error(`Gitea pull request #${number} did not include a head commit SHA.`);
     }
@@ -848,7 +873,7 @@ export function createGiteaChangeRequestSource(
     }
 
     const checks = await readChecks({
-      get,
+      api,
       origin: context.host,
       repoPrefix,
       prEndpoint,
@@ -857,7 +882,7 @@ export function createGiteaChangeRequestSource(
     });
     const activity = await readActivity({
       url: context.url,
-      get,
+      api,
       repoPrefix,
       number,
       prWebUrl,

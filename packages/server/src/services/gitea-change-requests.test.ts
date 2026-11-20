@@ -632,6 +632,73 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     }
   });
 
+  it("holds host slots until failed polls drain their already-started reads", async () => {
+    vi.useFakeTimers();
+    const origin = "https://codeberg.org";
+    let finishFirstReads!: () => void;
+    let finishLaterReads!: () => void;
+    const firstReads = new Promise<void>((resolve) => {
+      finishFirstReads = resolve;
+    });
+    const laterReads = new Promise<void>((resolve) => {
+      finishLaterReads = resolve;
+    });
+    let actionRequests = 0;
+    const { runner, calls } = createFakeTeaRunner(async (args) => {
+      if (args[0] === "login")
+        return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+      const endpoint = args.at(-1)!;
+      const pr = /\/pulls\/(\d+)$/.exec(endpoint);
+      if (pr) return teaHttp({ number: Number(pr[1]), state: "open", head: { sha: "head" } });
+      if (endpoint.includes("/status?")) {
+        return teaHttp({ message: "oops" }, { status: "500 Internal Server Error" });
+      }
+      if (endpoint.includes("/actions/tasks?")) {
+        if (!endpoint.includes("page=1")) return teaHttp({ workflow_runs: [], total_count: 3 });
+        actionRequests += 1;
+        await (actionRequests <= 2 ? firstReads : laterReads);
+        return teaHttp({
+          workflow_runs: [{ id: 1, head_sha: "head", status: "running" }],
+          total_count: 3,
+        });
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    });
+    const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+    const errors: unknown[] = [];
+    const observer = {
+      async snapshot() {
+        throw new Error("Expected the poll to fail");
+      },
+      error: (error: unknown) => errors.push(error),
+    };
+    try {
+      for (const number of [1, 2, 3, 4]) {
+        service.changeRequests!.observe(`${origin}/Org/Repo/pulls/${number}`, observer);
+      }
+      await vi.advanceTimersByTimeAsync(25);
+      expect(calls.filter(({ args }) => args.at(-1)?.includes("/actions/tasks?"))).toHaveLength(2);
+      expect(errors).toEqual([]);
+      finishFirstReads();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(errors).toHaveLength(2);
+      expect(actionRequests).toBe(4);
+      finishLaterReads();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls.filter(({ args }) => /actions\/tasks.*page=2/.test(args.at(-1) ?? ""))).toEqual(
+        [],
+      );
+      expect(errors).toHaveLength(4);
+      expect(errors).toEqual(
+        Array.from({ length: 4 }, () => expect.objectContaining({ status: 500 })),
+      );
+    } finally {
+      finishFirstReads();
+      finishLaterReads();
+      service.dispose?.();
+    }
+  });
+
   it("pauses the host when a sibling request fails before an Actions rate limit arrives", async () => {
     vi.useFakeTimers();
     const origin = "https://codeberg.org";
