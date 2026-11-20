@@ -19,6 +19,7 @@ export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
+  handoffFrom?: AutonomousAgentRun;
   start: ForegroundRunStart;
   turnStartedPromise: Promise<void>;
   resolveTurnStarted: () => void;
@@ -50,6 +51,10 @@ export class AgentRunState {
 
   createPendingRun(agentId: string): PendingForegroundRun {
     const pendingRun = createPendingForegroundRun();
+    const current = this.runs.get(agentId);
+    if (current?.kind === "autonomous" && current.acceptsFollowUp) {
+      pendingRun.handoffFrom = current;
+    }
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -65,6 +70,7 @@ export class AgentRunState {
   ): void {
     run.start = start;
     if (start.status === "started") {
+      this.settleHandoff(run);
       run.resolveTurnStarted();
     }
   }
@@ -133,6 +139,14 @@ export class AgentRunState {
     }
     if (
       run.kind === "foreground" &&
+      run.handoffFrom &&
+      (turnId === undefined || turnId === run.handoffFrom.turnId)
+    ) {
+      this.settleHandoff(run);
+      return;
+    }
+    if (
+      run.kind === "foreground" &&
       (run.start.status !== "started" || run.start.turnId !== turnId)
     ) {
       return;
@@ -163,6 +177,14 @@ export class AgentRunState {
     if (run) {
       this.clearRun(agentId, run);
     }
+  }
+
+  restoreAutonomousRun(agentId: string, pending: PendingForegroundRun): boolean {
+    if (this.runs.get(agentId) !== pending || !pending.handoffFrom) return false;
+    this.runs.set(agentId, pending.handoffFrom);
+    pending.handoffFrom = undefined;
+    settleTrackedRun(pending);
+    return true;
   }
 
   createTurnStream(turnId: string): ForegroundTurnStream {
@@ -250,7 +272,14 @@ export class AgentRunState {
 
   private clearRun(agentId: string, run: TrackedAgentRun): void {
     this.runs.delete(agentId);
+    if (run.kind === "foreground") this.settleHandoff(run);
     settleTrackedRun(run);
+  }
+
+  private settleHandoff(run: PendingForegroundRun): void {
+    if (!run.handoffFrom) return;
+    settleTrackedRun(run.handoffFrom);
+    run.handoffFrom = undefined;
   }
 }
 

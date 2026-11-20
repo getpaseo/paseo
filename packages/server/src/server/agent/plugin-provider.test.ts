@@ -20,7 +20,7 @@ import { cancelAgentRunCommand } from "./lifecycle-command.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
+import type { AgentClient, AgentPromptInput, AgentStreamEvent } from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
@@ -2819,7 +2819,7 @@ test("resumes a goose session saved by the generic ACP provider", async () => {
   }
 });
 
-test.each(["steer", "stop"] as const)(
+test.each(["steer", "stop", "interrupt", "refused follow-up"] as const)(
   "Antigravity ACP background work through the daemon's %s command",
   async (action) => {
     const home = await mkdtemp(join(tmpdir(), "plugin-bg-work-"));
@@ -2854,15 +2854,19 @@ test.each(["steer", "stop"] as const)(
                     },
                   });
                 }
-                wake = () =>
-                  acp.sessionUpdate({
-                    sessionId,
-                    update: {
-                      sessionUpdate: "tool_call_update",
-                      toolCallId: "cmd-1",
-                      status: "completed",
-                    },
-                  });
+                wake = async () => {
+                  const finished = action === "refused follow-up" ? ["cmd-1", "cmd-2"] : ["cmd-1"];
+                  for (const toolCallId of finished) {
+                    await acp.sessionUpdate({
+                      sessionId,
+                      update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId,
+                        status: "completed",
+                      },
+                    });
+                  }
+                };
               }
               return { stopReason: "end_turn" };
             },
@@ -2882,8 +2886,8 @@ test.each(["steer", "stop"] as const)(
       const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
         workspaceId: undefined,
       });
-      const send = async (prompt: string, activeTurnBehavior?: "steer") => {
-        const result = await sendPromptToAgent({
+      const dispatch = (prompt: AgentPromptInput, activeTurnBehavior?: "steer" | "interrupt") =>
+        sendPromptToAgent({
           agentManager: manager,
           agentStorage: storage,
           agentId: agent.id,
@@ -2891,6 +2895,8 @@ test.each(["steer", "stop"] as const)(
           prompt,
           activeTurnBehavior,
         });
+      const send = async (prompt: string, activeTurnBehavior?: "steer" | "interrupt") => {
+        const result = await dispatch(prompt, activeTurnBehavior);
         if (result.disposition !== "turn_started")
           throw new Error(`Unexpected dispatch: ${result.disposition}`);
         await result.started;
@@ -2908,15 +2914,38 @@ test.each(["steer", "stop"] as const)(
         { id: "cmd-2", kind: "shell" },
       ]);
 
-      if (action === "steer") {
+      if (action !== "stop") {
         await wake();
         await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+      }
+      if (action === "steer") {
         await send("Follow up", "steer");
         expect(calls).toEqual(["Start two commands", "Follow up"]);
         expect(manager.listAgentBackgroundWork(agent.id)).toEqual([
           { id: "cmd-2", kind: "shell", description: "cmd-2", startedAt: expect.any(String) },
         ]);
         expect(toolStatuses("cmd-1")).toEqual(["completed"]);
+      } else if (action === "interrupt") {
+        await send("Follow up", "interrupt");
+        expect(calls).toEqual(["Start two commands", "session/cancel", "Follow up"]);
+        expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+      } else if (action === "refused follow-up") {
+        await expect.poll(() => manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+        const result = await dispatch(
+          [{ type: "image", data: "AA==", mimeType: "image/png" }],
+          "steer",
+        );
+        if (result.disposition !== "turn_started")
+          throw new Error(`Unexpected dispatch: ${result.disposition}`);
+        await expect(result.started).rejects.toThrow(/image/i);
+        expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+        const { cancelled } = await cancelAgentRunCommand(
+          { agentManager: manager, logger },
+          agent.id,
+        );
+        expect(cancelled).toBe(true);
+        await expect.poll(() => calls).toEqual(["Start two commands", "session/cancel"]);
+        expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
       } else {
         const { cancelled } = await cancelAgentRunCommand(
           { agentManager: manager, logger },

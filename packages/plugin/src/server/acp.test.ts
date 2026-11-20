@@ -2833,6 +2833,13 @@ describe("ACP out-of-turn background activity", () => {
           ? [
               {
                 sessionUpdate: "tool_call",
+                toolCallId: "pending-before-stop",
+                kind: "execute",
+                title: "Pending command",
+                status: "pending",
+              },
+              {
+                sessionUpdate: "tool_call",
                 toolCallId: "cmd-1",
                 name: "run_command",
                 kind: "execute",
@@ -2961,6 +2968,14 @@ describe("ACP out-of-turn background activity", () => {
         update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", status: "failed" },
       });
       agent.notify("session/update", output);
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "pending-before-stop",
+          status: "failed",
+        },
+      });
       await new Promise((resolve) => setTimeout(resolve, 60));
       expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
         turnCountAfterCancel,

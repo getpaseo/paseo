@@ -92,7 +92,9 @@ async function startOrReplaceRun(
 }> {
   const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const iterator = replaced
-    ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions, promptStart)
+    ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions, promptStart, {
+        allowAutonomousHandoff: options?.activeTurnBehavior !== "interrupt",
+      })
     : agentManager.streamAgent(agentId, prompt, options?.runOptions, promptStart);
   return { iterator, replaced };
 }

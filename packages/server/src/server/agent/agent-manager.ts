@@ -3180,7 +3180,9 @@ export class AgentManager {
   }): Promise<string | null> {
     const { agent, agentId, pendingRun, prompt, options, promptStart } = params;
     if (promptStart?.admit?.() === false) {
-      this.runs.settleForegroundRun(agentId, pendingRun.token);
+      if (!(await this.restoreAutonomousRun(agentId, pendingRun))) {
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
+      }
       return null;
     }
     try {
@@ -3217,8 +3219,10 @@ export class AgentManager {
           stale: true,
         });
         agent.pendingReplacement = false;
-        if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
-        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        if (!(await this.restoreAutonomousRun(agentId, pendingRun))) {
+          if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
+          this.runs.settleForegroundRun(agentId, pendingRun.token);
+        }
         throw error;
       }
       agent.pendingReplacement = false;
@@ -3231,18 +3235,33 @@ export class AgentManager {
             messageId: options.clientMessageId,
           });
         }
-        await this.handleStreamEvent(agent, {
-          type: "turn_failed",
-          provider: agent.provider,
-          error: errorMsg,
-        });
-        this.finalizeForegroundTurn(agent);
+        if (await this.restoreAutonomousRun(agentId, pendingRun)) {
+          await this.appendSystemErrorTimelineMessage(agent, agent.provider, errorMsg);
+          this.emitState(agent);
+        } else {
+          await this.handleStreamEvent(agent, {
+            type: "turn_failed",
+            provider: agent.provider,
+            error: errorMsg,
+          });
+          this.finalizeForegroundTurn(agent);
+        }
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
         this.runs.settleForegroundRun(agentId, pendingRun.token);
       }
       throw error;
     }
+  }
+
+  private async restoreAutonomousRun(
+    agentId: string,
+    pending: PendingForegroundRun,
+  ): Promise<boolean> {
+    if (!this.runs.restoreAutonomousRun(agentId, pending)) return false;
+    for (const event of pending.stagedEvents.splice(0)) this.enqueueSessionEvent(agentId, event);
+    await this.drainSessionEvents(agentId);
+    return true;
   }
 
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
@@ -3337,8 +3356,6 @@ export class AgentManager {
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
-    // The provider settles this autonomous turn when it admits the new prompt.
-    if (acceptsFollowUp) this.runs.clearAgentRun(agentId);
     const pendingRun = this.runs.createPendingRun(agentId);
     promptStart?.bind(pendingRun);
 
@@ -3517,9 +3534,10 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
     promptStart?: ForegroundPromptStart,
+    admission?: { allowAutonomousHandoff?: boolean },
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.requireSessionAgent(agentId);
-    return this.replaceRunInForegroundLane(agentId, prompt, options, promptStart);
+    return this.replaceRunInForegroundLane(agentId, prompt, options, promptStart, admission);
   }
 
   async steerAgentRun(
@@ -3677,9 +3695,9 @@ export class AgentManager {
     promptStart?: ForegroundPromptStart,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-    return this.replaceRunInForegroundLane(agent.id, prompt, options, promptStart, (live) =>
-      this.assertSteerAdmissionOwnsTurn(live, expectedTurnId),
-    );
+    return this.replaceRunInForegroundLane(agent.id, prompt, options, promptStart, {
+      assert: (live) => this.assertSteerAdmissionOwnsTurn(live, expectedTurnId),
+    });
   }
 
   /**
@@ -3691,12 +3709,12 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
     promptStart?: ForegroundPromptStart,
-    assertAdmission?: (agent: ActiveManagedAgent) => void,
+    admission?: { assert?: (agent: ActiveManagedAgent) => void; allowAutonomousHandoff?: boolean },
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     // Replacements queue in arrival order; each one holds the foreground lane only while
     // it cancels and reserves, so Stop is never stuck behind a replacement that is waiting.
     return this.runQueuedMutation(this.replacementMutationTails, agentId, () =>
-      this.replaceRunWhenAdmitted(agentId, prompt, options, promptStart, assertAdmission),
+      this.replaceRunWhenAdmitted(agentId, prompt, options, promptStart, admission),
     );
   }
 
@@ -3705,7 +3723,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
     promptStart?: ForegroundPromptStart,
-    assertAdmission?: (agent: ActiveManagedAgent) => void,
+    delivery?: { assert?: (agent: ActiveManagedAgent) => void; allowAutonomousHandoff?: boolean },
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     let stalledStart: PendingForegroundRun | null = null;
     for (;;) {
@@ -3719,8 +3737,9 @@ export class AgentManager {
         if (starting && starting.start.status !== "started" && starting !== stalledStart) {
           return { status: "starting" as const, run: starting };
         }
-        assertAdmission?.(agent);
-        if (!this.hasInFlightRun(agent.id) || this.runs.acceptsFollowUp(agent.id)) {
+        delivery?.assert?.(agent);
+        const canHandOff = delivery?.allowAutonomousHandoff && this.runs.acceptsFollowUp(agent.id);
+        if (!this.hasInFlightRun(agent.id) || canHandOff) {
           return {
             status: "reserved" as const,
             iterator: this.streamAgent(agent.id, prompt, options, promptStart),

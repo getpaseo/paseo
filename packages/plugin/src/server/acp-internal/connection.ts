@@ -1414,7 +1414,7 @@ class AcpRuntime {
   ): void {
     for (const [id, record] of this.toolCalls) {
       const { snapshot, turnId, settlement } = record;
-      if (settlement) continue;
+      if (settlement === "canceled" || (settlement && state !== "canceled")) continue;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (options?.preserveBackgroundTools && this.backgroundToolCalls.has(id)) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
