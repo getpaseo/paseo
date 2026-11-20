@@ -3970,4 +3970,244 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("ignores steer usage_update when the background tool completes during the steer request", async () => {
+    let promptCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-mid-steer",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+        } else {
+          // Tool completes while steer is in flight, followed by steer reply + steer usage_update.
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "bg-mid-steer",
+              status: "completed",
+            },
+          });
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: textChunk("Steer reply"),
+          });
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: { sessionUpdate: "usage_update", used: 180, size: 1000 },
+          });
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-mid-steer-usage",
+      label: "Deferred Mid-Steer Usage",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 40, quietLimitMs: 1_500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "mid-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-mid-steer",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-mid",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "status?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "Steer reply",
+      );
+
+      // Must NOT settle after 40ms settleDelayMs using the steer's usage_update.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:mid-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Background reply arrives after the steer and settles via its own usage_update.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Background result."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 260, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:mid-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("reports a notice and still delivers a queued steer when an earlier steer rejects with an RPC error", async () => {
+    let promptCount = 0;
+    let failFirstSteer: (() => void) | null = null;
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-rpc-err",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          failFirstSteer = () => instance.reject(request, "Transient steer error");
+          return true;
+        }
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Second steer succeeded"),
+        });
+        instance.respond(request, { stopReason: "max_turn_requests" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-steer-rpc-err",
+      label: "Deferred Steer RPC Err",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "rpc-err-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-rpc-err",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-fail",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "first" }] },
+        },
+      });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-next",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "second" }] },
+        },
+      });
+      await expect.poll(() => failFirstSteer).not.toBeNull();
+      failFirstSteer!();
+
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.notice" &&
+          event.notice.severity === "error" &&
+          event.notice.description?.includes("Transient steer error") === true,
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "Second steer succeeded",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:rpc-err-turn" &&
+          event.state === "completed",
+      );
+      expect(promptCount).toBe(3);
+    } finally {
+      await connection.close();
+    }
+  });
 });

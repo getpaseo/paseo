@@ -1197,7 +1197,7 @@ class AcpRuntime {
         },
       });
       if (this.activePrompt?.deferred) {
-        if (update.sessionUpdate === "agent_message_chunk" && !this.hasQualifyingOpenTools()) {
+        if (update.sessionUpdate === "agent_message_chunk" && !this.hasDeferredBlockers()) {
           this.activePrompt.deferred.replyOpen = true;
         }
         this.activePrompt.deferred.replySettled = false;
@@ -1606,10 +1606,23 @@ class AcpRuntime {
       } catch (error) {
         await this.drainNotifications();
         if (!this.closing && active.deferred === deferred) {
-          this.finishDeferredTurn(active, {
-            type: "fail",
-            error: { message: describeError(error) },
-          });
+          if (!this.processFailed && !active.cancelling && active.wirePromptsInFlight > 1) {
+            this.emit({
+              type: "session.notice",
+              sessionId: this.options.boundarySessionId,
+              notice: {
+                id: `acp:steer-error:${input.prompt.clientMessageId}`,
+                severity: "error",
+                title: "Follow-up prompt failed",
+                description: describeError(error),
+              },
+            });
+          } else {
+            this.finishDeferredTurn(active, {
+              type: "fail",
+              error: { message: describeError(error) },
+            });
+          }
         }
       } finally {
         active.wirePromptsInFlight -= 1;
@@ -1679,7 +1692,7 @@ class AcpRuntime {
 
   private noteDeferredUsageUpdate(): void {
     const deferred = this.activePrompt?.deferred;
-    if (!deferred?.replyOpen || this.hasQualifyingOpenTools()) return;
+    if (!deferred?.replyOpen || this.hasDeferredBlockers()) return;
     deferred.replySettled = true;
     this.scheduleDeferredSettle();
   }
