@@ -4502,4 +4502,123 @@ describe("deferTurnOnRunningTools", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("does not let excluded daemon tool updates delay settlement of a completed background job", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "daemon-chatty",
+            name: "run_command",
+            title: "Dev server",
+            status: "in_progress",
+            rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "build-job",
+            name: "run_command",
+            title: "Build",
+            status: "in_progress",
+            rawInput: { CommandLine: "npm run build" },
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-chatty-daemon",
+      label: "Deferred Chatty Daemon",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 60,
+          quietLimitMs: 1_500,
+          keepsTurnOpen(toolCall) {
+            const input = toolCall.input;
+            return !(
+              typeof input === "object" &&
+              input !== null &&
+              !Array.isArray(input) &&
+              input.IsDaemon === true
+            );
+          },
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    let daemonTicker: ReturnType<typeof setInterval> | null = null;
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "chatty-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "build" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "build-job",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // Build completes and sends reply + usage_update while daemon emits updates every 20ms.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "build-job", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Build succeeded."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 120, size: 1000 },
+      });
+      let tick = 0;
+      daemonTicker = setInterval(() => {
+        tick += 1;
+        instances[1].notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "daemon-chatty",
+            status: "in_progress",
+            rawOutput: { stdout: `log ${tick}` },
+          },
+        });
+      }, 20);
+
+      // Turn must still settle in ~60ms despite the daemon updates every 20ms.
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:chatty-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      if (daemonTicker) clearInterval(daemonTicker);
+      await connection.close();
+    }
+  });
 });

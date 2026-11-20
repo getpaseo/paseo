@@ -1437,11 +1437,9 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
     });
-    if (this.activePrompt?.deferred) {
-      if (this.toolKeepsTurnOpen(snapshot)) {
-        this.activePrompt.deferred.replyOpen = false;
-        this.activePrompt.deferred.replySettled = false;
-      }
+    if (this.activePrompt?.deferred && this.toolKeepsTurnOpen(snapshot)) {
+      this.activePrompt.deferred.replyOpen = false;
+      this.activePrompt.deferred.replySettled = false;
       this.scheduleDeferredSettle();
     }
   }
