@@ -32,5 +32,5 @@ const SUBTITLE = (
 );
 
 function Home() {
-  return <LandingPage title={TITLE} subtitle={SUBTITLE} />;
+  return <LandingPage title={TITLE} subtitle={SUBTITLE} showHubEyebrow />;
 }
