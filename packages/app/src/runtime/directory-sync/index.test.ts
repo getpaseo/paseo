@@ -1670,8 +1670,12 @@ it("fills every cached workspace beneath live updates received during the SQLite
   database.close();
 });
 
-it("re-syncs every project when a project update lands while an untrusted cache loads", async () => {
-  const serverId = "untrusted-checkpoint-race";
+/**
+ * A host whose cache was damaged before the eviction fix: workspaces survived, project rows did not,
+ * and a version 1 checkpoint still claims the project directory is current. The daemon holds
+ * projects A and B; renaming A is its update at `renameSeq`.
+ */
+async function createDamagedLegacyProjectDirectory(serverId: string, renameSeq: number) {
   serverIds.add(serverId);
   const { cache, database, storage, reopen, holdRead } = createSqliteCache();
   cache.setHosts([serverId]);
@@ -1698,8 +1702,6 @@ it("re-syncs every project when a project update lands while an untrusted cache 
     projectKind: "git" as const,
   });
   const workspaceEntries = [workspacePayload("wa", "A"), workspacePayload("wb", "B")];
-  // An install damaged before the fix: workspaces survived eviction, project rows did not, and a
-  // version 1 checkpoint still claims the project directory is current.
   cache.replaceDirectoryBaseline(serverId, {
     agents: new Map(),
     workspaces: new Map(
@@ -1717,7 +1719,7 @@ it("re-syncs every project when a project update lands while an untrusted cache 
         id: "singleton",
         payload: JSON.stringify({
           version: 1,
-          cursors: { projects: { generation: "g", afterSeq: 5 } },
+          cursors: { projects: { generation: "g", afterSeq: renameSeq - 1 } },
         }),
       },
     ],
@@ -1725,20 +1727,25 @@ it("re-syncs every project when a project update lands while an untrusted cache 
   const reopened = reopen();
   reopened.setHosts([serverId]);
   const client = new FakeDirectoryClient();
+  let failNextProjectRequest = false;
   client.listProjects = async (options?: unknown): Promise<ProjectListResult> => {
     client.lastProjectOptions = options;
+    if (failNextProjectRequest) {
+      failNextProjectRequest = false;
+      throw new Error("Request timed out");
+    }
     const resumesAfterRename =
-      (options as { sync?: { afterSeq?: number } } | undefined)?.sync?.afterSeq === 6;
+      (options as { sync?: { afterSeq?: number } } | undefined)?.sync?.afterSeq === renameSeq;
     return resumesAfterRename
       ? {
           requestId: "projects",
           projects: [],
-          sync: { generation: "g", headSeq: 6, mode: "changes", removals: [] },
+          sync: { generation: "g", headSeq: renameSeq, mode: "changes", removals: [] },
         }
       : {
           requestId: "projects",
           projects: [project("A", "Renamed"), project("B", "B")],
-          sync: { generation: "g", headSeq: 6, mode: "snapshot", removals: [] },
+          sync: { generation: "g", headSeq: renameSeq, mode: "snapshot", removals: [] },
         };
   };
   client.fetchWorkspaces = async (): Promise<WorkspaceFetchResult> => ({
@@ -1771,37 +1778,76 @@ it("re-syncs every project when a project update lands while an untrusted cache 
     status: "online",
     source: { clientGeneration: 1, connectionEpoch: 1 },
   });
-  let renamed = false;
-  holdRead(async () => {
-    if (renamed) return;
-    renamed = true;
-    client.emit({
-      type: "project.update",
-      payload: { kind: "upsert", project: project("A", "Renamed"), generation: "g", seq: 6 },
-    });
-  });
+  return {
+    client,
+    directory,
+    holdRead,
+    failNextProjectRequest: () => {
+      failNextProjectRequest = true;
+    },
+    renameProjectA: () =>
+      client.emit({
+        type: "project.update",
+        payload: {
+          kind: "upsert",
+          project: project("A", "Renamed"),
+          generation: "g",
+          seq: renameSeq,
+        },
+      }),
+    sessionProjectIds: () =>
+      [...useSessionStore.getState().sessions[serverId].projects.keys()].sort(),
+    persistedProjectIds: async () => {
+      await reopened.flush();
+      const restarted = reopen();
+      restarted.setHosts([serverId]);
+      return [...(await restarted.readDirectory(serverId)).projects.keys()].sort();
+    },
+    close: async () => {
+      directory.dispose();
+      await reopened.flush();
+      database.close();
+    },
+  };
+}
 
+it("re-syncs every project when a project update lands while an untrusted cache loads", async () => {
+  const damaged = await createDamagedLegacyProjectDirectory("untrusted-checkpoint-race", 6);
   try {
-    directory.setDemand({}, true);
-    await directory.refreshDemand();
+    let renamed = false;
+    damaged.holdRead(async () => {
+      if (renamed) return;
+      renamed = true;
+      damaged.renameProjectA();
+    });
+
+    damaged.directory.setDemand({}, true);
+    await damaged.directory.refreshDemand();
 
     expect(renamed).toBe(true);
-    expect(client.lastProjectOptions).toEqual({ sync: {} });
-    expect([...useSessionStore.getState().sessions[serverId].projects.keys()].sort()).toEqual([
-      "A",
-      "B",
-    ]);
-    await reopened.flush();
-    const restarted = reopen();
-    restarted.setHosts([serverId]);
-    expect([...(await restarted.readDirectory(serverId)).projects.keys()].sort()).toEqual([
-      "A",
-      "B",
-    ]);
+    expect(damaged.client.lastProjectOptions).toEqual({ sync: {} });
+    expect(damaged.sessionProjectIds()).toEqual(["A", "B"]);
+    expect(await damaged.persistedProjectIds()).toEqual(["A", "B"]);
   } finally {
-    directory.dispose();
-    await reopened.flush();
-    database.close();
+    await damaged.close();
+  }
+});
+
+it("re-syncs every project when a project update lands after the first sync fails", async () => {
+  const damaged = await createDamagedLegacyProjectDirectory("failed-first-sync", 3);
+  try {
+    damaged.failNextProjectRequest();
+    damaged.directory.setDemand({}, true);
+    await expect(damaged.directory.refreshDemand()).rejects.toThrow("Request timed out");
+
+    damaged.renameProjectA();
+    await damaged.directory.refreshDemand();
+
+    expect(damaged.client.lastProjectOptions).toEqual({ sync: {} });
+    expect(damaged.sessionProjectIds()).toEqual(["A", "B"]);
+    expect(await damaged.persistedProjectIds()).toEqual(["A", "B"]);
+  } finally {
+    await damaged.close();
   }
 });
 

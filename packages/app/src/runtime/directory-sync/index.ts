@@ -288,7 +288,7 @@ export class DirectorySync {
     this.revision += 1;
     if (this.agentTransactions.record(source, delta)) return;
     this.agents.applyDelta(delta);
-    this.noteLiveCursor("agents", delta);
+    if (this.extendsRefreshedBaseline(source)) this.noteLiveCursor("agents", delta);
     this.persistCheckpoint();
   }
 
@@ -300,12 +300,26 @@ export class DirectorySync {
     this.workspaceRevision += 1;
     if (this.workspaceTransactions.record(source, delta)) return;
     this.applyWorkspaceDelta(delta);
-    if (delta.kind !== "script_status")
+    if (delta.kind !== "script_status" && this.extendsRefreshedBaseline(source))
       this.noteLiveCursor(
         "projectId" in delta || "project" in delta ? "projects" : "workspaces",
         delta,
       );
     this.persistCheckpoint();
+  }
+
+  /**
+   * A live event's sequence covers everything before it only when a refresh completed on the
+   * subscriptions that delivered it. Before that (first sync still pending or failed) or after
+   * they lapse, the client may have missed earlier changes, so the event updates rows but leaves
+   * the cursor where the next refresh can still fetch what was missed.
+   */
+  private extendsRefreshedBaseline(source: DirectorySourceToken): boolean {
+    const refreshed = this.satisfiedDemandSource;
+    return (
+      refreshed?.clientGeneration === source.clientGeneration &&
+      refreshed.connectionEpoch === source.connectionEpoch
+    );
   }
 
   private observeDirectoryEvents(): void {
