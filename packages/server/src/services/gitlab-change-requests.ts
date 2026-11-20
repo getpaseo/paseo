@@ -440,10 +440,14 @@ export function createGitLabChangeRequestSource(
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
 
-  async function readConfig(host: string, key: string): Promise<string> {
+  async function readConfig(
+    host: string,
+    key: string,
+    envOverlay: Record<string, string> = {},
+  ): Promise<string> {
     const config = await options.runCommand(["config", "get", key, "--host", host], {
       cwd: process.cwd(),
-      envOverlay: { GITLAB_HOST: host },
+      envOverlay: { GITLAB_HOST: host, ...envOverlay },
     });
     return config.stdout.trim();
   }
@@ -452,23 +456,13 @@ export function createGitLabChangeRequestSource(
     const { host, hostWithPort } = identity;
     if (hostWithPort === GITLAB_CLOUD_HOST) return { host, prefix: "" };
 
-    async function verifyProfile(profileHost: string): Promise<void> {
-      await options.runCommand(["auth", "status", "--hostname", profileHost], {
-        cwd: process.cwd(),
-        envOverlay: { GITLAB_HOST: profileHost },
-      });
-    }
-
-    // Config values can come from environment overrides even when a profile is
-    // absent. Check authentication before selecting the port-specific profile.
-    let profileHost = hostWithPort;
-    try {
-      await verifyProfile(profileHost);
-    } catch (error) {
-      if (hostWithPort === host) throw error;
-      profileHost = host;
-      await verifyProfile(profileHost);
-    }
+    // Select a port-specific profile from local configuration. The override
+    // applies to API requests for either profile and cannot tell them apart.
+    const exactProfile =
+      hostWithPort === host
+        ? ""
+        : await readConfig(hostWithPort, "api_host", { GITLAB_API_HOST: "" });
+    const profileHost = exactProfile ? hostWithPort : host;
 
     const trimSlashes = /^\/+|\/+$/g;
     let prefix = (await readConfig(profileHost, "subfolder")).replace(trimSlashes, "");

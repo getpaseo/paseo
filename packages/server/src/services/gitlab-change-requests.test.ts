@@ -524,17 +524,15 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("honors a self-hosted rate limit before checking authentication again", async () => {
+  it("honors a self-hosted rate limit before retrying the merge request", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_700_000_000_000);
     const mrUrl = "https://git.corp.internal/team/app/-/merge_requests/3";
     const encoded = encodeURIComponent("team/app");
-    let authChecks = 0;
     let mrCalls = 0;
 
     const { runner } = createFakeGlabRunner((args) => {
       if (args[0] === "auth" && args[1] === "status") {
-        authChecks += 1;
         return { stdout: "Logged in", stderr: "" };
       }
       if (args[0] === "config") return { stdout: "", stderr: "" };
@@ -583,7 +581,6 @@ describe("GitLab ChangeRequestSource polling", () => {
         },
       });
       await vi.advanceTimersByTimeAsync(25);
-      expect(authChecks).toBe(1);
       expect(mrCalls).toBe(1);
       expect(errors).toHaveLength(1);
 
@@ -591,9 +588,8 @@ describe("GitLab ChangeRequestSource polling", () => {
       await vi.advanceTimersByTimeAsync(44_999);
       expect(mrCalls).toBe(1);
 
-      // Resumes at 45s and checks the current CLI profile.
+      // Resumes when the server's Retry-After interval expires.
       await vi.advanceTimersByTimeAsync(1);
-      expect(authChecks).toBe(2);
       expect(mrCalls).toBe(2);
       expect(snapshots).toHaveLength(1);
       expect(snapshots[0]!.headSha).toBe("xyz");
@@ -978,6 +974,44 @@ describe("GitLab ChangeRequestSource polling", () => {
     },
   );
 
+  it("reads merge updates when GitLab's authentication status endpoint is down", async () => {
+    vi.useFakeTimers();
+    const url = "https://gitlab.example.org/team/app/-/merge_requests/1";
+    let merged = false;
+    const { runner, calls } = createFakeGlabRunner((args) => {
+      if (args[0] === "auth") {
+        if (merged) throw new Error("GitLab /user returned 403");
+        return { stdout: "", stderr: "" };
+      }
+      if (args[0] === "config") return { stdout: "", stderr: "" };
+      if (args.at(-1)?.includes("/discussions?")) return httpJson([]);
+      return httpJson({ iid: 1, state: merged ? "merged" : "opened", sha: "head", web_url: url });
+    });
+    const service = createGitLabService({
+      runner,
+      resolveGlabPath: async () => "glab",
+      watchPollMs: 10_000,
+    });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests!.observe(url, {
+        async snapshot(snapshot) {
+          snapshots.push(snapshot);
+        },
+        error: (error) => errors.push(error),
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      merged = true;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(errors).toEqual([]);
+      expect(snapshots.map(({ state }) => state)).toEqual(["open", "merged"]);
+      expect(calls.filter(({ args }) => args[0] === "auth")).toEqual([]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
   it("rereads the profile's subfolder when the installer changes it", async () => {
     vi.useFakeTimers();
     let folder = "gitlab";
@@ -1030,16 +1064,10 @@ describe("GitLab ChangeRequestSource polling", () => {
       const states = ["opened", "locked", "merged"] as const;
       let poll = 0;
 
-      const { runner, calls } = createFakeGlabRunner((args, options) => {
-        if (args[0] === "auth" && args[1] === "status") {
-          if (args.at(-1) !== profileHost) {
-            throw new Error("There is no authenticated profile for this hostname");
-          }
-          expect(args).toEqual(["auth", "status", "--hostname", profileHost]);
-          return { stdout: "Logged in", stderr: "" };
-        }
+      const { runner } = createFakeGlabRunner((args, options) => {
         if (args[0] === "config") {
-          const override = profile === "bare with API host override";
+          const override =
+            profile === "bare with API host override" && options.envOverlay?.GITLAB_API_HOST !== "";
           const apiHost =
             args[2] === "api_host" && (override || args.at(-1) === profileHost) ? authority : "";
           return { stdout: apiHost, stderr: "" };
@@ -1099,9 +1127,6 @@ describe("GitLab ChangeRequestSource polling", () => {
         await vi.advanceTimersByTimeAsync(10_000);
         await vi.advanceTimersByTimeAsync(10_000);
         expect(snapshots.map((s) => s.state)).toEqual(["open", "open", "merged"]);
-        expect(
-          calls.find(({ args }) => args[0] === "auth" && args.at(-1) === profileHost)?.args,
-        ).toEqual(["auth", "status", "--hostname", profileHost]);
         release();
       } finally {
         forgeResolver.dispose();
