@@ -538,6 +538,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
       <AddHostFlowHost />
+      <WorkspaceArchiveShortcutHandler />
       <AppearanceStyleBoundary>
         {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
           <WindowChromeRegion corners="top-left">
@@ -569,7 +570,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <CommandCenterWorkspaceActions />
         <PluginCommandCenterActions />
         <WorkspacePinShortcutHandler />
-        <WorkspaceArchiveShortcutHandler />
         <WorkspaceRenameHost />
         <WorkspaceArchiveUndoShortcutHost />
         <CommandCenter />

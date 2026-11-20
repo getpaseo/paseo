@@ -19,7 +19,7 @@ export interface WorkspaceArchiveTarget {
 
 const pendingArchiveAttempts = new Set<string>();
 
-/** Runs one archive attempt per workspace, including its checkout check and confirmation. */
+/** Checks and starts one archive at a time for a workspace. */
 export async function runWorkspaceArchiveAttempt(input: {
   workspace: WorkspaceArchiveTarget;
   confirm?: () => Promise<boolean>;
@@ -32,7 +32,10 @@ export async function runWorkspaceArchiveAttempt(input: {
   pendingArchiveAttempts.add(key);
   try {
     if (input.confirm && !(await input.confirm())) return;
-    await input.archive();
+    if (!isWorkspaceListed(input.workspace)) return;
+    // Archive hides the row synchronously. Undo can restore it and start a new
+    // archive while the previous daemon request is still settling.
+    return input.archive();
   } finally {
     pendingArchiveAttempts.delete(key);
   }

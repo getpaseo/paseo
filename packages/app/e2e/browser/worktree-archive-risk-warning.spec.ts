@@ -496,6 +496,30 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     expect(statusRequest.archiveRequests()).toBe(1);
   });
 
+  test("keeps the newly opened workspace after a theme change during an archive check", async ({
+    page,
+  }) => {
+    const { worktree, statusRequest } = await openWorktreeWithCheckoutHeld(
+      page,
+      "archive-risk-theme",
+    );
+
+    await pressArchiveShortcut(page);
+    await statusRequest.waitForHeld();
+    const otherWorkspaceId = worktree.project.workspaceId;
+    const otherRoute = buildHostWorkspaceRoute(getServerId(), otherWorkspaceId);
+    try {
+      await page.keyboard.press("Control+Alt+t");
+      await workspaceRow(page, otherWorkspaceId).click();
+      await expectAppRoute(page, otherRoute);
+    } finally {
+      statusRequest.release();
+    }
+
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    await expectAppRoute(page, otherRoute);
+  });
+
   test("archiving the open worktree from its git actions leaves it for a new workspace", async ({
     page,
   }) => {
