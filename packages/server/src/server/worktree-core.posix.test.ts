@@ -1710,6 +1710,161 @@ printf 'setup' > "$repo-pr-checkout/.worktrunk-setup"
       expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(initialPrHead);
     });
 
+    test("configures fork push remote on a managed Worktrunk PR checkout so Push updates the fork branch", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const baseRemoteDir = path.join(tempDir, "base.git");
+      const wt = path.join(tempDir, "fake-wt-fork-push");
+      writeFileSync(
+        wt,
+        `#!/bin/sh
+repo="$2"
+shift 2
+branch=""
+base=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --create) branch="$2"; shift 2 ;;
+    --base) base="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+git -C "$repo" worktree add --quiet -b "$branch" "$repo-fork-managed" "$base" || exit $?
+printf '{"action":"created","path":"%s","branch":"%s","created_branch":true}\\n' "$repo-fork-managed" "$branch"
+`,
+        { mode: 0o755 },
+      );
+
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const previous = process.env.WORKTRUNK_BIN;
+      process.env.WORKTRUNK_BIN = wt;
+      try {
+        const result = await createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "fork-pr-managed-push",
+            action: "checkout",
+            githubPrNumber: 526,
+            refName: "main",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps({ github }),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async (request) => {
+                const managed = await createWithWorktrunk(request, new AbortController().signal);
+                return managed ? { pluginId: "worktrunk", path: managed.path } : null;
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        );
+        expect(result.worktree.worktreeManagerPluginId).toBe("worktrunk");
+        expect(result.worktree.branchName).toBe("therainisme/main");
+        writeFileSync(path.join(result.worktree.worktreePath, "README.md"), "pushed from wt\n");
+        git(result.worktree.worktreePath, "add", "README.md");
+        git(
+          result.worktree.worktreePath,
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "-m",
+          "managed fork commit",
+        );
+        const pushedSha = git(result.worktree.worktreePath, "rev-parse", "HEAD");
+        await pushCurrentBranch(result.worktree.worktreePath);
+
+        expect(
+          execFileSync("git", [`--git-dir=${headRemoteDir}`, "rev-parse", "refs/heads/main"], {
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(pushedSha);
+        expect(
+          execFileSync(
+            "git",
+            [`--git-dir=${baseRemoteDir}`, "for-each-ref", "refs/heads/therainisme/main"],
+            { encoding: "utf8" },
+          ).trim(),
+        ).toBe("");
+      } finally {
+        if (previous === undefined) delete process.env.WORKTRUNK_BIN;
+        else process.env.WORKTRUNK_BIN = previous;
+      }
+    });
+
+    test("falls back to built-in Git without calling managers when Git rejects worktree list -z", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const trailingSpaceWorktree = path.join(tempDir, "detached space ");
+      git(repoDir, "worktree", "add", "--detach", trailingSpaceWorktree, "main");
+      writeFileSync(path.join(trailingSpaceWorktree, "keep.txt"), "do not delete\n");
+
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const shimDir = path.join(tempDir, "legacy-git-bin");
+      mkdirSync(shimDir, { recursive: true });
+      writeFileSync(
+        path.join(shimDir, "git"),
+        `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-z" ]; then
+    echo 'error: unknown switch -z' >&2
+    exit 129
+  fi
+done
+exec "${realGit}" "$@"
+`,
+        { mode: 0o755 },
+      );
+
+      let managerCalled = false;
+      const previousPath = process.env.PATH;
+      process.env.PATH = `${shimDir}:${previousPath ?? ""}`;
+      try {
+        const result = await createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "legacy-git-fallback",
+            action: "branch-off",
+            branchName: "legacy-git-fallback",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps(),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async () => {
+                managerCalled = true;
+                return { pluginId: "bad-manager", path: trailingSpaceWorktree };
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        );
+        expect(managerCalled).toBe(false);
+        expect(result.worktree.branchName).toBe("legacy-git-fallback");
+        expect(result.worktree.worktreeManagerPluginId).toBeUndefined();
+        expect(readFileSync(path.join(trailingSpaceWorktree, "keep.txt"), "utf8")).toBe(
+          "do not delete\n",
+        );
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      }
+    });
+
     test("protects pre-existing and discovers newly managed worktrees whose paths contain a line break", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);
