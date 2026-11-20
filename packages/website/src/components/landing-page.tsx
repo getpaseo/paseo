@@ -10,7 +10,6 @@ import {
   Braces,
   Compass,
   ExternalLink,
-  FileCode2,
   Gem,
   GitFork,
   GitPullRequest,
@@ -19,7 +18,6 @@ import {
   Merge,
   Monitor,
   Puzzle,
-  Server,
   Smartphone,
   Terminal,
   Users,
@@ -883,16 +881,6 @@ function SdkAutomationExample() {
   );
 }
 
-const HUB_HIGHLIGHTS = [
-  { key: "machines", Icon: Laptop },
-  { key: "authoring", Icon: FileCode2 },
-  { key: "hosting", Icon: Server },
-] as const;
-
-const HUB_HIGHLIGHT_CODE_COMPONENTS = {
-  code: <code className="font-mono text-[11px] text-white/80" />,
-};
-
 function HubSection() {
   const { t } = useTranslation();
   const localize = useLocalizePath();
@@ -914,27 +902,10 @@ function HubSection() {
         </p>
       </div>
 
-      <div className="space-y-5">
+      <div className="space-y-8">
         <HubLandingFlow />
 
-        <div className="grid gap-3 md:grid-cols-3">
-          {HUB_HIGHLIGHTS.map(({ key, Icon }) => (
-            <div
-              key={key}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3.5 py-3 text-xs text-white/80"
-            >
-              <Icon className="h-4 w-4 shrink-0 text-extra-muted-foreground" strokeWidth={1.5} />
-              <span className="min-w-0">
-                <Trans
-                  i18nKey={`landing.hubSection.highlights.${key}`}
-                  components={HUB_HIGHLIGHT_CODE_COMPONENTS}
-                />
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 pt-1">
+        <div className="flex flex-wrap items-center gap-3">
           <a href={localize("/hub")} className={PRIMARY_CTA_CLASS}>
             {t("landing.hubSection.exploreCta")}
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
