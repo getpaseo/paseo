@@ -64,11 +64,13 @@ paseo hub init
 
 Choose your local Hub endpoint (`http://localhost:3000`) and select your Slack connection if prompted. Setup asks three questions:
 
-| Prompt                                  | Value to provide                                                                        |
-| --------------------------------------- | --------------------------------------------------------------------------------------- |
-| Starter agent provider, model, and mode | Any enabled provider on your daemon. Suggested model and mode entries are its defaults. |
-| Your Slack member ID                    | Your Slack ID, such as `U01234567`. Only listed users can trigger the bot.              |
-| Deploy now?                             | Yes, to validate and install the trigger in Hub.                                        |
+| Prompt                                  | Value to provide                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Starter agent provider, model, and mode | An enabled provider on your daemon with a selectable model and at least one execution mode (such as Claude, Codex, or OpenCode). |
+| Your Slack member ID                    | Your Slack ID, such as `U01234567`. Only listed users can trigger the bot.                                                       |
+| Deploy now?                             | Yes, to validate and install the trigger in Hub.                                                                                 |
+
+Providers that advertise zero execution modes (such as Pi) are skipped by `paseo hub init`, but you can configure them in the Hub dashboard or in `.paseo/triggers/*.yml` and deploy with `paseo hub deploy`.
 
 See [Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) to copy your member ID.
 

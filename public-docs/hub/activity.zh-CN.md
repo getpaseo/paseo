@@ -27,8 +27,8 @@ Hub 会记录每一次已接受的事件，无论它是否启动了运行。使�
 
 1. 打开 **Activity**。如果事件未出现在那里，请检查 **Integrations → Known unrouted events** 并查看记录的原因。
 2. 如果两处都没有，说明事件从未到达 Hub。检查 Provider 自己的投递日志（GitHub **App → Advanced → Recent Deliveries**、Linear webhook 日志或 Slack **Event Subscriptions**），并确认应用已订阅对应事件类型。
-3. 检查 `from_users`。GitHub 使用登录名，Linear、Slack 和 Discord 使用用户 ID 而不是显示名称。参见 [Linear 触发器](/docs/hub/triggers/linear#filters-and-linear-uuids)、[Slack 触发器](/docs/hub/triggers/slack#find-your-slack-ids)和 [Discord 触发器](/docs/hub/triggers/discord#find-your-discord-ids)。
-4. 检查文本过滤条件。在 GitHub 和 Linear 评论上，`contains` 匹配子串，`pattern` 匹配开头。在 Slack 和 Discord 上，消息必须提及机器人，且任何 `pattern` 都必须紧跟在提及之后。在 GitHub 上，还要确认 `exclude_contains` 没有将该评论排除。
+3. 检查 `from_users`。GitHub 使用登录名，Linear、Slack 和 Discord 使用用户 ID（参见 [Linear](/docs/hub/triggers/linear#filters-and-linear-uuids)、[Slack](/docs/hub/triggers/slack#find-your-slack-ids)、[Discord](/docs/hub/triggers/discord#find-your-discord-ids)）。
+4. 检查文本过滤条件（`contains`、`pattern` 以及 GitHub 的 `exclude_contains`）。在 Slack 和 Discord 上，消息必须提及机器人，且任何 `pattern` 都必须紧跟在提及之后。
 5. 在 **Triggers** 下确认触发器已启用。
 6. 在 **Daemons** 下确认目标 daemon 已连接并拥有 `hub.execute` 权限。
 7. 如果运行已启动但提前停止，请将其持续时间与 `max_runtime`、`idle_timeout` 和 `startup_timeout` 进行对比。

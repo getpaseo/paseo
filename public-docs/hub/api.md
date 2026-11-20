@@ -65,7 +65,7 @@ A valid credential missing the required scope returns `403` in the same format.
 
 ```json
 {
-  "yaml": "name: manual-task\nenabled: true\non:\n  manual.run: {}\nrun:\n  target: { daemon: my-macbook, cwd: /workspace }\n  agent: { provider: codex, mode: full-access }\n  prompt: Complete the task and call finish_execution.\n  max_runtime: 1h\n  idle_timeout: 5m\n"
+  "yaml": "name: manual-task\nenabled: true\non:\n  manual.run: {}\nrun:\n  target: { daemon: my-macbook, cwd: /workspace }\n  agent: { provider: codex, mode: full-access }\n  prompt: |\n    Complete the task and call finish_execution.\n    ${{ paseo.prompt }}\n  max_runtime: 1h\n  idle_timeout: 5m\n"
 }
 ```
 

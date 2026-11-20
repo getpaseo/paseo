@@ -59,7 +59,9 @@ paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-使用允许的 Linear 账号发表一条 issue 评论，例如 `/paseo summarize this request`。Hub 会匹配前缀、在 `devbox` 上运行 Agent，并将回复作为评论发布到该 Linear issue。Hub 运行在 HTTPS 下时，回复会附带 **Open in Paseo** 链接。在 [Activity](/docs/hub/activity) 中可以查看运行记录。
+使用允许的 Linear 账号发表一条 issue 评论，例如 `/paseo summarize this request`。Hub 会匹配前缀、在 `devbox` 上运行 Agent，并将回复作为评论发布到该 Linear issue。
+
+Hub 运行在 HTTPS 下时，回复会附带 **Open in Paseo** 链接。在 [Activity](/docs/hub/activity) 中可以查看运行记录。
 
 ## 在 issue 进入范围时开始工作 {#start-work-when-an-issue-enters-scope}
 

@@ -32,7 +32,7 @@ GitHub / Linear / Slack / Discord / Schedule / Webhook
 
 ## From event to agent
 
-1. An event arrives. GitHub, Linear, Slack (Webhooks transport), and inbound webhooks send signed or authenticated HTTPS requests to Hub. Slack Socket Mode and Discord connect out from Hub. Schedules fire on Hub's own clock.
+1. An event arrives via HTTPS webhooks (GitHub, Linear, Slack Webhooks, or inbound webhooks), an outbound connection (Slack Socket Mode or Discord gateway), or Hub's schedule clock.
 2. Hub verifies the sender or signature and looks up matching enabled triggers.
 3. For external provider events, Hub evaluates the trigger's connection, resource filters, and sender allowlist (`from_users`).
 4. For each matching trigger, Hub creates a run and sends the launch intent to the target daemon over the same RPC protocol used by the Paseo app and CLI.

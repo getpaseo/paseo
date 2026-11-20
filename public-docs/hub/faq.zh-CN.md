@@ -24,11 +24,15 @@ Hub 可以运行你已连接的 Paseo daemon 上配置的任意 Provider，包�
 
 ## 谁可以触发 Agent？ {#who-can-trigger-an-agent}
 
-对于 GitHub、Slack、Discord 以及 Linear 评论和分配触发器，只有列在 `from_users` 中的用户可以触发运行。`linear.issue_entered_scope` 要求设置 `filters.project` 且可以省略 `from_users`。入站 webhook 通过 Bearer 密钥（`whsec_...`）验证调用方，定时任务则按 Hub 自己的时钟触发。
+对于 GitHub、Slack、Discord 以及 Linear 评论和分配触发器，Hub 会对照 `from_users` 检查发送者。设置为 `from_users: ["*"]`（控制台 **Audience: Everyone** 的默认值）时允许任意发送者，列出具名登录名或用户 ID 时则只允许这些账号。
+
+`linear.issue_entered_scope` 要求设置 `filters.project` 且可以省略 `from_users`。入站 webhook 通过 Bearer 密钥（`whsec_...`）验证调用方，定时任务则按 Hub 自己的时钟触发。
 
 ## Agent 可以回复到 GitHub、Linear、Slack 或 Discord 吗？ {#can-an-agent-reply-back-to-github-linear-slack-or-discord}
 
-可以。对话类触发器（`github.*`、`linear.*`、`slack.*`、`discord.*`）会自动授予 Hub MCP `reply` 工具，将回复发布回触发运行的 issue、Pull Request 或讨论串。添加 `run.outputs` 可设置 `max` 或 `required: true`，并在 `run.prompt` 中指示 Agent 调用 `reply` 和 `finish_execution`。当 Hub 运行在 HTTPS 下时，回复会为已登录的组织成员附带 **Open in Paseo** 链接。
+可以。对话类触发器（`github.*`、`linear.*`、`slack.*`、`discord.*`）会自动授予 Hub MCP `reply` 工具，将回复发布回触发运行的 issue、Pull Request 或讨论串。
+
+添加 `run.outputs` 可设置 `max` 或 `required: true`，并在 `run.prompt` 中指示 Agent 调用 `reply` 和 `finish_execution`。当 Hub 运行在 HTTPS 下时，回复会为已登录的组织成员附带 **Open in Paseo** 链接。
 
 ## 定时任务或 webhook 可以发送到 Slack 或 Discord 吗？ {#can-a-schedule-or-webhook-post-to-slack-or-discord}
 
@@ -36,11 +40,15 @@ Hub 可以运行你已连接的 Paseo daemon 上配置的任意 Provider，包�
 
 ## daemon 离线时会发生什么？ {#what-happens-when-a-daemon-is-offline}
 
-派发会失败，Hub 会在 **Activity** 中记录失败。对于 Provider 事件和 webhook，Hub 不会在之后静默重放失败的派发，daemon 重新上线后需要再次触发。定时触发器会在未来计划时间继续触发，并在已有运行活跃时跳过重叠的计划。
+如果目标 daemon 离线时 Hub 接受了 Provider 事件或入站 webhook，Hub 会将该运行保留在队列中并重试派发，直到达到 `max_runtime` 截止时间。如果 daemon 在截止时间前重新上线，排队中的运行会自动启动，因此重新发送事件可能会造成重复运行。
+
+请等到 **Activity** 显示该运行已进入终态失败后再发送新事件。定时触发器会在未来计划时间继续触发，并在前一次运行活跃时跳过重叠的计划。
 
 ## 退出登录会断开我的 daemon 吗？ {#does-logging-out-disconnect-my-daemon}
 
-不会。CLI 登录是保存在 `PASEO_HOME` 下的个人凭据，而已注册的 daemon 持有自己的关系凭据。交互式 `paseo hub logout` 会在删除登录前询问是否断开连接到同一 Hub 的 daemon。非交互式和 `--json` 退出登录除非传入 `--disconnect-daemon`，否则不会断开 daemon。
+不会。CLI 登录是保存在 `PASEO_HOME` 下的个人凭据，而已注册的 daemon 持有自己的关系凭据。
+
+交互式 `paseo hub logout` 会在删除登录前询问是否断开连接到同一 Hub 的 daemon。非交互式和 `--json` 退出登录除非传入 `--disconnect-daemon`，否则不会断开 daemon。
 
 ## 不使用 GitHub 也能用 Hub 吗？ {#can-i-use-hub-without-github}
 

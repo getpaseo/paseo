@@ -29,8 +29,8 @@ Check these items in order:
 
 1. Open **Activity**. If the event is missing there, check **Integrations → Known unrouted events** and read the recorded reason.
 2. If the event does not appear in either view, the provider never reached Hub. Check the provider delivery log (GitHub **App → Advanced → Recent Deliveries**, Linear webhook logs, or Slack **Event Subscriptions**) and make sure that the app subscribes to that event type.
-3. Verify `from_users`. GitHub uses login names. Linear, Slack, and Discord use user IDs rather than display names. See [Linear triggers](/docs/hub/triggers/linear#filters-and-linear-uuids), [Slack triggers](/docs/hub/triggers/slack#find-your-slack-ids), and [Discord triggers](/docs/hub/triggers/discord#find-your-discord-ids).
-4. Verify text filters. On GitHub and Linear comments, `contains` matches a substring and `pattern` matches the start. On Slack and Discord, the message must mention the bot and any `pattern` must immediately follow the mention. On GitHub, make sure that `exclude_contains` did not exclude the comment.
+3. Verify `from_users`. GitHub uses login names, while Linear, Slack, and Discord use user IDs ([Linear](/docs/hub/triggers/linear#filters-and-linear-uuids), [Slack](/docs/hub/triggers/slack#find-your-slack-ids), [Discord](/docs/hub/triggers/discord#find-your-discord-ids)).
+4. Verify text filters (`contains`, `pattern`, and GitHub `exclude_contains`). On Slack and Discord, the message must mention the bot and any `pattern` must follow the mention.
 5. Verify that the trigger is enabled under **Triggers**.
 6. Verify that the target daemon is connected under **Daemons** and holds the `hub.execute` permission.
 7. If the run started and stopped early, compare its duration against `max_runtime`, `idle_timeout`, and `startup_timeout`.

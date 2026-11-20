@@ -48,7 +48,7 @@ run:
 
 Discord 过滤条件使用数字 snowflake ID，而不是服务器名称、显示名称或连接 slug。请为每个 snowflake ID 加上引号，让 YAML 将其保留为字符串。
 
-`from_users` 为必填项，匹配发送者。`guild` 和 `channels` 限制提及出现的位置。`pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。所有过滤条件按逻辑与组合。
+`from_users` 为必填项，匹配发送者，`guild` 和 `channels` 限制提及出现的位置。`pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。所有过滤条件按逻辑与组合。
 
 `${{ paseo.prompt }}` 包含收到的完整消息文本。如果你声明了 `inputs`，Hub 会将提及之后紧跟的 `key=value` 头部解析到 `${{ paseo.inputs }}`。在 `run.prompt` 中包含 `${{ paseo.context }}`，即可以 JSON 形式传入被引用的消息、讨论串历史和附件描述符。
 

@@ -127,7 +127,9 @@ Hub 会在每段提示词中附带 `executionId`。在持续运行的 Agent 上�
 - `schedule.tick` 使用 `recurrence`，不接受 `connection` 或 `filters`。
 - `webhook.received` 通过 Bearer 密钥验证调用方，不接受 `connection` 或 `filters`。
 
-`from_users` 白名单可以防止陌生人在公开 issue 上发表评论就启动你机器上的 Agent。白名单不能为 Agent 提供沙箱隔离，也不会清洗不可信文本，扩大范围前请先阅读 [Hub 安全](/docs/hub/security)。
+控制台触发器表单默认将 **Audience** 设为 **Everyone**，保存为 `from_users: ["*"]`，允许公开仓库或工作区中的任意用户启动运行。如需限制访问，请在表单中选择 **Specific people**，或在 YAML 的 `from_users` 中显式列出登录名或用户 ID。
+
+白名单不能为 Agent 提供沙箱隔离，也不会清洗不可信文本，授予写权限或放宽受众范围前请先阅读 [Hub 安全](/docs/hub/security)。
 
 | 过滤条件           | 适用于                         | 匹配内容                                                      |
 | ------------------ | ------------------------------ | ------------------------------------------------------------- |

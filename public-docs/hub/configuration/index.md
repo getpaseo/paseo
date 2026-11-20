@@ -99,7 +99,9 @@ paseo hub deploy
 
 Both commands read every direct `.paseo/triggers/*.yml` file in deterministic path order. The CLI rejects nested directories, `.yaml` extensions, symlinks, and unreadable files, and does not search parent directories.
 
-`--dry-run` validates every file against Hub and your connected daemons without writing revisions. `paseo hub deploy` validates all files first, then installs each trigger by its YAML `name`. If a later trigger fails to install, the error lists the files already installed. Redeploying an existing webhook trigger name preserves its webhook URL and secret.
+`--dry-run` validates every file against Hub and your connected daemons without writing revisions. `paseo hub deploy` validates all files first, then installs each trigger by its YAML `name`.
+
+If a later trigger fails to install, the error lists the files already installed. Redeploying an existing webhook trigger name preserves its webhook URL and secret.
 
 Origin precedence:
 

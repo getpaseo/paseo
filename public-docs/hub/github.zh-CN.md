@@ -56,7 +56,9 @@ run:
 | `permissions`  | 安装令牌权限，例如 `contents`、`pull_requests` 和 `issues`（`read`、`write` 或 `admin`）。默认为 `contents: read`。 |
 | `duration`     | 正的令牌有效期，最长 `1h`。默认为 `1h`（GitHub 上限）。                                                             |
 
-请求的权限不能超过 GitHub App 安装本身被授予的权限。如果连接、仓库或权限无法解析，保存或部署会直接失败。
+请求的权限不能超过 GitHub App 安装本身被授予的权限。
+
+保存或部署触发器时，Hub 会校验 `run.github` 字段结构、GitHub 事件过滤条件（`on.github.*`）以及 Agent 配置。Hub 会在运行启动时才查找 `run.github.connection` 并签发安装令牌，因此不存在的 slug、无法访问的仓库或超出范围的权限会在启动时失败，而不是在部署时失败。
 
 ## Agent 环境 {#agent-environment}
 

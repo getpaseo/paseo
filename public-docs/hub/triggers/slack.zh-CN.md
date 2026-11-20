@@ -46,7 +46,11 @@ run:
 
 ## 过滤条件与提示词文本 {#filters-and-prompt-text}
 
-Slack 过滤条件使用 ID，而不是显示名称或连接 slug。`from_users` 为必填项，匹配发送者的 Slack 成员 ID。`workspace` 匹配 Slack Team ID，`channels` 限制可触发运行的频道。`pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。所有过滤条件按逻辑与组合。
+Slack 过滤条件使用 ID，而不是显示名称或连接 slug。所有过滤条件按逻辑与组合：
+
+- `from_users` 为必填项，匹配发送者的 Slack 成员 ID。
+- `workspace` 匹配 Slack Team ID，`channels` 限制可触发运行的频道。
+- `pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。
 
 `${{ paseo.prompt }}` 包含收到的完整消息文本。如果你在触发器上声明了 `inputs`，Hub 会将提及之后紧跟的 `key=value` 头部解析到 `${{ paseo.inputs }}`：
 

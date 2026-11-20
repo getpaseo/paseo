@@ -58,7 +58,9 @@ run:
 | `permissions`  | Installation-token permissions such as `contents`, `pull_requests`, and `issues` (`read`, `write`, or `admin`). Defaults to `contents: read`. |
 | `duration`     | Positive token lifetime up to `1h`. Defaults to `1h`, GitHub's maximum.                                                                       |
 
-Requested permissions cannot exceed what the GitHub App installation allows. Saving or deploying fails if the connection, repository, or permission cannot be resolved.
+Requested permissions cannot exceed what the GitHub App installation allows.
+
+When you save or deploy a trigger, Hub validates the `run.github` schema, any GitHub event filters (`on.github.*`), and the agent configuration. Hub looks up `run.github.connection` and mints the installation token when the run launches, so a nonexistent slug, unreachable repository, or excess permission fails at launch rather than at deploy time.
 
 ## Agent environment
 

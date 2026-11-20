@@ -61,7 +61,9 @@ paseo hub deploy --dry-run
 paseo hub deploy
 ```
 
-From an allowed Linear account, post an issue comment such as `/paseo summarize this request`. Hub matches the prefix, runs the agent on `devbox`, and posts the reply as a comment on that Linear issue. When Hub runs over HTTPS, the reply includes an **Open in Paseo** link. Check [Activity](/docs/hub/activity) to inspect the run.
+From an allowed Linear account, post an issue comment such as `/paseo summarize this request`. Hub matches the prefix, runs the agent on `devbox`, and posts the reply as a comment on that Linear issue.
+
+When Hub runs over HTTPS, the reply includes an **Open in Paseo** link. Check [Activity](/docs/hub/activity) to inspect the run.
 
 ## Start work when an issue enters scope
 

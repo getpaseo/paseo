@@ -79,7 +79,7 @@ Set `run.background: true` to create a background Paseo workspace that stays hid
 
 ## Timing, overlap, and recovery
 
-- Hub evaluates schedules against the selected timezone's local wall clock. A local time skipped by a daylight-saving jump is skipped. A repeated local time runs once at its earlier occurrence. Use `UTC` for fixed elapsed-time intervals across daylight saving.
+- Hub evaluates schedules against the selected timezone's local wall clock, skipping times jumped by daylight saving and running repeated times once at their earlier occurrence. Use `UTC` for fixed elapsed-time intervals across daylight saving.
 - While a scheduled run is still active, Hub skips newly due occurrences for that trigger instead of stacking parallel runs. Once the active run completes or fails, the next future occurrence resumes. Separate triggers can still run at the same time on the same daemon.
 - After Hub downtime, Hub dispatches one catch-up run for the earliest missed occurrence and then advances to the next future occurrence. It does not replay every missed tick.
 - Include `${{ paseo.context }}` in `run.prompt` to pass `schedule.trigger_id`, `schedule.scheduled_at` (UTC), and `schedule.timezone`.

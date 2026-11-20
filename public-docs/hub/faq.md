@@ -26,11 +26,15 @@ Yes. Integrations belong to the organization under **Integrations**, and each co
 
 ## Who can trigger an agent?
 
-For GitHub, Slack, Discord, and Linear comment or assignment triggers, only users listed in `from_users` can trigger a run. `linear.issue_entered_scope` requires `filters.project` and can omit `from_users`. Inbound webhooks authenticate callers with a Bearer secret (`whsec_...`), and schedules fire on Hub's own clock.
+For GitHub, Slack, Discord, and Linear comment or assignment triggers, Hub checks the sender against `from_users`. Setting `from_users: ["*"]` (the dashboard's **Audience: Everyone** default) allows any sender, while listing named logins or user IDs restricts access.
+
+`linear.issue_entered_scope` requires `filters.project` and can omit `from_users`. Inbound webhooks authenticate callers with a Bearer secret (`whsec_...`), and schedules fire on Hub's own clock.
 
 ## Can an agent reply back to GitHub, Linear, Slack, or Discord?
 
-Yes. Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) automatically grant the Hub MCP `reply` tool, which posts back to the triggering issue, pull request, or thread. Add `run.outputs` to set `max` or `required: true`, and tell the agent to call `reply` and `finish_execution` in `run.prompt`. When Hub runs over HTTPS, replies include an **Open in Paseo** link for signed-in organization members.
+Yes. Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) automatically grant the Hub MCP `reply` tool, which posts back to the triggering issue, pull request, or thread.
+
+Add `run.outputs` to set `max` or `required: true`, and tell the agent to call `reply` and `finish_execution` in `run.prompt`. When Hub runs over HTTPS, replies include an **Open in Paseo** link for signed-in organization members.
 
 ## Can a schedule or webhook post to Slack or Discord?
 
@@ -38,11 +42,15 @@ Yes. Add [`run.tools`](/docs/hub/tools) (or configure **Integration tools** in t
 
 ## What happens when a daemon is offline?
 
-Dispatch fails and Hub records the failure in **Activity**. For provider events and webhooks, Hub does not silently replay failed dispatches later, so trigger the event again once the daemon reconnects. Scheduled triggers continue firing at future occurrences and skip overlapping ticks while a run is active.
+When Hub accepts a provider event or inbound webhook while the target daemon is offline, Hub keeps the run queued and retries dispatch until its `max_runtime` deadline expires. If the daemon reconnects in time, the queued run starts automatically, so resending the event can start a duplicate run.
+
+Wait for **Activity** to show a terminal failure before sending a new event. Scheduled triggers continue firing at future occurrences and skip overlapping ticks while an earlier run is active.
 
 ## Does logging out disconnect my daemon?
 
-No. The CLI login is a human credential stored under `PASEO_HOME`, while an enrolled daemon holds its own relationship credential. Interactive `paseo hub logout` offers to disconnect a daemon connected to the same Hub before deleting the login. Non-interactive and `--json` logout never disconnect the daemon unless you pass `--disconnect-daemon`.
+No. The CLI login is a human credential stored under `PASEO_HOME`, while an enrolled daemon holds its own relationship credential.
+
+Interactive `paseo hub logout` offers to disconnect a daemon connected to the same Hub before deleting the login. Non-interactive and `--json` logout never disconnect the daemon unless you pass `--disconnect-daemon`.
 
 ## Can I use Hub without GitHub?
 

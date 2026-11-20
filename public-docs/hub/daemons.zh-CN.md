@@ -28,7 +28,9 @@ paseo hub connect
 
 `connect` 使用当前登录凭据申请一个一次性注册令牌。daemon 用该令牌换取自己的关系凭据，因此你的 CLI 登录凭据永远不会作为 daemon 权限保存。
 
-Hub 根据主机名生成 daemon 的初始 slug。如果组织内已有同名 slug，Hub 会附加一个短 daemon ID 后缀。slug 使用连字符连接的小写单词，例如 `Build Studio` 会变成 `build-studio`。之后可以在 Hub 中重命名 slug，不会改变不可变的 daemon ID，但需要更新引用旧 slug 的触发器。
+Hub 根据主机名生成使用连字符连接的小写初始 slug，例如 `build-studio`。如果组织内已有同名 slug，Hub 会附加一个短 daemon ID 后缀。
+
+之后可以在 Hub 中重命名 slug，不会改变不可变的 daemon ID，但需要更新引用旧 slug 的触发器。
 
 无人值守环境中，可通过环境变量传入组织 API 密钥：
 

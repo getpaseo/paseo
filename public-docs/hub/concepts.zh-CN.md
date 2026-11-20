@@ -30,7 +30,7 @@ GitHub / Linear / Slack / Discord / Schedule / Webhook
 
 ## 从事件到 Agent {#from-event-to-agent}
 
-1. 事件到达。GitHub、Linear、Slack（Webhooks 传输方式）和入站 webhook 向 Hub 发送带签名或已认证的 HTTPS 请求。Slack Socket Mode 和 Discord 由 Hub 主动向外连接。定时任务按 Hub 自身的时钟触发。
+1. 事件通过 HTTPS webhook（GitHub、Linear、Slack Webhooks 或入站 webhook）、出站连接（Slack Socket Mode 或 Discord gateway）或 Hub 定时时钟到达。
 2. Hub 验证发送者或签名，并查找匹配的已启用触发器。
 3. 对于外部 Provider 事件，Hub 会评估触发器的连接、资源过滤条件和发送者白名单（`from_users`）。
 4. 对每个匹配的触发器，Hub 创建一次运行，并通过 Paseo 应用和 CLI 使用的同一套 RPC 协议向目标 daemon 发送启动意图。

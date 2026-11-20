@@ -138,13 +138,15 @@ Paseo 从不保存或传输 Provider API 密钥。Agent 在你的用户上下文
 
 ## Hub 身份与凭据 {#hub-identities-and-credentials}
 
-Hub CLI 登录和 daemon 注册是两个独立的身份。`paseo hub login [origin]` 会在 `PASEO_HOME` 下的一个私有文件中保存一个持久的、组织范围的个人凭据，以规范化后的 Hub 地址为键。保存的凭据从不会发送到其他地址。请把 `PASEO_HOME` 当作敏感的本地状态加以保护。
+Hub CLI 登录和 daemon 注册是两个独立的身份。`paseo hub login [origin]` 会在 `PASEO_HOME` 下的私有文件中保存持久的组织级凭据，以规范化后的 Hub 地址为键。
 
-Hub CLI 凭据是 bearer 密钥。远程 Hub 地址必须使用 HTTPS；只有回环地址的开发环境（`localhost`、`127.0.0.1` 和 `[::1]`）才接受明文 HTTP。
+保存的凭据从不会发送到其他地址，请将 `PASEO_HOME` 作为敏感的本地状态加以保护。Hub CLI 凭据是 bearer 密钥，远程 Hub 地址必须使用 HTTPS（仅 `localhost`、`127.0.0.1` 和 `[::1]` 接受明文 HTTP）。
 
-`paseo hub connect [origin]` 只用这个凭据（或显式提供的 API 密钥）申请一个短期有效的一次性注册令牌。daemon 用这个令牌完成交换，并保留它自己独立生成的关系凭据。退出 CLI 登录不会悄悄移除 daemon 的权限。交互式退出会先完成已确认的同一地址 daemon 断开，再删除登录。在 JSON 和非交互使用中，`logout` 从不提示也不断开；只有当自动化打算同时移除两个身份时，才传入 `--disconnect-daemon`。
+`paseo hub connect [origin]` 只用 CLI 登录或 API 密钥申请短期有效的一次性注册令牌。daemon 用该令牌换取自己独立的关系凭据。
 
-`--api-key` 和 `PASEO_HUB_API_KEY` 会覆盖已保存的登录，但不会被持久化。用于自动化时，优先通过环境变量或密钥管理器注入；当本地进程列表或 shell 历史对其他用户可见时，避免使用命令行参数。
+退出 CLI 登录不会悄悄移除 daemon 权限。交互式 `logout` 会在删除登录前询问是否断开同一地址的 daemon，而 JSON 和非交互式退出需要传入 `--disconnect-daemon` 才会移除两个身份。
+
+`--api-key` 和 `PASEO_HUB_API_KEY` 会覆盖已保存的登录而不会持久化。用于自动化时，优先通过环境变量或密钥管理器注入，并在本地进程列表或 shell 历史对其他用户可见时避免使用命令行参数。
 
 ## 建议 {#recommendations}
 

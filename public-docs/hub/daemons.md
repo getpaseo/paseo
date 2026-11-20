@@ -20,7 +20,7 @@ paseo hub login https://hub.example.com
 
 The CLI prints a URL and verification code and opens your browser. After approval, Paseo stores an organization-scoped CLI login under `PASEO_HOME`.
 
-In an interactive terminal, `login` offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes. Execution permission defaults to no. `--json` and non-TTY logins do not prompt.
+In an interactive terminal, `login` offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes, and execution permission defaults to no. `--json` and non-TTY logins do not prompt.
 
 If you skipped connection during login, enroll the daemon separately:
 
@@ -30,7 +30,9 @@ paseo hub connect
 
 `connect` uses your active login to request a single-use enrollment token. The daemon exchanges that token for its own relationship credential, so your CLI login is never stored as daemon authority.
 
-Hub derives the daemon's initial slug from its hostname. If that slug is already taken in the organization, Hub appends a short daemon ID suffix. Slugs use lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. You can rename the slug later in Hub without changing the immutable daemon ID, then update any triggers that reference the old slug.
+Hub derives the daemon's initial slug from its hostname using lowercase words joined by hyphens, such as `build-studio`. If that slug is already taken in the organization, Hub appends a short daemon ID suffix.
+
+You can rename the slug later in Hub without changing the immutable daemon ID, then update any triggers that reference the old slug.
 
 For unattended setup, pass an organization API key through the environment:
 

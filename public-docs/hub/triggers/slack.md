@@ -48,7 +48,11 @@ run:
 
 ## Filters and prompt text
 
-Slack filters use IDs, not display names or connection slugs. `from_users` is required and matches the sender's Slack member ID. `workspace` matches the Slack team ID and `channels` limits which channels can trigger the run. `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior). All filters compose with AND.
+Slack filters use IDs, not display names or connection slugs. All filters compose with AND:
+
+- `from_users` is required and matches the sender's Slack member ID.
+- `workspace` matches the Slack team ID and `channels` limits which channels can trigger the run.
+- `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior).
 
 `${{ paseo.prompt }}` contains the complete received message text. If you declare `inputs` on the trigger, Hub parses leading `key=value` tokens after the mention into `${{ paseo.inputs }}`:
 

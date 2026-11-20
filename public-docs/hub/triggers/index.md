@@ -129,7 +129,9 @@ External provider triggers require a non-empty `from_users` allowlist. There are
 - `schedule.tick` uses `recurrence` and accepts no `connection` or `filters`.
 - `webhook.received` authenticates callers with a Bearer secret and accepts no `connection` or `filters`.
 
-The `from_users` allowlist stops a stranger's comment on a public issue from starting an agent on your machine. Allowlists do not sandbox the agent or sanitize untrusted text, so read [Hub security](/docs/hub/security) before widening them.
+The dashboard trigger form defaults **Audience** to **Everyone**, which saves `from_users: ["*"]` and lets any user on a public repository or workspace start a run. To restrict access, choose **Specific people** in the form or list explicit logins or user IDs in `from_users`.
+
+Allowlists do not sandbox the agent or sanitize untrusted text, so read [Hub security](/docs/hub/security) before granting write access or widening the audience.
 
 | Filter             | Applies to                     | Matches                                                                            |
 | ------------------ | ------------------------------ | ---------------------------------------------------------------------------------- |

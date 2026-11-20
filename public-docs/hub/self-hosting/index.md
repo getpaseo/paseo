@@ -61,7 +61,9 @@ DATABASE_URL=postgres://paseo:password@localhost:5432/paseo_hub \
 
 Use PostgreSQL for a durable server deployment, multiple Hub processes, or standard database backups. Migrations run automatically at startup, and Hub refuses to listen if a migration fails.
 
-The database also stores Hub's generated authentication secret. Set `PASEO_HUB_AUTH_SECRET` only when your platform injects that secret from an external secret store. While set, Hub uses the override without replacing the stored secret. Changing the active secret signs dashboard users out, while running executions keep their existing credentials until they end.
+The database also stores Hub's generated authentication secret. Set `PASEO_HUB_AUTH_SECRET` only when your platform injects that secret from an external secret store.
+
+While set, Hub uses the override without replacing the stored secret. Changing the active secret signs dashboard users out, while running executions keep their existing credentials until they end.
 
 ## App configuration
 

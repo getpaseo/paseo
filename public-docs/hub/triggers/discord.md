@@ -50,7 +50,7 @@ run:
 
 Discord filters use numeric snowflake IDs, not server names, display names, or connection slugs. Quote every snowflake ID so YAML keeps it as a string.
 
-`from_users` is required and matches the sender. `guild` and `channels` restrict where the mention arrived. `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior). All filters compose with AND.
+`from_users` is required and matches the sender, while `guild` and `channels` restrict where the mention arrived. `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior). All filters compose with AND.
 
 `${{ paseo.prompt }}` contains the complete received message text. If you declare `inputs`, Hub parses leading `key=value` tokens after the mention into `${{ paseo.inputs }}`. Include `${{ paseo.context }}` in `run.prompt` to pass the referenced message, thread history, and attachment descriptors as JSON.
 

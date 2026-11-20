@@ -97,7 +97,9 @@ paseo hub deploy
 
 两个命令都会按确定的路径顺序读取直接位于 `.paseo/triggers/*.yml` 下的文件。CLI 会拒绝嵌套目录、`.yaml` 扩展名、符号链接和不可读文件，并且不会向上搜索父目录。
 
-`--dry-run` 会对照 Hub 和已连接的 daemon 校验所有文件，但不写入版本。`paseo hub deploy` 会先校验全部文件，再按 YAML 中的 `name` 逐个安装。如果后面的触发器安装失败，错误信息会列出已成功安装的文件。重新部署同名的 webhook 触发器会保留它的 webhook URL 和密钥。
+`--dry-run` 会对照 Hub 和已连接的 daemon 校验所有文件，但不写入版本。`paseo hub deploy` 会先校验全部文件，再按 YAML 中的 `name` 逐个安装。
+
+如果后面的触发器安装失败，错误信息会列出已成功安装的文件。重新部署同名的 webhook 触发器会保留它的 webhook URL 和密钥。
 
 地址优先级：
 
