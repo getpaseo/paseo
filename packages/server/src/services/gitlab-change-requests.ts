@@ -37,7 +37,7 @@ const gitLabWatchMrSchema = z
       .passthrough()
       .nullable()
       .optional(),
-    web_url: z.string().optional(),
+    web_url: checkUrlSchema,
     target_project_id: z.number().nullable().optional(),
     merged_at: z.string().nullable().optional(),
     head_pipeline: gitLabWatchPipelineSchema.nullable().optional(),
@@ -83,7 +83,6 @@ const gitLabWatchApprovalsSchema = z
   .object({
     approvals_required: z.number().nullable().optional(),
     approvals_left: z.number().nullable().optional(),
-    approved_by: z.array(z.unknown()).nullable().optional(),
   })
   .passthrough();
 
@@ -309,21 +308,10 @@ interface ApprovalCount {
   required: number;
 }
 
-function computeApprovalsGiven(approvals: GitLabWatchApprovals): number {
-  if (approvals.approved_by != null) {
-    return approvals.approved_by.length;
-  }
-  if (approvals.approvals_required != null && approvals.approvals_left != null) {
-    return Math.max(0, approvals.approvals_required - approvals.approvals_left);
-  }
-  return 0;
-}
-
-function summarizeApprovalCount(approvals: GitLabWatchApprovals): ApprovalCount {
-  return {
-    given: computeApprovalsGiven(approvals),
-    required: approvals.approvals_required ?? 0,
-  };
+function summarizeApprovalCount(approvals: GitLabWatchApprovals): ApprovalCount | null {
+  const { approvals_required: required, approvals_left: remaining } = approvals;
+  if (required == null || remaining == null) return null;
+  return { given: Math.max(0, required - remaining), required };
 }
 
 function formatApprovalCount(summary: ApprovalCount | null): string {
@@ -397,9 +385,16 @@ function isApprovalsEndpointUnavailable(status: number | null, text: string): bo
   return /\b(403|404|501|not found|forbidden)\b/i.test(text);
 }
 
-function isNotFoundError(status: number | null, text: string): boolean {
-  if (status === 404) return true;
-  return /\b(404|not found)\b/i.test(text);
+function pipelineFailureCheck(
+  pipeline: z.infer<typeof gitLabWatchPipelineSchema>,
+): ChangeRequestSnapshot["checks"][number] {
+  const url = checkUrlSchema.safeParse(pipeline.web_url).data;
+  return {
+    id: `pipeline:${pipeline.id}`,
+    name: `Pipeline #${pipeline.id}`,
+    state: "failed",
+    ...(url ? { url } : {}),
+  };
 }
 
 function createRateLimitError(
@@ -628,7 +623,28 @@ export function createGitLabChangeRequestSource(
     return { status, stderr: error.stderr };
   }
 
+  async function readMergeRequestMetadata(params: {
+    url: string;
+    host: string;
+    endpoint: string;
+    pauseHost(untilMs: number): void;
+  }): Promise<GitLabWatchMr> {
+    const { data: mr } = await apiGet({ ...params, schema: gitLabWatchMrSchema });
+    if (new URL(mr.web_url).origin !== new URL(params.url).origin) {
+      throw new Error(
+        `GitLab returned a merge request from a different web origin: ${new URL(mr.web_url).origin}`,
+      );
+    }
+    return mr;
+  }
+
+  function pipelineDetailsUnavailable(error: unknown): boolean {
+    const { status } = extractCommandErrorStatus(error);
+    return status === 403 || status === 404;
+  }
+
   async function readPipelineChecks(params: {
+    url: string;
     host: string;
     mrEndpoint: string;
     encodedProject: string;
@@ -641,13 +657,22 @@ export function createGitLabChangeRequestSource(
     if (!pipeline) return [];
 
     const pipelineProject = resolvePipelineProjectId(pipeline, params.mr, params.encodedProject);
-    const jobsResult = await apiGetAllPages({
-      host: params.host,
-      endpoint: `projects/${pipelineProject}/pipelines/${pipeline.id}/jobs`,
-      itemSchema: gitLabWatchJobSchema,
-      isObserved: params.isObserved,
-      pauseHost: params.pauseHost,
-    });
+    let jobsResult: { items: GitLabWatchJob[]; pagesRead: number };
+    try {
+      jobsResult = await apiGetAllPages({
+        host: params.host,
+        endpoint: `projects/${pipelineProject}/pipelines/${pipeline.id}/jobs`,
+        itemSchema: gitLabWatchJobSchema,
+        isObserved: params.isObserved,
+        pauseHost: params.pauseHost,
+      });
+    } catch (error) {
+      if (!pipelineDetailsUnavailable(error)) throw error;
+      // The MR can expose pipeline status even when its jobs are restricted.
+      return mapGitLabPipelineState(pipeline.status) === "failed"
+        ? [pipelineFailureCheck(pipeline)]
+        : [];
+    }
     if (!params.isObserved()) {
       throw new Error("Change request observation ended");
     }
@@ -671,10 +696,10 @@ export function createGitLabChangeRequestSource(
 
     // Guard against headSha or head_pipeline shifting while paginating check pages.
     if (jobsResult.pagesRead > 1 || fetchedBridges) {
-      const { data: recheck } = await apiGet({
+      const recheck = await readMergeRequestMetadata({
+        url: params.url,
         host: params.host,
         endpoint: params.mrEndpoint,
-        schema: gitLabWatchMrSchema,
         pauseHost: params.pauseHost,
       });
       const recheckSha = recheck.sha || recheck.diff_refs?.head_sha || "";
@@ -709,19 +734,10 @@ export function createGitLabChangeRequestSource(
         params.checks.push(toWatchCheck(bridge, "bridge"));
       }
     } catch (error) {
-      const { status, stderr } = extractCommandErrorStatus(error);
-      if (!isNotFoundError(status, stderr)) {
-        throw error;
-      }
+      if (!pipelineDetailsUnavailable(error)) throw error;
     }
     if (!params.checks.some((check) => check.state === "failed")) {
-      const pipelineUrl = checkUrlSchema.safeParse(params.pipeline.web_url).data;
-      params.checks.push({
-        id: `pipeline:${params.pipeline.id}`,
-        name: `Pipeline #${params.pipeline.id}`,
-        state: "failed",
-        ...(pipelineUrl ? { url: pipelineUrl } : {}),
-      });
+      params.checks.push(pipelineFailureCheck(params.pipeline));
     }
   }
 
@@ -762,19 +778,19 @@ export function createGitLabChangeRequestSource(
     const encodedProject = encodeURIComponent(projectPath);
     const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
 
-    const { data: mr } = await apiGet({
+    const mr = await readMergeRequestMetadata({
+      url: context.url,
       host,
       endpoint: mrEndpoint,
-      schema: gitLabWatchMrSchema,
       pauseHost: context.pauseHost,
     });
     const headSha = mr.sha || mr.diff_refs?.head_sha || "";
     if (!headSha) {
       throw new Error(`GitLab merge request !${iid} did not include a head commit SHA.`);
     }
-    const mrWebUrl = mr.web_url || context.url;
 
     const checks = await readPipelineChecks({
+      url: context.url,
       host,
       mrEndpoint,
       encodedProject,
@@ -796,7 +812,7 @@ export function createGitLabChangeRequestSource(
 
     const { humanActivity, approvalNotes } = parseDiscussionItems(
       discussionsResult.items,
-      mrWebUrl,
+      mr.web_url,
     );
     const known = context.knownActivity();
     const hasNewApprovalNote =

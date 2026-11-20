@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { FORGE_IDS } from "@getpaseo/protocol/forge-manifest";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ChangeRequestRouter } from "../../../services/change-request-router.js";
@@ -161,23 +162,38 @@ export function createChangeRequestWatches(deps: Dependencies) {
     }
   }
 
-  function withdraw(agentId: string, url?: string): boolean {
-    let removed = false;
-    for (const [address, window] of windows) {
-      if (url && address !== url) continue;
-      removed = window.recipients.delete(agentId) || removed;
+  function withdraw(agentId: string, matches: (url: string) => boolean): string | undefined {
+    let withdrawn: string | undefined;
+    for (const [url, window] of windows) {
+      if (!window.recipients.has(agentId) || !matches(url)) continue;
+      window.recipients.delete(agentId);
+      withdrawn ??= url;
       if (!window.recipients.size) {
         clearTimeout(window.timer);
-        windows.delete(address);
+        windows.delete(url);
       }
     }
-    const queued = deps
-      .messages()
-      .withdrawPending(
-        agentId,
-        (source) => source.kind === "change-request-update" && (!url || source.url === url),
-      );
-    return removed || queued > 0;
+    deps.messages().withdrawPending(agentId, (source) => {
+      if (source.kind !== "change-request-update" || !matches(source.url)) return false;
+      withdrawn ??= source.url;
+      return true;
+    });
+    return withdrawn;
+  }
+
+  function withdrawByInput(agentId: string, input: string): string | undefined {
+    const trimmed = input.trim();
+    const candidates = new Set([trimmed]);
+    for (const forge of FORGE_IDS) {
+      const source = deps.router.source(forge);
+      if (!source) continue;
+      try {
+        candidates.add(source.resolve(trimmed));
+      } catch {
+        // This source does not recognize the URL.
+      }
+    }
+    return withdraw(agentId, (url) => candidates.has(url));
   }
 
   async function commit(...updates: WatchGroup[]): Promise<void> {
@@ -416,15 +432,15 @@ export function createChangeRequestWatches(deps: Dependencies) {
         throw new Error("Background work is no longer available to stop");
       }
       if (group && watcher) await removeWatcher(group, agentId);
-      const withdrawn = withdraw(agentId, url);
-      return { url, removed: Boolean(watcher) || withdrawn };
+      const withdrawn = withdraw(agentId, (address) => address === url);
+      return { url, removed: Boolean(watcher || withdrawn) };
     });
   }
 
   function archive(agentId: string): Promise<void> {
     return serialize(async () => {
       if (closed) return;
-      withdraw(agentId);
+      withdraw(agentId, () => true);
       const updates: WatchGroup[] = [];
       for (const group of groups.values()) {
         const watchers = group.watchers.filter((watcher) => watcher.agentId !== agentId);
@@ -510,10 +526,13 @@ export function createChangeRequestWatches(deps: Dependencies) {
       }
     },
     subscribe,
-    unsubscribe(agentId: string, input: string) {
+    async unsubscribe(agentId: string, input: string) {
       const active = matchActiveGroup(input);
       if (active) return unsubscribe(agentId, active.url);
-      return deps.router.resolve(input).then(({ url }) => unsubscribe(agentId, url));
+      const withdrawn = await serialize(async () => withdrawByInput(agentId, input));
+      if (withdrawn) return { url: withdrawn, removed: true };
+      const { url } = await deps.router.resolve(input);
+      return unsubscribe(agentId, url);
     },
     archive,
     async close() {

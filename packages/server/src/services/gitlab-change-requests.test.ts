@@ -211,8 +211,8 @@ describe("GitLab ChangeRequestSource polling", () => {
             ? { approvals_required: 1, approvals_left: 1, approved: false, approved_by: [] }
             : {
                 approvals_required: 1,
-                approvals_left: 0,
-                approved: true,
+                approvals_left: 1,
+                approved: false,
                 approved_by: [
                   { user: { id: 1, username: "alice" }, approved_at: "2026-11-20T06:00:00Z" },
                 ],
@@ -294,7 +294,7 @@ describe("GitLab ChangeRequestSource polling", () => {
           id: "approval-note:103",
           kind: "approval",
           url: `${mrUrl}#note_103`,
-          message: `Merge request approved by @alice (1/1 approvals): ${mrUrl}#note_103`,
+          message: `Merge request approved by @alice (0/1 approvals): ${mrUrl}#note_103`,
         },
       ]);
       release();
@@ -715,6 +715,99 @@ describe("GitLab ChangeRequestSource polling", () => {
       service.dispose?.();
     }
   });
+
+  it("rejects a merge request served by a different GitLab web origin", async () => {
+    vi.useFakeTimers();
+    const { runner, calls } = createFakeGlabRunner((args) => {
+      if (args[0] === "auth") return { stdout: "Logged in", stderr: "" };
+      return httpJson({
+        iid: 1,
+        state: "merged",
+        sha: "other-head",
+        web_url: "https://gitlab.example.org:3443/team/app/-/merge_requests/1",
+      });
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests!.observe(
+        "https://gitlab.example.org:9443/team/app/-/merge_requests/1",
+        {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error: (error) => errors.push(error),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([
+        expect.objectContaining({ message: expect.stringContaining("web origin") }),
+      ]);
+      expect(snapshots).toEqual([]);
+      expect(calls.map(({ args }) => args[0])).toEqual(["auth", "api"]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it.each(["403 Forbidden", "404 Not Found"])(
+    "publishes a merge and its discussion when pipeline jobs return %s",
+    async (deniedStatus) => {
+      vi.useFakeTimers();
+      const url = "https://gitlab.com/team/app/-/merge_requests/1";
+      let polls = 0;
+      const { runner } = createFakeGlabRunner((args) => {
+        const endpoint = args.at(-1)!;
+        if (endpoint === "projects/team%2Fapp/merge_requests/1") {
+          polls += 1;
+          return httpJson({
+            iid: 1,
+            state: polls === 1 ? "opened" : "merged",
+            sha: "head",
+            web_url: url,
+            head_pipeline: { id: 3, status: polls === 1 ? "running" : "failed" },
+          });
+        }
+        if (endpoint.includes("/jobs?")) {
+          return polls === 1
+            ? httpJson([{ id: 4, name: "test", status: "running" }])
+            : httpJson({ message: deniedStatus }, {}, deniedStatus);
+        }
+        if (endpoint.includes("/discussions?")) {
+          return httpJson(polls === 1 ? [] : [{ id: "d", notes: [{ id: 7, body: "Done" }] }]);
+        }
+        throw new Error(`Unexpected GitLab endpoint: ${endpoint}`);
+      });
+      const service = createGitLabService({
+        runner,
+        resolveGlabPath: async () => "glab",
+        watchPollMs: 10_000,
+      });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      const errors: unknown[] = [];
+      try {
+        service.changeRequests!.observe(url, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error: (error) => errors.push(error),
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(errors).toEqual([]);
+        expect(snapshots).toHaveLength(2);
+        expect(snapshots[1]).toMatchObject({
+          state: "merged",
+          checksState: "failed",
+          checks: [{ id: "pipeline:3", name: "Pipeline #3", state: "failed" }],
+          activity: [{ id: "comment:7", kind: "comment", url: `${url}#note_7` }],
+        });
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
 
   it("keeps polling through GitLab locked state until merged and uses bare hostname for custom-port self-hosted instances", async () => {
     vi.useFakeTimers();

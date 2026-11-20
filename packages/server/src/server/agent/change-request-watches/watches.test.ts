@@ -297,6 +297,47 @@ test("can withdraw a terminal digest after its observation has stopped", async (
   }
 });
 
+test.each([0, 32_000])(
+  "withdraws a terminal update without a host probe after %i ms",
+  async (elapsed) => {
+    vi.useFakeTimers();
+    const home = await createTestHome();
+    const enterpriseUrl = "https://github.example.com/owner/repo/pull/42";
+    const { activity: _activity, ...snapshot } = initial;
+    await writeFile(
+      join(home, "change-request-watches.json"),
+      JSON.stringify([
+        {
+          forge: "github",
+          url: enterpriseUrl,
+          snapshot,
+          seenActivity: [],
+          watchers: [{ agentId: "first" }],
+        },
+      ]),
+    );
+    const h = createHarness(home, { resolveFails: true });
+    try {
+      h.busy.add("first");
+      await h.watches.start();
+      await h.observations.get(enterpriseUrl)!.snapshot({ ...initial, state: "merged" });
+      expect(h.observations.has(enterpriseUrl)).toBe(false);
+      await vi.advanceTimersByTimeAsync(elapsed);
+      await expect(h.watches.unsubscribe("first", `${enterpriseUrl}/`)).resolves.toEqual({
+        url: enterpriseUrl,
+        removed: true,
+      });
+      expect(h.resolveCalls).toEqual([]);
+      h.idle("first");
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(h.turns).toEqual([]);
+    } finally {
+      await h.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
 test("retains the current observation as the last subscriber leaves and a new one joins", async () => {
   const home = await createTestHome();
   const h = createHarness(home);
