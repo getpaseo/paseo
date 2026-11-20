@@ -3279,7 +3279,16 @@ export class AgentManager {
     agentId: string,
     operation: (agent: ActiveManagedAgent) => Promise<T>,
   ): Promise<T> {
-    await this.pendingCancellations.get(agentId)?.catch(() => undefined);
+    const pendingCancellation = this.pendingCancellations.get(agentId);
+    if (pendingCancellation) {
+      await this.waitWithTimeout({
+        operation: pendingCancellation.then(
+          () => undefined,
+          () => undefined,
+        ),
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      });
+    }
     const agent = await this.ensureInteractiveSessionUnlocked(agentId);
     try {
       return await operation(agent);

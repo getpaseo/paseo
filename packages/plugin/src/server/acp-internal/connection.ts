@@ -952,8 +952,12 @@ class AcpRuntime {
   close(options?: { force?: boolean }): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
-    this.closePromise = this.closeInternal(options);
-    return this.closePromise;
+    const promise = this.closeInternal(options).catch((error) => {
+      if (this.closePromise === promise) this.closePromise = null;
+      throw error;
+    });
+    this.closePromise = promise;
+    return promise;
   }
 
   private async closeInternal(options?: { force?: boolean }): Promise<void> {
@@ -1939,7 +1943,7 @@ function ownConnectorStream(source: Stream): {
 } {
   const reader = source.readable.getReader();
   const writer = source.writable.getWriter();
-  let closed = false;
+  let closing: Promise<unknown> | null = null;
   const stream: Stream = {
     readable: new ReadableStream({
       async pull(controller) {
@@ -1962,18 +1966,16 @@ function ownConnectorStream(source: Stream): {
   return {
     stream,
     async close(options?: { force?: boolean }) {
-      if (closed) return;
-      closed = true;
-      const closeWrite = options?.force
-        ? settlesWithin(
-            writer.abort(new Error("Paseo aborted the ACP connector")).catch(() => undefined),
-            250,
-          )
-        : writer.close();
-      await Promise.allSettled([
-        reader.cancel(new Error("Paseo closed the ACP connector")),
-        closeWrite,
-      ]);
+      if (!closing) {
+        const closeWrite = options?.force
+          ? writer.abort(new Error("Paseo aborted the ACP connector"))
+          : writer.close();
+        closing = Promise.allSettled([
+          reader.cancel(new Error("Paseo closed the ACP connector")),
+          closeWrite,
+        ]);
+      }
+      await withTimeout(closing, 1_000, "ACP connector did not close");
     },
   };
 }

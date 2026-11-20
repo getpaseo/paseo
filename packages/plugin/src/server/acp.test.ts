@@ -6034,7 +6034,7 @@ describe("deferTurnOnRunningTools", () => {
     }
   });
 
-  it("retires a connector-backed deferred session even when the cancel write stalls", async () => {
+  it("reports interrupt failure when a connector refuses to confirm shutdown within the deadline", async () => {
     let releaseStalledWrite: (() => void) | null = null;
     const base = connectorHarness({
       handleRequest(instance, request) {
@@ -6110,20 +6110,22 @@ describe("deferTurnOnRunningTools", () => {
         requestId: "stalled-conn-int",
         sessionId: "session-1",
       });
-      await waitForEvent(
+      const failed = await waitForEvent(
         events,
-        (event) => event.type === "request.completed" && event.requestId === "stalled-conn-int",
-        2_500,
+        (event) => event.type === "request.failed" && event.requestId === "stalled-conn-int",
+        3_000,
+      );
+      expect(failed.type === "request.failed" && failed.error.message).toContain(
+        "ACP connector did not close",
       );
       expect(
-        events.filter(
+        events.some(
           (event) =>
             event.type === "session.turn" &&
             event.turnId === "acp:stalled-conn-turn" &&
             event.state === "canceled",
         ),
-      ).toHaveLength(1);
-      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
+      ).toBe(false);
     } finally {
       releaseStalledWrite?.();
       await connection.close();

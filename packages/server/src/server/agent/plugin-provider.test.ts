@@ -3278,3 +3278,130 @@ test("does not block mode changes after a plugin refuses Stop by ignoring sessio
     await plugins.shutdown();
   }
 });
+
+test("bounds settings wait when Stop is queued behind an unanswered steer", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  let releaseSteer: (() => void) | null = null;
+  const harness = createProviderHarness({
+    capabilities: ["prompt.message", "prompt.steer", "session.interrupt", "session.configure"],
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [
+            "prompt.message",
+            "prompt.steer",
+            "session.interrupt",
+            "session.configure",
+          ],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        if (input.prompt.delivery === "steer") {
+          releaseSteer = () =>
+            emit({
+              type: "session.prompt_result",
+              sessionId: input.sessionId,
+              clientMessageId: input.prompt.clientMessageId,
+              result: { type: "steer", turnId: "steer-turn" },
+            });
+          return true;
+        }
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "steer-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "steer-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    // Start an unanswered steer, queue Stop behind it, then change mode.
+    const steerPromise = manager.steerAgentRun(agent.id, "unanswered steer").catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Mode change must complete within the bounded interrupt timeout even while Stop is queued.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+
+    releaseSteer?.();
+    await Promise.all([steerPromise, stopPromise]);
+  } finally {
+    releaseSteer?.();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});
