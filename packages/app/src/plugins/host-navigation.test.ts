@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { createPluginHostNavigation } from "./host-navigation-model";
 import { useSidebarViewStore } from "../stores/sidebar-view-store";
 
@@ -13,8 +14,14 @@ describe("plugin host navigation", () => {
       isHostRegistered: (serverId: string) => serverId === "selected" || serverId === "remote",
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
-      openAgent: (input) => destinations.push(input),
-      openWorkspace: (input) => destinations.push(input),
+      openAgent: (input) => {
+        destinations.push(input);
+        return buildHostAgentDetailRoute(input.serverId, input.agentId);
+      },
+      openWorkspace: (input) => {
+        destinations.push(input);
+        return buildHostWorkspaceRoute(input.serverId, input.workspaceId);
+      },
       focusHost: (serverId) => {
         focusedHosts.push(serverId);
         useSidebarViewStore.getState().focusHost(serverId);
@@ -83,14 +90,14 @@ describe("plugin host navigation", () => {
     expect(useSidebarViewStore.getState().hostFilters).toEqual(["selected"]);
   });
 
-  it("uses the same normalized host ID for navigation and the sidebar", () => {
+  it("focuses the host in the returned route for padded host IDs", () => {
     const { navigation, destinations, focusedHosts } = setup();
     navigation.openAgent({ serverId: " remote ", agentId: "agent-2", focusHost: true });
     navigation.openWorkspace({ serverId: " selected ", workspaceId: "one", focusHost: true });
 
     expect(destinations).toEqual([
-      { serverId: "remote", agentId: "agent-2" },
-      { serverId: "selected", workspaceId: "one" },
+      { serverId: " remote ", agentId: "agent-2" },
+      { serverId: " selected ", workspaceId: "one" },
     ]);
     expect(focusedHosts).toEqual(["remote", "selected"]);
     expect(useSidebarViewStore.getState().hostFilters).toEqual(["selected"]);
@@ -102,9 +109,13 @@ describe("plugin host navigation", () => {
       projectFilters: ["pinned-project"],
       labelFilter: { labels: ["urgent"] },
     });
-    const { navigation, focusedHosts } = setup();
-    navigation.openAgent({ agentId: "agent-1" });
-    navigation.openWorkspace({ workspaceId: "one", focusHost: false });
+    const { navigation, destinations, focusedHosts } = setup();
+    navigation.openAgent({ agentId: "agent-1", serverId: " remote " });
+    navigation.openWorkspace({ workspaceId: "one", serverId: " selected ", focusHost: false });
+    expect(destinations).toEqual([
+      { serverId: " remote ", agentId: "agent-1" },
+      { serverId: " selected ", workspaceId: "one" },
+    ]);
     expect(focusedHosts).toEqual([]);
     expect(useSidebarViewStore.getState()).toMatchObject({
       hostFilters: ["remote"],
@@ -112,6 +123,20 @@ describe("plugin host navigation", () => {
       labelFilter: { labels: ["urgent"] },
     });
     expect(navigation.supportsFocusHost).toBe(true);
+  });
+
+  it("preserves sidebar filters when the navigation route has no destination", () => {
+    const filters = {
+      hostFilters: ["selected"],
+      projectFilters: ["pinned-project"],
+      labelFilter: { labels: ["urgent"] },
+    };
+    useSidebarViewStore.setState(filters);
+    const { navigation } = setup();
+    navigation.openAgent({ serverId: "remote", agentId: " ", focusHost: true });
+    navigation.openWorkspace({ serverId: "remote", workspaceId: "", focusHost: true });
+
+    expect(useSidebarViewStore.getState()).toMatchObject(filters);
   });
 
   it("preserves sidebar filters when the destination host has been removed", () => {
