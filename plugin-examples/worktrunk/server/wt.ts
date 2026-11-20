@@ -207,12 +207,12 @@ export async function createWithWorktrunk(
 ): Promise<{ type: "created"; path: string } | undefined> {
   const args = buildCreateArgs(request);
   if (!args) return undefined;
+  const isChangeRequest =
+    request.kind === "checkout-change-request" || request.kind === "checkout-github-pr";
   const sameRepoChangeRequest =
-    (request.kind === "checkout-change-request" || request.kind === "checkout-github-pr") &&
-    !request.untrusted &&
-    !request.headRepositoryOwner;
+    isChangeRequest && !request.untrusted && !request.headRepositoryOwner;
   // With a local name collision, Git gives branch-off a new name or fetches the PR head into
-  // a separate branch. Worktrunk's PR shortcut can reuse the local branch at an older commit.
+  // a separate branch. Worktrunk's PR shortcut can reuse a local branch at an older commit.
   let existingBranch: string | undefined;
   if (request.kind === "branch-off") existingBranch = request.branch;
   else if (sameRepoChangeRequest) existingBranch = request.headRef;
@@ -234,7 +234,10 @@ export async function createWithWorktrunk(
   if (output.action !== undefined && output.action !== "created") {
     return undefined;
   }
-  if (sameRepoChangeRequest && output.action === "created" && !output.createdBranch) {
+  // For any change request (same-repo or fork), if Worktrunk reused a pre-existing local branch
+  // instead of fetching a fresh branch from the remote PR/MR head, decline so Paseo's Git
+  // checkout fetches the latest head commit into a unique branch.
+  if (isChangeRequest && output.action === "created" && !output.createdBranch) {
     await cleanupPartiallyCreatedWorktree(request.repoRoot, output);
     return undefined;
   }

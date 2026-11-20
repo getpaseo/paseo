@@ -354,9 +354,10 @@ export default function contribute(server) {
         command: "switch",
         branch: "team/feat-one",
         create: false,
-        explicitPath: await realpath(worktreePath),
+        explicitPath: expect.any(String),
       }),
     ]);
+    expect(path.resolve(events.at(-1).explicitPath)).toBe(await realpath(worktreePath));
   } finally {
     if (previousBin === undefined) delete process.env.WORKTRUNK_BIN;
     else process.env.WORKTRUNK_BIN = previousBin;

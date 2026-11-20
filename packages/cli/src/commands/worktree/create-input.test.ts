@@ -79,7 +79,7 @@ describe("buildCreateWorktreeRequest", () => {
   });
 });
 
-it("uses workspace creation to wait for the worktree result", async () => {
+it("uses the explicit worktree creation RPC and returns the created worktree details", async () => {
   const result = await runCreateCommandWithDeps(
     {
       daemonTarget: { kind: "endpoint", host: "example.test:12345" },
@@ -90,9 +90,8 @@ it("uses workspace creation to wait for the worktree result", async () => {
     },
     {
       connectToDaemon: async () => ({
-        createWorkspace: async (input) => {
-          expect(input.source).toEqual({
-            kind: "worktree",
+        createPaseoWorktree: async (input) => {
+          expect(input).toEqual({
             cwd: REPO,
             worktreeSlug: "topic",
             action: "branch-off",
@@ -115,8 +114,7 @@ it("uses workspace creation to wait for the worktree result", async () => {
               scripts: [],
             },
             error: null,
-            requestId: "workspace-create",
-            setupTerminalId: null,
+            requestId: "worktree-create",
           };
         },
         close: async () => {},

@@ -129,6 +129,8 @@ interface PluginRequestOptions {
   signal?: AbortSignal;
   /** Receives `provider.installation.report` messages for the request. */
   report?: (report: ProviderUpdateReport) => void;
+  /** Overrides the default per-message timeout (e.g. shared budget across serial worktree managers). */
+  timeoutMs?: number;
 }
 
 interface LoadedPlugin {
@@ -831,12 +833,21 @@ export class PluginRuntime {
     const plugins = [...this.plugins.values()]
       .filter((plugin) => plugin.worktreeManager !== null)
       .sort((left, right) => left.id.localeCompare(right.id));
+    // Share one 120s budget across the full serial manager chain so clients waiting on
+    // create_paseo_worktree_request (150s) never time out while the daemon is still running managers.
+    const deadline = Date.now() + WORKTREE_MANAGER_TIMEOUT_MS;
     for (const loaded of plugins) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(
+          `Plugin ${loaded.id} worktree.create failed: Plugin RPC timed out: ${loaded.id}.worktree.create`,
+        );
+      }
       try {
         const raw = await this.request(
           loaded,
           { type: "worktree.create", requestId: randomUUID(), request },
-          { signal: options?.signal },
+          { signal: options?.signal, timeoutMs: remainingMs },
         );
         const parsed = worktreeCreateResultSchema.parse(raw ?? null);
         if (parsed !== null) {
@@ -1009,7 +1020,7 @@ export class PluginRuntime {
         signal?.removeEventListener("abort", cancel);
         reject(signal?.reason ?? new Error("Plugin request canceled"));
       };
-      const timeoutMs = requestTimeoutMs(message);
+      const timeoutMs = options.timeoutMs ?? requestTimeoutMs(message);
       const timeout =
         timeoutMs === null
           ? undefined

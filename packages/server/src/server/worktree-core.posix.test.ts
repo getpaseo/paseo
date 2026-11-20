@@ -1543,6 +1543,122 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
       expect(getBranchUpstream(second.worktree.worktreePath)).toBe("paseo-pr-526/main");
     });
 
+    test("rejects and rolls back a managed fork PR checkout whose HEAD is behind the current PR head", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const staleBranch = "archived-fork-pr-526";
+      const staleWorktreePath = path.join(tempDir, "stale-fork-pr");
+      git(repoDir, "branch", staleBranch, "main");
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      await expect(
+        createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "fork-pr-stale",
+            action: "checkout",
+            githubPrNumber: 526,
+            refName: "main",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps({ github }),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async () => {
+                git(repoDir, "worktree", "add", staleWorktreePath, staleBranch);
+                return { pluginId: "stale-manager", path: staleWorktreePath };
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        ),
+      ).rejects.toThrow("expected change request head");
+      expect(existsSync(staleWorktreePath)).toBe(false);
+    });
+
+    test("declines a Worktrunk fork PR checkout that reuses an archived local branch so Git checks out the latest PR head", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const staleBranch = "therainisme-pr-526";
+      const archivedTip = git(repoDir, "rev-parse", "main");
+      git(repoDir, "branch", staleBranch, archivedTip);
+      const latestPrHead = git(repoDir, "ls-remote", "origin", "refs/pull/526/head").split(
+        /\s+/,
+      )[0];
+      expect(latestPrHead).not.toBe(archivedTip);
+
+      const wt = path.join(tempDir, "fake-wt-fork-pr");
+      writeFileSync(
+        wt,
+        `#!/bin/sh
+if [ "$3" = remove ]; then
+  exec git -C "$2" worktree remove --force "$2-fork-pr"
+fi
+git -C "$2" worktree add --quiet "$2-fork-pr" ${staleBranch} || exit $?
+printf '{"action":"created","path":"%s","branch":"${staleBranch}","created_branch":false}\\n' "$2-fork-pr"
+`,
+        { mode: 0o755 },
+      );
+
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const previous = process.env.WORKTRUNK_BIN;
+      process.env.WORKTRUNK_BIN = wt;
+      try {
+        const result = await createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "fork-pr-reopen",
+            action: "checkout",
+            githubPrNumber: 526,
+            refName: "main",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps({ github }),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async (request) => {
+                expect(request.untrusted).toBe(true);
+                const managed = await createWithWorktrunk(request, new AbortController().signal);
+                return managed ? { pluginId: "worktrunk", path: managed.path } : null;
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        );
+        expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(latestPrHead);
+        expect(existsSync(`${repoDir}-fork-pr`)).toBe(false);
+        expect(git(repoDir, "rev-parse", `refs/heads/${staleBranch}`)).toBe(archivedTip);
+      } finally {
+        if (previous === undefined) delete process.env.WORKTRUNK_BIN;
+        else process.env.WORKTRUNK_BIN = previous;
+      }
+    });
+
     test("throws a typed error for an unknown checkout branch", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);

@@ -41,10 +41,12 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import {
+  createRealpathAwarePathMatcher,
   expandTilde,
   getRealpathAwareRelativePath,
   getRelativePathInsideRoot,
   isPathInsideRoot,
+  normalizePathForIdentity,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
 import { validateWorktreePath } from "./worktree-path.js";
@@ -1229,7 +1231,7 @@ async function listGitWorktreePaths(cwd: string): Promise<Set<string>> {
   });
   const paths = new Set<string>();
   for (const entry of parseWorktreeList(stdout)) {
-    paths.add(await normalizePathForOwnership(entry.path));
+    paths.add(normalizePathForIdentity(entry.path));
   }
   return paths;
 }
@@ -1751,35 +1753,41 @@ export async function runPluginWorktreeManagerCheckout(
       existingWorktreePaths,
     });
   } catch (error) {
-    await cleanupFailedPluginWorktree({
-      cwd,
-      candidatePath: managed.path,
-      existingWorktreePaths,
-      worktreeManagers,
-      worktreeManagerPluginId: managed.pluginId,
-      untrusted,
-      paseoHome,
-      worktreesBaseRoot,
-    }).catch(() => {});
-    throw error;
+    return cleanupFailedPluginWorktree(
+      {
+        cwd,
+        candidatePath: managed.path,
+        existingWorktreePaths,
+        worktreeManagers,
+        worktreeManagerPluginId: managed.pluginId,
+        untrusted,
+        paseoHome,
+        worktreesBaseRoot,
+      },
+      error,
+    );
   }
 }
 
 /**
  * Roll back a newly created worktree that failed adoption or path verification.
  * Only touches a directory that was absent from `existingWorktreePaths` and
- * shares the source repository's Git common dir.
+ * shares the source repository's Git common dir; preserves rollback failures
+ * alongside the adoption error via `rollbackCreatedPaseoWorktree`.
  */
-async function cleanupFailedPluginWorktree(options: {
-  cwd: string;
-  candidatePath: string;
-  existingWorktreePaths?: ReadonlySet<string>;
-  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
-  worktreeManagerPluginId: string;
-  untrusted?: boolean;
-  paseoHome?: string;
-  worktreesBaseRoot?: string;
-}): Promise<void> {
+async function cleanupFailedPluginWorktree(
+  options: {
+    cwd: string;
+    candidatePath: string;
+    existingWorktreePaths?: ReadonlySet<string>;
+    worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+    worktreeManagerPluginId: string;
+    untrusted?: boolean;
+    paseoHome?: string;
+    worktreesBaseRoot?: string;
+  },
+  cause: unknown,
+): Promise<never> {
   const {
     cwd,
     candidatePath,
@@ -1797,13 +1805,13 @@ async function cleanupFailedPluginWorktree(options: {
     });
     rootPath = await normalizePathForOwnership(stdout.trim());
   } catch {
-    return;
+    throw cause;
   }
   if (
-    existingWorktreePaths?.has(rootPath) ||
-    rootPath !== (await normalizePathForOwnership(candidatePath))
+    existingWorktreePaths?.has(normalizePathForIdentity(rootPath)) ||
+    !createRealpathAwarePathMatcher(rootPath)(candidatePath)
   ) {
-    return;
+    throw cause;
   }
   const [worktreeCommonDir, repoCommonDir] = await Promise.all([
     getGitCommonDir(rootPath).catch(() => null),
@@ -1812,23 +1820,25 @@ async function cleanupFailedPluginWorktree(options: {
   if (
     !worktreeCommonDir ||
     !repoCommonDir ||
-    (await normalizePathForOwnership(worktreeCommonDir)) !==
-      (await normalizePathForOwnership(repoCommonDir))
+    !createRealpathAwarePathMatcher(worktreeCommonDir)(repoCommonDir)
   ) {
-    return;
+    throw cause;
   }
-  await deletePaseoWorktree({
-    cwd,
-    worktreePath: rootPath,
-    teardownCwds: [],
-    paseoHome,
-    worktreesBaseRoot,
-    registryProven: true,
-    worktreeManagers,
-    worktreeManagerPluginId,
-    removeReason: "rollback",
-    untrusted,
-  });
+  return rollbackCreatedPaseoWorktree(
+    {
+      cwd,
+      worktreePath: rootPath,
+      teardownCwds: [],
+      paseoHome,
+      worktreesBaseRoot,
+      registryProven: true,
+      worktreeManagers,
+      worktreeManagerPluginId,
+      removeReason: "rollback",
+      untrusted,
+    },
+    cause,
+  );
 }
 
 /**
@@ -1841,7 +1851,7 @@ async function adoptPluginWorktree(
 ): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }> {
   const { cwd, source, worktreePath, worktreeManagerPluginId, existingWorktreePaths } = options;
   const normalizedPath = await normalizePathForOwnership(worktreePath);
-  if (existingWorktreePaths?.has(normalizedPath)) {
+  if (existingWorktreePaths?.has(normalizePathForIdentity(normalizedPath))) {
     throw new Error(
       `Plugin ${worktreeManagerPluginId} returned an already-existing worktree: ${normalizedPath}`,
     );
@@ -1853,7 +1863,7 @@ async function adoptPluginWorktree(
       `Plugin ${worktreeManagerPluginId} did not create a Git worktree at: ${normalizedPath}`,
     );
   });
-  if ((await normalizePathForOwnership(rootStdout.trim())) !== normalizedPath) {
+  if (!createRealpathAwarePathMatcher(rootStdout.trim())(normalizedPath)) {
     throw new Error(
       `Plugin ${worktreeManagerPluginId} created a worktree whose root is not the returned path: ${normalizedPath}`,
     );
@@ -1862,10 +1872,7 @@ async function adoptPluginWorktree(
     getGitCommonDir(normalizedPath),
     getGitCommonDir(cwd),
   ]);
-  if (
-    (await normalizePathForOwnership(worktreeCommonDir)) !==
-    (await normalizePathForOwnership(repoCommonDir))
-  ) {
+  if (!createRealpathAwarePathMatcher(worktreeCommonDir)(repoCommonDir)) {
     throw new Error(
       `Plugin ${worktreeManagerPluginId} created a worktree outside the repository: ${normalizedPath}`,
     );
@@ -1882,7 +1889,7 @@ async function adoptPluginWorktree(
   }
   const branchName = detached ? null : rawBranch;
 
-  await verifyPluginRestoreTarget({
+  await verifyPluginCheckoutTarget({
     cwd,
     source,
     worktreePath: normalizedPath,
@@ -1909,7 +1916,36 @@ async function adoptPluginWorktree(
   };
 }
 
-async function verifyPluginRestoreTarget(options: {
+async function resolveRemoteChangeRequestHeadSha(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
+): Promise<string | null> {
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+  const refs = source.checkoutRefs ?? [
+    { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+  ];
+  for (const ref of refs) {
+    try {
+      const { stdout } = await runGitCommand(
+        ["ls-remote", ref.remoteName ?? "origin", ref.remoteRef],
+        {
+          cwd,
+          envOverlay: READ_ONLY_GIT_ENV,
+        },
+      );
+      const sha = stdout.trim().split(/\s+/)[0];
+      if (sha && /^[0-9a-f]{40,64}$/i.test(sha)) {
+        return sha;
+      }
+    } catch {
+      // Try next candidate ref.
+    }
+  }
+  return null;
+}
+
+async function verifyPluginCheckoutTarget(options: {
   cwd: string;
   source: WorktreeSource;
   worktreePath: string;
@@ -1917,6 +1953,23 @@ async function verifyPluginRestoreTarget(options: {
   worktreeManagerPluginId: string;
 }): Promise<void> {
   const { cwd, source, worktreePath, branchName, worktreeManagerPluginId } = options;
+  if (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") {
+    const expectedHead = await resolveRemoteChangeRequestHeadSha(cwd, source);
+    if (expectedHead) {
+      const { stdout: headStdout } = await runGitCommand(
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        {
+          cwd: worktreePath,
+        },
+      );
+      if (headStdout.trim() !== expectedHead) {
+        throw new Error(
+          `Plugin ${worktreeManagerPluginId} checked out ${headStdout.trim()}, expected change request head ${expectedHead}`,
+        );
+      }
+    }
+    return;
+  }
   if (source.kind === "restore" || source.kind === "restore-from-base") {
     if (branchName !== source.branchName) {
       throw new Error(
