@@ -4,6 +4,7 @@ import {
   isTaskNotificationUserContent,
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
+  readTaskNotificationsFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 
 describe("task-notification-tool-call", () => {
@@ -108,6 +109,38 @@ describe("task-notification-tool-call", () => {
     expect(items.map((item) => item?.callId)).toEqual([
       "task_notification_message-1",
       "task_notification_message-2",
+    ]);
+  });
+
+  it("gives every block of one message its own status", () => {
+    // Claude can deliver several notices in one user message. Pairing every task id in the
+    // message with its first status hands both children the same outcome.
+    const record = {
+      type: "user",
+      uuid: "two-block-notice",
+      message: {
+        role: "user",
+        content: [
+          "<task-notification>",
+          "<task-id>a4d6ec6abc41971c8</task-id>",
+          "<status>completed</status>",
+          "</task-notification>",
+          "<task-notification>",
+          "<task-id>af1bac5e1cafacbc7</task-id>",
+          "<status>stopped</status>",
+          "</task-notification>",
+        ].join("\n"),
+      },
+    };
+
+    expect(
+      readTaskNotificationsFromHistoryRecord(record).map((envelope) => [
+        envelope.taskIds,
+        envelope.status,
+      ]),
+    ).toEqual([
+      [["a4d6ec6abc41971c8"], "completed"],
+      [["af1bac5e1cafacbc7"], "stopped"],
     ]);
   });
 });

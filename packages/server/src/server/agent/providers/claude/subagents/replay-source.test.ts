@@ -24,7 +24,12 @@ const TOOL_USE_ID = "toolu_01DgLoPMW9";
 const AGENT_ID = "a1730a6215e1f5cf6";
 
 function emptyParent(): ClaudeReplayParentFacts {
-  return { toolCalls: new Map(), linksByAgentId: new Map(), outcomesByToolCallId: new Map() };
+  return {
+    toolCalls: new Map(),
+    linksByAgentId: new Map(),
+    outcomesByToolCallId: new Map(),
+    outcomesByAgentId: new Map(),
+  };
 }
 
 function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
@@ -37,6 +42,7 @@ function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
     ]),
     linksByAgentId: new Map(),
     outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: failed ? "failed" : "completed" }]]),
+    outcomesByAgentId: new Map(),
   };
 }
 
@@ -219,6 +225,7 @@ describe("observeReplaySubagents", () => {
       toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
       linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
       outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: "completed" }]]),
+      outcomesByAgentId: new Map(),
     };
 
     const [declared, ...rest] = (
@@ -366,6 +373,49 @@ describe("observeReplaySubagents", () => {
     );
 
     expect(descriptor).toMatchObject({ status: "completed" });
+  });
+
+  it("settles a child whose outcome is recorded under its task id", async () => {
+    // Claude's resume notice for the tasks a killed process left running names them by
+    // `<task-id>` and carries no tool id, so the task id (the child's agentId) is the only key
+    // to its outcome.
+    const secondAgentId = "b2810a6215e1f5cf7";
+    const secondToolUseId = "toolu_01SecondLaunch";
+    const replay = await observeReplaySubagents({
+      subagents: [
+        { agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] },
+        { agentId: secondAgentId, meta: { toolUseId: secondToolUseId }, entries: [] },
+      ],
+      parent: {
+        toolCalls: new Map([
+          [TOOL_USE_ID, { title: "general-purpose" }],
+          [secondToolUseId, { title: "general-purpose" }],
+        ]),
+        linksByAgentId: new Map(),
+        outcomesByToolCallId: new Map(),
+        outcomesByAgentId: new Map([
+          [AGENT_ID, { status: "canceled" }],
+          [secondAgentId, { status: "canceled" }],
+        ]),
+      },
+      convertEntry: () => [],
+    });
+
+    const store = new ProviderSubagentStore();
+    for (const event of foldSubagentObservations(replay.observations))
+      store.apply("parent", "claude", event);
+    // Both children are settled; their order only reflects identical creation timestamps.
+    expect(
+      store
+        .list("parent")
+        .map((child) => [child.id, child.status])
+        .sort(),
+    ).toEqual(
+      [
+        [TOOL_USE_ID, "canceled"],
+        [secondToolUseId, "canceled"],
+      ].sort(),
+    );
   });
 
   it("leaves a subagent with no recorded outcome running", async () => {

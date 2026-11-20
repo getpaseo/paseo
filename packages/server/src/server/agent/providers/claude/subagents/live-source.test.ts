@@ -192,6 +192,60 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
+  it("settles a restored child that Claude reports stopped on resume", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.restore([
+      {
+        taskId: "af1b",
+        id: "toolu_orphaned",
+        presentation: { title: "general-purpose" },
+      },
+    ]);
+
+    // Claude resumes, finds a task it launched before the restart still recorded as running,
+    // and announces the outcome for it. The child came from the transcript, so the only id
+    // this process has for it is the restored one.
+    expect(source.observe(taskNotification("stopped", "af1b") as unknown as SDKMessage)).toEqual([
+      { kind: "status", id: "toolu_orphaned", status: "canceled" },
+    ]);
+    // A later task_started still resumes it on the same row.
+    expect(
+      source.observe(
+        taskStarted({
+          task_id: "af1b",
+          tool_use_id: "toolu_resumed",
+          prompt: "Resumed prompt",
+        }),
+      ),
+    ).toEqual([
+      { kind: "status", id: "toolu_orphaned", status: "running" },
+      {
+        kind: "timeline",
+        id: "toolu_orphaned",
+        item: { type: "user_message", text: "Resumed prompt" },
+      },
+    ]);
+  });
+
+  it("keeps the last outcome a restored child is given", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.restore([
+      {
+        taskId: "af1b",
+        id: "toolu_orphaned",
+        presentation: { title: "general-purpose" },
+      },
+    ]);
+
+    expect(source.observe(taskNotification("stopped", "af1b"))).toEqual([
+      { kind: "status", id: "toolu_orphaned", status: "canceled" },
+    ]);
+    // Claude can correct an earlier notice. The transcript's latest fact wins.
+    expect(source.observe(taskNotification("completed", "af1b"))).toEqual([
+      { kind: "status", id: "toolu_orphaned", status: "completed" },
+    ]);
+  });
+
   it("declares a distinct task separately", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted({ task_id: "first", tool_use_id: "toolu_first" }));

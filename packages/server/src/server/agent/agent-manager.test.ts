@@ -12109,6 +12109,53 @@ test("idle runtime cleanup honors a provider veto and resumes the saved conversa
   }
 });
 
+test("idle runtime cleanup holds a runtime whose provider subagent is still running", async () => {
+  // A provider child left marked running is why a killed session's runtime can sit idle for days:
+  // this veto never lets the collector take the runtime, and its MCP servers go with it.
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-veto-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const collect = runtimeCleanup(manager);
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "orphaned-child",
+        title: "Orphaned child",
+        status: "running",
+      },
+    });
+    await manager.flush();
+
+    const now = new Date(Date.now() + 61 * 60_000);
+    expect(await collect({ now })).toEqual({ collected: [], failures: [] });
+
+    // The moment the child settles, the veto lifts.
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "orphaned-child", status: "canceled" },
+    });
+    await manager.flush();
+    // The idle clock restarts when the veto lifts, so the next sweep starts it again.
+    expect(await collect({ now })).toEqual({ collected: [], failures: [] });
+    const later = new Date(now.getTime() + 61 * 60_000);
+    expect((await collect({ now: later })).collected).toEqual([
+      { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+    ]);
+  } finally {
+    await manager.closeAgent(manager.listAgents()[0]?.id ?? "missing").catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("idle agents remain resident until an explicit lifecycle action closes them", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-residency-"));
   let closeCount = 0;

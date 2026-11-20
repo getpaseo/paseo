@@ -555,13 +555,29 @@ export class ClaudeTaskProtocolSource {
    * `tool_use_id`. Falling back to that id would readmit exactly what the filter rejected — as a
    * descriptor holding a status and no identity, which the track renders as a nameless row.
    * A status without a declaration describes nothing, so it is dropped.
+   *
+   * A restored child is the one exception, and only for a terminal status. Claude keeps its own
+   * record of the tasks a killed process left running, and announces them on the next resume so
+   * they do not stay "running" for ever. That announcement is about the transcript's child, which
+   * this process has not declared yet, so its id comes from `restoredByTaskId`. Non-terminal
+   * statuses are still ignored: Claude announces a running task with `task_started`, which adopts
+   * the restored child properly. The restore entry is kept either way, so a child Claude later
+   * resumes still lands on its original row.
    */
   private observeStatus(taskId: string, rawStatus: string | undefined): SubagentObservation[] {
-    const id = this.subagentIdByTaskId.get(taskId);
-    if (!id) return [];
     const status = mapTaskStatus(rawStatus);
-    if (!status || this.lastStatusById.get(id) === status) return [];
+    const id =
+      this.subagentIdByTaskId.get(taskId) ?? this.restoredIdForTerminalStatus(taskId, status);
+    if (!id || !status || this.lastStatusById.get(id) === status) return [];
     this.lastStatusById.set(id, status);
     return [{ kind: "status", id, status }];
+  }
+
+  private restoredIdForTerminalStatus(
+    taskId: string,
+    status: ProviderSubagentStatus | undefined,
+  ): string | undefined {
+    if (!status || status === "running") return undefined;
+    return this.restoredByTaskId.get(taskId)?.id;
   }
 }
