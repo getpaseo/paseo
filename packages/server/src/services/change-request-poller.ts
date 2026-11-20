@@ -272,6 +272,10 @@ export function createPerHostChangeRequestPoller(
         if (!isObserved()) return;
         const nowMs = now();
         watch.nextDueAt = Math.max(nowMs + pollIntervalMs, hostPauseUntil(watch.host, nowMs));
+        // A watch that delivered a snapshot yields priority to watches still
+        // waiting for a successful poll after a shared quota reset.
+        watches.delete(watch.url);
+        watches.set(watch.url, watch);
       } catch (error) {
         if (!isObserved()) return;
         options.onError?.(error, watch.host);

@@ -1092,6 +1092,58 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
+  it("gives a watch that hit the shared quota a turn after reset", async () => {
+    vi.useFakeTimers();
+    const start = 1_700_000_000_000;
+    vi.setSystemTime(start);
+    const url = "https://gitlab.com/team/app/-/merge_requests";
+    let window = -1;
+    let requests = 0;
+    const { runner } = createFakeGlabRunner((args) => {
+      const currentWindow = Math.floor((Date.now() - start) / 60_000);
+      if (window !== currentWindow) {
+        window = currentWindow;
+        requests = 0;
+      }
+      requests += 1;
+      if (requests > 3) {
+        return httpJson({}, { "Retry-After": "60" }, "429 Too Many Requests");
+      }
+      const endpoint = args.at(-1)!;
+      if (endpoint.includes("/discussions?")) return httpJson([]);
+      const iid = Number(endpoint.at(-1));
+      return httpJson({
+        iid,
+        state: iid === 2 ? "merged" : "opened",
+        sha: "head",
+        web_url: `${url}/${iid}`,
+      });
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: string[] = [];
+    const failures: number[] = [];
+    try {
+      for (const iid of [1, 2]) {
+        service.changeRequests!.observe(`${url}/${iid}`, {
+          async snapshot(snapshot) {
+            snapshots.push(`${iid}:${snapshot.state}`);
+          },
+          error() {
+            failures.push(iid);
+          },
+        });
+      }
+      await vi.advanceTimersByTimeAsync(25);
+      expect(snapshots).toEqual(["1:open"]);
+      expect(failures).toEqual([2]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(snapshots).toEqual(["1:open", "2:merged"]);
+      expect(failures).toEqual([2, 1]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
   it("stops an overlapping poll before it starts another GitLab API request during a pause", async () => {
     vi.useFakeTimers();
     const url = "https://gitlab.com/team/app/-/merge_requests";
