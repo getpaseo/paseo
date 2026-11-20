@@ -1455,6 +1455,24 @@ async function waitForCapturedLog(
       expect(result.size).toBe(source.byteLength);
       expect(result.bytes.byteLength).toBe(source.byteLength);
       expect(sha256(result.bytes)).toBe(sha256(source));
+
+      const agent = await client.createAgent({ provider: "codex", cwd: workspaceDir });
+      await client.sendAgentMessage(agent.id, "relay image", {
+        images: [{ data: source.toString("base64"), mimeType: "image/png" }],
+      });
+      let imageId: string | undefined;
+      await expect
+        .poll(async () => {
+          const timeline = await client!.fetchAgentTimeline(agent.id, {
+            direction: "tail",
+            limit: 0,
+          });
+          const item = timeline.entries[0]?.item;
+          imageId = item?.type === "user_message" ? item.imageRefs?.[0]?.id : undefined;
+          return Boolean(imageId);
+        })
+        .toBe(true);
+      expect(sha256(await client.readTimelineImage(agent.id, imageId!))).toBe(sha256(source));
     } catch (err) {
       const tail = lines.slice(-50).join("");
       // eslint-disable-next-line no-console

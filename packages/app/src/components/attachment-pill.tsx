@@ -135,10 +135,15 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
   const preview = useAttachmentPreviewUrl(metadata);
   const uri = preview.status === "ready" ? preview.url : null;
-  const source = useMemo(() => (uri ? { uri } : null), [uri]);
-  if (!source) {
+  if (!uri) {
     return <View style={styles.thumbnailPlaceholder} />;
   }
+  return <AttachmentUriThumbnail uri={uri} />;
+}
+
+/** A timeline image already carries portable bytes and needs no local store lookup. */
+export function AttachmentUriThumbnail({ uri }: { uri: string }) {
+  const source = useMemo(() => ({ uri }), [uri]);
   return <Image source={source} style={styles.thumbnail} />;
 }
 

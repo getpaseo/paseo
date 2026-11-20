@@ -7,9 +7,10 @@ import { afterEach, expect, test } from "vitest";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
+  UploadedImage,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { CreationService, type CreationInput } from "./index.js";
+import { CreationService, fingerprintCreationIntent, type CreationInput } from "./index.js";
 
 const silentLogger = pino({ level: "silent" });
 const directories: string[] = [];
@@ -321,4 +322,94 @@ test("observer failures are logged without failing creation", async () => {
       err: expect.objectContaining({ message: "delivery failed" }),
     }),
   );
+});
+
+test("reversed image order is a different creation intent", async () => {
+  const paseoHome = await mkdtemp(join(tmpdir(), "creation-order-uploads-"));
+  directories.push(paseoHome);
+  const putUpload = async (id: string, bytes: Buffer): Promise<UploadedImage> => {
+    const fileName = "image.png";
+    await mkdir(join(paseoHome, "uploads", id), { recursive: true });
+    await writeFile(join(paseoHome, "uploads", id, fileName), bytes);
+    return { id, fileName, mimeType: "image/png", size: bytes.byteLength };
+  };
+  const firstUpload = await putUpload("upload_a1", Buffer.from("first image"));
+  const secondUpload = await putUpload("upload_b1", Buffer.from("second image"));
+  const firstRetry = await putUpload("upload_a2", Buffer.from("first image"));
+  const secondRetry = await putUpload("upload_b2", Buffer.from("second image"));
+  const directory = await mkdtemp(join(tmpdir(), "creation-order-intent-"));
+  directories.push(directory);
+  const service = new CreationService(directory, silentLogger);
+  let starts = 0;
+  const create = async (imageUploads: UploadedImage[]) => {
+    const request = { config: { provider: "codex", cwd: "/project" }, imageUploads };
+    return await service.create({
+      kind: "agent",
+      key: "image-order-key",
+      request,
+      fingerprint: await fingerprintCreationIntent(paseoHome, request),
+      hasAgent: true,
+      hasPrompt: true,
+      exists: async () => false,
+      readAgent: async () => agent,
+      createAgent: async (id, _workspace, onReady) => {
+        starts++;
+        const created = { ...agent, id };
+        await onReady(created);
+        return { agent: created, initialPromptStarted: true };
+      },
+    });
+  };
+
+  const first = await create([firstUpload, secondUpload]);
+  expect(await create([firstRetry, secondRetry])).toEqual(first);
+  expect(starts).toBe(1);
+  await expect(create([secondRetry, firstRetry])).rejects.toThrow("agent_request_key_conflict");
+});
+
+test("a retry that re-uploads the same images keeps the intent while different bytes conflict", async () => {
+  const paseoHome = await mkdtemp(join(tmpdir(), "creation-uploads-"));
+  directories.push(paseoHome);
+  const putUpload = async (id: string, bytes: Buffer): Promise<UploadedImage> => {
+    const fileName = "image.png";
+    await mkdir(join(paseoHome, "uploads", id), { recursive: true });
+    await writeFile(join(paseoHome, "uploads", id, fileName), bytes);
+    return { id, fileName, mimeType: "image/png", size: bytes.byteLength };
+  };
+  const sameImage = Buffer.from("first image bytes");
+  const firstUpload = await putUpload("upload_first", sameImage);
+  const retryUpload = await putUpload("upload_retry", sameImage);
+  const otherUpload = await putUpload("upload_other", Buffer.from("other image bytes"));
+  const directory = await mkdtemp(join(tmpdir(), "creation-image-intent-"));
+  directories.push(directory);
+  const service = new CreationService(directory, silentLogger);
+  let starts = 0;
+  const create = async (upload: UploadedImage) => {
+    const request = { config: { provider: "codex", cwd: "/project" }, imageUploads: [upload] };
+    return await service.create({
+      kind: "agent",
+      key: "image-key",
+      request,
+      fingerprint: await fingerprintCreationIntent(paseoHome, request),
+      hasAgent: true,
+      hasPrompt: true,
+      exists: async () => false,
+      readAgent: async () => agent,
+      createAgent: async (id, _workspace, onReady) => {
+        starts++;
+        const created = { ...agent, id };
+        await onReady(created);
+        return { agent: created, initialPromptStarted: true };
+      },
+    });
+  };
+
+  const first = await create(firstUpload);
+  expect(first).toMatchObject({
+    phase: "completed",
+    agent: expect.objectContaining({ title: agent.title }),
+  });
+  expect(await create(retryUpload)).toEqual(first);
+  expect(starts).toBe(1);
+  await expect(create(otherUpload)).rejects.toThrow("agent_request_key_conflict");
 });
