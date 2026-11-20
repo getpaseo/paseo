@@ -134,7 +134,8 @@ export class SessionTurns {
     const output =
       options?.outputSchema === undefined ? undefined : structuredOutput(options.outputSchema);
     const turn = this.createTurn(submitted, false, output);
-    void this.submit(turn, input, accept, options);
+    // A local turn ID is not evidence that the native service accepted the prompt.
+    await this.submit(turn, input, accept, options);
     return { turnId: turn.id };
   }
   private async submit(
@@ -152,6 +153,7 @@ export class SessionTurns {
       this.requestReconciliation();
     } catch (error) {
       if (this.turn === turn) this.fail(new Error(toDiagnosticErrorMessage(error)));
+      throw error;
     } finally {
       accept();
     }

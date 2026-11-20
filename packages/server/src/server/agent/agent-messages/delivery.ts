@@ -1,6 +1,11 @@
+import { messageFingerprint } from "../../message-receipts/fingerprint.js";
 import { AgentTurnBusyError, type PromptDispatchDisposition } from "../agent-prompt.js";
 import { randomUUID } from "node:crypto";
-import type { AgentPromptInput, AgentPromptContentBlock } from "../agent-sdk-types.js";
+import type {
+  AgentPromptInput,
+  AgentPromptContentBlock,
+  SubmittedMessageFingerprint,
+} from "../agent-sdk-types.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./envelope.js";
 
 interface Message {
@@ -31,6 +36,7 @@ interface Admitted extends Message {
 interface DispatchRequest {
   recipientId: string;
   messageIds: readonly string[];
+  submittedMessages: readonly SubmittedMessageFingerprint[];
   prompt: AgentPromptInput;
   activeTurnBehavior: "steer" | "interrupt";
   idleOnly: boolean;
@@ -100,6 +106,10 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         return true;
       },
       messageIds: messages.map((message) => message.receipt.messageId),
+      submittedMessages: messages.map((message) => ({
+        clientMessageId: message.receipt.messageId,
+        promptFingerprint: messageFingerprint(message.prompt),
+      })),
       prompt,
       activeTurnBehavior: messages[0]!.activeTurnBehavior ?? "steer",
       sessionMode: messages.find((message) => message.sessionMode)?.sessionMode,

@@ -61,14 +61,28 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
-A direct send (one without `sourceAgentId`) rejected before its prompt is handed to a run, for
-example because the agent could not be loaded or the requested mode could not be set, leaves no
-receipt, so retrying its message ID submits it. A failure during or after run startup is treated
-as an unfinished delivery.
-An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
-accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
-work. Inspect the agent before choosing a new message ID. Receipts contain identity and request
-hashes, never prompts, environment values, or credentials.
+A direct send rejected before provider dispatch or a definitive provider refusal retains a negative
+outcome, so a retry with the same identity can dispatch again. A lost
+reply or transport failure after dispatch remains unknown; it is not permission to resend.
+
+For unfinished delivery, the daemon checks the durable provider-acceptance journal. The manager
+writes that evidence after acknowledgement, binding it to the agent, message ID, and complete
+prompt fingerprint. Positive evidence completes the receipt without resending, even after restart.
+This does not load a provider session or reread its history: some histories omit client IDs, are
+one-shot, or share state with live events. A timeline row alone is not evidence; rejected prompts
+also remain in history.
+
+Hosts advertising `messageDeliveryStatus` support `agent.message.get_delivery_status.request`.
+It checks the original request fingerprint and returns accepted, rejected, in flight, or unknown
+without dispatching a prompt. Already-admitted work owns its receipt independently of the client
+connection, so reconnecting can observe it while provider startup finishes.
+
+Without positive evidence or a known refusal, delivery stays unknown. This includes legacy
+pending receipts, absent legacy records, and a crash before writing acceptance. A journal failure
+does not revoke provider acceptance. Completed receipts replace their temporary acceptance
+records; deleting an agent removes its remaining records. These files contain identities,
+request hashes and outcome tags, never prompt text, provider error text, environment values,
+or credentials.
 
 Before messaging an archived workspace, call `workspace.recovery.inspect.request`, then
 `workspace.recovery.restore.request` and await success. The native message handler unarchives the

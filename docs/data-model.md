@@ -54,6 +54,8 @@ $PASEO_HOME/
 ├── paseo.pid                            # Daemon PID lock file
 ├── local-credential                     # Per-run local client credential (mode 0600)
 ├── daemon.log                           # Default log file (path configurable)
+├── message-acceptance/                  # Durable acknowledgement evidence; see docs/hub.md
+│   └── {fingerprint}.json               # Agent/message IDs and a prompt hash; no prompt text
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent

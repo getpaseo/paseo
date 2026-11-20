@@ -10237,3 +10237,93 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("message delivery checks require host support and never submit a message", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "delivery-status",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: { messageDeliveryStatus: true } });
+  await connecting;
+  const checking = client.getAgentMessageDeliveryStatus({
+    agentId: "agent",
+    messageId: "stable",
+    text: "hello",
+  });
+  const request = parseSentFrame(transport.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.message.get_delivery_status.request",
+    messageId: "stable",
+    text: "hello",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.message.get_delivery_status.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent",
+        messageId: "stable",
+        status: "unknown",
+        error: null,
+      },
+    }),
+  );
+  await expect(checking).resolves.toEqual({ status: "unknown", failure: undefined });
+  expect(transport.sent).toHaveLength(1);
+});
+
+test("an old host rejects a delivery status check before any wire request", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "legacy-delivery-status",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: {} });
+  await connecting;
+  await expect(
+    client.getAgentMessageDeliveryStatus({ agentId: "agent", messageId: "stable", text: "hello" }),
+  ).rejects.toThrow("Update the Paseo host");
+  expect(transport.sent).toHaveLength(0);
+});
+
+test("message rejections retain the daemon's machine-readable outcome", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "delivery-outcome",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+  const send = client.sendAgentMessage("agent", "hello", { messageId: "stable" });
+  const rejected = expect(send).rejects.toMatchObject({
+    deliveryOutcome: "not_submitted",
+    message: "Could not load agent",
+  });
+  const request = parseSentFrame(transport.sent[0]);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "send_agent_message_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent",
+        accepted: false,
+        error: "Could not load agent",
+        deliveryOutcome: "not_submitted",
+      },
+    }),
+  );
+  await rejected;
+});

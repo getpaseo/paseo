@@ -1491,7 +1491,7 @@ describe("OMP agent client and session", () => {
     await omp.start();
     omp.processExit("OMP RPC process exited with code null and signal SIGKILL");
     omp.failNextStart(new Error("Bun failed during startup"));
-    await omp.startTurn("continue");
+    await expect(omp.startTurn("continue")).rejects.toThrow("Bun failed during startup");
     expect(omp.turnFailures()).toEqual([
       "OMP RPC process exited with code null and signal SIGKILL",
       "Bun failed during startup",
@@ -1853,16 +1853,17 @@ test("interrupting OMP during image conversion cancels the admitted turn and per
       admitted = true;
       return result;
     });
+  const canceled = expect(first).rejects.toThrow("canceled before starting");
   await waitForImmediate();
   expect(admitted).toBe(false);
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image interrupt");
-  const original = await first;
+  await canceled;
   expect(events).toContainEqual(
-    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+    expect.objectContaining({ type: "turn_canceled", turnId: expect.any(String) }),
   );
-  expect(followup.turnId).not.toBe(original.turnId);
+  expect(followup.turnId).toBeTruthy();
   expect(runtime.latestSession().prompts).toEqual([
     { message: "follow-up after image interrupt", imageCount: 0 },
   ]);
@@ -1950,4 +1951,52 @@ describe("OMP catalog model labels", () => {
     expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
     expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
+});
+
+for (const nativeStarted of [false, true]) {
+  test(`OMP startup waits for native evidence (start event: ${nativeStarted})`, async () => {
+    const runtime = new FakeOmp();
+    const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession(
+      { provider: "omp", cwd: process.cwd() },
+    );
+    onTestFinished(() => session.close());
+    const native = runtime.latestSession();
+    let acknowledge!: () => void;
+    const ack = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const prompt = native.prompt.bind(native);
+    native.prompt = async (...args: Parameters<typeof native.prompt>) => {
+      const result = await prompt(...args);
+      await ack;
+      return result;
+    };
+    let settled = false;
+    const starting = session.startTurn("Wait for admission").then((result) => {
+      settled = true;
+      return result;
+    });
+    await waitForImmediate();
+    expect(settled).toBe(false);
+    if (nativeStarted) native.beginTurn();
+    else acknowledge();
+    await starting;
+    expect(settled).toBe(true);
+    acknowledge();
+  });
+}
+
+test("OMP failed process replacement rejects startup without claiming submission", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  const old = runtime.latestSession();
+  old.emit({ type: "process_exit", error: "Runtime exited" });
+  runtime.failNextStart(new Error("Cannot replace runtime"));
+  await expect(session.startTurn("Never sent")).rejects.toMatchObject({
+    deliveryOutcome: "not_submitted",
+    message: "Cannot replace runtime",
+  });
+  expect(old.prompts).toEqual([]);
 });

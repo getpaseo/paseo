@@ -735,7 +735,7 @@ export class VoiceAssistantWebSocketServer {
         agentManager.tryRunOutOfBand(
           request.recipientId,
           request.prompt,
-          { clientMessageId: request.messageIds[0] },
+          { clientMessageId: request.messageIds[0], submittedMessages: request.submittedMessages },
           onAccepted,
         ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
@@ -759,7 +759,10 @@ export class VoiceAssistantWebSocketServer {
           sessionMode: batch.sessionMode,
           clearPendingPermissions: batch.clearPendingPermissions,
           unarchive: batch.unarchive,
-          runOptions: { clientMessageId: batch.messageIds[0] },
+          runOptions: {
+            clientMessageId: batch.messageIds[0],
+            submittedMessages: batch.submittedMessages,
+          },
           logger: this.logger,
         });
         if (dispatch.disposition === "turn_started")
@@ -2230,6 +2233,7 @@ export class VoiceAssistantWebSocketServer {
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
         agentMessageBatching: true,
+        messageDeliveryStatus: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.

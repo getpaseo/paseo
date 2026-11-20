@@ -1,3 +1,4 @@
+import { deliveryFailureOutcome } from "./message-receipts/outcome.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -505,7 +506,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  messageReceipts: Pick<MessageReceipts, "send">;
+  messageReceipts: Pick<MessageReceipts, "send" | "getStatus">;
   agentMessages: AgentMessageDelivery;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
@@ -880,7 +881,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly messageReceipts: Pick<MessageReceipts, "send">;
+  private readonly messageReceipts: Pick<MessageReceipts, "send" | "getStatus">;
   private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
@@ -2735,6 +2736,8 @@ export class Session {
 
   private dispatchMetadataMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.message.get_delivery_status.request":
+        return this.handleGetMessageDeliveryStatus(msg);
       case "agent.metadata.update.request":
         return this.handleAgentMetadataUpdateRequest(msg);
       case "workspace.metadata.update.request":
@@ -3244,6 +3247,10 @@ export class Session {
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "send_agent_message_request":
+        return this.handleSendAgentMessageRequest(msg);
+      case "wait_for_finish_request":
+        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
       case "fetch_agent_history_request":
@@ -3264,10 +3271,6 @@ export class Session {
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "project.icon.set.request":
         return this.handleProjectIconSetRequest(msg);
-      case "send_agent_message_request":
-        return this.handleSendAgentMessageRequest(msg);
-      case "wait_for_finish_request":
-        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "create_agent_request":
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
@@ -8995,6 +8998,56 @@ export class Session {
     }
   }
 
+  private messageReceiptInput(input: {
+    message: Omit<Extract<SessionInboundMessage, { type: "send_agent_message_request" }>, "type">;
+    agentId: string;
+  }) {
+    const { message: msg, agentId } = input;
+    const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+    const identity = { agentId, clientMessageId: msg.messageId ?? "", prompt };
+    return {
+      agentId,
+      messageId: identity.clientMessageId,
+      request: {
+        prompt,
+        sourceAgentId: msg.sourceAgentId,
+        sourceAgentServerId: msg.sourceAgentServerId,
+        sessionMode: msg.sessionMode,
+        activeTurnBehavior: msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
+      },
+      isAccepted: () => this.agentManager.hasAcceptedSubmittedMessage(identity),
+      onCompleted: () => this.agentManager.forgetAcceptedSubmittedMessage(identity),
+    };
+  }
+
+  private async handleGetMessageDeliveryStatus(
+    msg: Extract<SessionInboundMessage, { type: "agent.message.get_delivery_status.request" }>,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    const base = { requestId: msg.requestId, agentId: msg.agentId, messageId: msg.messageId };
+    if (!resolved.ok) {
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, status: null, error: resolved.error },
+      });
+      return;
+    }
+    try {
+      const status = await this.messageReceipts.getStatus(
+        this.messageReceiptInput({ message: msg, agentId: resolved.agentId }),
+      );
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, agentId: resolved.agentId, ...status, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, status: null, error: errorToFriendlyMessage(error) },
+      });
+    }
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -9007,11 +9060,13 @@ export class Session {
           agentId: msg.agentId,
           accepted: false,
           error: resolved.error,
+          deliveryOutcome: "not_submitted",
         },
       });
       return;
     }
 
+    let dispatched = false;
     try {
       const agentId = resolved.agentId;
 
@@ -9067,32 +9122,24 @@ export class Session {
           logger: this.sessionLogger,
         });
         if (result.disposition === "turn_started") {
-          await waitForAgentRunStartWithTimeout(
-            this.agentManager,
-            agentId,
-            result.started,
-            this.delivery.requestSignal,
-          );
+          await waitForAgentRunStartWithTimeout(this.agentManager, agentId, result.started);
         }
       };
-      const sent = msg.messageId
+      const messageId = msg.messageId;
+      const sent = messageId
         ? this.messageReceipts.send({
-            agentId,
-            messageId: msg.messageId,
-            request: {
-              prompt,
-              sourceAgentId: msg.sourceAgentId,
-              sourceAgentServerId: msg.sourceAgentServerId,
-              sessionMode: msg.sessionMode,
-              activeTurnBehavior:
-                msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
-            },
+            ...this.messageReceiptInput({ message: msg, agentId }),
             send: async (beforeDispatch) => {
               if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-              await send(beforeDispatch);
+              await send(async () => {
+                await beforeDispatch();
+                dispatched = true;
+              });
             },
           })
-        : send(async () => {});
+        : send(async () => {
+            dispatched = true;
+          });
       void sent.catch((error) => {
         if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
@@ -9120,6 +9167,7 @@ export class Session {
           agentId: resolved.agentId,
           accepted: false,
           error: errorToFriendlyMessage(error),
+          deliveryOutcome: deliveryFailureOutcome(error, dispatched ? "unknown" : "not_submitted"),
         },
       });
     }

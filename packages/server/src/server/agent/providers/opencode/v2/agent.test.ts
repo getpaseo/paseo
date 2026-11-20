@@ -232,7 +232,8 @@ describe("OpenCode v2 session lifecycle", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     try {
-      await session.startTurn("fast execution");
+      const starting = session.startTurn("fast execution");
+      await expect.poll(() => typeof accept).toBe("function");
       const reads = harness.activeReads;
       harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
       await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
@@ -240,6 +241,7 @@ describe("OpenCode v2 session lifecycle", () => {
       harness.startExecution();
       harness.finishExecution();
       accept();
+      await starting;
       await expect.poll(() => terminalEvents(events)).toHaveLength(1);
       expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
     } finally {
@@ -1047,11 +1049,13 @@ describe("OpenCode v2 session lifecycle", () => {
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
     try {
-      await session.startTurn("first");
+      const starting = session.startTurn("first");
+      await expect.poll(() => typeof accept).toBe("function");
       const stopping = session.interrupt();
       await Promise.resolve();
       expect(interruptions).toBe(0);
       accept();
+      await starting;
       await stopping;
       expect(interruptions).toBe(1);
     } finally {
@@ -2087,6 +2091,88 @@ test("keeps a live background shell visible and stoppable after its launch is re
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
       items: [],
     });
+  } finally {
+    await session.close();
+  }
+});
+
+test("turn start waits for native prompt acknowledgement", async () => {
+  const harness = new V2Harness();
+  let acknowledge!: () => void;
+  let dispatched!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    dispatched = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  harness.prompt = async () => {
+    dispatched();
+    await gate;
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  let accepted = false;
+  const start = session.startTurn("hello").then((result) => {
+    accepted = true;
+    return result;
+  });
+  try {
+    await entered;
+    expect(accepted).toBe(false);
+    acknowledge();
+    await start;
+    expect(accepted).toBe(true);
+  } finally {
+    acknowledge();
+    await start;
+    await session.close();
+    await client.shutdown();
+  }
+});
+
+test("turn start rejects discovery failures before sending a native prompt", async () => {
+  const harness = new V2Harness();
+  harness.api.command.list = async () => {
+    throw new Error("command discovery failed");
+  };
+  harness.api.skill.list = async () => ({ location: harness.info.location, data: [] });
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  try {
+    await expect(session.startTurn("/review")).rejects.toThrow("command discovery failed");
+    expect(harness.prompts).toEqual([]);
+  } finally {
+    await session.close();
+    await client.shutdown();
+  }
+});
+
+test("terminal output validation failure during Stop leaves OpenCode able to start another turn", async () => {
+  const harness = new V2Harness();
+  harness.autoComplete = false;
+  harness.interrupt = async () => {
+    harness.finishExecution("succeeded");
+    return { interrupted: false };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("produce structured output", { outputSchema: { type: "object" } });
+    await expect(session.interrupt()).resolves.toBeUndefined();
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+    await expect(session.startTurn("next prompt")).resolves.toEqual({ turnId: expect.any(String) });
   } finally {
     await session.close();
   }

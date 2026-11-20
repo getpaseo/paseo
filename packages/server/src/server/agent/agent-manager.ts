@@ -1,3 +1,9 @@
+import { deliveryFailureOutcome } from "../message-receipts/outcome.js";
+import { messageFingerprint } from "../message-receipts/fingerprint.js";
+import {
+  MessageAcceptanceStore,
+  type SubmittedMessageIdentity,
+} from "../message-receipts/acceptance.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -377,6 +383,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  messageAcceptanceStore?: MessageAcceptanceStore;
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
@@ -868,6 +875,7 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
+  private readonly messageAcceptanceStore?: MessageAcceptanceStore;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -909,6 +917,7 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.messageAcceptanceStore = options.messageAcceptanceStore;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1434,6 +1443,14 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  async hasAcceptedSubmittedMessage(input: SubmittedMessageIdentity): Promise<boolean> {
+    return (await this.messageAcceptanceStore?.has(input)) ?? false;
+  }
+
+  async forgetAcceptedSubmittedMessage(input: SubmittedMessageIdentity): Promise<void> {
+    await this.messageAcceptanceStore?.forget(input);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -3101,6 +3118,8 @@ export class AgentManager {
     }
     onAccepted?.();
     this.touchUpdatedAt(agent);
+    if (this.messageAcceptanceStore)
+      await this.persistMessageAcceptances({ agentId, prompt, options });
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
       this.emitState(agent);
@@ -3185,6 +3204,8 @@ export class AgentManager {
     }
     try {
       const result = await agent.session.startTurn(prompt, options);
+      if (this.messageAcceptanceStore)
+        await this.persistMessageAcceptances({ agentId, prompt, options });
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -3192,6 +3213,11 @@ export class AgentManager {
     } catch (error) {
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
+          this.runs.settleForegroundStart(pendingRun, {
+            status: "failed",
+            error: error.message,
+            cause: error,
+          });
           if (options?.clientMessageId) {
             this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
               messageId: options.clientMessageId,
@@ -3223,13 +3249,23 @@ export class AgentManager {
       }
       agent.pendingReplacement = false;
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-      this.runs.settleForegroundStart(pendingRun, { status: "failed", error: errorMsg });
+      this.runs.settleForegroundStart(pendingRun, {
+        status: "failed",
+        error: errorMsg,
+        ...(error instanceof Error ? { cause: error } : {}),
+      });
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
         if (options?.clientMessageId) {
-          this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-            messageId: options.clientMessageId,
-          });
+          this.recordSubmittedPrompt(
+            agent,
+            prompt,
+            options.clientMessageId,
+            deliveryFailureOutcome(error) === "unknown" ? "unknown" : "rejected",
+            {
+              messageId: options.clientMessageId,
+            },
+          );
         }
         await this.handleStreamEvent(agent, {
           type: "turn_failed",
@@ -3535,6 +3571,8 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
+        if (this.messageAcceptanceStore)
+          await this.persistMessageAcceptances({ agentId, prompt, options });
         await this.recordAcceptedSteer(
           agent,
           prompt,
@@ -3575,6 +3613,8 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
+            if (this.messageAcceptanceStore)
+              await this.persistMessageAcceptances({ agentId, prompt, options });
             await this.recordAcceptedSteer(
               agent,
               prompt,
@@ -4124,6 +4164,14 @@ export class AgentManager {
   async deleteAgentState(agentId: string): Promise<void> {
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
+    try {
+      await this.messageAcceptanceStore?.forgetAgent(agentId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "Could not clean message acceptance records for the removed agent",
+      );
+    }
   }
 
   notifyAgentRemoved(agent: Pick<StoredAgentRecord, "id" | "workspaceId" | "internal">): void {
@@ -5691,11 +5739,40 @@ export class AgentManager {
     return event;
   }
 
+  private async persistMessageAcceptances(input: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+  }): Promise<void> {
+    if (!this.messageAcceptanceStore) return;
+    const submissions =
+      input.options?.submittedMessages ??
+      (input.options?.clientMessageId
+        ? [
+            {
+              clientMessageId: input.options.clientMessageId,
+              promptFingerprint: messageFingerprint(input.prompt),
+            },
+          ]
+        : []);
+    for (const submission of submissions) {
+      try {
+        await this.messageAcceptanceStore.record({ agentId: input.agentId, ...submission });
+      } catch (error) {
+        // A journal failure cannot undo provider acceptance or fail the running turn.
+        this.logger.error(
+          { err: error, agentId: input.agentId, clientMessageId: submission.clientMessageId },
+          "Could not persist message acceptance",
+        );
+      }
+    }
+  }
+
   private recordSubmittedPrompt(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    outcome: "accepted" | "rejected",
+    outcome: "accepted" | "rejected" | "unknown",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
     const items = projectAgentMessages({
@@ -5706,7 +5783,7 @@ export class AgentManager {
     });
     for (const item of items) {
       // Human attempts stay in history on rejection; delivery notifications require acceptance.
-      if (outcome === "rejected" && item.type !== "user_message") continue;
+      if (outcome !== "accepted" && item.type !== "user_message") continue;
       this.recordSubmittedPromptItem(agent, item, options);
     }
   }
