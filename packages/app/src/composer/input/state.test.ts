@@ -1,3 +1,4 @@
+import { DEFAULT_DICTATION_WRAP } from "@getpaseo/protocol/speech/rpc-schemas";
 import { describe, expect, it, vi } from "vitest";
 import {
   applyDictationTranscript,
@@ -172,25 +173,113 @@ describe("dictation keyboard behavior", () => {
 });
 
 describe("dictation transcript behavior", () => {
-  it("publishes an auto-sent transcript to the composer before submitting it", () => {
-    const actions: string[] = [];
+  const secondBlock = "```speech-to-text\nsecond\n```";
+  const firstBlock = "```speech-to-text\nfirst\n```";
 
-    applyDictationTranscript("spoken prompt", {
-      value: "typed context",
+  function dictate(
+    text: string,
+    overrides: Partial<Parameters<typeof applyDictationTranscript>[1]> = {},
+  ) {
+    const actions: string[] = [];
+    applyDictationTranscript(text, {
+      value: "",
       defaultSendBehavior: "interrupt",
       isAgentRunning: false,
       onQueue: undefined,
-      replaceText: (text) => actions.push(`replace:${text}`),
+      replaceText: (draft) => actions.push(`replace:${draft}`),
       onSubmit: (payload) => actions.push(`submit:${payload.text}`),
       attachments: [],
       cwd: "/repo",
-      autoSend: true,
+      autoSend: false,
+      ...overrides,
     });
+    return actions;
+  }
 
-    expect(actions).toEqual([
-      "replace:typed context spoken prompt",
-      "submit:typed context spoken prompt",
+  it.each(["", "typed context", "typed context\n"])(
+    "starts a default block on its own line after %j, even if the daemon omits wrap",
+    (value) => {
+      const before = value ? "typed context\n" : "";
+      expect(dictate("first", { value })).toEqual([`replace:${before}${firstBlock}\n`]);
+    },
+  );
+
+  it("merges consecutive transcriptions when only whitespace follows the block", () => {
+    expect(dictate("second", { value: `typed\n${firstBlock}\n  \t` })).toEqual([
+      "replace:typed\n```speech-to-text\nfirst second\n```\n",
     ]);
+  });
+
+  it("starts a separate block when merging is disabled", () => {
+    expect(
+      dictate("second", {
+        value: `${firstBlock}\n`,
+        wrap: { ...DEFAULT_DICTATION_WRAP, mergeConsecutive: false },
+      }),
+    ).toEqual([`replace:${firstBlock}\n${secondBlock}\n`]);
+  });
+
+  it("starts a separate block after intervening typed text", () => {
+    const value = `${firstBlock}\ntyped text\n`;
+    expect(dictate("second", { value })).toEqual([`replace:${value}${secondBlock}\n`]);
+  });
+
+  it("starts a separate block after an independently typed fence", () => {
+    const typedFence = "```js\nconst x = 1\n```";
+    const value = `${firstBlock}\n${typedFence}\n`;
+    expect(dictate("second", { value })).toEqual([`replace:${value}${secondBlock}\n`]);
+  });
+
+  it("uses the same block for auto-send without sending the editing newline", () => {
+    expect(dictate("first", { value: "typed context", autoSend: true })).toEqual([
+      `replace:typed context\n${firstBlock}\n`,
+      `submit:typed context\n${firstBlock}`,
+    ]);
+  });
+
+  it("queues wrapped text without the editing newline", () => {
+    const queued: string[] = [];
+    const actions = dictate("first", {
+      autoSend: true,
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      onQueue: (payload) => queued.push(payload.text),
+    });
+    expect(queued).toEqual([firstBlock]);
+    expect(actions).toEqual([`replace:${firstBlock}\n`, "replace:"]);
+  });
+
+  it("grows backtick fences to accommodate both transcriptions", () => {
+    const value = "````speech-to-text\nfirst with ```\n````\n";
+    expect(dictate("first with ```")).toEqual([`replace:${value}`]);
+    expect(dictate("second with ````", { value })).toEqual([
+      "replace:`````speech-to-text\nfirst with ``` second with ````\n`````\n",
+    ]);
+  });
+
+  it("grows tilde fences for a custom info string", () => {
+    const wrap = { ...DEFAULT_DICTATION_WRAP, prefix: "~~~spoken\n", suffix: "\n~~~" };
+    expect(dictate("first ~~~~ line", { wrap })).toEqual([
+      "replace:~~~~~spoken\nfirst ~~~~ line\n~~~~~\n",
+    ]);
+  });
+
+  it("inserts and merges literal custom markers with their whitespace", () => {
+    const wrap = { ...DEFAULT_DICTATION_WRAP, prefix: "<dictation> ", suffix: " </dictation> " };
+    const value = "typed\n<dictation> first </dictation> \n";
+    expect(dictate("first", { value: "typed", wrap })).toEqual([`replace:${value}`]);
+    expect(dictate("second", { value, wrap })).toEqual([
+      "replace:typed\n<dictation> first second </dictation> \n",
+    ]);
+  });
+
+  it("preserves the plain-text insertion and auto-send behavior when wrapping is off", () => {
+    const wrap = { ...DEFAULT_DICTATION_WRAP, enabled: false };
+    expect(dictate("first", { value: "typed", wrap, autoSend: true })).toEqual([
+      "replace:typed first",
+      "submit:typed first",
+    ]);
+    expect(dictate("first", { value: "typed\n", wrap })).toEqual(["replace:typed\nfirst"]);
   });
 });
 

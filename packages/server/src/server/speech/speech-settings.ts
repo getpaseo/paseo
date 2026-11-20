@@ -1,4 +1,8 @@
-import type { SpeechSettings, SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
+import {
+  DEFAULT_DICTATION_WRAP,
+  type SpeechSettings,
+  type SpeechSettingsPatch,
+} from "@getpaseo/protocol/speech/rpc-schemas";
 
 import {
   PersistedConfigSchema,
@@ -104,6 +108,7 @@ export function readSpeechSettings(persisted: PersistedConfig, env: NodeJS.Proce
     features: {
       dictation: {
         enabled: providers.dictationStt.enabled !== false,
+        wrap: { ...DEFAULT_DICTATION_WRAP, ...dictation?.wrap },
         stt: readSite(
           dictation?.stt,
           providers.dictationStt.provider,
@@ -183,9 +188,20 @@ export function mergeSpeechSettingsPatch(
 ): PersistedConfig {
   const features = { ...persisted.features };
   if (patch.dictation) {
-    const { stt, ...rest } = patch.dictation;
+    const { stt, wrap, ...rest } = patch.dictation;
     const next = mergeFields(features.dictation, rest);
     if (stt) next.stt = mergeSite(features.dictation?.stt, stt, "stt");
+    if (wrap) {
+      const nextWrap = { ...features.dictation?.wrap };
+      // Marker whitespace is literal. Only null clears an override.
+      for (const key of ["enabled", "prefix", "suffix", "mergeConsecutive"] as const) {
+        const value = wrap[key];
+        if (value === null) delete nextWrap[key];
+        else if (value !== undefined) Object.assign(nextWrap, { [key]: value });
+      }
+      if (Object.keys(nextWrap).length > 0) next.wrap = nextWrap;
+      else delete next.wrap;
+    }
     features.dictation = PersistedConfigSchema.shape.features.unwrap().shape.dictation.parse(next);
   }
   if (patch.voiceMode) {

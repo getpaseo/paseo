@@ -1,15 +1,24 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { StyleSheet } from "react-native-unistyles";
-import type { SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
+import {
+  DEFAULT_DICTATION_WRAP,
+  type DictationWrapSettings,
+  type SpeechSettingsPatch,
+} from "@getpaseo/protocol/speech/rpc-schemas";
 import {
   SettingsCard,
+  SettingsCollapsibleRow,
   SettingsDetailRow,
   SettingsRow,
   SettingsSection,
+  SettingsSwitch,
 } from "@/components/settings";
+import { Button } from "@/components/ui/button";
+import { FormTextInput } from "@/components/ui/form-field";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { Alert } from "@/components/ui/alert";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +36,7 @@ import {
 } from "./voice-settings";
 
 type SavePatch = (patch: SpeechSettingsPatch) => Promise<unknown>;
+type WrapPatch = NonNullable<NonNullable<SpeechSettingsPatch["dictation"]>["wrap"]>;
 const EMPTY_ENV_OVERRIDES: Record<string, string> = {};
 
 // The sheet mounts fresh for every open (docs/forms.md); `openCount` keys each mount.
@@ -65,6 +75,26 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
       });
     },
     [save, t, toast],
+  );
+  const saveWrap = useCallback(
+    (wrap: WrapPatch) => patchConfig({ features: { dictation: { wrap } } }),
+    [patchConfig],
+  );
+  const saveWrapSwitch = useCallback(
+    (patch: WrapPatch) => {
+      saveWrap(patch).catch((error: unknown) => {
+        toast.error(`${t("settings.voice.saveError")}: ${errorMessage(error)}`);
+      });
+    },
+    [saveWrap, t, toast],
+  );
+  const setWrapEnabled = useCallback(
+    (enabled: boolean) => saveWrapSwitch({ enabled }),
+    [saveWrapSwitch],
+  );
+  const setMergeConsecutive = useCallback(
+    (mergeConsecutive: boolean) => saveWrapSwitch({ mergeConsecutive }),
+    [saveWrapSwitch],
   );
   const setDictationEnabled = useCallback(
     (enabled: boolean) => saveSwitch({ dictation: { enabled } }),
@@ -115,6 +145,7 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
     />
   );
   const sheetSite = sheet ? getSpeechSite(features, sheet.siteId) : null;
+  const wrap = features.dictation.wrap;
 
   return (
     <View testID="voice-settings">
@@ -128,6 +159,29 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
             onChange={setDictationEnabled}
           />
           {siteRow("dictation.stt", t("settings.voice.sites.dictationStt"))}
+          {wrap ? (
+            <SettingsSwitch
+              label={t("settings.voice.dictation.wrapEnabled")}
+              value={wrap.enabled}
+              onValueChange={setWrapEnabled}
+            />
+          ) : null}
+          {wrap?.enabled ? (
+            <SettingsSwitch
+              label={t("settings.voice.dictation.mergeConsecutive")}
+              value={wrap.mergeConsecutive}
+              onValueChange={setMergeConsecutive}
+            />
+          ) : null}
+          {wrap?.enabled ? (
+            <SettingsCollapsibleRow label={t("settings.voice.dictation.markers")}>
+              <DictationMarkers
+                key={JSON.stringify([serverId, wrap.prefix, wrap.suffix])}
+                wrap={wrap}
+                save={saveWrap}
+              />
+            </SettingsCollapsibleRow>
+          ) : null}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection
@@ -162,6 +216,99 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
         />
       ) : null}
     </View>
+  );
+}
+
+function DictationMarkers({
+  wrap,
+  save,
+}: {
+  wrap: DictationWrapSettings;
+  save: (patch: WrapPatch) => Promise<unknown>;
+}) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [prefix, setPrefix] = useState(wrap.prefix);
+  const [suffix, setSuffix] = useState(wrap.suffix);
+  const [saving, setSaving] = useState(false);
+  const prefixInput = useRef<EditingTextInputHandle>(null);
+  const suffixInput = useRef<EditingTextInputHandle>(null);
+
+  const reset = useCallback(() => {
+    const { prefix: defaultPrefix, suffix: defaultSuffix } = DEFAULT_DICTATION_WRAP;
+    prefixInput.current?.replaceText(defaultPrefix);
+    suffixInput.current?.replaceText(defaultSuffix);
+    setPrefix(defaultPrefix);
+    setSuffix(defaultSuffix);
+  }, []);
+  const submit = useCallback(async () => {
+    setSaving(true);
+    try {
+      await save({
+        prefix: prefix === DEFAULT_DICTATION_WRAP.prefix ? null : prefix,
+        suffix: suffix === DEFAULT_DICTATION_WRAP.suffix ? null : suffix,
+      });
+    } catch (error) {
+      toast.error(`${t("settings.voice.saveError")}: ${errorMessage(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [prefix, save, suffix, t, toast]);
+
+  const prefixLabel = t("settings.voice.dictation.prefix");
+  const suffixLabel = t("settings.voice.dictation.suffix");
+  return (
+    <>
+      <SettingsRow label={prefixLabel}>
+        <FormTextInput
+          ref={prefixInput}
+          accessibilityLabel={prefixLabel}
+          initialValue={prefix}
+          onChangeText={setPrefix}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!saving}
+          multiline
+          numberOfLines={2}
+          style={styles.markerInput}
+        />
+      </SettingsRow>
+      <SettingsRow label={suffixLabel}>
+        <FormTextInput
+          ref={suffixInput}
+          accessibilityLabel={suffixLabel}
+          initialValue={suffix}
+          onChangeText={setSuffix}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!saving}
+          multiline
+          numberOfLines={2}
+          style={styles.markerInput}
+        />
+      </SettingsRow>
+      <View style={styles.markerActions}>
+        <Button
+          variant="ghost"
+          onPress={reset}
+          disabled={
+            saving ||
+            (prefix === DEFAULT_DICTATION_WRAP.prefix && suffix === DEFAULT_DICTATION_WRAP.suffix)
+          }
+          size="sm"
+        >
+          {t("settings.voice.dictation.resetMarkers")}
+        </Button>
+        <Button
+          onPress={submit}
+          loading={saving}
+          disabled={prefix === wrap.prefix && suffix === wrap.suffix}
+          size="sm"
+        >
+          {t("settings.voice.save")}
+        </Button>
+      </View>
+    </>
   );
 }
 
@@ -245,6 +392,15 @@ const styles = StyleSheet.create((theme) => ({
   loading: {
     paddingVertical: theme.spacing[8],
     alignItems: "center",
+  },
+  markerInput: {
+    minWidth: 180,
+  },
+  markerActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+    padding: theme.spacing[3],
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,
