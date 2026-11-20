@@ -566,24 +566,16 @@ export class DirectorySync {
     input: { subscribe?: boolean } | undefined,
     loadDirectoryCache: boolean,
   ): Promise<void> {
-    if (loadDirectoryCache) await this.loadCachedDirectory();
+    if (loadDirectoryCache) {
+      this.primeWorkspaceTransactionForCacheLoad();
+      await this.loadCachedDirectory();
+    }
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) return;
     const { client, source } = onlineConnection;
-    const transaction = this.workspaceTransactions.begin(source, () => {
-      const baseline = this.workspaces.snapshot();
-      return {
-        workspaces: new Map(baseline.workspaces),
-        projects: new Map(baseline.projects),
-        // Cache hydration can advance the live replica while these requests await responses.
-        // Every page must use the cursors belonging to the maps captured here.
-        requestCursors: { ...this.cursors },
-        syncCursors: {},
-        syncModes: {},
-        touchedWorkspaceIds: new Set(),
-        touchedProjectIds: new Set(),
-      };
-    });
+    const transaction = this.workspaceTransactions.begin(source, () =>
+      this.createWorkspaceRefreshSnapshot(),
+    );
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
@@ -805,6 +797,31 @@ export class DirectorySync {
       subscriptionId: null,
       syncRemovals: [],
     }));
+  }
+
+  // Updates that arrive before a refresh completes have no trusted baseline to advance from.
+  // Holding them keeps their cursor out of the cache until the refresh they are applied over.
+  private primeWorkspaceTransactionForCacheLoad(): void {
+    const connection = this.getOnlineConnection();
+    if (!connection) return;
+    this.workspaceTransactions.begin(connection.source, () =>
+      this.createWorkspaceRefreshSnapshot(),
+    );
+  }
+
+  private createWorkspaceRefreshSnapshot(): WorkspaceRefreshSnapshot {
+    const baseline = this.workspaces.snapshot();
+    return {
+      workspaces: new Map(baseline.workspaces),
+      projects: new Map(baseline.projects),
+      // Cache hydration can advance the live replica while these requests await responses.
+      // Every page must use the cursors belonging to the maps captured here.
+      requestCursors: { ...this.cursors },
+      syncCursors: {},
+      syncModes: {},
+      touchedWorkspaceIds: new Set(),
+      touchedProjectIds: new Set(),
+    };
   }
 
   private supportsDirectorySync(): boolean {

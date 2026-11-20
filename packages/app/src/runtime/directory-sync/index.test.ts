@@ -10,7 +10,10 @@ import type {
   DaemonClient,
   WorkspaceLabelListPayload,
 } from "@getpaseo/client/internal/daemon-client";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type {
+  SessionOutboundMessage,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -1665,6 +1668,141 @@ it("fills every cached workspace beneath live updates received during the SQLite
   directory.dispose();
   await cache.flush();
   database.close();
+});
+
+it("re-syncs every project when a project update lands while an untrusted cache loads", async () => {
+  const serverId = "untrusted-checkpoint-race";
+  serverIds.add(serverId);
+  const { cache, database, storage, reopen, holdRead } = createSqliteCache();
+  cache.setHosts([serverId]);
+  const workspacePayload = (id: string, projectId: string): WorkspaceDescriptorPayload => ({
+    id,
+    projectId,
+    projectDisplayName: projectId,
+    projectRootPath: `/repo/${projectId}`,
+    workspaceDirectory: `/repo/${projectId}`,
+    projectKind: "git",
+    workspaceKind: "local_checkout",
+    name: id,
+    status: "done",
+    statusEnteredAt: null,
+    activityAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+  });
+  const project = (projectId: string, projectDisplayName: string) => ({
+    projectId,
+    projectDisplayName,
+    projectRootPath: `/repo/${projectId}`,
+    projectKind: "git" as const,
+  });
+  const workspaceEntries = [workspacePayload("wa", "A"), workspacePayload("wb", "B")];
+  // An install damaged before the fix: workspaces survived eviction, project rows did not, and a
+  // version 1 checkpoint still claims the project directory is current.
+  cache.replaceDirectoryBaseline(serverId, {
+    agents: new Map(),
+    workspaces: new Map(
+      workspaceEntries.map((entry) => [entry.id, normalizeWorkspaceDescriptor(entry)]),
+    ),
+    projects: new Map(),
+  });
+  await cache.flush();
+  await storage.apply({
+    deletes: [],
+    upserts: [
+      {
+        serverId,
+        kind: "checkpoint",
+        id: "singleton",
+        payload: JSON.stringify({
+          version: 1,
+          cursors: { projects: { generation: "g", afterSeq: 5 } },
+        }),
+      },
+    ],
+  });
+  const reopened = reopen();
+  reopened.setHosts([serverId]);
+  const client = new FakeDirectoryClient();
+  client.listProjects = async (options?: unknown): Promise<ProjectListResult> => {
+    client.lastProjectOptions = options;
+    const resumesAfterRename =
+      (options as { sync?: { afterSeq?: number } } | undefined)?.sync?.afterSeq === 6;
+    return resumesAfterRename
+      ? {
+          requestId: "projects",
+          projects: [],
+          sync: { generation: "g", headSeq: 6, mode: "changes", removals: [] },
+        }
+      : {
+          requestId: "projects",
+          projects: [project("A", "Renamed"), project("B", "B")],
+          sync: { generation: "g", headSeq: 6, mode: "snapshot", removals: [] },
+        };
+  };
+  client.fetchWorkspaces = async (): Promise<WorkspaceFetchResult> => ({
+    requestId: "workspaces",
+    entries: workspaceEntries,
+    emptyProjects: [],
+    pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    sync: { generation: "g", headSeq: 2, mode: "snapshot", removals: [] },
+  });
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    reopened,
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true, projectList: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  let renamed = false;
+  holdRead(async () => {
+    if (renamed) return;
+    renamed = true;
+    client.emit({
+      type: "project.update",
+      payload: { kind: "upsert", project: project("A", "Renamed"), generation: "g", seq: 6 },
+    });
+  });
+
+  try {
+    directory.setDemand({}, true);
+    await directory.refreshDemand();
+
+    expect(renamed).toBe(true);
+    expect(client.lastProjectOptions).toEqual({ sync: {} });
+    expect([...useSessionStore.getState().sessions[serverId].projects.keys()].sort()).toEqual([
+      "A",
+      "B",
+    ]);
+    await reopened.flush();
+    const restarted = reopen();
+    restarted.setHosts([serverId]);
+    expect([...(await restarted.readDirectory(serverId)).projects.keys()].sort()).toEqual([
+      "A",
+      "B",
+    ]);
+  } finally {
+    directory.dispose();
+    await reopened.flush();
+    database.close();
+  }
 });
 
 function createWorkspaceLabelDirectory(serverId: string) {
