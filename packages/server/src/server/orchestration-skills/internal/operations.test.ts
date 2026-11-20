@@ -21,19 +21,31 @@ function only(...skills: string[]): SkillSelection {
   return { mode: "custom", skills };
 }
 
+interface TestSkillTargets extends SkillTargets {
+  agentsDir: string;
+  claudeDir: string;
+  antigravityDir: string;
+  installDirs: string[];
+}
+
 interface Sandbox {
   root: string;
-  targets: SkillTargets;
+  targets: TestSkillTargets;
 }
 
 async function makeSandbox(): Promise<Sandbox> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-skills-"));
-  const targets: SkillTargets = {
+  const agentsDir = path.join(root, "home", ".agents", "skills");
+  const claudeDir = path.join(root, "home", ".claude", "skills");
+  const codexDir = path.join(root, "home", ".codex", "skills");
+  const antigravityDir = path.join(root, "home", ".gemini", "config", "skills");
+  const targets: TestSkillTargets = {
     sourceDir: path.join(root, "bundle"),
-    agentsDir: path.join(root, "home", ".agents", "skills"),
-    claudeDir: path.join(root, "home", ".claude", "skills"),
-    codexDir: path.join(root, "home", ".codex", "skills"),
-    antigravityDir: path.join(root, "home", ".gemini", "config", "skills"),
+    installDirs: [agentsDir, claudeDir, antigravityDir],
+    agentsDir,
+    claudeDir,
+    codexDir,
+    antigravityDir,
   };
   await fs.mkdir(targets.sourceDir, { recursive: true });
   return { root, targets };
@@ -64,7 +76,7 @@ async function writeOnDiskSkill(
 }
 
 async function writeOnDiskSkillToAllTargets(
-  targets: SkillTargets,
+  targets: TestSkillTargets,
   name: string,
   files: Record<string, string>,
 ): Promise<void> {
@@ -88,7 +100,7 @@ async function pathExists(p: string): Promise<boolean> {
     .catch(() => false);
 }
 
-async function installedIn(targets: SkillTargets, name: string): Promise<boolean[]> {
+async function installedIn(targets: TestSkillTargets, name: string): Promise<boolean[]> {
   return Promise.all(
     [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map((dir) =>
       pathExists(path.join(dir, name)),

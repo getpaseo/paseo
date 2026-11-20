@@ -11,6 +11,7 @@ interface Sandbox {
   claudeDir: string;
   codexDir: string;
   antigravityDir: string;
+  installDirs: string[];
 }
 
 async function makeSandbox(): Promise<Sandbox> {
@@ -20,8 +21,9 @@ async function makeSandbox(): Promise<Sandbox> {
   const claudeDir = path.join(root, "home", ".claude", "skills");
   const codexDir = path.join(root, "home", ".codex", "skills");
   const antigravityDir = path.join(root, "home", ".gemini", "config", "skills");
+  const installDirs = [agentsDir, claudeDir, antigravityDir];
   await fs.mkdir(sourceDir, { recursive: true });
-  return { root, sourceDir, agentsDir, claudeDir, codexDir, antigravityDir };
+  return { root, sourceDir, agentsDir, claudeDir, codexDir, antigravityDir, installDirs };
 }
 
 async function writeBundleSkill(
@@ -59,10 +61,8 @@ describe("syncSkills", () => {
 
     const result = await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
@@ -96,10 +96,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo-committee"],
     });
 
@@ -146,10 +144,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
@@ -168,10 +164,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
@@ -180,10 +174,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
@@ -212,10 +204,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
@@ -250,10 +240,8 @@ describe("syncSkills", () => {
       await expect(
         syncSkills({
           sourceDir: sandbox.sourceDir,
-          agentsDir: sandbox.agentsDir,
-          claudeDir: sandbox.claudeDir,
+          installDirs: sandbox.installDirs,
           codexDir: sandbox.codexDir,
-          antigravityDir: sandbox.antigravityDir,
           skillNames: ["paseo"],
         }),
       ).rejects.toThrow("Cannot sync through symbolic link");
@@ -284,10 +272,8 @@ describe("syncSkills", () => {
       await expect(
         syncSkills({
           sourceDir: sandbox.sourceDir,
-          agentsDir: sandbox.agentsDir,
-          claudeDir: sandbox.claudeDir,
+          installDirs: sandbox.installDirs,
           codexDir: sandbox.codexDir,
-          antigravityDir: sandbox.antigravityDir,
           skillNames: ["paseo"],
         }),
       ).rejects.toThrow("Cannot sync through symbolic link");
@@ -308,20 +294,16 @@ describe("syncSkills", () => {
 
     const first = await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
     expect(first.changedFiles).toBeGreaterThan(0);
 
     const second = await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
     expect(second.changedFiles).toBe(0);
@@ -334,10 +316,8 @@ describe("syncSkills", () => {
     const errors: Array<{ name: string; error: unknown }> = [];
     const result = await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo", "paseo-removed"],
       onSkillError: (name, error) => errors.push({ name, error }),
     });
@@ -358,10 +338,8 @@ describe("syncSkills", () => {
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo", "paseo-deprecated"],
     });
 
@@ -374,10 +352,8 @@ describe("syncSkills", () => {
     const errors: string[] = [];
     const result = await syncSkills({
       sourceDir: missingSourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
       onSkillError: (skillName) => errors.push(skillName),
     });
@@ -395,10 +371,8 @@ describe("syncSkills", () => {
     const errors: string[] = [];
     const result = await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
       onSkillError: (skillName) => errors.push(skillName),
     });
@@ -423,18 +397,14 @@ describe("removeSkill", () => {
     await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "content" });
     await syncSkills({
       sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
       skillNames: ["paseo"],
     });
 
     await removeSkill("paseo", {
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
+      installDirs: sandbox.installDirs,
       codexDir: sandbox.codexDir,
-      antigravityDir: sandbox.antigravityDir,
     });
 
     await expect(fs.access(path.join(sandbox.agentsDir, "paseo"))).rejects.toThrow();
@@ -446,10 +416,8 @@ describe("removeSkill", () => {
   it("does not throw when targets are missing", async () => {
     await expect(
       removeSkill("does-not-exist", {
-        agentsDir: sandbox.agentsDir,
-        claudeDir: sandbox.claudeDir,
+        installDirs: sandbox.installDirs,
         codexDir: sandbox.codexDir,
-        antigravityDir: sandbox.antigravityDir,
       }),
     ).resolves.toBeUndefined();
   });

@@ -22,9 +22,16 @@ import type { SkillSelectionStore } from "./selection-store";
 import { createSkillsController, type SkillsController } from "./controller";
 import { beginSkillsTransaction } from "./transaction";
 
+interface TestSkillTargets extends SkillTargets {
+  agentsDir: string;
+  claudeDir: string;
+  antigravityDir: string;
+  installDirs: string[];
+}
+
 interface Harness {
   root: string;
-  targets: SkillTargets;
+  targets: TestSkillTargets;
   controller: SkillsController;
   selectionStore: SkillSelectionStore;
 }
@@ -33,12 +40,17 @@ const BUNDLED_SKILLS = ["paseo", "paseo-advisor", "paseo-loop"];
 
 async function makeHarness(selectionStore?: SkillSelectionStore): Promise<Harness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-skills-controller-"));
-  const targets: SkillTargets = {
+  const agentsDir = path.join(root, "home", ".agents", "skills");
+  const claudeDir = path.join(root, "home", ".claude", "skills");
+  const codexDir = path.join(root, "home", ".codex", "skills");
+  const antigravityDir = path.join(root, "home", ".gemini", "config", "skills");
+  const targets: TestSkillTargets = {
     sourceDir: path.join(root, "bundle"),
-    agentsDir: path.join(root, "home", ".agents", "skills"),
-    claudeDir: path.join(root, "home", ".claude", "skills"),
-    codexDir: path.join(root, "home", ".codex", "skills"),
-    antigravityDir: path.join(root, "home", ".gemini", "config", "skills"),
+    installDirs: [agentsDir, claudeDir, antigravityDir],
+    agentsDir,
+    claudeDir,
+    codexDir,
+    antigravityDir,
   };
   for (const name of BUNDLED_SKILLS) {
     await mkdir(path.join(targets.sourceDir, name), { recursive: true });
@@ -147,7 +159,7 @@ async function installedSkills(dir: string): Promise<string[]> {
     .sort();
 }
 
-async function installedEverywhere(targets: SkillTargets): Promise<string[][]> {
+async function installedEverywhere(targets: TestSkillTargets): Promise<string[][]> {
   return Promise.all(
     [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map(
       installedSkills,
@@ -156,7 +168,7 @@ async function installedEverywhere(targets: SkillTargets): Promise<string[][]> {
 }
 
 async function writeUserFile(
-  targets: SkillTargets,
+  targets: TestSkillTargets,
   skill: string,
   relativePath: string,
   contents: string,
@@ -174,7 +186,7 @@ async function writeUserFile(
 }
 
 async function readUserFile(
-  targets: SkillTargets,
+  targets: TestSkillTargets,
   skill: string,
   relativePath: string,
 ): Promise<Array<string | null>> {
@@ -186,7 +198,7 @@ async function readUserFile(
 }
 
 /** Anything the transaction staged and failed to clean up sits beside the skills tree. */
-async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
+async function backupArtifacts(targets: TestSkillTargets): Promise<string[][]> {
   return Promise.all(
     [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map(
       async (dir) => {
@@ -216,13 +228,13 @@ async function waitForTransactionDirectory(parent: string): Promise<void> {
 }
 
 /** Puts a regular file where the agents skills tree goes, so convergence fails with ENOTDIR. */
-async function blockAgentsDir(targets: SkillTargets): Promise<void> {
+async function blockAgentsDir(targets: TestSkillTargets): Promise<void> {
   await rm(targets.agentsDir, { recursive: true, force: true });
   await mkdir(path.dirname(targets.agentsDir), { recursive: true });
   await writeFile(targets.agentsDir, "not a directory");
 }
 
-async function isInstalled(targets: SkillTargets, name: string): Promise<boolean> {
+async function isInstalled(targets: TestSkillTargets, name: string): Promise<boolean> {
   const dirs = [targets.agentsDir, targets.claudeDir, targets.antigravityDir];
   const present = await Promise.all(
     dirs.map((dir) =>
@@ -840,6 +852,7 @@ describe("skills controller", () => {
       const crossFilesystemRoot = await mkdtemp("/dev/shm/paseo-skills-controller-");
       try {
         harness.targets.claudeDir = path.join(crossFilesystemRoot, "skills");
+        harness.targets.installDirs[1] = harness.targets.claudeDir;
         const previous: SkillSelection = {
           mode: "custom",
           skills: ["paseo", "paseo-loop"],
@@ -1249,6 +1262,109 @@ describe("skills controller", () => {
 
     expect(await readFile(collision, "utf8")).toBe("keep this file");
     expect(await installedEverywhere(harness.targets)).toEqual([[], [], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
+  });
+
+  it("rolls back cleanly without locking later calls when an Antigravity parent is a file", async () => {
+    const geminiConfig = path.dirname(harness.targets.antigravityDir);
+    await mkdir(path.dirname(geminiConfig), { recursive: true });
+    await writeFile(geminiConfig, "not a directory");
+
+    await expect(harness.controller.save({ mode: "custom", skills: ["paseo"] })).rejects.toThrow();
+
+    expect(await readFile(geminiConfig, "utf8")).toBe("not a directory");
+    expect(await installedEverywhere(harness.targets)).toEqual([[], [], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
+    await expect(harness.controller.status()).resolves.toMatchObject({
+      state: "not-installed",
+      selection: { mode: "all" },
+    });
+    await expect(harness.controller.uninstall()).resolves.toMatchObject({
+      state: "not-installed",
+    });
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "rolls back cleanly and still updates other targets when ~/.gemini is unwritable",
+    async () => {
+      const geminiHome = path.dirname(path.dirname(harness.targets.antigravityDir));
+      await mkdir(geminiHome, { recursive: true });
+      await chmod(geminiHome, 0o000);
+      try {
+        await expect(
+          harness.controller.save({ mode: "custom", skills: ["paseo"] }),
+        ).rejects.toThrow();
+
+        expect(await installedEverywhere(harness.targets)).toEqual([[], [], [], []]);
+        expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
+        await expect(harness.controller.status()).resolves.toMatchObject({
+          state: "not-installed",
+          selection: { mode: "all" },
+        });
+      } finally {
+        await chmod(geminiHome, 0o755);
+      }
+
+      // Install v1 everywhere, remove ~/.gemini/config so ~/.gemini (0555) blocks
+      // Antigravity writes with EACCES, then upgrade bundle to v2 and autoUpdate.
+      await harness.controller.install();
+      await rm(path.dirname(harness.targets.antigravityDir), { recursive: true, force: true });
+      for (const name of BUNDLED_SKILLS) {
+        await writeFile(path.join(harness.targets.sourceDir, name, "SKILL.md"), `${name}-v2`);
+      }
+      await chmod(geminiHome, 0o555);
+      try {
+        await expect(harness.controller.autoUpdate()).rejects.toThrow();
+        for (const root of [harness.targets.agentsDir, harness.targets.claudeDir]) {
+          for (const name of BUNDLED_SKILLS) {
+            expect(await readFile(path.join(root, name, "SKILL.md"), "utf8")).toBe(`${name}-v2`);
+          }
+        }
+      } finally {
+        await chmod(geminiHome, 0o755);
+      }
+    },
+  );
+
+  it("recovers a pre-upgrade transaction manifest that recorded codex at root index 2", async () => {
+    const previous: SkillSelection = { mode: "custom", skills: ["paseo"] };
+    const next: SkillSelection = { mode: "all" };
+    await harness.controller.save(previous);
+
+    const transactionDir = path.join(
+      path.dirname(harness.targets.agentsDir),
+      ".paseo-skills-transaction-legacy-codex-index",
+    );
+    const codexBackup = path.join(transactionDir, "backup", "2", "paseo");
+    await mkdir(path.join(codexBackup, "notes"), { recursive: true });
+    await writeFile(path.join(codexBackup, "notes", "codex.md"), "restored codex note");
+    await writeFile(
+      path.join(transactionDir, "transaction.json"),
+      `${JSON.stringify(
+        {
+          owner: "paseo-skills-transaction",
+          version: 1,
+          phase: "converging",
+          previousSelection: previous,
+          nextSelection: next,
+          entries: [
+            {
+              livePath: path.join(harness.targets.codexDir, "paseo"),
+              kind: "update",
+              backupPath: path.join("backup", "2", "paseo"),
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await harness.controller.status();
+
+    expect(
+      await readFile(path.join(harness.targets.codexDir, "paseo", "notes", "codex.md"), "utf8"),
+    ).toBe("restored codex note");
     expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 

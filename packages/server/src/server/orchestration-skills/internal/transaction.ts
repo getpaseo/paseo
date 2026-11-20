@@ -128,8 +128,19 @@ function selectionsEqual(left: SkillSelection, right: SkillSelection): boolean {
   );
 }
 
+/**
+ * Ordered roots for transaction capture and recovery. Pre-0.17 manifests
+ * recorded `[agents, claude, codex]` at indices 0–2, so `codexDir` stays at
+ * index 2 and newer install roots follow at index 3+.
+ */
 function skillRoots(targets: SkillTargets): string[] {
-  return [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir];
+  const [agentsDir, claudeDir, ...additionalInstallDirs] = targets.installDirs;
+  return [
+    ...(agentsDir ? [agentsDir] : []),
+    ...(claudeDir ? [claudeDir] : []),
+    targets.codexDir,
+    ...additionalInstallDirs,
+  ];
 }
 
 async function validateEntries(
@@ -413,6 +424,10 @@ async function restore(
       continue;
     }
     const liveInfo = await lstat(entry.livePath).catch(() => null);
+    // An add entry with no backup and no readable live path wrote nothing here
+    // (absent, under a file, or under an unreadable parent). Skipping avoids
+    // failing rollback with ENOTDIR/EACCES and leaving a stuck transaction.
+    if (liveInfo === null && backup === null) continue;
     if (liveInfo !== null && !(await isDirectory(entry.livePath))) {
       // Add/update rollback has the same conflict state as delete rollback. A
       // recreated file or file symlink belongs to the external writer; preserve
