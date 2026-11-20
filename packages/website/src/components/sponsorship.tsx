@@ -265,12 +265,7 @@ export function HomepageSponsorsSection() {
 
   return (
     <section aria-labelledby="sponsors-heading">
-      <SectionOpener
-        eyebrow={t("landing.eyebrows.sponsors")}
-        headingId="sponsors-heading"
-        title={t("sponsor.sponsors")}
-        className="mb-10"
-      />
+      <SectionOpener headingId="sponsors-heading" title={t("sponsor.sponsors")} className="mb-10" />
 
       <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
         {SPONSORS.map((sponsor) => (

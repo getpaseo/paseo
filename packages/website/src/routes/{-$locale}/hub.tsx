@@ -113,9 +113,6 @@ function HubHero() {
   const localize = useLocalizePath();
   return (
     <header className="space-y-6">
-      <p className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-accent-text">
-        {t("hub.eyebrows.hero")}
-      </p>
       <h1>
         <PaseoHubLockup className="h-10 w-auto text-foreground md:h-12" />
         <span className="sr-only">{t("hub.title")}</span>
@@ -140,7 +137,6 @@ function AutomationsSection() {
   return (
     <section aria-labelledby="automations-heading">
       <SectionOpener
-        eyebrow={t("hub.eyebrows.automations")}
         headingId="automations-heading"
         title={t("hub.automations.title")}
         description={t("hub.automations.description")}
@@ -286,7 +282,6 @@ function AuthoringSection() {
   return (
     <section aria-labelledby="authoring-heading">
       <SectionOpener
-        eyebrow={t("hub.eyebrows.authoring")}
         headingId="authoring-heading"
         title={t("hub.authoring.title")}
         description={t("hub.authoring.description")}
@@ -418,7 +413,7 @@ function InfrastructureSection() {
   return (
     <section aria-labelledby="infrastructure-heading">
       <SectionOpener
-        eyebrow={t("hub.eyebrows.infrastructure")}
+        eyebrow={t("hub.eyebrows.architecture")}
         headingId="infrastructure-heading"
         title={t("hub.shape.title")}
         description={t("hub.shape.description")}
@@ -455,7 +450,6 @@ function AgentsSection() {
   return (
     <section aria-labelledby="agents-heading">
       <SectionOpener
-        eyebrow={t("hub.eyebrows.agents")}
         headingId="agents-heading"
         title={t("hub.agents.title")}
         description={t("hub.agents.description")}
@@ -700,7 +694,6 @@ function FaqSection() {
       className="grid items-start gap-10 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:gap-16"
     >
       <SectionOpener
-        eyebrow={t("hub.eyebrows.faq")}
         headingId="faq-heading"
         title={t("hub.faq.title")}
         className="mb-0 self-start"

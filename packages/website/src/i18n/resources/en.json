@@ -353,15 +353,9 @@
       "label": "Automations on your machines"
     },
     "eyebrows": {
-      "community": "Community",
-      "providers": "01 · Providers",
-      "deployment": "02 · Deployment",
-      "extensibility": "03 · Extensibility",
-      "automation": "04 · Automation",
-      "hub": "Paseo Hub",
-      "openSource": "Open source",
-      "sponsors": "Sponsors",
-      "faq": "FAQ"
+      "providers": "Providers",
+      "plugins": "Plugins",
+      "openSource": "Open source"
     },
     "closingCta": {
       "eyebrow": "Get started",
@@ -618,13 +612,8 @@
       "selfHost": "Self-host"
     },
     "eyebrows": {
-      "hero": "Paseo Hub",
-      "automations": "01 · Automations",
-      "authoring": "02 · Authoring",
-      "infrastructure": "03 · Infrastructure",
-      "agents": "04 · Harnesses",
-      "pricing": "05 · Pricing",
-      "faq": "FAQ"
+      "architecture": "Architecture",
+      "pricing": "Pricing"
     },
     "automations": {
       "title": "Automations from every source",

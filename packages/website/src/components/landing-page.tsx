@@ -413,7 +413,6 @@ function SocialProofWall() {
       transition={EASE_OUT_05}
     >
       <SectionOpener
-        eyebrow={t("landing.eyebrows.community")}
         title={t("landing.socialProof.title")}
         description={t("landing.socialProof.description")}
       />
@@ -526,7 +525,6 @@ function TurnkeySection() {
   const localize = useLocalizePath();
   return (
     <FeatureSection
-      eyebrow={t("landing.eyebrows.deployment")}
       title={t("landing.runAnywhere.title")}
       description={t("landing.runAnywhere.description")}
     >
@@ -679,7 +677,6 @@ function AutomationSection() {
 
   return (
     <FeatureSection
-      eyebrow={t("landing.eyebrows.automation")}
       title={t("landing.automation.title")}
       description={t("landing.automation.description")}
       links={links}
@@ -910,9 +907,6 @@ function HubSection() {
       aria-labelledby="hub-section-heading"
     >
       <div className="mb-10 space-y-3 md:mb-12">
-        <p className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-accent-text">
-          {t("landing.eyebrows.hub")}
-        </p>
         <h2 id="hub-section-heading">
           <PaseoHubLockup className="h-9 w-auto text-foreground md:h-11" />
           <span className="sr-only">{t("hub.title")}</span>
@@ -944,7 +938,7 @@ function ExtensibleSection() {
   const pluginActions = React.useMemo(() => <PluginActions />, []);
   return (
     <FeatureSection
-      eyebrow={t("landing.eyebrows.extensibility")}
+      eyebrow={t("landing.eyebrows.plugins")}
       title={t("landing.plugins.title")}
       description={t("landing.plugins.description")}
     >
@@ -1517,7 +1511,6 @@ function FAQ() {
       className="grid items-start gap-10 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:gap-16"
     >
       <SectionOpener
-        eyebrow={t("landing.eyebrows.faq")}
         headingId="home-faq-heading"
         title={t("landing.faq.title")}
         className="mb-0 self-start"
