@@ -8,6 +8,7 @@ import {
 } from "@getpaseo/server/configuration";
 import { connectToDaemon } from "../../utils/client.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";
+import { addConfigTransferCommands } from "./config-transfer.js";
 
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);
@@ -112,5 +113,6 @@ export function daemonConfigCommand(): Command {
       return applySaved(homeOf(options), options);
     }),
   );
+  addConfigTransferCommands(config);
   return config;
 }

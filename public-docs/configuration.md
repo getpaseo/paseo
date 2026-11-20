@@ -72,6 +72,19 @@ paseo daemon restart
 
 Runtime-safe settings include relay enablement, MCP settings, browser tools, hostnames, CORS origins, trusted proxies, Git process limits, agent and terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
 
+## Move to another host
+
+Copy a host's portable configuration to another host instead of copying `config.json`:
+
+```bash
+paseo daemon config export paseo-host.json
+paseo daemon config import paseo-host.json --host other-host:6767
+```
+
+The export holds agent and terminal profiles, provider settings, metadata generation, agent behavior settings, voice and dictation settings, the skills selection, plugins as reinstall sources, and saved plugin settings. It never holds API keys, provider `env`, the daemon password, plugin registry tokens, identity files, absolute install paths, agents, projects, or schedules. The export lists each value it left behind so you can re-enter it.
+
+`import` shows what each section would replace, then asks before applying; `--yes` skips the question. Plugins install through the normal install path at the exported revision, then get their settings back. A host with plugins turned off installs them only with `--enable-plugins`; the preview names every plugin that turning plugins on would also start. Each section, plugin, and settings file is reported as applied, skipped, or failed. Settings from a newer daemon that this host cannot read are refused before anything is written. The Backup page in Settings does the same from the app and also carries your app preferences.
+
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
 Idle runtime cleanup, listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.

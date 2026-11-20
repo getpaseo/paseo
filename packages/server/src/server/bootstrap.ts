@@ -168,6 +168,7 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
+import { createConfigTransfer } from "./config-transfer/index.js";
 import {
   resolveReloadableConfig,
   type ResolvedDaemonSettings,
@@ -687,6 +688,13 @@ export async function createPaseoDaemon(
       defaultUrl: config.pluginRegistryUrl,
     }),
     builtinPlugins: resolveBuiltinPluginLoader(dependencies),
+    settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
+  });
+  const configTransfer = createConfigTransfer({
+    daemonVersion,
+    config: daemonConfigStore,
+    plugins: pluginRuntime,
+    skills: orchestrationSkills,
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
   });
 
@@ -1930,6 +1938,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              configTransfer,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
