@@ -1197,7 +1197,7 @@ class AcpRuntime {
         },
       });
       if (this.activePrompt?.deferred) {
-        if (update.sessionUpdate === "agent_message_chunk") {
+        if (update.sessionUpdate === "agent_message_chunk" && !this.hasQualifyingOpenTools()) {
           this.activePrompt.deferred.replyOpen = true;
         }
         this.activePrompt.deferred.replySettled = false;
@@ -1312,10 +1312,7 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
-      if (this.activePrompt?.deferred?.replyOpen) {
-        this.activePrompt.deferred.replySettled = true;
-        this.scheduleDeferredSettle();
-      }
+      this.noteDeferredUsageUpdate();
       return;
     }
     if (update.sessionUpdate === "compaction_update") {
@@ -1402,7 +1399,7 @@ class AcpRuntime {
       item: toolTimelineItem(snapshot),
     });
     if (this.activePrompt?.deferred) {
-      if (isOpen && this.toolKeepsTurnOpen(snapshot)) {
+      if (this.toolKeepsTurnOpen(snapshot)) {
         this.activePrompt.deferred.replyOpen = false;
         this.activePrompt.deferred.replySettled = false;
       }
@@ -1526,21 +1523,49 @@ class AcpRuntime {
   private steerDeferredPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
     const active = this.activePrompt;
     const deferred = active?.deferred;
-    const rejectSteer = (message: string) => {
+    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
       this.emit({
         type: "session.prompt_result",
         sessionId: this.options.boundarySessionId,
         clientMessageId: input.prompt.clientMessageId,
-        result: { type: "failed", error: { message } },
+        result: {
+          type: "failed",
+          error: {
+            message: "ACP session can only steer while waiting on deferred background tools",
+          },
+        },
       });
-    };
-    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
-      rejectSteer("ACP session can only steer while waiting on deferred background tools");
       return;
+    }
+    if (input.prompt.clearPendingPermissions) {
+      this.finishTurnPermissions(active.turnId);
     }
     const prompt = toAcpPrompt(input.prompt);
     active.wirePromptsInFlight += 1;
+    deferred.replyOpen = false;
+    deferred.replySettled = false;
     this.scheduleDeferredSettle();
+    this.replayWindow = null;
+    this.fallbackChunkIds.clear();
+    this.emit({
+      type: "timeline.item",
+      sessionId: this.options.boundarySessionId,
+      item: {
+        type: "user_message",
+        id: input.prompt.clientMessageId,
+        text: prompt
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n"),
+        clientMessageId: input.prompt.clientMessageId,
+      },
+    });
+    this.emit({
+      type: "session.prompt_result",
+      sessionId: this.options.boundarySessionId,
+      clientMessageId: input.prompt.clientMessageId,
+      result: { type: "steer", turnId: active.turnId },
+    });
     const runSteer = async (): Promise<void> => {
       try {
         if (
@@ -1549,35 +1574,8 @@ class AcpRuntime {
           active.cancelling ||
           active.deferred !== deferred
         ) {
-          rejectSteer("Deferred ACP turn ended before steer could be sent");
           return;
         }
-        if (input.prompt.clearPendingPermissions) {
-          this.finishTurnPermissions(active.turnId);
-        }
-        deferred.replyOpen = false;
-        deferred.replySettled = false;
-        this.replayWindow = null;
-        this.fallbackChunkIds.clear();
-        this.emit({
-          type: "timeline.item",
-          sessionId: this.options.boundarySessionId,
-          item: {
-            type: "user_message",
-            id: input.prompt.clientMessageId,
-            text: prompt
-              .filter((part) => part.type === "text")
-              .map((part) => part.text)
-              .join("\n"),
-            clientMessageId: input.prompt.clientMessageId,
-          },
-        });
-        this.emit({
-          type: "session.prompt_result",
-          sessionId: this.options.boundarySessionId,
-          clientMessageId: input.prompt.clientMessageId,
-          result: { type: "steer", turnId: active.turnId },
-        });
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
@@ -1602,7 +1600,7 @@ class AcpRuntime {
           return;
         }
         this.fallbackChunkIds.clear();
-        if (response.stopReason !== "end_turn") {
+        if (response.stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
           this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
         }
       } catch (error) {
@@ -1677,6 +1675,13 @@ class AcpRuntime {
     if (deferred.timer) clearTimeout(deferred.timer);
     active.deferred = null;
     deferred.resolve(outcome);
+  }
+
+  private noteDeferredUsageUpdate(): void {
+    const deferred = this.activePrompt?.deferred;
+    if (!deferred?.replyOpen || this.hasQualifyingOpenTools()) return;
+    deferred.replySettled = true;
+    this.scheduleDeferredSettle();
   }
 
   private scheduleDeferredSettle(): void {

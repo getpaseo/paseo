@@ -2824,6 +2824,7 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
   let cancelCount = 0;
   let promptCount = 0;
   let notifyAgent: ((message: AcpStreamMessage) => void) | null = null;
+  let holdNextPrompt: ((release: () => void) => void) | null = null;
   const registration = runAcpProvider({
     id: "deferred-acp-daemon",
     label: "Deferred ACP Daemon",
@@ -2908,6 +2909,14 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
                 },
               });
             }
+            if (holdNextPrompt) {
+              const hook = holdNextPrompt;
+              holdNextPrompt = null;
+              hook(() =>
+                send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "cancelled" } }),
+              );
+              return;
+            }
             send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
             return;
           }
@@ -2983,7 +2992,8 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
     expect(cancelCount).toBe(0);
 
-    // Start a second deferred job and explicitly Stop it through AgentManager.
+    // Start a second deferred job, send two steers while steer 1 waits on ACP, and press Stop.
+    let heldSteerResponse: (() => void) | null = null;
     const second = await sendPreparedPromptToAgent({
       agentManager: manager,
       agentStorage: storage,
@@ -2995,9 +3005,39 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
 
-    await manager.cancelAgentRun(agent.id);
+    // Hold the next steer prompt so Stop races with a queued second steer.
+    holdNextPrompt = (release) => {
+      heldSteerResponse = release;
+    };
+    const steerOne = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "held steer 1",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerOne.disposition).toBe("steered");
+    const steerTwo = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "queued steer 2",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerTwo.disposition).toBe("steered");
+    await expect.poll(() => heldSteerResponse).not.toBeNull();
+    const promptsBeforeStop = promptCount;
+
+    // Stop must send session/cancel immediately without waiting behind steer 2,
+    // and releasing steer 1 must not dispatch steer 2 to ACP.
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await expect.poll(() => cancelCount, { timeout: 2_000 }).toBe(1);
+    heldSteerResponse!();
+    await stopPromise;
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
-    expect(cancelCount).toBe(1);
+    expect(promptCount).toBe(promptsBeforeStop);
   } finally {
     await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
     await plugins.shutdown();

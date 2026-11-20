@@ -3735,7 +3735,7 @@ describe("deferTurnOnRunningTools", () => {
     }
   });
 
-  it("rejects a queued steer instead of dropping it when an earlier steer ends the deferred turn", async () => {
+  it("delivers a queued steer even when an earlier steer returns max_turn_requests", async () => {
     let promptCount = 0;
     let finishFirstSteer: (() => void) | null = null;
     const { connector } = connectorHarness({
@@ -3760,13 +3760,17 @@ describe("deferTurnOnRunningTools", () => {
           finishFirstSteer = () => instance.respond(request, { stopReason: "max_turn_requests" });
           return true;
         }
-        instance.respond(request, { stopReason: "end_turn" });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Second steer delivered"),
+        });
+        instance.respond(request, { stopReason: "max_turn_requests" });
         return true;
       },
     });
     const registration = runAcpProvider({
-      id: "deferred-steer-reject",
-      label: "Deferred Steer Reject",
+      id: "deferred-steer-deliver",
+      label: "Deferred Steer Deliver",
       connector,
       acpOptions: {
         deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
@@ -3817,24 +3821,151 @@ describe("deferTurnOnRunningTools", () => {
           input: { type: "message", content: [{ type: "text", text: "second steer" }] },
         },
       });
-      await expect.poll(() => finishFirstSteer).not.toBeNull();
-      // steer-2 must not have been reported as accepted before steer-1 finishes.
-      expect(
-        events.some(
-          (event) => event.type === "session.prompt_result" && event.clientMessageId === "steer-2",
-        ),
-      ).toBe(false);
-
-      // steer-1 ends the turn with max_turn_requests -> steer-2 fails explicitly instead of being dropped.
-      finishFirstSteer!();
       await waitForEvent(
         events,
         (event) =>
           event.type === "session.prompt_result" &&
           event.clientMessageId === "steer-2" &&
-          event.result.type === "failed",
+          event.result.type === "steer",
       );
-      expect(promptCount).toBe(2);
+      await expect.poll(() => finishFirstSteer).not.toBeNull();
+      finishFirstSteer!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "Second steer delivered",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:drop-turn" &&
+          event.state === "completed",
+      );
+      expect(promptCount).toBe(3);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("ignores steer usage_update from before a background tool finishes so the background reply is not cut short", async () => {
+    let promptCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-usage",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+        } else {
+          // Steer replies and emits usage_update while bg-usage is still in_progress.
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: textChunk("Steer reply"),
+          });
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: { sessionUpdate: "usage_update", used: 150, size: 1000 },
+          });
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-steer-usage",
+      label: "Deferred Steer Usage",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 40, quietLimitMs: 1_500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "usage-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-usage",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // Steer completes with its own reply + usage_update while bg-usage is still running.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-usage",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "status?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "Steer reply",
+      );
+
+      // Now bg-usage completes. The earlier steer usage_update must NOT trigger the 40ms timer.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-usage", status: "completed" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:usage-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Background reply arrives after the thinking gap and closes with usage_update.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Background result ready."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 250, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:usage-turn" &&
+          event.state === "completed",
+      );
     } finally {
       await connection.close();
     }
