@@ -6,6 +6,7 @@ import {
   createPerHostChangeRequestPoller,
   parseCliHttpResponse,
   parseRetryAfterMs,
+  type PerHostReadContext,
 } from "./change-request-poller.js";
 import type { ChangeRequestSnapshot, ChangeRequestSource } from "./change-request-source.js";
 
@@ -421,6 +422,7 @@ export interface CreateGitLabChangeRequestSourceOptions {
     args: string[],
     options: { cwd: string; envOverlay?: Record<string, string> },
   ): Promise<{ stdout: string; stderr: string }>;
+  isAuthError(error: unknown): boolean;
   isCommandError(error: unknown): error is Error & { stderr: string; stdout?: string };
   createAuthError(stderr: string): Error;
   createCommandError(params: {
@@ -452,18 +454,18 @@ export function createGitLabChangeRequestSource(
     return config.stdout.trim();
   }
 
-  async function resolveWatchProfile(identity: GitLabMergeRequestIdentity) {
+  async function preferredProfileHost(identity: GitLabMergeRequestIdentity): Promise<string> {
     const { host, hostWithPort } = identity;
-    if (hostWithPort === GITLAB_CLOUD_HOST) return { host, prefix: "" };
+    if (hostWithPort === host) return host;
 
-    // Select a port-specific profile from local configuration. The override
-    // applies to API requests for either profile and cannot tell them apart.
-    const exactProfile =
-      hostWithPort === host
-        ? ""
-        : await readConfig(hostWithPort, "api_host", { GITLAB_API_HOST: "" });
-    const profileHost = exactProfile ? hostWithPort : host;
+    // An API host override applies to either profile. Use the configured value
+    // to decide which profile to try first, then check access through the MR.
+    const exactProfile = await readConfig(hostWithPort, "api_host", { GITLAB_API_HOST: "" });
+    return exactProfile ? hostWithPort : host;
+  }
 
+  async function readApiPrefix(profileHost: string): Promise<string> {
+    if (profileHost === GITLAB_CLOUD_HOST) return "";
     const trimSlashes = /^\/+|\/+$/g;
     let prefix = (await readConfig(profileHost, "subfolder")).replace(trimSlashes, "");
     if (!prefix) {
@@ -473,7 +475,7 @@ export function createGitLabChangeRequestSource(
         prefix = apiUrl.pathname.replace(trimSlashes, "");
       }
     }
-    return { host: profileHost, prefix: decodeURI(prefix) };
+    return decodeURI(prefix);
   }
 
   function parseJsonResponseBody<T>(params: {
@@ -543,8 +545,10 @@ export function createGitLabChangeRequestSource(
     host: string;
     endpoint: string;
     schema: z.ZodType<T>;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<{ data: T; headers: ReadonlyMap<string, string> }> {
+    if (!params.poll.isObserved()) throw new Error("Change request observation ended");
+    params.poll.assertHostAvailable();
     // glab api rejects a port in --hostname. GITLAB_HOST selects that profile.
     const args = params.host.includes(":")
       ? ["api", "-i", params.endpoint]
@@ -567,7 +571,7 @@ export function createGitLabChangeRequestSource(
           `${error.stderr}\n${error.stdout ?? ""}`,
         );
         if (rateLimit) {
-          params.pauseHost(rateLimit.resetAtMs);
+          params.poll.pauseHost(rateLimit.resetAtMs);
           throw rateLimit;
         }
       }
@@ -584,12 +588,12 @@ export function createGitLabChangeRequestSource(
       body: parsed.body,
       rawStdout: result.stdout,
       rawStderr: result.stderr,
-      pauseHost: params.pauseHost,
+      pauseHost: params.poll.pauseHost,
     });
 
     const proactivePause = parseRetryAfterMs(parsed.headers, now());
     if (proactivePause !== null) {
-      params.pauseHost(proactivePause);
+      params.poll.pauseHost(proactivePause);
     }
 
     const data = parseJsonResponseBody({ args, cwd, body: parsed.body, schema: params.schema });
@@ -600,8 +604,7 @@ export function createGitLabChangeRequestSource(
     host: string;
     endpoint: string;
     itemSchema: z.ZodType<T>;
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<{ items: T[]; pagesRead: number }> {
     const items: T[] = [];
     const schema = z.array(params.itemSchema);
@@ -610,7 +613,7 @@ export function createGitLabChangeRequestSource(
     let pagesRead = 0;
 
     while (true) {
-      if (!params.isObserved()) {
+      if (!params.poll.isObserved()) {
         return { items, pagesRead };
       }
       const sep = params.endpoint.includes("?") ? "&" : "?";
@@ -618,7 +621,7 @@ export function createGitLabChangeRequestSource(
         host: params.host,
         endpoint: `${params.endpoint}${sep}per_page=${GITLAB_PAGE_SIZE}&page=${page}`,
         schema,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
       pagesRead += 1;
       items.push(...response.data);
@@ -653,13 +656,13 @@ export function createGitLabChangeRequestSource(
     host: string;
     identity: GitLabMergeRequestIdentity;
     endpoint: string;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<GitLabWatchMr> {
     const { data: mr } = await apiGet({
       host: params.host,
       endpoint: params.endpoint,
       schema: gitLabWatchMrSchema,
-      pauseHost: params.pauseHost,
+      poll: params.poll,
     });
     const address = parseGitLabMergeRequestUrl(mr.web_url);
     const expected = params.identity;
@@ -689,8 +692,7 @@ export function createGitLabChangeRequestSource(
     encodedProject: string;
     mr: GitLabWatchMr;
     headSha: string;
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<ChangeRequestSnapshot["checks"]> {
     const pipeline = params.mr.head_pipeline;
     if (!pipeline) return [];
@@ -702,8 +704,7 @@ export function createGitLabChangeRequestSource(
         host: params.host,
         endpoint: `projects/${pipelineProject}/pipelines/${pipeline.id}/jobs`,
         itemSchema: gitLabWatchJobSchema,
-        isObserved: params.isObserved,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
     } catch (error) {
       if (!pipelineDetailsUnavailable(error)) throw error;
@@ -712,7 +713,7 @@ export function createGitLabChangeRequestSource(
         ? [pipelineFailureCheck(pipeline)]
         : [];
     }
-    if (!params.isObserved()) {
+    if (!params.poll.isObserved()) {
       throw new Error("Change request observation ended");
     }
 
@@ -728,8 +729,7 @@ export function createGitLabChangeRequestSource(
         pipelineProject,
         pipeline,
         checks,
-        isObserved: params.isObserved,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
     }
 
@@ -739,7 +739,7 @@ export function createGitLabChangeRequestSource(
         host: params.host,
         identity: params.identity,
         endpoint: params.mrEndpoint,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
       const recheckSha = recheck.sha || recheck.diff_refs?.head_sha || "";
       if (
@@ -758,16 +758,14 @@ export function createGitLabChangeRequestSource(
     pipelineProject: string;
     pipeline: z.infer<typeof gitLabWatchPipelineSchema>;
     checks: ChangeRequestSnapshot["checks"];
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<void> {
     try {
       const bridgesResult = await apiGetAllPages({
         host: params.host,
         endpoint: `projects/${params.pipelineProject}/pipelines/${params.pipeline.id}/bridges`,
         itemSchema: gitLabWatchJobSchema,
-        isObserved: params.isObserved,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
       for (const bridge of bridgesResult.items) {
         params.checks.push(toWatchCheck(bridge, "bridge"));
@@ -783,14 +781,14 @@ export function createGitLabChangeRequestSource(
   async function readOptionalApprovalCount(params: {
     host: string;
     endpoint: string;
-    pauseHost(untilMs: number): void;
+    poll: PerHostReadContext;
   }): Promise<ApprovalCount | null> {
     try {
       const { data: approvals } = await apiGet({
         host: params.host,
         endpoint: params.endpoint,
         schema: gitLabWatchApprovalsSchema,
-        pauseHost: params.pauseHost,
+        poll: params.poll,
       });
       return summarizeApprovalCount(approvals);
     } catch {
@@ -799,31 +797,41 @@ export function createGitLabChangeRequestSource(
     }
   }
 
-  async function readMergeRequest(context: {
-    url: string;
-    host: string;
-    knownActivity(): ReadonlySet<string> | undefined;
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
-  }): Promise<ChangeRequestSnapshot> {
-    const identity = parseGitLabMergeRequestUrl(context.url);
-    const { projectPath, iid } = identity;
-    const { host, prefix } = await resolveWatchProfile(identity);
-    const relativePath =
-      prefix && projectPath.startsWith(`${prefix}/`)
-        ? projectPath.slice(prefix.length + 1)
-        : projectPath;
-    const encodedProject = encodeURIComponent(
-      relativePath.includes("/") ? relativePath : projectPath,
-    );
-    const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
+  async function readInitialMergeRequest(
+    identity: GitLabMergeRequestIdentity,
+    poll: PerHostReadContext,
+  ) {
+    async function readUsing(host: string) {
+      const { projectPath, iid } = identity;
+      const prefix = await readApiPrefix(host);
+      const relativePath =
+        prefix && projectPath.startsWith(`${prefix}/`)
+          ? projectPath.slice(prefix.length + 1)
+          : projectPath;
+      const encodedProject = encodeURIComponent(
+        relativePath.includes("/") ? relativePath : projectPath,
+      );
+      const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
+      const mr = await readMergeRequestMetadata({ host, identity, endpoint: mrEndpoint, poll });
+      return { host, encodedProject, mrEndpoint, mr };
+    }
 
-    const mr = await readMergeRequestMetadata({
-      host,
+    const preferred = await preferredProfileHost(identity);
+    try {
+      return await readUsing(preferred);
+    } catch (error) {
+      if (preferred === identity.host || !options.isAuthError(error)) throw error;
+      return readUsing(identity.host);
+    }
+  }
+
+  async function readMergeRequest(context: PerHostReadContext): Promise<ChangeRequestSnapshot> {
+    const identity = parseGitLabMergeRequestUrl(context.url);
+    const { iid } = identity;
+    const { host, encodedProject, mrEndpoint, mr } = await readInitialMergeRequest(
       identity,
-      endpoint: mrEndpoint,
-      pauseHost: context.pauseHost,
-    });
+      context,
+    );
     const headSha = mr.sha || mr.diff_refs?.head_sha || "";
     if (!headSha) {
       throw new Error(`GitLab merge request !${iid} did not include a head commit SHA.`);
@@ -836,15 +844,13 @@ export function createGitLabChangeRequestSource(
       encodedProject,
       mr,
       headSha,
-      isObserved: context.isObserved,
-      pauseHost: context.pauseHost,
+      poll: context,
     });
     const discussionsResult = await apiGetAllPages({
       host,
       endpoint: `projects/${encodedProject}/merge_requests/${iid}/discussions`,
       itemSchema: gitLabWatchDiscussionSchema,
-      isObserved: context.isObserved,
-      pauseHost: context.pauseHost,
+      poll: context,
     });
     if (!context.isObserved()) {
       throw new Error("Change request observation ended");
@@ -864,7 +870,7 @@ export function createGitLabChangeRequestSource(
       ? await readOptionalApprovalCount({
           host,
           endpoint: `projects/${encodedProject}/merge_requests/${iid}/approvals`,
-          pauseHost: context.pauseHost,
+          poll: context,
         })
       : null;
 

@@ -130,6 +130,7 @@ export interface PerHostReadContext {
   host: string;
   knownActivity(): ReadonlySet<string> | undefined;
   isObserved(): boolean;
+  assertHostAvailable(): void;
   pauseHost(untilMs: number): void;
 }
 
@@ -251,6 +252,13 @@ export function createPerHostChangeRequestPoller(
           host: watch.host,
           knownActivity: () => watch.callbacks.knownActivity?.(),
           isObserved,
+          assertHostAvailable() {
+            const nowMs = now();
+            const resetAtMs = hostPauseUntil(watch.host, nowMs);
+            if (resetAtMs > nowMs) {
+              throw new ChangeRequestRateLimitError({ host: watch.host, resetAtMs });
+            }
+          },
           pauseHost: (untilMs) => pauseHost(watch.host, untilMs),
         });
         if (!isObserved()) return;

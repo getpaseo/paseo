@@ -951,6 +951,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
 
   const changeRequests = createGitLabChangeRequestSource({
     runCommand: runRaw,
+    isAuthError: (error) => error instanceof GlabAuthenticationError,
     isCommandError: (error): error is GlabCommandError => error instanceof GlabCommandError,
     createAuthError: (stderr) => new GlabAuthenticationError({ stderr }),
     createCommandError: (params) => new GlabCommandError(params),

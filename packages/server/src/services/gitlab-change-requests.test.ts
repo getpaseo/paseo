@@ -1012,6 +1012,88 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
+  it("uses a valid bare profile when a port profile cannot read the MR", async () => {
+    vi.useFakeTimers();
+    const host = "gitlab.example.org";
+    const authority = `${host}:3443`;
+    const url = `https://${authority}/team/app/-/merge_requests/1`;
+    const { runner, calls } = createFakeGlabRunner((args, options) => {
+      if (args[0] === "config") {
+        return { stdout: args[2] === "api_host" ? authority : "", stderr: "" };
+      }
+      if (options.envOverlay?.GITLAB_HOST === authority) {
+        return httpJson({ message: "401 Unauthorized" }, {}, "401 Unauthorized");
+      }
+      if (args.at(-1)?.includes("/discussions?")) return httpJson([]);
+      return httpJson({ iid: 1, state: "opened", sha: "valid-profile", web_url: url });
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests!.observe(url, {
+        async snapshot(snapshot) {
+          snapshots.push(snapshot);
+        },
+        error: (error) => errors.push(error),
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([]);
+      expect(snapshots[0]?.headSha).toBe("valid-profile");
+      expect(
+        calls
+          .filter(({ args }) => args[0] === "api")
+          .map(({ envOverlay }) => envOverlay?.GITLAB_HOST),
+      ).toEqual([authority, host, host]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it("stops an overlapping poll before it starts another GitLab API request during a pause", async () => {
+    vi.useFakeTimers();
+    const url = "https://gitlab.com/team/app/-/merge_requests";
+    let releaseMr!: () => void;
+    const firstMr = new Promise<void>((resolve) => {
+      releaseMr = resolve;
+    });
+    const { runner, calls } = createFakeGlabRunner(async (args) => {
+      const endpoint = args.at(-1)!;
+      if (endpoint.endsWith("/merge_requests/1")) {
+        await firstMr;
+        return httpJson({ iid: 1, state: "opened", sha: "head", web_url: `${url}/1` });
+      }
+      if (endpoint.endsWith("/merge_requests/2")) {
+        return httpJson({}, { "Retry-After": "90" }, "429 Too Many Requests");
+      }
+      return httpJson([]);
+    });
+    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    const errors: unknown[] = [];
+    const observer = {
+      async snapshot(snapshot: ChangeRequestSnapshot) {
+        snapshots.push(snapshot);
+      },
+      error: (error: unknown) => errors.push(error),
+    };
+    try {
+      service.changeRequests!.observe(`${url}/1`, observer);
+      service.changeRequests!.observe(`${url}/2`, observer);
+      await vi.advanceTimersByTimeAsync(25);
+      releaseMr();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(errors).toHaveLength(2);
+      expect(snapshots).toEqual([]);
+      expect(calls.map(({ args }) => args.at(-1))).toEqual([
+        "projects/team%2Fapp/merge_requests/1",
+        "projects/team%2Fapp/merge_requests/2",
+      ]);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
   it("rereads the profile's subfolder when the installer changes it", async () => {
     vi.useFakeTimers();
     let folder = "gitlab";
