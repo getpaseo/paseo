@@ -9809,6 +9809,69 @@ test.each([
   },
 );
 
+test("turns an agent starts on its own keep its finish unread until it is read", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-finish-unread-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class AutonomousClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new AutonomousClient();
+  const attention: Array<{ reason: string; attentionTimestamp: Date | null }> = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    onAgentAttention: ({ reason, attentionTimestamp }) =>
+      attention.push({ reason, attentionTimestamp }),
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  async function runAutonomousTurn(turnId: string): Promise<void> {
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    await running;
+    const idle = waitForAgentLifecycle(manager, agent.id, "idle");
+    client.session.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+    await idle;
+  }
+
+  // A background task's output wakes the agent three times while nobody reads it.
+  await runAutonomousTurn("wake-1");
+  await runAutonomousTurn("wake-2");
+  await runAutonomousTurn("wake-3");
+  // Each finish is reported, and all three belong to the same unread finish.
+  const unreadFinish = attention[0]?.attentionTimestamp;
+  expect(unreadFinish).toBeInstanceOf(Date);
+  expect(attention).toEqual([
+    { reason: "finished", attentionTimestamp: unreadFinish },
+    { reason: "finished", attentionTimestamp: unreadFinish },
+    { reason: "finished", attentionTimestamp: unreadFinish },
+  ]);
+  expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+
+  // After the user reads the agent, its next finish is a new unread finish.
+  await manager.clearAgentAttention(agent.id);
+  await runAutonomousTurn("wake-4");
+  expect(attention).toHaveLength(4);
+  expect(attention[3]?.reason).toBe("finished");
+  expect(attention[3]?.attentionTimestamp).not.toBe(unreadFinish);
+});
+
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
   const storagePath = join(workdir, "agents");
@@ -15716,6 +15779,7 @@ test("lists and stops heartbeat background work across provider session closure"
   const heartbeat = {
     ...heartbeatKey,
     kind: "heartbeat",
+    countsAsRunning: false,
     description: "Check build",
     startedAt: "2026-10-06T10:00:00.000Z",
     stop: async () => {
@@ -15742,7 +15806,10 @@ test("lists and stops heartbeat background work across provider session closure"
       items: [{ id: item.id, kind: "shell", description: null, canStop: true }],
     });
     await vi.waitFor(() =>
-      expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 2 }),
+      expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({
+        count: 2,
+        runningCount: 1,
+      }),
     );
     const providerItem = manager
       .listAgentBackgroundWork(agent.id)
@@ -15764,7 +15831,7 @@ test("lists and stops heartbeat background work across provider session closure"
     await manager.closeAgent(agent.id);
     expect(manager.getAgent(agent.id)).toBeNull();
     expect(manager.listAgentBackgroundWork(agent.id)).toEqual([renamed]);
-    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1 });
+    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1, runningCount: 0 });
     expect(events.slice(eventsBeforeClose)).toContainEqual({
       type: "background_work",
       agentId: agent.id,

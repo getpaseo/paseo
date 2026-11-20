@@ -12,7 +12,7 @@ nav: Hoplite
 
 1. 在 daemon 主机上安装 [Hoplite CLI](https://hoplite.sh/docs/cli)。
 2. 运行 `hoplite login`。
-3. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**，在目录里找到 **Hoplite** 并选择 **添加**。
+3. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**，选择 **+ Provider**，找到 **Hoplite** 并选择 **添加**。
 
 Paseo 会启动 `hoplite acp`。认证和项目设置见 [Hoplite 的 ACP 指南](https://hoplite.sh/docs/cli/acp)。
 

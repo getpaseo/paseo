@@ -1,12 +1,46 @@
 # Adaptive plugin features: source verification
 
 - Record date: 2026-11-19. Clock checked with `date '+%Y-%m-%d %H:%M:%S %Z'`: `2026-11-19 22:30:48 IST`.
-- Status: source corrections and bounded verification complete. The single light review found one queued-live-snapshot gap, independently confirmed, then fixed and regression-tested without another review round. M authorized six feature-branch commits/pushes and draft PRs only; no npm, tag, store publication, installation or port-6767 restart. Morphise was explicitly fast-forwarded to v0.47.0 and revalidated before draft publication. Clock checked: 2026-11-20 08:55 IST; original record filename retained.
+- Status: six draft PRs published; M subsequently authorized upstream conflict resolution and pushing the updated Paseo feature branch. Pinned upstream `a0ed629b7` is integrated, with server/SDK build, full typecheck, 15 targeted suites and five-plugin integration passing before merge commit/push. The light review's queued-snapshot correction remains regression-proven without another review pass. No PR merge, npm/tag/store release, installation or port-6767 restart. Clock checked: 2026-11-20 09:25 IST; original record filename retained.
 - Local implementation plan: `paseo-provider-plugin-compatibility/docs/2026-11-19-1624_adaptive-plugin-features_plan.md` in the sibling working checkout; it is not part of this published repository.
 - Local accepted decision record: `paseo-provider-plugin-compatibility/docs/adr/0001-derive-plugin-features-for-each-session-open.md`. The goal, decisions and safety boundary are restated below so this evidence does not require that local file.
 - Prior evidence: integration/copy/lifecycle/manager/build/typecheck/lint/format and visual checks PASS; actual built-CLI redaction characterization PASS1 (49 deselected/50 total).17 representative mutants restored. Current fixes add empty fixed-opening, retained-prefix and consumed-policy regressions before a second independent review. Routed/Codex and release limits remain explicit.
 
 ## Current review corrections (provisional)
+
+### Upstream integration after draft publication
+
+M authorized resolving draft [#10266](https://github.com/getpaseo/paseo/pull/10266)'s upstream conflicts and pushing the result, without merging the PR or releasing. The merge pins upstream `a0ed629b7d2f21ca4e26908e4696b50f1f28bef8` and preserves published feature history. Shared agent types retain both adaptive support and installation types; Codex retains both support resolution and installation/update operations; plugin tool dispatch carries its launch ID through upstream's `{ signal }` request-options interface. No new behavior or broader approval is added by conflict resolution.
+
+Upstream's `0.17.0-beta.1` workspace metadata and lockfile are inherited unchanged relative to that pinned commit. This supersedes the earlier source-base `0.16.2` metadata checkpoint, not the release gate: the already published beta still lacks this contract. No independent version bump or plugin dependency/floor edit is included. The five plugin branches are unchanged. Compatibility prerequisite [#10209](https://github.com/getpaseo/paseo/pull/10209) remains OPEN and included in the stack.
+
+After the last code edit, on Node 22.20.0:
+
+- VERIFY: ran `npm run build:server`: PASS (exit 0; server/CLI and SDK dependency build). Evidence: `adaptive-upstream-build.log` and completion notification.
+- VERIFY: ran `npm run typecheck`: PASS (exit 0; all workspace checks). Evidence: `adaptive-upstream-verification.log`.
+- Each row below ran from the named package using `npx vitest run <file> --bail=1 --maxWorkers=1`, with the resume filter shown. Every invocation exited 0. Evidence: `adaptive-upstream-verification.log`, `adaptive-upstream-verification-rest.log`, `adaptive-upstream-copy-integration.log`.
+
+| Package  | Test file                                                                                                   | Passed | Skipped / deselected |
+| -------- | ----------------------------------------------------------------------------------------------------------- | ------ | -------------------- |
+| server   | `src/server/agent/provider-registry.test.ts`                                                                | 52     | 0                    |
+| server   | `src/server/agent/plugin-provider.test.ts`                                                                  | 127    | 4                    |
+| server   | `src/server/agent/provider-installation/provider-installations.test.ts`                                     | 33     | 0                    |
+| server   | `src/server/agent/provider-options.test.ts`                                                                 | 27     | 0                    |
+| server   | `src/server/plugins/runtime.posix.test.ts`                                                                  | 78     | 0                    |
+| server   | `src/server/plugins/agent-tools.e2e.test.ts`                                                                | 50     | 0                    |
+| server   | `src/server/agent/agent-manager.test.ts`                                                                    | 324    | 0                    |
+| server   | `src/server/agent/providers/codex-app-server-agent.test.ts`                                                 | 232    | 0                    |
+| server   | `src/server/agent/providers/codex/collab-replay.test.ts`                                                    | 32     | 0                    |
+| server   | `src/server/schedule/service.test.ts`                                                                       | 77     | 0                    |
+| server   | `src/server/daemon-client.e2e.test.ts -t '^resume_agent\|createAgentFromRecord projects adoption receipts'` | 11     | 36                   |
+| protocol | `tests/validation/ws-outbound.test.ts`                                                                      | 14     | 0                    |
+| plugin   | `src/server/provider.test.ts`                                                                               | 8      | 0                    |
+| server   | `src/server/agent/agent-projections.test.ts`                                                                | 64     | 0                    |
+| server   | `src/server/session/agent-updates/agent-updates-service.test.ts`                                            | 35     | 0                    |
+
+VERIFY: ran `node --import ./node_modules/tsx/dist/loader.mjs /private/var/folders/vm/dcb_27hs4t50mktlkq73b7ww0000gn/T/opencode/adaptive-review-actual-plugins.integration.ts` from host root: PASS (exit 0; five real subprocesses, supported/fixed/limited/restored, unchanged fixed credentials/current prefix, initially empty fixed opens, caller/collision/permission/history negatives, byte-identical protected settings/data, zero engine/model calls). Fixture `adaptive-review-actual-plugins-cKkpg0`; log `adaptive-upstream-copy-integration.log`.
+
+An initial guessed installation-test path ran no tests and exited 1 (`No test files found`). The actual nested file was located and its 33 tests passed; this was test selection, not a failed product assertion. Scoped conflict-file lint and read-only formatting passed, and the resolved index has no unmerged paths or whitespace errors. No full monorepo suite or unrelated UI rerun was performed locally; remote CI remains unclaimed until checked after push. No additional source-review round was started.
 
 ### Second-review disposition, 2026-11-20
 

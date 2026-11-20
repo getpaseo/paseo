@@ -575,6 +575,7 @@ export class ScheduleService {
       namespace: "heartbeat",
       id,
       kind: "heartbeat",
+      countsAsRunning: false,
       description: name,
       startedAt: createdAt,
       stop,
