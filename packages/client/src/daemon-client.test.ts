@@ -2766,6 +2766,59 @@ test("foreground shares a pending credential lookup with the current connection 
   expect(client.getConnectionState()).toEqual({ status: "connected" });
 });
 
+test("foreground replaces a stalled credential lookup and ignores its late result", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  const credentials: Array<(value: string) => void> = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "foreground-stalled-credentials",
+    connectTimeoutMs: 4_000,
+    localCredential: () => new Promise((resolve) => credentials.push(resolve)),
+    transportFactory: () => {
+      attempts += 1;
+      return daemon.transport;
+    },
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(3_100);
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(2);
+  credentials[1]!("replacement-credential");
+  await vi.advanceTimersByTimeAsync(0);
+  daemon.openConnection();
+  await connection;
+
+  credentials[0]!("obsolete-credential");
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("connection timeout includes credential lookup", async () => {
+  useHeartbeatClock();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "credential-lookup-timeout",
+    connectTimeoutMs: 4_000,
+    reconnect: { enabled: false },
+    localCredential: () => new Promise(() => {}),
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  const outcome = connection.catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(3_999);
+  expect(client.getConnectionState().status).toBe("connecting");
+  await vi.advanceTimersByTimeAsync(1);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  expect(await outcome).toMatchObject({ message: "Connection timed out" });
+});
+
 test("foreground keeps a connect attempt that just started", async () => {
   useHeartbeatClock();
   const pending = new FakeDaemon();
