@@ -156,6 +156,7 @@ export interface DesktopBrowserBridge {
   listProfiles?: () => Promise<BrowserProfileEntry[]>;
   createProfile?: (input: {
     group: BrowserProfileGroup;
+    workspaceNames: string[];
     name: string;
   }) => Promise<BrowserProfileEntry>;
   retirePristineGuest?: (browserId: string, webContentsId: number) => boolean;

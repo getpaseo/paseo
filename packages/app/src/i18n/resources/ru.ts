@@ -629,6 +629,7 @@ export const ru: TranslationResources = {
       profiles: {
         shared: "Общие",
         label: "Профиль браузера {{profile}}",
+        duplicateName: "В этой группе уже есть профиль с таким именем.",
         createShared: "Создать общий профиль…",
         createWorkspace: "Создать профиль рабочего пространства…",
         create: "Создать",

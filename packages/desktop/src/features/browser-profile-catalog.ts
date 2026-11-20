@@ -12,6 +12,7 @@ const groupSchema = z
   .nullable();
 const nameSchema = z.string().trim().min(1).max(80);
 const entryInput = z.strictObject({ group: groupSchema, name: nameSchema });
+const createInput = entryInput.extend({ workspaceNames: z.array(z.string()).default([]) });
 const entrySchema = entryInput
   .extend({ slug: z.string() })
   .refine((entry) => isNamedBrowserSlug(entry.slug, entry.group === null));
@@ -40,12 +41,13 @@ export function createBrowserProfileCatalog(userData: string) {
     }
   }
   async function append(input: unknown) {
-    const { group, name } = entryInput.parse(input);
+    const { group, name, workspaceNames } = createInput.parse(input);
     const profiles = await list();
     const siblings = profiles.filter(
       (row) => row.group?.serverId === group?.serverId && row.group?.projectId === group?.projectId,
     );
-    if (siblings.some((row) => row.name.toLowerCase() === name.toLowerCase()))
+    const names = siblings.map((row) => row.name).concat(group ? workspaceNames : []);
+    if (names.some((existing) => existing.trim().toLowerCase() === name.toLowerCase()))
       throw new Error("Duplicate profile name");
     const base = foldedSlug(name) || `profile-${randomUUID().slice(0, 8)}`;
     if (!isNamedBrowserSlug(base, group === null) || (group && /^ws-/i.test(name)))

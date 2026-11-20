@@ -623,6 +623,7 @@ export const ko: TranslationResources = {
       profiles: {
         shared: "공유",
         label: "브라우저 프로필 {{profile}}",
+        duplicateName: "이 그룹에 같은 이름의 프로필이 이미 있습니다.",
         createShared: "새 공유 프로필 만들기…",
         createWorkspace: "새 작업 공간 프로필 만들기…",
         create: "만들기",

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -11,9 +11,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getDesktopHost, type BrowserProfileEntry, type BrowserProfileGroup } from "@/desktop/host";
-import { useHosts } from "@/runtime/host-runtime";
-import { useHostProjects } from "@/projects/host-projects";
+import { useSessionStore } from "@/stores/session-store";
+import { selectProject } from "@/stores/session-store-hooks/selectors";
 import { sameProfile, sameProfileGroup, sharedDefault } from "../profiles";
+
+function useProjectName(group: BrowserProfileGroup) {
+  return useSessionStore((state) => {
+    if (!group) return "";
+    const project = selectProject(state, group.serverId, group.projectId);
+    return project?.projectCustomName ?? project?.projectDisplayName ?? group.projectId;
+  });
+}
 
 function ProfileMenuRow<T>({
   value,
@@ -54,30 +62,14 @@ export function ProfileSelector({
   onSelect: (entry: BrowserProfileEntry) => void;
 }) {
   const { t } = useTranslation();
-  const hosts = useHosts();
-  const ids = useMemo(() => hosts.map((h) => h.serverId), [hosts]);
-  const projects = useHostProjects(ids);
-  const projectGroups = projects.flatMap((project) =>
-    project.hosts.map((host) => ({
-      group: { serverId: host.serverId, projectId: host.projectId },
-      name: project.projectName,
-      path: host.iconWorkingDir,
-    })),
-  );
+  const sharedName = t("workspace.browser.profiles.shared");
+  const projectName = useProjectName(automatic.group);
+  const selectedProject = useProjectName(selected.group);
   const groups = [
-    { group: null, name: t("workspace.browser.profiles.shared") },
-    ...projectGroups.map((row) => ({
-      group: row.group,
-      name: projectGroups.some((other) => other !== row && other.name === row.name)
-        ? `${row.name} (${row.group.serverId} · ${row.path})`
-        : row.name,
-    })),
+    { group: null, name: sharedName },
+    { group: automatic.group, name: projectName },
   ];
-  const label =
-    (groups.find((row) => sameProfileGroup(row.group, selected.group))?.name ??
-      selected.group?.projectId) +
-    " › " +
-    selected.name;
+  const label = (selected.group ? selectedProject : sharedName) + " › " + selected.name;
   const accessible = t("workspace.browser.profiles.label", { profile: label });
   const [creating, setCreating] = useState<BrowserProfileGroup | undefined>(undefined);
   const openChanged = useCallback(
@@ -91,7 +83,21 @@ export function ProfileSelector({
     async (name: string) => {
       const create = getDesktopHost()?.browser?.createProfile;
       if (!create || creating === undefined) throw new Error(t("desktop.settings.loadFailed"));
-      const entry = await create({ group: creating, name });
+      const workspaces =
+        creating && useSessionStore.getState().sessions[creating.serverId]?.workspaces;
+      const workspaceNames = workspaces
+        ? Array.from(workspaces.values())
+            .filter((workspace) => workspace.projectId === creating?.projectId)
+            .map((workspace) => workspace.title || workspace.name)
+        : [];
+      const entry = await create({ group: creating, name, workspaceNames }).catch(
+        (error: unknown) => {
+          if (error instanceof Error && error.message.endsWith("Duplicate profile name")) {
+            throw new Error(t("workspace.browser.profiles.duplicateName"));
+          }
+          throw error;
+        },
+      );
       refresh();
       onSelect(entry);
     },

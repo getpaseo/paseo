@@ -622,6 +622,7 @@ export const ar: TranslationResources = {
       profiles: {
         shared: "مشتركة",
         label: "ملف المتصفح {{profile}}",
+        duplicateName: "يوجد بالفعل ملف تعريف بهذا الاسم في هذه المجموعة.",
         createShared: "إنشاء ملف مشترك جديد…",
         createWorkspace: "إنشاء ملف مساحة عمل جديد…",
         create: "إنشاء",

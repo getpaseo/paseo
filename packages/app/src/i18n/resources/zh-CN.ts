@@ -622,6 +622,7 @@ export const zhCN: TranslationResources = {
       profiles: {
         shared: "共享",
         label: "浏览器配置文件 {{profile}}",
+        duplicateName: "此组中已存在同名配置文件。",
         createShared: "新建共享配置文件…",
         createWorkspace: "新建工作区配置文件…",
         create: "创建",

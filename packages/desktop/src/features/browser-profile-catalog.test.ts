@@ -54,3 +54,15 @@ test("collisions with the bare project slug ws never allocate a reserved workspa
   expect([first.slug, second.slug]).toEqual(["ws", "profile-ws-2"]);
   expect(await catalog.list()).toEqual([first, second]);
 });
+
+test("reserves the project's automatic workspace names without occupying them in Shared", async () => {
+  const catalog = createBrowserProfileCatalog(directory);
+  const workspaceNames = ["Main", "Release"];
+  for (const name of ["  MAIN", "release"]) {
+    await expect(catalog.create({ group, name, workspaceNames })).rejects.toThrow(
+      "Duplicate profile name",
+    );
+  }
+  const shared = await catalog.create({ group: null, name: "Main", workspaceNames: [] });
+  expect(await catalog.list()).toEqual([shared]);
+});

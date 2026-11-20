@@ -621,6 +621,7 @@ export const en = {
       profiles: {
         shared: "Shared",
         label: "Browser profile {{profile}}",
+        duplicateName: "A profile with this name already exists in this group.",
         createShared: "Create new shared profile…",
         createWorkspace: "Create new workspace profile…",
         create: "Create",

@@ -627,6 +627,7 @@ export const ptBR: TranslationResources = {
       profiles: {
         shared: "Compartilhados",
         label: "Perfil do navegador {{profile}}",
+        duplicateName: "Já existe um perfil com esse nome neste grupo.",
         createShared: "Criar perfil compartilhado…",
         createWorkspace: "Criar perfil do espaço de trabalho…",
         create: "Criar",

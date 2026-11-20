@@ -628,6 +628,7 @@ export const ja: TranslationResources = {
       profiles: {
         shared: "共有",
         label: "ブラウザープロファイル {{profile}}",
+        duplicateName: "このグループには同じ名前のプロファイルがすでにあります。",
         createShared: "共有プロファイルを作成…",
         createWorkspace: "ワークスペースのプロファイルを作成…",
         create: "作成",
