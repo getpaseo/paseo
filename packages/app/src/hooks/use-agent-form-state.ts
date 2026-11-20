@@ -13,6 +13,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { mergeAgentModes } from "@/provider-selection/mode-catalog";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
 import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
@@ -199,6 +200,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, { cwd: workingDir });
+  // A profile stores a mode id and is host-wide, so a mode defined by a project
+  // this workspace does not resolve still has to be offered here. The host
+  // snapshot carries every mode a warmed workspace reported; it is the same
+  // catalogue the profile form lists.
+  const { entries: hostSnapshotEntries } = useProvidersSnapshot(serverId, { cwd: null });
 
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
 
@@ -253,6 +259,14 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const snapshotSelectedProviderModels = filterSelectableModels(
     snapshotSelectedEntry?.models ?? null,
   );
+  const hostSelectedEntry = useMemo(
+    () =>
+      formState.provider
+        ? ((hostSnapshotEntries ?? []).find((entry) => entry.provider === formState.provider) ??
+          null)
+        : null,
+    [formState.provider, hostSnapshotEntries],
+  );
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
   const snapshotSelectedProviderModes = resolveSelectedProviderModes({
     selectedEntry: snapshotSelectedEntry,
@@ -271,7 +285,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   };
   const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
-  const modeOptions = snapshotSelectedProviderModes;
+  const modeOptions = useMemo(
+    () => mergeAgentModes(snapshotSelectedProviderModes, hostSelectedEntry?.modes),
+    [hostSelectedEntry, snapshotSelectedProviderModes],
+  );
   const isModelSelectionLoading =
     isConnected &&
     (resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading);

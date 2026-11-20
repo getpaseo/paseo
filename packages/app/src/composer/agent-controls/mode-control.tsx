@@ -21,6 +21,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
+import { mergeAgentModes } from "@/provider-selection/mode-catalog";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
@@ -47,8 +48,7 @@ function ModeComboboxOption({
 }: ModeComboboxOptionProps) {
   const IconComponent = getAgentModeOptionIcon(provider, option.id, providerDefinitions);
   const leadingSlot = useMemo(
-    () =>
-      IconComponent ? <DensityIcon icon={IconComponent} size="md" color="foreground" /> : null,
+    () => <DensityIcon icon={IconComponent} size="md" color="foreground" />,
     [IconComponent],
   );
   return (
@@ -262,6 +262,21 @@ export function useLiveAgentModeControl(
   const { updatePreferences } = useFormPreferences();
   const toast = useToast();
   const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });
+  // The agent reports the modes its own workspace resolved. A profile is
+  // host-wide, so the picker also offers every mode the host discovered
+  // elsewhere; the live options stay first and win on id conflicts.
+  const { entries: hostSnapshotEntries } = useProvidersSnapshot(serverId, { cwd: null });
+  const hostModes = useMemo(
+    () =>
+      slice?.provider
+        ? (hostSnapshotEntries ?? []).find((entry) => entry.provider === slice.provider)?.modes
+        : undefined,
+    [hostSnapshotEntries, slice?.provider],
+  );
+  const modeOptions = useMemo(
+    () => mergeAgentModes(availableModes, hostModes),
+    [availableModes, hostModes],
+  );
 
   const providerDefinitions = useMemo<AgentProviderDefinition[]>(() => {
     if (!slice?.provider) return [];
@@ -293,16 +308,16 @@ export function useLiveAgentModeControl(
   );
 
   return useMemo(() => {
-    if (!slice || availableModes.length === 0) return null;
+    if (!slice || modeOptions.length === 0) return null;
     return {
       provider: slice.provider,
       providerDefinitions,
-      modeOptions: availableModes,
+      modeOptions,
       selectedModeId: slice.currentModeId,
       onSelectMode: handleSelectMode,
       disabled: !client,
     };
-  }, [availableModes, client, handleSelectMode, providerDefinitions, slice]);
+  }, [modeOptions, client, handleSelectMode, providerDefinitions, slice]);
 }
 
 const styles = StyleSheet.create((theme) => ({

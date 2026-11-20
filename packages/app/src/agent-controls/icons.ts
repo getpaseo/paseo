@@ -53,13 +53,17 @@ export function getAgentModeIcon(
   return (icon ? MODE_ICONS[icon] : undefined) ?? Bot;
 }
 
+/**
+ * What the picker shows beside a mode. Unlike the trigger, the row is not the
+ * selected mode, so a provider mode with no icon still gets the same default
+ * the trigger uses rather than an empty slot.
+ */
 export function getAgentModeOptionIcon(
   provider: string,
   modeId: string,
   providerDefinitions: AgentProviderDefinition[],
-): AgentControlIcon | undefined {
-  const icon = getModeVisuals(provider, modeId, providerDefinitions)?.icon;
-  return icon ? MODE_ICONS[icon] : undefined;
+): AgentControlIcon {
+  return getAgentModeIcon(provider, modeId, providerDefinitions);
 }
 
 /** A built-in control names its icon in kebab case; a plugin provider names a Lucide icon. */

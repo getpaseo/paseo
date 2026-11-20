@@ -1,16 +1,41 @@
-import { Settings2 } from "lucide-react-native";
-import { describe, expect, it } from "vitest";
-import { getAgentFeatureIcon } from "./icons";
+import { describe, expect, it, vi } from "vitest";
 
-describe("getAgentFeatureIcon", () => {
-  it("draws the Lucide icon a plugin provider names", () => {
-    const icon = getAgentFeatureIcon("Mic");
-    expect(icon).not.toBe(Settings2);
-    expect(getAgentFeatureIcon("Mic")).toBe(icon);
+vi.mock("lucide-react-native", () => ({
+  Bot: () => null,
+  Brain: () => null,
+  ListTodo: () => null,
+  Settings2: () => null,
+  Shield: () => null,
+  ShieldAlert: () => null,
+  ShieldCheck: () => null,
+  ShieldEllipsis: () => null,
+  ShieldOff: () => null,
+  ShieldPlus: () => null,
+  ShieldQuestionMark: () => null,
+  Zap: () => null,
+}));
+
+vi.mock("@/plugins/icons", () => ({
+  isLucideIconName: () => false,
+  pluginIconComponent: () => () => null,
+}));
+
+const { Bot, Shield } = await import("lucide-react-native");
+const { getAgentModeOptionIcon } = await import("./icons");
+
+describe("getAgentModeOptionIcon", () => {
+  it("falls back to the trigger's default instead of leaving the row empty", () => {
+    expect(getAgentModeOptionIcon("opencode", "navigator", [])).toBe(Bot);
   });
 
-  it("falls back to the generic icon for a missing or unknown name", () => {
-    expect(getAgentFeatureIcon()).toBe(Settings2);
-    expect(getAgentFeatureIcon("not-an-icon")).toBe(Settings2);
+  it("uses the definition's icon when the provider names one", () => {
+    const definitions = [
+      {
+        id: "opencode",
+        modes: [{ id: "build", icon: "Shield" }],
+      },
+    ] as never;
+
+    expect(getAgentModeOptionIcon("opencode", "build", definitions)).toBe(Shield);
   });
 });
