@@ -301,52 +301,62 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("detects approval transitions from /approvals when no system note is present", async () => {
+  it("reports unapproval and approval-reset system notes and ignores 429/rate-limit text inside 200 OK payloads", async () => {
     vi.useFakeTimers();
     let poll = 0;
-    const mrUrl = "https://gitlab.com/org/repo/-/merge_requests/5";
+    const mrUrl = "https://gitlab.com/org/repo/-/merge_requests/429";
     const encoded = encodeURIComponent("org/repo");
+    let approvalCalls = 0;
 
     const { runner } = createFakeGlabRunner((args) => {
       const endpoint = args.at(-1) ?? "";
-      if (endpoint === `projects/${encoded}/merge_requests/5`) {
+      if (endpoint === `projects/${encoded}/merge_requests/429`) {
         poll += 1;
         return httpJson({
-          iid: 5,
+          iid: 429,
+          title: "Fix rate limit handling for HTTP 429 responses",
+          description: "Too many requests should trigger backoff",
           state: "opened",
           sha: "abc",
           web_url: mrUrl,
           head_pipeline: null,
         });
       }
-      if (endpoint.startsWith(`projects/${encoded}/merge_requests/5/discussions`)) {
-        return httpJson([], { "X-Next-Page": "" });
+      if (endpoint.startsWith(`projects/${encoded}/merge_requests/429/discussions`)) {
+        const notes: Array<{
+          id: number;
+          system: boolean;
+          body: string;
+          author: { username: string };
+        }> = [
+          {
+            id: 1,
+            system: false,
+            body: "We hit HTTP 429 and rate limit errors in CI",
+            author: { username: "dev" },
+          },
+        ];
+        if (poll >= 2) {
+          notes.push({
+            id: 2,
+            system: true,
+            body: "unapproved this merge request",
+            author: { username: "carol" },
+          });
+        }
+        if (poll >= 3) {
+          notes.push({
+            id: 3,
+            system: true,
+            body: "reset approvals from @carol by pushing to the branch",
+            author: { username: "dev" },
+          });
+        }
+        return httpJson([{ id: "d1", notes }], { "X-Next-Page": "" });
       }
-      if (endpoint === `projects/${encoded}/merge_requests/5/approvals`) {
-        if (poll === 1) {
-          return httpJson({
-            approvals_required: 1,
-            approvals_left: 1,
-            approved: false,
-            approved_by: [],
-          });
-        }
-        if (poll === 2) {
-          return httpJson({
-            approvals_required: 1,
-            approvals_left: 0,
-            approved: true,
-            approved_by: [
-              { user: { id: 2, username: "carol" }, approved_at: "2026-11-20T07:00:00Z" },
-            ],
-          });
-        }
-        return httpJson({
-          approvals_required: 1,
-          approvals_left: 1,
-          approved: false,
-          approved_by: [],
-        });
+      if (endpoint === `projects/${encoded}/merge_requests/429/approvals`) {
+        approvalCalls += 1;
+        return httpJson({ approvals_required: 1, approvals_left: 1, approved_by: [] });
       }
       throw new Error(`Unexpected: ${endpoint}`);
     });
@@ -357,33 +367,42 @@ describe("GitLab ChangeRequestSource polling", () => {
       watchPollMs: 10_000,
     });
     const snapshots: ChangeRequestSnapshot[] = [];
+    const seen = new Set<string>();
     try {
       service.changeRequests!.observe(mrUrl, {
+        knownActivity: () => seen,
         async snapshot(s) {
           snapshots.push(s);
+          for (const item of s.activity) seen.add(item.id);
         },
         error(err) {
           throw err;
         },
       });
       await vi.advanceTimersByTimeAsync(25);
-      expect(snapshots[0]!.activity).toEqual([]);
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(snapshots[1]!.activity).toEqual([
-        expect.objectContaining({
-          kind: "approval",
-          message: `Merge request approved by @carol (1/1 approvals): ${mrUrl}`,
-        }),
+      expect(snapshots).toHaveLength(1);
+      expect(approvalCalls).toBe(0);
+      expect(snapshots[0]!.activity).toEqual([
+        { id: "comment:1", kind: "comment", url: `${mrUrl}#note_1` },
       ]);
 
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(snapshots[2]!.activity).toEqual([
-        expect.objectContaining({
-          kind: "approval",
-          message: `Merge request approval removed by @carol (0/1 approvals): ${mrUrl}`,
-        }),
-      ]);
+      expect(approvalCalls).toBe(1);
+      expect(snapshots[1]!.activity).toContainEqual({
+        id: "approval-note:2",
+        kind: "approval",
+        url: `${mrUrl}#note_2`,
+        message: `Merge request approval removed by @carol (0/1 approvals): ${mrUrl}#note_2`,
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(approvalCalls).toBe(2);
+      expect(snapshots[2]!.activity).toContainEqual({
+        id: "approval-note:3",
+        kind: "approval",
+        url: `${mrUrl}#note_3`,
+        message: `Merge request approvals reset by @dev (0/1 approvals): ${mrUrl}#note_3`,
+      });
     } finally {
       service.dispose?.();
     }

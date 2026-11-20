@@ -79,26 +79,11 @@ const gitLabWatchDiscussionSchema = z
   })
   .passthrough();
 
-const gitLabWatchApproverSchema = z
-  .object({
-    user: z
-      .object({
-        id: z.number().optional(),
-        username: z.string().optional(),
-        name: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-    approved_at: z.string().nullable().optional(),
-  })
-  .passthrough();
-
 const gitLabWatchApprovalsSchema = z
   .object({
-    approved: z.boolean().optional(),
     approvals_required: z.number().nullable().optional(),
     approvals_left: z.number().nullable().optional(),
-    approved_by: z.array(gitLabWatchApproverSchema).nullable().optional(),
+    approved_by: z.array(z.unknown()).nullable().optional(),
   })
   .passthrough();
 
@@ -315,11 +300,9 @@ function parseGitLabApprovalNote(
   };
 }
 
-interface ApprovalSummary {
-  approvers: Map<string, string | null>;
+interface ApprovalCount {
   given: number;
   required: number;
-  satisfied: boolean;
 }
 
 function computeApprovalsGiven(approvals: GitLabWatchApprovals): number {
@@ -332,34 +315,14 @@ function computeApprovalsGiven(approvals: GitLabWatchApprovals): number {
   return 0;
 }
 
-function computeApprovalsSatisfied(
-  approvals: GitLabWatchApprovals,
-  given: number,
-  required: number,
-): boolean {
-  if (approvals.approved !== undefined) return approvals.approved;
-  if (required <= 0) return given > 0;
-  if (approvals.approvals_left != null) return approvals.approvals_left <= 0;
-  return given >= required;
+function summarizeApprovalCount(approvals: GitLabWatchApprovals): ApprovalCount {
+  return {
+    given: computeApprovalsGiven(approvals),
+    required: approvals.approvals_required ?? 0,
+  };
 }
 
-function summarizeGitLabApprovals(approvals: GitLabWatchApprovals): ApprovalSummary {
-  const approvers = new Map<string, string | null>();
-  for (const entry of approvals.approved_by ?? []) {
-    const key =
-      entry.user?.username?.trim() ||
-      entry.user?.name?.trim() ||
-      (entry.user?.id != null ? String(entry.user.id) : "");
-    if (!key) continue;
-    approvers.set(key, entry.approved_at ?? null);
-  }
-  const required = approvals.approvals_required ?? 0;
-  const given = computeApprovalsGiven(approvals);
-  const satisfied = computeApprovalsSatisfied(approvals, given, required);
-  return { approvers, given, required, satisfied };
-}
-
-function formatApprovalCount(summary: ApprovalSummary | null): string {
+function formatApprovalCount(summary: ApprovalCount | null): string {
   if (!summary || summary.required <= 0) return "";
   return ` (${summary.given}/${summary.required} approvals)`;
 }
@@ -371,7 +334,7 @@ function formatApprovalActor(actor: string | null): string {
 
 function formatApprovalNoteMessage(
   note: ParsedApprovalNote,
-  summary: ApprovalSummary | null,
+  summary: ApprovalCount | null,
 ): string {
   const actor = formatApprovalActor(note.actor);
   const count = formatApprovalCount(summary);
@@ -384,44 +347,27 @@ function formatApprovalNoteMessage(
   return `Merge request approvals reset${actor ? ` by ${actor}` : ""}${count}: ${note.url}`;
 }
 
-interface DiscussionActivityResult {
-  activity: ChangeRequestSnapshot["activity"];
-  newApprovedActors: Set<string>;
-  newUnapprovedActors: Set<string>;
-  hadNewResetNote: boolean;
+interface ParsedDiscussionItems {
+  humanActivity: ChangeRequestSnapshot["activity"];
+  approvalNotes: ParsedApprovalNote[];
 }
 
-function collectDiscussionActivity(
+function parseDiscussionItems(
   discussions: GitLabWatchDiscussion[],
   mrWebUrl: string,
-  known: ReadonlySet<string> | undefined,
-  approvalSummary: ApprovalSummary | null,
-): DiscussionActivityResult {
-  const activity: ChangeRequestSnapshot["activity"] = [];
-  const newApprovedActors = new Set<string>();
-  const newUnapprovedActors = new Set<string>();
-  let hadNewResetNote = false;
+): ParsedDiscussionItems {
+  const humanActivity: ChangeRequestSnapshot["activity"] = [];
+  const approvalNotes: ParsedApprovalNote[] = [];
 
   for (const discussion of discussions) {
     for (const note of discussion.notes) {
       if (note.system === true) {
         const approvalNote = parseGitLabApprovalNote(note, mrWebUrl);
-        if (!approvalNote) continue;
-        if (!known?.has(approvalNote.id)) {
-          recordNewApprovalNoteActor(approvalNote, newApprovedActors, newUnapprovedActors, () => {
-            hadNewResetNote = true;
-          });
-        }
-        activity.push({
-          id: approvalNote.id,
-          kind: "approval",
-          url: approvalNote.url,
-          message: formatApprovalNoteMessage(approvalNote, approvalSummary),
-        });
+        if (approvalNote) approvalNotes.push(approvalNote);
         continue;
       }
       const isInline = note.position != null || note.type === "DiffNote";
-      activity.push({
+      humanActivity.push({
         id: isInline ? `inline:${note.id}` : `comment:${note.id}`,
         kind: isInline ? "inline comment" : "comment",
         url: `${mrWebUrl}#note_${note.id}`,
@@ -429,71 +375,7 @@ function collectDiscussionActivity(
     }
   }
 
-  return { activity, newApprovedActors, newUnapprovedActors, hadNewResetNote };
-}
-
-function recordNewApprovalNoteActor(
-  note: ParsedApprovalNote,
-  approved: Set<string>,
-  unapproved: Set<string>,
-  markReset: () => void,
-): void {
-  if (note.action === "approved" && note.actor) {
-    approved.add(note.actor.toLowerCase());
-  } else if (note.action === "unapproved" && note.actor) {
-    unapproved.add(note.actor.toLowerCase());
-  } else if (note.action === "reset") {
-    markReset();
-  }
-}
-
-function collectSummaryApprovalTransitions(params: {
-  previous: ApprovalSummary;
-  current: ApprovalSummary;
-  mrWebUrl: string;
-  notes: DiscussionActivityResult;
-  nextSeq: () => number;
-}): ChangeRequestSnapshot["activity"] {
-  const { previous, current, mrWebUrl, notes, nextSeq } = params;
-  const count = formatApprovalCount(current);
-  const emitted: ChangeRequestSnapshot["activity"] = [];
-
-  for (const [actor, approvedAt] of current.approvers) {
-    if (previous.approvers.has(actor)) continue;
-    if (notes.newApprovedActors.has(actor.toLowerCase())) continue;
-    emitted.push({
-      id: `approval:added:${actor}:${approvedAt ?? nextSeq()}`,
-      kind: "approval",
-      url: mrWebUrl,
-      message: `Merge request approved by ${formatApprovalActor(actor)}${count}: ${mrWebUrl}`,
-    });
-  }
-  for (const actor of previous.approvers.keys()) {
-    if (current.approvers.has(actor)) continue;
-    if (notes.hadNewResetNote || notes.newUnapprovedActors.has(actor.toLowerCase())) continue;
-    emitted.push({
-      id: `approval:removed:${actor}:${nextSeq()}`,
-      kind: "approval",
-      url: mrWebUrl,
-      message: `Merge request approval removed by ${formatApprovalActor(actor)}${count}: ${mrWebUrl}`,
-    });
-  }
-  const hasActorEvent =
-    emitted.length > 0 ||
-    notes.newApprovedActors.size > 0 ||
-    notes.newUnapprovedActors.size > 0 ||
-    notes.hadNewResetNote;
-  if (!hasActorEvent && current.required > 0 && previous.satisfied !== current.satisfied) {
-    emitted.push({
-      id: `approval:status:${current.satisfied ? "satisfied" : "pending"}:${current.given}/${current.required}:${nextSeq()}`,
-      kind: "approval",
-      url: mrWebUrl,
-      message: current.satisfied
-        ? `Merge request approvals satisfied${count}: ${mrWebUrl}`
-        : `Merge request needs approvals${count}: ${mrWebUrl}`,
-    });
-  }
-  return emitted;
+  return { humanActivity, approvalNotes };
 }
 
 function resolvePipelineProjectId(
@@ -516,20 +398,30 @@ function isNotFoundError(status: number | null, text: string): boolean {
   return /\b(404|not found)\b/i.test(text);
 }
 
-function extractRateLimitError(
+function createRateLimitError(
+  host: string,
+  nowMs: number,
+  headers: ReadonlyMap<string, string>,
+): ChangeRequestRateLimitError {
+  const resetAtMs = parseRetryAfterMs(headers, nowMs, {
+    forceOnMissing: true,
+    defaultPauseMs: 60_000,
+  })!;
+  return new ChangeRequestRateLimitError({ host, resetAtMs });
+}
+
+function extractRateLimitFromFailedCommand(
   host: string,
   nowMs: number,
   status: number | null,
   headers: ReadonlyMap<string, string>,
   text: string,
 ): ChangeRequestRateLimitError | null {
-  const isRateLimited = status === 429 || /\b(429|too many requests|rate limit)\b/i.test(text);
-  if (!isRateLimited) return null;
-  const resetAtMs = parseRetryAfterMs(headers, nowMs, {
-    forceOnMissing: true,
-    defaultPauseMs: 60_000,
-  })!;
-  return new ChangeRequestRateLimitError({ host, resetAtMs });
+  if (status !== null) {
+    return status === 429 ? createRateLimitError(host, nowMs, headers) : null;
+  }
+  if (!/\b(429|too many requests|rate limit)\b/i.test(text)) return null;
+  return createRateLimitError(host, nowMs, headers);
 }
 
 export interface CreateGitLabChangeRequestSourceOptions {
@@ -557,8 +449,6 @@ export function createGitLabChangeRequestSource(
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
   const authenticatedWatchHosts = new Set<string>();
-  const lastApprovalsByUrl = new Map<string, ApprovalSummary>();
-  let approvalEventSeq = 0;
 
   async function ensureHostAuthenticated(host: string): Promise<void> {
     if (host === GITLAB_CLOUD_HOST || authenticatedWatchHosts.has(host)) {
@@ -610,15 +500,13 @@ export function createGitLabChangeRequestSource(
     rawStdout: string;
     rawStderr: string;
   }): void {
-    const rateLimit = extractRateLimitError(
-      params.host,
-      now(),
-      params.status,
-      params.headers,
-      `${params.rawStderr}\n${params.body}`,
-    );
-    if (rateLimit) throw rateLimit;
+    // Only decide rate limits from the HTTP status code on parsed responses so
+    // ordinary MR titles, comments, or IIDs mentioning "429" or "rate limit"
+    // never trip a false rate-limit pause.
     if (params.status === null) return;
+    if (params.status === 429) {
+      throw createRateLimitError(params.host, now(), params.headers);
+    }
     if (params.status === 401) {
       throw options.createAuthError(params.body || params.rawStderr || "401 Unauthorized");
     }
@@ -650,7 +538,7 @@ export function createGitLabChangeRequestSource(
     } catch (error) {
       if (options.isCommandError(error)) {
         const parsedError = error.stdout ? parseCliHttpResponse(error.stdout) : null;
-        const rateLimit = extractRateLimitError(
+        const rateLimit = extractRateLimitFromFailedCommand(
           params.host,
           now(),
           parsedError?.status ?? null,
@@ -833,11 +721,11 @@ export function createGitLabChangeRequestSource(
     }
   }
 
-  async function readOptionalApprovals(params: {
+  async function readOptionalApprovalCount(params: {
     host: string;
     endpoint: string;
     pauseHost(untilMs: number): void;
-  }): Promise<ApprovalSummary | null> {
+  }): Promise<ApprovalCount | null> {
     try {
       const { data: approvals } = await apiGet({
         host: params.host,
@@ -845,7 +733,7 @@ export function createGitLabChangeRequestSource(
         schema: gitLabWatchApprovalsSchema,
         pauseHost: params.pauseHost,
       });
-      return summarizeGitLabApprovals(approvals);
+      return summarizeApprovalCount(approvals);
     } catch (error) {
       if (options.isAuthError(error) || error instanceof ChangeRequestRateLimitError) {
         throw error;
@@ -902,38 +790,33 @@ export function createGitLabChangeRequestSource(
       throw new Error("Change request observation ended");
     }
 
-    const approvalSummary = await readOptionalApprovals({
-      host: hostWithPort,
-      endpoint: `projects/${encodedProject}/merge_requests/${iid}/approvals`,
-      pauseHost: context.pauseHost,
-    });
-
-    const notesResult = collectDiscussionActivity(
+    const { humanActivity, approvalNotes } = parseDiscussionItems(
       discussionsResult.items,
       mrWebUrl,
-      context.knownActivity(),
-      approvalSummary,
     );
-    const activity = [...notesResult.activity];
+    const known = context.knownActivity();
+    const hasNewApprovalNote =
+      known !== undefined && approvalNotes.some((note) => !known.has(note.id));
+    // Fetch /approvals only to enrich a newly observed approval system note with
+    // current counts — keeping seenActivity as the single persisted owner of
+    // approval transition baselines.
+    const approvalCount = hasNewApprovalNote
+      ? await readOptionalApprovalCount({
+          host: hostWithPort,
+          endpoint: `projects/${encodedProject}/merge_requests/${iid}/approvals`,
+          pauseHost: context.pauseHost,
+        })
+      : null;
 
-    if (approvalSummary) {
-      const previous = lastApprovalsByUrl.get(context.url);
-      if (previous) {
-        activity.push(
-          ...collectSummaryApprovalTransitions({
-            previous,
-            current: approvalSummary,
-            mrWebUrl,
-            notes: notesResult,
-            nextSeq: () => {
-              approvalEventSeq += 1;
-              return approvalEventSeq;
-            },
-          }),
-        );
-      }
-      lastApprovalsByUrl.set(context.url, approvalSummary);
-    }
+    const activity: ChangeRequestSnapshot["activity"] = [
+      ...humanActivity,
+      ...approvalNotes.map((note) => ({
+        id: note.id,
+        kind: "approval" as const,
+        url: note.url,
+        message: formatApprovalNoteMessage(note, approvalCount),
+      })),
+    ];
 
     return {
       state: mapGitLabMrState(mr),
@@ -962,14 +845,9 @@ export function createGitLabChangeRequestSource(
     resolve: resolveGitLabChangeRequest,
     describe: describeGitLabChangeRequest,
     observe(url, callbacks) {
-      const release = poller.observe(url, callbacks);
-      return () => {
-        lastApprovalsByUrl.delete(url);
-        release();
-      };
+      return poller.observe(url, callbacks);
     },
     dispose() {
-      lastApprovalsByUrl.clear();
       authenticatedWatchHosts.clear();
       poller.dispose();
     },

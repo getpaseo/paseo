@@ -16,14 +16,16 @@ import { writeJsonFileAtomic } from "../../atomic-file.js";
 
 const DIGEST_WINDOW_MS = 30_000;
 const LEGACY_DEFAULT_FORGE = "github";
-const watchGroupSchema = z.object({
-  forge: z.string().min(1).default(LEGACY_DEFAULT_FORGE),
+const LEGACY_INFERENCE_FORGES = ["github", "gitlab"] as const;
+const persistedWatchGroupSchema = z.object({
+  forge: z.string().min(1).optional(),
   url: z.url(),
   snapshot: changeRequestStatusSchema,
   seenActivity: z.array(z.string()),
   watchers: z.array(z.object({ agentId: z.string(), startedAt: z.string().optional() })),
 });
-type WatchGroup = z.infer<typeof watchGroupSchema>;
+type PersistedWatchGroup = z.infer<typeof persistedWatchGroupSchema>;
+type WatchGroup = Omit<PersistedWatchGroup, "forge"> & { forge: string };
 type Watcher = WatchGroup["watchers"][number];
 interface DigestWindow {
   dueAt: number;
@@ -432,6 +434,20 @@ export function createChangeRequestWatches(deps: Dependencies) {
     });
   }
 
+  function inferLegacyForge(url: string): string {
+    for (const candidate of LEGACY_INFERENCE_FORGES) {
+      const source = deps.router.source(candidate);
+      if (!source) continue;
+      try {
+        source.resolve(url);
+        return candidate;
+      } catch {
+        // URL does not match this forge's canonical path shape.
+      }
+    }
+    return LEGACY_DEFAULT_FORGE;
+  }
+
   return {
     async start() {
       const active: WatchGroup[] = [];
@@ -441,8 +457,12 @@ export function createChangeRequestWatches(deps: Dependencies) {
           if (error.code === "ENOENT") return "[]";
           throw error;
         });
-        const restored = z.array(watchGroupSchema).parse(JSON.parse(stored));
-        for (const group of restored) {
+        const restored = z.array(persistedWatchGroupSchema).parse(JSON.parse(stored));
+        for (const record of restored) {
+          const group: WatchGroup = {
+            ...record,
+            forge: record.forge ?? inferLegacyForge(record.url),
+          };
           if (group.snapshot.state !== "open") {
             pruned = true;
             continue;

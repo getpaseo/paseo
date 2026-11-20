@@ -60,9 +60,15 @@ function createHarness(
       throw error;
     },
   });
-  function createFakeSource(describe: (address: string) => string): ChangeRequestSource {
+  function createFakeSource(
+    describe: (address: string) => string,
+    accepts: (input: string) => boolean,
+  ): ChangeRequestSource {
     return {
-      resolve: (input) => input.replace(/\/+$/, ""),
+      resolve: (input) => {
+        if (!accepts(input)) throw new Error("Unsupported URL for fake forge");
+        return input.replace(/\/+$/, "");
+      },
       describe,
       observe(address, callbacks) {
         observations.set(address, callbacks);
@@ -75,8 +81,14 @@ function createHarness(
     };
   }
   const sources: Record<string, ChangeRequestSource> = {
-    github: createFakeSource(() => "owner/repo #42"),
-    gitlab: createFakeSource(() => "org/sub/app !9"),
+    github: createFakeSource(
+      () => "owner/repo #42",
+      (input) => input.includes("/pull/"),
+    ),
+    gitlab: createFakeSource(
+      () => "org/sub/app !9",
+      (input) => input.includes("/merge_requests/"),
+    ),
     ...extraSources,
   };
   const router: ChangeRequestRouter = {
@@ -396,7 +408,17 @@ test("persists forge ids, restores legacy GitHub watches without probing, and pr
     seenActivity: [],
     watchers: [{ agentId: "future-agent", startedAt: "2026-01-01T00:00:00.000Z" }],
   };
-  await writeFile(file, JSON.stringify([legacyRecord, unknownForgeRecord]), "utf8");
+  const strippedGitLabRecord = {
+    url: gitlabUrl,
+    snapshot: legacyRecord.snapshot,
+    seenActivity: [],
+    watchers: [{ agentId: "gitlab-agent", startedAt: "2026-01-01T00:00:00.000Z" }],
+  };
+  await writeFile(
+    file,
+    JSON.stringify([legacyRecord, strippedGitLabRecord, unknownForgeRecord]),
+    "utf8",
+  );
 
   const h = createHarness(home, { resolveFails: true });
   try {
@@ -405,7 +427,11 @@ test("persists forge ids, restores legacy GitHub watches without probing, and pr
     expect(h.backgroundWork.list("legacy-agent")).toEqual([
       expect.objectContaining({ description: "owner/repo #42", kind: "monitor" }),
     ]);
+    expect(h.backgroundWork.list("gitlab-agent")).toEqual([
+      expect.objectContaining({ description: "org/sub/app !9", kind: "monitor" }),
+    ]);
     expect(h.observations.has(url)).toBe(true);
+    expect(h.observations.has(gitlabUrl)).toBe(true);
 
     // Unsubscribing an active watch succeeds even when host resolution is temporarily down.
     await expect(h.watches.unsubscribe("legacy-agent", `${url}/`)).resolves.toEqual({
@@ -417,7 +443,10 @@ test("persists forge ids, restores legacy GitHub watches without probing, and pr
       forge?: string;
       url: string;
     }>;
-    expect(persisted).toEqual([unknownForgeRecord]);
+    expect(persisted).toEqual([
+      expect.objectContaining({ forge: "gitlab", url: gitlabUrl }),
+      unknownForgeRecord,
+    ]);
   } finally {
     await h.close();
     await rm(home, { recursive: true, force: true });
