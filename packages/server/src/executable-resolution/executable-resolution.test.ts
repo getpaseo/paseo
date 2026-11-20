@@ -4,7 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { executableExists, findExecutable } from "./executable-resolution.js";
-import { windowsExecutableResolution } from "./windows.js";
+import {
+  expandWindowsEnvironmentVariables,
+  mergeWindowsPathValues,
+  parseWindowsRegistryPath,
+  readWindowsEnvironmentPath,
+  refreshWindowsProcessPath,
+  windowsExecutableResolution,
+} from "./windows.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 const originalEnv = {
@@ -174,6 +181,119 @@ describe("findExecutable", () => {
       }),
     ).resolves.toBeNull();
     expect(probeExecutable).not.toHaveBeenCalled();
+  });
+});
+
+describe("Windows environment PATH refresh", () => {
+  const registryOutput = (value: string, type = "REG_EXPAND_SZ"): string =>
+    ["", "HKEY_CURRENT_USER\\Environment", `    Path    ${type}    ${value}`, ""].join("\r\n");
+
+  test("parses a registry Path value including spaces", () => {
+    expect(
+      parseWindowsRegistryPath(registryOutput("C:\\Program Files\\Tool;C:\\Tools", "REG_SZ")),
+    ).toBe("C:\\Program Files\\Tool;C:\\Tools");
+  });
+
+  test("returns null when the query output has no Path value", () => {
+    expect(
+      parseWindowsRegistryPath(
+        "ERROR: The system was unable to find the specified registry key or value.",
+      ),
+    ).toBeNull();
+  });
+
+  test("expands registry environment variables case-insensitively", () => {
+    expect(
+      expandWindowsEnvironmentVariables("%USERPROFILE%\\bin;%SystemRoot%\\Tools", {
+        UserProfile: "C:\\Users\\paseo",
+        SYSTEMROOT: "C:\\Windows",
+      }),
+    ).toBe("C:\\Users\\paseo\\bin;C:\\Windows\\Tools");
+  });
+
+  test("merges PATH values without reordering or duplicating entries", () => {
+    expect(
+      mergeWindowsPathValues(
+        'C:\\Windows;"C:\\Program Files\\Node";C:\\Windows\\',
+        "C:\\Tools;c:\\program files\\node",
+      ),
+    ).toBe("C:\\Windows;C:\\Program Files\\Node;C:\\Tools");
+  });
+
+  test("reads machine and user Path values in Windows order", async () => {
+    const outputs: Record<string, string> = {
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment":
+        registryOutput("%SystemRoot%\\System32"),
+      "HKCU\\Environment": registryOutput("%USERPROFILE%\\bin"),
+    };
+    const exec = async (_file: string, args: string[]): Promise<string> => {
+      const key = args[1] ?? "";
+      const output = outputs[key];
+      if (!output) {
+        throw new Error("missing registry value");
+      }
+      return output;
+    };
+
+    await expect(
+      readWindowsEnvironmentPath({
+        platform: "win32",
+        env: {
+          SystemRoot: "C:\\Windows",
+          USERPROFILE: "C:\\Users\\paseo",
+        },
+        exec,
+      }),
+    ).resolves.toBe("C:\\Windows\\System32;C:\\Users\\paseo\\bin");
+  });
+
+  test("appends missing registry entries to the process PATH", async () => {
+    const env = {
+      SystemRoot: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\paseo",
+      Path: "C:\\Windows\\System32",
+    };
+    const exec = async (_file: string, args: string[]): Promise<string> => {
+      if (args[1] === "HKCU\\Environment") {
+        return registryOutput("C:\\Users\\paseo\\.kimi-code\\bin;%SystemRoot%\\System32");
+      }
+      // A key without a Path value exits non-zero, the way reg.exe reports it.
+      const missing = new Error("missing registry value") as Error & { code: number };
+      missing.code = 1;
+      throw missing;
+    };
+
+    await expect(refreshWindowsProcessPath({ platform: "win32", env, exec })).resolves.toEqual({
+      added: ["C:\\Users\\paseo\\.kimi-code\\bin"],
+    });
+    expect(env.Path).toBe("C:\\Windows\\System32;C:\\Users\\paseo\\.kimi-code\\bin");
+  });
+
+  test("does nothing outside Windows", async () => {
+    const env = { PATH: "/usr/bin" };
+    await expect(refreshWindowsProcessPath({ platform: "linux", env })).resolves.toEqual({
+      added: [],
+    });
+    expect(env.PATH).toBe("/usr/bin");
+  });
+
+  test("reports a registry query that failed rather than found nothing", async () => {
+    // A key with no Path value exits non-zero and contributes nothing, which is
+    // the common case. A query that cannot run at all — a timeout, a denied
+    // key, a missing reg.exe — is different: silently treating it as "no
+    // entries" would leave the provider unavailable with nothing in the logs.
+    const env = {
+      SystemRoot: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\paseo",
+      Path: "C:\\Windows\\System32",
+    };
+    const exec = vi.fn(async (_file: string, _args: string[]): Promise<string> => {
+      throw new Error("reg.exe timed out");
+    });
+
+    await expect(refreshWindowsProcessPath({ platform: "win32", env, exec })).rejects.toThrow(
+      /registry/i,
+    );
   });
 });
 
