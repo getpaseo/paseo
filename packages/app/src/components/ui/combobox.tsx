@@ -235,6 +235,12 @@ export interface ComboboxItemProps {
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
+  /**
+   * An interactive control shown at the end of the row, outside the row's own
+   * pressable. A pressable nested inside another renders a `<button>` inside a
+   * `<button>` on web, which is invalid and aborts the row's press handling.
+   */
+  trailingAction?: ReactNode;
   selected?: boolean;
   active?: boolean;
   disabled?: boolean;
@@ -252,6 +258,7 @@ export function ComboboxItem({
   kind,
   leadingSlot,
   trailingSlot,
+  trailingAction,
   selected,
   active,
   disabled,
@@ -300,15 +307,29 @@ export function ComboboxItem({
     [labelPrefix],
   );
 
-  return (
-    <Pressable
-      testID={testID}
-      disabled={disabled}
-      onPress={onPress}
-      style={itemPressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-    >
+  const [hovered, setHovered] = useState(false);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+  const splitPressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.comboboxItemSplitPressable,
+      pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
+    ],
+    [elevated],
+  );
+  const splitRowStyle = useMemo(
+    () => [
+      styles.comboboxItem,
+      styles.comboboxItemSplitRow,
+      hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
+      active && styles.comboboxItemActive,
+      disabled && styles.comboboxItemDisabled,
+    ],
+    [active, disabled, elevated, hovered],
+  );
+
+  const content = (
+    <>
       {leadingContent}
       <View style={itemContentStyle}>
         {labelPrefix ? (
@@ -333,7 +354,38 @@ export function ComboboxItem({
           {trailingSlot}
         </View>
       ) : null}
-    </Pressable>
+    </>
+  );
+
+  if (!trailingAction) {
+    return (
+      <Pressable
+        testID={testID}
+        disabled={disabled}
+        onPress={onPress}
+        style={itemPressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={splitRowStyle} onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
+      <Pressable
+        testID={testID}
+        disabled={disabled}
+        onPress={onPress}
+        style={splitPressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+      >
+        {content}
+      </Pressable>
+      <View style={styles.comboboxItemActionSlot}>{trailingAction}</View>
+    </View>
   );
 }
 
@@ -1741,6 +1793,26 @@ const styles = StyleSheet.create((theme) => ({
           marginHorizontal: theme.spacing[1],
           marginBottom: theme.spacing[1],
         }),
+  },
+  // With a split row the outer view carries the row padding and highlight, so
+  // its pressable can stop before the trailing action.
+  comboboxItemSplitRow: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  comboboxItemSplitPressable: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[1],
+    paddingVertical: theme.spacing[2],
+  },
+  comboboxItemActionSlot: {
+    paddingLeft: theme.spacing[1],
+    paddingRight: theme.spacing[3],
   },
   comboboxItemHovered: {
     backgroundColor: theme.colors.surface1,
