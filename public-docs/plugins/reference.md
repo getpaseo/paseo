@@ -616,7 +616,11 @@ For numeric durations, use `windowFromReportedDuration()` from
 `@getpaseo/plugin/server/usage` (Paseo 0.11+). Pass the reported seconds or `null`, a neutral
 `unknown` identity and name, and an optional stable quota `scope`. The helper derives the ID,
 label, and short label together; it accepts no duration-label override. For named API periods,
-use `windowFromUsedPct()` with names justified by that field.
+use `windowFromUsedPct()` with names justified by that field. Set `durationSeconds` when
+the period has a known fixed length. Usage Details uses it with the reset time and the
+latest reading to estimate whether the quota will last until reset. If the source returns
+a previous reading, include its measurement time as an ISO timestamp in the report’s
+`observedAt` field.
 
 A window ID identifies a quota scope and period, never its response position, utilization, or
 reset instant. Scope model-specific quotas by the provider's stable feature ID, falling back to
