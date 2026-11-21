@@ -9611,6 +9611,76 @@ test("onAgentAttention is not called for delegated child agents", async () => {
   expect(attentionCalls).toEqual([]);
 });
 
+test.each(["read", "unread"])(
+  "waits for a delegated agent before reporting a finish (earlier attention is %s)",
+  async (attentionState) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-delegated-finish-"));
+    const config = { provider: "codex", cwd: workdir } as const;
+    const client = new SessionRecordingAgentClient();
+    const finishes: Array<{ agentId: string; attentionTimestamp: Date | null }> = [];
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+      onAgentAttention: ({ agentId, reason, attentionTimestamp }) => {
+        if (reason === "finished") finishes.push({ agentId, attentionTimestamp });
+      },
+    });
+    const parent = await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const child = await manager.createAgent(config, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    onTestFinished(async () => {
+      await manager.closeAgent(child.id);
+      await manager.closeAgent(parent.id);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    });
+    const [parentSession, childSession] = client.sessions;
+
+    async function completeParentTurn(turnId: string) {
+      const running = waitForAgentLifecycle(manager, parent.id, "running");
+      parentSession.pushEvent({ type: "turn_started", provider: "codex", turnId });
+      await running;
+      const idle = waitForAgentLifecycle(manager, parent.id, "idle");
+      parentSession.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+      await idle;
+    }
+
+    if (attentionState === "unread") {
+      await completeParentTurn("earlier-parent-finish");
+    }
+    const earlierFinishes = [...finishes];
+    const earlierAttention = manager.getAgent(parent.id)?.attention;
+    const childRunning = waitForAgentLifecycle(manager, child.id, "running");
+    const childTurn = { provider: "codex", turnId: "child-turn" } as const;
+    childSession.pushEvent({ ...childTurn, type: "turn_started" });
+    await childRunning;
+
+    await completeParentTurn("parent-handles-child-update");
+    expect(finishes).toEqual(earlierFinishes);
+    expect(manager.getAgent(parent.id)?.attention).toEqual(earlierAttention);
+
+    const childIdle = waitForAgentLifecycle(manager, child.id, "idle");
+    childSession.pushEvent({ ...childTurn, type: "turn_completed" });
+    await childIdle;
+    await completeParentTurn("parent-handles-child-finish");
+
+    expect(finishes).toEqual([
+      ...earlierFinishes,
+      {
+        agentId: parent.id,
+        attentionTimestamp: earlierFinishes[0]?.attentionTimestamp ?? expect.any(Date),
+      },
+    ]);
+    expect(manager.getAgent(parent.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+  },
+);
+
 test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-error-"));
   const storagePath = join(workdir, "agents");

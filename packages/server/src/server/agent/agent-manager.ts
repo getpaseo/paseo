@@ -5943,7 +5943,10 @@ export class AgentManager {
       return;
     }
 
-    const finished = previousStatus === "running" && currentStatus === "idle";
+    const finished =
+      previousStatus === "running" &&
+      currentStatus === "idle" &&
+      (isDelegatedAgent(agent) || !this.hasBusyChildAgent(agent.id));
     if (agent.attention.requiresAttention) {
       // The unread finish stays the same; the notifier knows whether the user was told about it.
       if (finished && agent.attention.attentionReason === "finished") {
@@ -5960,6 +5963,15 @@ export class AgentManager {
       };
       this.broadcastAgentAttention(agent, "finished");
     }
+  }
+
+  private hasBusyChildAgent(agentId: string): boolean {
+    for (const child of this.agents.values()) {
+      if (isAgentBusy(child.lifecycle) && getParentAgentIdFromLabels(child.labels) === agentId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // The failed state is only shown while error attention is unread, so every new failure raises
