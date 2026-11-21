@@ -4,6 +4,7 @@ interface AskOptions {
   title?: string;
   okLabel?: string;
   cancelLabel?: string;
+  defaultToCancel?: boolean;
   kind?: "info" | "warning" | "error";
 }
 
@@ -35,7 +36,7 @@ export function registerDialogHandlers(): void {
       title: options?.title ?? "Confirm",
       message,
       buttons: [options?.cancelLabel ?? "Cancel", options?.okLabel ?? "OK"],
-      defaultId: 1,
+      defaultId: options?.defaultToCancel === true ? 0 : 1,
       cancelId: 0,
     });
     return result.response === 1;

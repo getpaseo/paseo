@@ -19,6 +19,7 @@ export interface DesktopDialogAskOptions {
   title?: string;
   okLabel?: string;
   cancelLabel?: string;
+  defaultToCancel?: boolean;
   kind?: "info" | "warning" | "error";
 }
 
@@ -180,6 +181,9 @@ export interface DesktopHostBridge {
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
+  workspaceNavigation?: {
+    ready?: () => Promise<{ serverId: string; path: string } | null>;
+  };
   events?: DesktopEventsBridge;
   window?: DesktopWindowModuleBridge;
   dialog?: DesktopDialogBridge;

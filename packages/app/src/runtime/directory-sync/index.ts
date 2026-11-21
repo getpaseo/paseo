@@ -265,6 +265,7 @@ export class DirectorySync {
 
   private releaseSubscriptions(): void {
     this.subscriptionGeneration += 1;
+    useSessionStore.getState().setHasLiveWorkspaceDirectory(this.serverId, false);
     for (const subscription of [
       this.agentSubscription,
       this.workspaceSubscription,
@@ -570,6 +571,7 @@ export class DirectorySync {
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) return;
     const { client, source } = onlineConnection;
+    const subscriptionGeneration = this.subscriptionGeneration;
     const transaction = this.workspaceTransactions.begin(source, () => {
       const baseline = this.workspaces.snapshot();
       return {
@@ -609,6 +611,9 @@ export class DirectorySync {
           transaction.snapshot.syncModes?.workspaces;
       }
       this.completeWorkspaceRefresh(client, source, transaction);
+      if (input?.subscribe && subscriptionGeneration === this.subscriptionGeneration) {
+        useSessionStore.getState().setHasLiveWorkspaceDirectory(this.serverId, true);
+      }
     } catch (error) {
       const deltas = this.workspaceTransactions.fail(transaction);
       if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);

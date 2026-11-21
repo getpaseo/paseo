@@ -475,6 +475,7 @@ export interface SessionState {
   // Hydration status
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
+  hasLiveWorkspaceDirectory: boolean;
   hasWorkspaceDirectorySnapshot: boolean;
 
   // Audio state
@@ -712,6 +713,7 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+  setHasLiveWorkspaceDirectory: (serverId: string, ready: boolean) => void;
   setHasWorkspaceDirectorySnapshot: (serverId: string, available: boolean) => void;
 
   // Agent directory (derived from agents)
@@ -736,6 +738,7 @@ function createInitialSessionState(
     serverInfo: null,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
+    hasLiveWorkspaceDirectory: false,
     hasWorkspaceDirectorySnapshot: false,
     isPlayingAudio: false,
     focusedAgentId: null,
@@ -1960,6 +1963,19 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, hasHydratedWorkspaces: hydrated },
+            },
+          };
+        });
+      },
+
+      setHasLiveWorkspaceDirectory: (serverId, ready) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.hasLiveWorkspaceDirectory === ready) return prev;
+          return {
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hasLiveWorkspaceDirectory: ready },
             },
           };
         });
