@@ -550,6 +550,7 @@ function usePasteEffect(args: PasteEffectArgs): void {
         if (pasteLinkedClipboardText(textarea, event.clipboardData)) event.preventDefault();
         return;
       }
+      if (event.clipboardData?.getData("text/plain")) return;
       if (!isConnected || !onAddImages) return;
 
       event.preventDefault();

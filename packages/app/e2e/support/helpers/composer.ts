@@ -618,6 +618,33 @@ export async function pasteRichTextIntoComposer({
   await composerInput(page).press("ControlOrMeta+v");
 }
 
+export async function pasteTextWithImageIntoComposer({
+  page,
+  text,
+  png,
+}: {
+  page: Page;
+  text: string;
+  png: Buffer;
+}): Promise<void> {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(
+    async ({ content, png: encodedPng }) => {
+      const response = await fetch(`data:image/png;base64,${encodedPng}`);
+      const image = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([content], { type: "text/plain" }),
+          "text/html": new Blob([`<p>${content}</p>`], { type: "text/html" }),
+          "image/png": image,
+        }),
+      ]);
+    },
+    { content: text, png: png.toString("base64") },
+  );
+  await composerInput(page).press("ControlOrMeta+v");
+}
+
 export async function undoComposerEdit(page: Page): Promise<void> {
   await composerInput(page).press("ControlOrMeta+z");
 }
