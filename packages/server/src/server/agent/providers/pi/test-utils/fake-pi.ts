@@ -427,6 +427,13 @@ export class FakePiSession implements PiRuntimeSession {
 
   async close(): Promise<void> {
     this.closeCalls += 1;
+    if (this.activeHeldPrompt) {
+      await this.failHeldPrompt(new Error("Pi RPC session is closed"));
+    }
+    this.emit({
+      type: "process_exit",
+      error: "Pi RPC process exited with code 0 and signal null",
+    });
   }
 
   emit(event: PiRuntimeEvent): void {
