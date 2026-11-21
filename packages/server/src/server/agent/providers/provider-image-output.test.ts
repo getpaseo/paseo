@@ -212,7 +212,7 @@ test("64 MiB materialization leaves the event loop responsive and preserves byte
 });
 
 test("preserves base64 decoding across whitespace and chunk boundaries", async () => {
-  const bytes = Buffer.alloc(512 * 1024, 123);
+  const bytes = Buffer.alloc(1024 * 1024, 123);
   const base64 = bytes.toString("base64");
   const data = base64.match(/.{1,77}/g)!.join("\n");
   const result = await materializeProviderImage({ data, mimeType: "image/png" });
@@ -305,6 +305,31 @@ test("publishing small distinct images stays within eight event-loop turns per i
     clearImmediate(probe);
     for (const image of images) rmSync(image, { force: true });
   }
-  console.log(`${count} small attachments used ${activeTurns} active event-loop turns`);
   expect(activeTurns).toBeLessThanOrEqual(8 * count);
+});
+
+test("six concurrent 8 MiB images share the main-thread CPU budget", async () => {
+  const inputs = Array.from({ length: 6 }, (_, index) => ({
+    data: Buffer.alloc(8 * 1024 * 1024, index + 1).toString("base64"),
+    mimeType: "image/png",
+  }));
+  const threadCpuMs = () => {
+    const { user, system } = process.threadCpuUsage();
+    return (user + system) / 1000;
+  };
+  let previous = threadCpuMs();
+  let longest = 0;
+  const probe = setInterval(() => {
+    const now = threadCpuMs();
+    longest = Math.max(longest, now - previous);
+    previous = now;
+  }, 1);
+  try {
+    const images = await Promise.all(inputs.map(materializeProviderImage));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (const image of images) rmSync(image.path, { force: true });
+    expect(longest).toBeLessThan(50);
+  } finally {
+    clearInterval(probe);
+  }
 });

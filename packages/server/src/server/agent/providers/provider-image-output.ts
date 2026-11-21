@@ -67,8 +67,22 @@ function getImageExtension(mimeType: string): string {
 // 128 MiB admits the measured 64 MiB fixture with headroom while bounding disk
 // and decoding per image. This is materialization admission, not a wire schema limit.
 export const MAX_PROVIDER_IMAGE_BYTES = 128 * 1024 * 1024;
-const BASE64_CHUNK_CHARACTERS = 2 * 1024 * 1024; // Multiple of four; decode units stay aligned.
+const BASE64_CHUNK_CHARACTERS = 1024 * 1024; // Multiple of four; decode units stay aligned.
 const DECODE_SLICE_MS = 10;
+let decodeSliceDeadline = performance.now() + DECODE_SLICE_MS;
+let pendingDecodeYield: Promise<void> | undefined;
+
+function yieldForDecodeBudget(): Promise<void> | undefined {
+  if (performance.now() >= decodeSliceDeadline) {
+    // Promise reactions resume in arrival order. Decoders that exhaust the
+    // next slice wait again before taking another chunk.
+    pendingDecodeYield ??= setImmediate().then(() => {
+      decodeSliceDeadline = performance.now() + DECODE_SLICE_MS;
+      pendingDecodeYield = undefined;
+    });
+  }
+  return pendingDecodeYield;
+}
 
 export async function materializeProviderImage(image: {
   data: string;
@@ -128,21 +142,27 @@ async function publishImage(
   filePath: string,
   data: string,
 ): Promise<MaterializedProviderImage> {
-  try {
-    await fs.stat(filePath);
-    return { path: filePath };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  const [directory, existing] = await Promise.allSettled([fs.lstat(dir), fs.stat(filePath)]);
+  if (directory.status === "rejected") throw directory.reason;
+  const stats = directory.value;
+  const uid = process.platform === "win32" ? undefined : process.getuid?.();
+  if (
+    !stats.isDirectory() ||
+    (uid !== undefined && (stats.uid !== uid || (stats.mode & 0o077) !== 0))
+  ) {
+    throw Object.assign(new Error("Private image attachment directory is unavailable"), {
+      code: "ENOENT",
+    });
   }
+  if (existing.status === "fulfilled") return { path: filePath };
+  if (!isMissingPath(existing.reason)) throw existing.reason;
 
   const stagingPath = path.join(dir, `.pending-${randomUUID()}`);
   const file = await fs.open(stagingPath, "wx", MATERIALIZED_IMAGE_FILE_MODE);
   try {
     try {
-      // A restrictive umask can remove owner permissions from the open mode.
-      if (process.umask() & MATERIALIZED_IMAGE_FILE_MODE) {
-        await file.chmod(MATERIALIZED_IMAGE_FILE_MODE);
-      }
+      // Restore owner permissions if the umask masked them at open.
+      await file.chmod(MATERIALIZED_IMAGE_FILE_MODE);
       // Decode again only for new content, retaining one chunk at a time.
       for await (const bytes of decodeImage(data)) await file.writeFile(bytes);
     } finally {
@@ -159,10 +179,14 @@ async function publishImage(
 }
 
 async function* decodeImage(data: string): AsyncGenerator<Buffer> {
-  let sliceStarted = performance.now();
   let carry = "";
   let decodedBytes = 0;
   for (let offset = 0; offset < data.length; offset += BASE64_CHUNK_CHARACTERS) {
+    let pause = yieldForDecodeBudget();
+    while (pause) {
+      await pause;
+      pause = yieldForDecodeBudget();
+    }
     // Buffer.from ignores non-base64 characters. Carry incomplete quartets so
     // line-wrapped payloads decode identically across chunk boundaries.
     const chunk =
@@ -177,10 +201,6 @@ async function* decodeImage(data: string): AsyncGenerator<Buffer> {
       throw new Error("Image attachment exceeds size limit");
     yield bytes;
     if (finalChunk) break;
-    if (performance.now() - sliceStarted >= DECODE_SLICE_MS) {
-      await setImmediate();
-      sliceStarted = performance.now();
-    }
   }
 }
 
