@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyInactiveBrowserWebviewViewport,
   type BrowserWebviewProfileHost,
@@ -222,7 +222,7 @@ describe("resident browser webviews", () => {
     expectResidentWebviewParking(webview as HTMLElement);
   });
 
-  it("shares one profile and registers attached guests with explicit identity", () => {
+  it("registers ready guests with explicit identity and refreshes it after reattachment", () => {
     const firstWebview = ensureTestBrowser({
       browserId: "browser-first",
       workspaceId: "workspace-a",
@@ -236,17 +236,36 @@ describe("resident browser webviews", () => {
     if (!firstWebview || !secondWebview) {
       throw new Error("Expected resident webviews");
     }
-    Object.assign(firstWebview, { getWebContentsId: () => 101 });
-    Object.assign(secondWebview, { getWebContentsId: () => 202 });
+    const firstGuestId = vi.fn(() => 101);
+    const secondGuestId = vi.fn(() => 202);
+    Object.assign(firstWebview, { getWebContentsId: firstGuestId });
+    Object.assign(secondWebview, { getWebContentsId: secondGuestId });
 
     firstWebview.dispatchEvent(new Event("did-attach"));
     secondWebview.dispatchEvent(new Event("did-attach"));
+
+    expect(firstGuestId).not.toHaveBeenCalled();
+    expect(secondGuestId).not.toHaveBeenCalled();
+    expect(attachedBrowsers).toEqual([]);
+
+    firstWebview.dispatchEvent(new Event("dom-ready"));
+    secondWebview.dispatchEvent(new Event("dom-ready"));
 
     expect(firstWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(secondWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(attachedBrowsers).toEqual([
       { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 101 },
       { browserId: "browser-second", workspaceId: "workspace-b", webContentsId: 202 },
+    ]);
+
+    firstGuestId.mockReturnValue(303);
+    firstWebview.dispatchEvent(new Event("did-attach"));
+    expect(firstGuestId).toHaveBeenCalledTimes(1);
+    firstWebview.dispatchEvent(new Event("dom-ready"));
+    expect(attachedBrowsers).toEqual([
+      { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 101 },
+      { browserId: "browser-second", workspaceId: "workspace-b", webContentsId: 202 },
+      { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 303 },
     ]);
   });
 
