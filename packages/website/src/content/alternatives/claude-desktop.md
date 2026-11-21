@@ -108,7 +108,7 @@ Claude supports voice in Claude's own mobile and app surfaces. Claude Code itsel
 | Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, 30+ more                                 | Claude Code                                      |
 | Parallel agents              | Yes (isolated worktrees, across machines)                                                          | Yes (Git worktrees)                              |
 | Terminal agents              | Yes (run any agent in a terminal, get notified when it finishes)                                   | -                                                |
-| Agent orchestration          | Yes (agents create worktrees and launch other agents, across providers)                            | -                                                |
+| Agent orchestration          | Yes (agents create worktrees and launch other agents, across providers)                            | Claude subagents, others if prompted explicitly  |
 | Editor                       | Yes                                                                                                | Yes (file editor)                                |
 | Terminals                    | Yes                                                                                                | Yes                                              |
 | Diff review                  | Yes (comments go to the agent)                                                                     | Yes                                              |
@@ -116,9 +116,9 @@ Claude supports voice in Claude's own mobile and app surfaces. Claude Code itsel
 | In-app browser               | Yes (element picker, agent browser tools)                                                          | Yes (live app preview)                           |
 | Per-worktree dev server URLs | Yes (`web--fix-auth--my-app.localhost`)                                                            | No                                               |
 | Schedules and heartbeats     | Yes                                                                                                | Yes (scheduled tasks)                            |
-| Plan usage                   | Yes                                                                                                | -                                                |
+| Plan usage                   | Yes                                                                                                | Two-clickk away, or via `/usage`                 |
 | Plugins                      | Yes (new screens, panels, agent hooks, and providers, one plugin runs on desktop, web, and mobile) | No                                               |
 | Voice                        | Yes (local dictation, realtime voice)                                                              | Yes (in Claude's mobile and app surfaces)        |
-| Telemetry                    | None                                                                                               | -                                                |
+| Telemetry                    | None                                                                                               | Default                                          |
 
 See also: [Paseo vs Codex App](/alternatives/codex-app), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [Paseo vs Conductor](/alternatives/conductor).
