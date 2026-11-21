@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
+import { useSessionStore } from "@/stores/session-store";
+import { workspaceProfile, profilePartition } from "../profiles";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { useBrowserStore } from "@/desktop/browser/store";
@@ -276,7 +278,35 @@ useWorkspaceLayoutStore.persist.setOptions({
 });
 
 describe("mountBrowserAutomationHandler", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await useBrowserStore.persist.rehydrate();
+    const store = useSessionStore.getState();
+    store.initializeSession("server-1", null);
+    store.setWorkspaces(
+      "server-1",
+      new Map([
+        [
+          "wks_workspace_a",
+          {
+            id: "wks_workspace_a",
+            projectId: "project-a",
+            projectDisplayName: "Project A",
+            projectRootPath: "/repo",
+            workspaceDirectory: "/repo/worktree",
+            projectKind: "git",
+            workspaceKind: "worktree",
+            name: "worktree",
+            status: "done",
+            scripts: [],
+            createdAt: null,
+            lastUserMessageAt: null,
+            archivingAt: null,
+            statusEnteredAt: null,
+            diffStat: null,
+          },
+        ],
+      ]),
+    );
     browserAutomationStorage.clear();
     useBrowserStore.setState({ browsersById: {} });
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
@@ -299,7 +329,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
 
     const result = newTabResultFrom(browser.client.payloadAt(0));
     const openedTabs = workspaceBrowserTabs(workspaceKey, result.browserId);
@@ -324,6 +354,9 @@ describe("mountBrowserAutomationHandler", () => {
     expect(browser.resident.ensuredWebviews).toEqual([
       {
         browserId: result.browserId,
+        partition: await profilePartition(
+          await workspaceProfile("server-1", "project-a", "wks_workspace_a", "worktree"),
+        ),
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
       },
@@ -337,6 +370,41 @@ describe("mountBrowserAutomationHandler", () => {
         command: { command: "list_tabs", args: {} },
       },
     ]);
+  });
+
+  test("a second workspace's no-URL agent tab opens blank in its own partition", async () => {
+    const store = useSessionStore.getState();
+    const workspaces = new Map(store.sessions["server-1"]!.workspaces);
+    const second = { ...workspaces.get("wks_workspace_a")!, id: "wks_workspace_b", name: "Second" };
+    workspaces.set(second.id, second);
+    store.setWorkspaces("server-1", workspaces);
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+    browser.receive({
+      ...browserNewTabRequest(),
+      workspaceId: second.id,
+      command: { command: "new_tab", args: {} },
+    });
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
+    const profile = await workspaceProfile("server-1", second.projectId, second.id, second.name);
+    expect(browser.resident.ensuredWebviews[0]).toMatchObject({
+      partition: await profilePartition(profile),
+      url: "about:blank",
+    });
+    expect(Object.values(useBrowserStore.getState().browsersById)[0]).toMatchObject({
+      profile,
+      phase: "pristine",
+    });
+  });
+
+  test("browser_new_tab fails before opening a tab in an unknown workspace", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+    browser.receive({ ...browserNewTabRequest(), workspaceId: "missing" });
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(0).ok).toBe(false);
+    expect(browser.resident.ensuredWebviews).toEqual([]);
+    expect(useBrowserStore.getState().browsersById).toEqual({});
   });
 
   test("browser_new_tab returns a retryable timeout when the resident webview does not register", async () => {
@@ -365,6 +433,10 @@ describe("mountBrowserAutomationHandler", () => {
         },
       },
     ]);
+    const failedId = browser.resident.ensuredWebviews[0].browserId;
+    expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([failedId]);
+    expect(workspaceBrowserTabs("server-1:wks_workspace_a", failedId)).toEqual([]);
+    expect(currentBrowserTabs()).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       expect.objectContaining({
         workspaceId: "wks_workspace_a",
@@ -379,8 +451,9 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
 
+    expect(currentBrowserTabs()).toEqual([]);
     expect(browser.client.sentResponses).toEqual([
       {
         type: "browser.automation.execute.response",
@@ -402,7 +475,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
     const result = newTabResultFrom(browser.client.payloadAt(0));
 
     browser.receive(browserResizeRequest(result.browserId));
@@ -431,7 +504,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
     const result = newTabResultFrom(browser.client.payloadAt(0));
 
     browser.receive(browserResizeRequest(result.browserId, { workspaceId: "wks_workspace_b" }));
@@ -460,7 +533,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
     const result = newTabResultFrom(browser.client.payloadAt(0));
 
     browser.receive(browserCloseTabRequest(result.browserId));
@@ -482,7 +555,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
-    await flushAsyncWork();
+    await vi.waitFor(() => expect(browser.client.sentResponses).toHaveLength(1));
     const result = newTabResultFrom(browser.client.payloadAt(0));
 
     browser.receive(browserCloseTabRequest(result.browserId));

@@ -1,9 +1,13 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
+  listBrowserPartitionDirectories,
   readLegacyPaseoBrowserIds,
 } from "./browser-profile.js";
 
@@ -66,16 +70,17 @@ class FakeWebContents extends FakeLiveGuest {
 }
 
 describe("listPaseoBrowserProfileGuests", () => {
-  test("returns every live webview and popup in the shared profile", () => {
+  test("reloads live webviews and popups across cleared profiles", async () => {
     const profileSession = {};
     const firstWindowGuest = new FakeWebContents(1, profileSession, "webview");
-    const secondWindowGuest = new FakeWebContents(2, profileSession, "webview");
+    const scopedSession = new FakeProfileSession();
+    const secondWindowGuest = new FakeWebContents(2, scopedSession, "webview");
     const foreignProfileGuest = new FakeWebContents(3, {}, "webview");
     const popupWindow = new FakeWebContents(4, profileSession, "window");
     const destroyedGuest = new FakeWebContents(5, profileSession, "webview", true);
 
     const guests = listPaseoBrowserProfileGuests({
-      profileSession,
+      profileSessions: new Set([profileSession, scopedSession]),
       webContents: [
         firstWindowGuest,
         secondWindowGuest,
@@ -86,6 +91,12 @@ describe("listPaseoBrowserProfileGuests", () => {
     });
 
     expect(guests).toEqual([firstWindowGuest, secondWindowGuest, popupWindow]);
+    await clearPaseoBrowserProfile({
+      profileSessions: [scopedSession],
+      listGuests: () => guests,
+      logReloadError: () => {},
+    });
+    expect(secondWindowGuest.reloads).toBe(1);
   });
 });
 
@@ -94,6 +105,7 @@ describe("legacy browser profiles", () => {
     const uuid = "123e4567-e89b-42d3-a456-426614174000";
     const fallbackId = "1700000000000-abcd";
     const browserIds = readLegacyPaseoBrowserIds([uuid, fallbackId, uuid, "not-a-browser-id", 123]);
+    const orphanId = "1700000000001-ef";
     const partitions: string[] = [];
     const sessions = getPaseoBrowserProfileSessions(
       {
@@ -103,14 +115,27 @@ describe("legacy browser profiles", () => {
         },
       },
       browserIds,
+      [
+        "paseo-shared-work",
+        `paseo-project-${"a".repeat(32)}-customer`,
+        `paseo-project-${"a".repeat(32)}-ws-${"b".repeat(32)}`,
+        "paseo-browser-scope-invalid",
+        "foreign",
+        `paseo-browser-${uuid}`,
+        `paseo-browser-${orphanId}`,
+      ],
     );
 
     expect(partitions).toEqual([
       "persist:paseo-browser",
+      "persist:paseo-shared-work",
+      `persist:paseo-project-${"a".repeat(32)}-customer`,
+      `persist:paseo-project-${"a".repeat(32)}-ws-${"b".repeat(32)}`,
       `persist:paseo-browser-${uuid}`,
       `persist:paseo-browser-${fallbackId}`,
+      `persist:paseo-browser-${orphanId}`,
     ]);
-    expect(sessions).toHaveLength(3);
+    expect(sessions).toHaveLength(7);
   });
 
   test("resolves one valid legacy profile for tab-close cleanup", () => {
@@ -205,4 +230,37 @@ describe("clearPaseoBrowserProfile", () => {
     ).rejects.toBe(clearError);
     expect(guest.reloads).toBe(0);
   });
+});
+
+test("disk discovery includes closed named, automatic and old per-tab sessions", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "browser-partitions-"));
+  const project = "paseo-project-" + "a".repeat(32);
+  const names = [
+    "paseo-shared-work",
+    project + "-customer",
+    project + "-ws-" + "b".repeat(32),
+    "paseo-browser-1700000000001-ef",
+  ];
+  const opened: string[] = [];
+  try {
+    expect(await listBrowserPartitionDirectories(directory)).toEqual([]);
+    for (const name of [...names, "unrelated"])
+      await mkdir(path.join(directory, "Partitions", name), { recursive: true });
+    await writeFile(path.join(directory, "Partitions", "paseo-shared-file"), "");
+    getPaseoBrowserProfileSessions(
+      {
+        fromPartition(partition) {
+          opened.push(partition);
+          return new FakeProfileSession();
+        },
+      },
+      [],
+      await listBrowserPartitionDirectories(directory),
+    );
+    expect(opened.sort()).toEqual(
+      ["persist:paseo-browser", ...names.map((name) => "persist:" + name)].sort(),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -1,5 +1,27 @@
 export const BROWSER_NEW_TAB_REQUEST_EVENT = "paseo:event:browser-new-tab-request";
 
+export function getBrowserPopupWindowOptions(
+  mainWindow: Electron.BrowserWindow,
+  sourceContents: Electron.WebContents,
+): Electron.BrowserWindowConstructorOptions {
+  return {
+    parent: mainWindow,
+    show: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      session: sourceContents.session,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      webviewTag: false,
+      allowRunningInsecureContent: false,
+    },
+  };
+}
+
 export type BrowserWindowOpenDisposition =
   | "default"
   | "foreground-tab"

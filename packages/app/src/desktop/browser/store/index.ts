@@ -109,3 +109,13 @@ export function createWorkspaceBrowser(input?: { initialUrl?: string }): {
 export function normalizeWorkspaceBrowserUrl(value: string | null | undefined): string {
   return normalizeBrowserUrl(value);
 }
+
+export function waitForBrowserHydration(): Promise<void> {
+  if (useBrowserStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = useBrowserStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}

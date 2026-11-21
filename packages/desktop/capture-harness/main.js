@@ -4,6 +4,9 @@ const http = require("node:http");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
+const {
+  getBrowserPopupWindowOptions,
+} = require("../dist/features/browser-webviews/window-open.js");
 const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
 
 const ROOT = __dirname;
@@ -2474,7 +2477,7 @@ function assertAutomationSnapshot(snapshot) {
   }
 }
 
-async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
+async function createBrowserProfileHarnessWindow(partitions, sourceUrl) {
   const handle = createInactiveHarnessWindow({
     width: 640,
     height: 480,
@@ -2495,7 +2498,7 @@ async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
       query: {
         webviewCount: "2",
         targetUrl: sourceUrl,
-        profilePartition: partition,
+        profilePartitions: partitions.join(","),
         profileBrowserIds: "browser-first,browser-second",
       },
     }),
@@ -2526,7 +2529,7 @@ function assertBrowserProfileFixture(state, expectedValue, label) {
   }
 }
 
-function resolveBrowserProfileGuests(profileWindow, profileSession) {
+function resolveBrowserProfileGuests(profileWindow, [firstSession, secondSession]) {
   if (profileWindow.identities.length !== 2 || profileWindow.guests.length !== 2) {
     fail("browser profile harness did not attach exactly two guests");
   }
@@ -2559,8 +2562,8 @@ function resolveBrowserProfileGuests(profileWindow, profileSession) {
   ) {
     fail("browser profile guests were not owned by their renderer");
   }
-  if (firstGuest.session !== profileSession || secondGuest.session !== profileSession) {
-    fail("browser profile guests did not share the persistent session");
+  if (firstGuest.session !== firstSession || secondGuest.session !== secondSession) {
+    fail("browser profile guest session did not match its partition");
   }
   return [firstGuest, secondGuest];
 }
@@ -2571,16 +2574,77 @@ async function prepareBrowserProfileValue(firstGuest, profileSession) {
   }
 
   const profileValue = `profile-${Date.now()}-${process.pid}`;
-  await firstGuest.executeJavaScript(`(() => {
-    const value = ${JSON.stringify(profileValue)};
-    localStorage.setItem("paseo-browser-profile", value);
-    document.cookie = "paseo-browser-profile=" + value + "; Max-Age=86400; SameSite=Lax";
-  })()`);
+  await writeBrowserProfileValue(firstGuest, profileValue);
   if (BROWSER_PROFILE_PHASE === "write") {
     await fsp.writeFile(BROWSER_PROFILE_VALUE_FILE, `${profileValue}\n`);
     await profileSession.cookies.flushStore();
   }
   return profileValue;
+}
+
+async function writeBrowserProfileValue(guest, profileValue) {
+  await guest.executeJavaScript(`(() => {
+    const value = ${JSON.stringify(profileValue)};
+    localStorage.setItem("paseo-browser-profile", value);
+    document.cookie = "paseo-browser-profile=" + value + "; Max-Age=86400; SameSite=Lax";
+  })()`);
+}
+
+async function checkScopedBrowserProfiles(origin, profileValue, results) {
+  const partitions = [
+    "persist:paseo-shared-work",
+    `persist:paseo-project-${"b".repeat(32)}-customer`,
+  ];
+  const profileWindow = await createBrowserProfileHarnessWindow(partitions, origin);
+  const { win } = profileWindow.handle;
+  try {
+    const sessions = partitions.map((partition) => session.fromPartition(partition));
+    const guests = resolveBrowserProfileGuests(profileWindow, sessions);
+    const values = guests.map((_, i) => `${profileValue}-${i}`);
+    await Promise.all(guests.map((guest) => waitForGuestLoad(guest)));
+    if (BROWSER_PROFILE_PHASE === "write") {
+      for (const [i, guest] of guests.entries()) {
+        await writeBrowserProfileValue(guest, values[i]);
+        await guest.session.cookies.flushStore();
+      }
+    }
+    for (const [i, guest] of guests.entries()) {
+      assertBrowserProfileFixture(await readBrowserProfileFixture(guest), values[i], partitions[i]);
+      const directory = path.join(app.getPath("userData"), "Partitions", partitions[i].slice(8));
+      if (!(await fsp.stat(directory)).isDirectory())
+        fail(`Missing partition directory ${directory}`);
+    }
+    results.push({ group: "browser-profile", check: "scoped-isolation", pass: true });
+    if (BROWSER_PROFILE_PHASE === "read") {
+      results.push({ group: "browser-profile", check: "scoped-restart-persistence", pass: true });
+    }
+
+    const [opener] = guests;
+    opener.setWindowOpenHandler(() => ({
+      action: "allow",
+      overrideBrowserWindowOptions: getBrowserPopupWindowOptions(win, opener),
+    }));
+    const created = new Promise((resolve) => opener.once("did-create-window", resolve));
+    await opener.executeJavaScript(
+      `window.open(location.href, "profile-popup", "width=320") !== null`,
+      true,
+    );
+    const popup = await withTimeout(created, "scoped browser popup");
+    try {
+      await waitForGuestLoad(popup.webContents);
+      if (popup.webContents.session !== opener.session) fail("Popup session differs from opener");
+      assertBrowserProfileFixture(
+        await readBrowserProfileFixture(popup.webContents),
+        values[0],
+        "popup",
+      );
+      results.push({ group: "browser-profile", check: "scoped-popup-session", pass: true });
+    } finally {
+      popup.destroy();
+    }
+  } finally {
+    await closeHarnessWindow(win);
+  }
 }
 
 async function runBrowserProfileGroup() {
@@ -2596,9 +2660,15 @@ async function runBrowserProfileGroup() {
       await profileSession.clearStorageData();
       await profileSession.clearCache();
     }
-    const profileWindow = await createBrowserProfileHarnessWindow(partition, fixture.origin);
+    const profileWindow = await createBrowserProfileHarnessWindow(
+      [partition, partition],
+      fixture.origin,
+    );
     windows.push(profileWindow.handle);
-    const [firstGuest, secondGuest] = resolveBrowserProfileGuests(profileWindow, profileSession);
+    const [firstGuest, secondGuest] = resolveBrowserProfileGuests(profileWindow, [
+      profileSession,
+      profileSession,
+    ]);
     await Promise.all([waitForGuestLoad(firstGuest), waitForGuestLoad(secondGuest)]);
 
     const profileValue = await prepareBrowserProfileValue(firstGuest, profileSession);
@@ -2624,6 +2694,7 @@ async function runBrowserProfileGroup() {
         pass: true,
       });
     }
+    await checkScopedBrowserProfiles(fixture.origin, profileValue, results);
     return results;
   } finally {
     for (const handle of windows) {

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { useBrowserStore } from "@/desktop/browser/store";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyInactiveBrowserWebviewViewport,
   type BrowserWebviewProfileHost,
@@ -25,7 +26,6 @@ const attachedBrowsers: Array<{
   webContentsId: number;
 }> = [];
 const profileHost: BrowserWebviewProfileHost = {
-  profilePartition: "persist:paseo-browser",
   registerAttachedBrowser: async (input) => {
     attachedBrowsers.push(input);
   },
@@ -36,14 +36,18 @@ function ensureTestBrowser(input: {
   workspaceId: string;
   url: string;
 }): HTMLElement | null {
-  return ensureResidentBrowserWebview({ ...input, profileHost });
+  return ensureResidentBrowserWebview({
+    partition: "persist:paseo-browser",
+    ...input,
+    profileHost,
+  });
 }
 
 function prepareTestBrowser(
   webview: HTMLElement,
   input: { browserId: string; workspaceId: string; initialUrl?: string | null },
 ): void {
-  prepareBrowserWebview(webview, { ...input, profileHost });
+  prepareBrowserWebview(webview, { partition: "persist:paseo-browser", ...input, profileHost });
 }
 
 function residentHost(): HTMLElement {
@@ -222,7 +226,20 @@ describe("resident browser webviews", () => {
     expectResidentWebviewParking(webview as HTMLElement);
   });
 
-  it("shares one profile and registers attached guests with explicit identity", () => {
+  it("keeps the partition of a resident browser when the setting changes", () => {
+    const input = { browserId: "first", workspaceId: "workspace", url: "about:blank", profileHost };
+    const first = ensureTestBrowser(input);
+    const partition = "persist:paseo-shared-work";
+    expect(ensureResidentBrowserWebview({ ...input, partition })).toBe(first);
+    expect(first?.getAttribute("partition")).toBe("persist:paseo-browser");
+    expect(
+      ensureResidentBrowserWebview({ ...input, browserId: "second", partition })?.getAttribute(
+        "partition",
+      ),
+    ).toBe(partition);
+  });
+
+  it("registers each attached guest when its ID becomes readable before DOM readiness", async () => {
     const firstWebview = ensureTestBrowser({
       browserId: "browser-first",
       workspaceId: "workspace-a",
@@ -237,16 +254,34 @@ describe("resident browser webviews", () => {
       throw new Error("Expected resident webviews");
     }
     Object.assign(firstWebview, { getWebContentsId: () => 101 });
-    Object.assign(secondWebview, { getWebContentsId: () => 202 });
+    const readSecondId = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Guest ID pending");
+      })
+      .mockReturnValue(202);
+    Object.assign(secondWebview, { getWebContentsId: readSecondId });
 
     firstWebview.dispatchEvent(new Event("did-attach"));
     secondWebview.dispatchEvent(new Event("did-attach"));
+    expect(attachedBrowsers).toHaveLength(1);
+    await vi.waitFor(() => expect(attachedBrowsers).toHaveLength(2));
 
     expect(firstWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(secondWebview.getAttribute("partition")).toBe("persist:paseo-browser");
     expect(attachedBrowsers).toEqual([
-      { browserId: "browser-first", workspaceId: "workspace-a", webContentsId: 101 },
-      { browserId: "browser-second", workspaceId: "workspace-b", webContentsId: 202 },
+      {
+        browserId: "browser-first",
+        workspaceId: "workspace-a",
+        partition: "persist:paseo-browser",
+        webContentsId: 101,
+      },
+      {
+        browserId: "browser-second",
+        workspaceId: "workspace-b",
+        partition: "persist:paseo-browser",
+        webContentsId: 202,
+      },
     ]);
   });
 
@@ -449,4 +484,25 @@ describe("resident browser webviews", () => {
     expect(webview?.isConnected).toBe(false);
     expect(takeResidentBrowserWebview("browser-closed")).toBeNull();
   });
+});
+
+it("persists first top-level navigation while parked and keeps a committed tab locked", () => {
+  const browserId = useBrowserStore.getState().createBrowser();
+  const view = ensureTestBrowser({ browserId, workspaceId: "workspace-a", url: "about:blank" })!;
+  const record = () => useBrowserStore.getState().browsersById[browserId];
+  const fire = (type: string, url: string) =>
+    view.dispatchEvent(Object.assign(new Event(type), { isMainFrame: true, url }));
+  Object.assign(view, { getURL: () => "about:blank" });
+  fire("did-start-navigation", "file:///unavailable");
+  expect(record().phase).toBe("pristine");
+  fire("did-start-navigation", "https://first.test");
+  expect(record()).toMatchObject({ phase: "in-flight", url: "https://first.test" });
+  fire("did-fail-load", "https://first.test");
+  expect(record().phase).toBe("pristine");
+  fire("did-navigate", "https://second.test");
+  fire("did-navigate", "about:blank");
+  fire("did-fail-load", "https://first.test");
+  expect(record()).toMatchObject({ phase: "locked", url: "about:blank" });
+  useBrowserStore.getState().removeBrowser(browserId);
+  removeResidentBrowserWebview(browserId);
 });

@@ -62,6 +62,34 @@ describe("browser webview attachment", () => {
     ).toBe(false);
   });
 
+  test("admits only complete lowercase scoped names on allowed URLs", () => {
+    const prefix = "persist:paseo-project-";
+    const valid = prefix + "ab".repeat(16) + "-work";
+    for (const partition of [
+      valid,
+      "persist:paseo-shared-" + "a".repeat(48),
+      prefix + "ab".repeat(16) + "-ws-" + "ab".repeat(16),
+    ]) {
+      expect(isPaseoBrowserWebviewAttach({ src: "about:blank", partition })).toBe(true);
+    }
+    expect(isPaseoBrowserWebviewAttach({ src: "file:///tmp/local", partition: valid })).toBe(false);
+    for (const partition of [
+      undefined,
+      prefix + "a".repeat(31) + "-work",
+      valid + "-",
+      valid + "x".repeat(49),
+      "persist:paseo-shared-default",
+      "persist:paseo-shared-" + "a".repeat(49),
+      "persist:paseo-shared-Work",
+      valid + "\n",
+      "persist:paseo-shared-a--b",
+      prefix + "ab".repeat(16) + "-ws-invalid",
+      prefix + "AB".repeat(16),
+    ]) {
+      expect(isPaseoBrowserWebviewAttach({ src: "https://example.com", partition })).toBe(false);
+    }
+  });
+
   test("binds explicit browser identity to the renderer that hosts the guest", () => {
     const profileSession = {};
     const renderer = new FakeRenderer(1);
@@ -72,7 +100,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
       findWebContents: () => guest,
     });
 
@@ -93,7 +122,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: claimant,
-      profileSession,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
       findWebContents: () => guest,
     });
 
@@ -101,7 +131,7 @@ describe("browser webview attachment", () => {
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
   });
 
-  test("rejects a guest outside the shared profile", () => {
+  test("rejects a guest whose session differs from its claimed scoped partition", () => {
     const profileSession = {};
     const renderer = new FakeRenderer(1);
     const guest = new FakeBrowserGuest(301, renderer, {});
@@ -111,7 +141,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      partition: "persist:paseo-shared-work",
+      sessionFromPartition: () => profileSession,
       findWebContents: () => guest,
     });
 
@@ -135,7 +166,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-second",
       webContentsId: secondGuest.id,
       sender: secondRenderer,
-      profileSession,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
       findWebContents: (id) => guests.get(id) ?? null,
     });
     registerAttachedPaseoBrowser({
@@ -143,7 +175,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-first",
       webContentsId: firstGuest.id,
       sender: firstRenderer,
-      profileSession,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
       findWebContents: (id) => guests.get(id) ?? null,
     });
 
@@ -169,7 +202,8 @@ describe("browser webview attachment", () => {
         workspaceId: "workspace-shared",
         webContentsId: guest.id,
         sender: renderer,
-        profileSession,
+        partition: PASEO_BROWSER_PROFILE_PARTITION,
+        sessionFromPartition: () => profileSession,
         findWebContents: () => guest,
       });
     }
@@ -192,7 +226,8 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-cleanup",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
       findWebContents: () => guest,
     });
 

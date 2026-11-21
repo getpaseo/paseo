@@ -1,5 +1,5 @@
 import { webContents as allWebContents, type WebContents } from "electron";
-import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
+import { isPaseoBrowserPartition } from "../browser-profile.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
   decideBrowserWindowOpenRequest,
@@ -35,14 +35,13 @@ interface AttachedBrowserRegistration {
 
 interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
   sender: BrowserWebContentsIdentity;
-  profileSession: object;
+  partition: string;
+  sessionFromPartition(partition: string): object;
   findWebContents(webContentsId: number): RegisteredBrowserWebContents | null;
 }
 
 export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: string }): boolean {
-  return (
-    isAllowedBrowserWebviewUrl(input.src) && input.partition === PASEO_BROWSER_PROFILE_PARTITION
-  );
+  return isAllowedBrowserWebviewUrl(input.src) && isPaseoBrowserPartition(input.partition);
 }
 
 export function listRegisteredPaseoBrowserIds(): string[] {
@@ -68,7 +67,8 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
     !guest ||
     guest.isDestroyed() ||
     guest.hostWebContents !== input.sender ||
-    guest.session !== input.profileSession
+    !isPaseoBrowserPartition(input.partition) ||
+    guest.session !== input.sessionFromPartition(input.partition)
   ) {
     return false;
   }
@@ -183,7 +183,19 @@ function preventUnsafeBrowserWebviewNavigation(
   }
 }
 
+const committedGuests = new WeakSet<WebContents>();
+
+export function retirePristineGuest(guest: WebContents): boolean {
+  if (committedGuests.has(guest) || guest.isLoadingMainFrame() || guest.getURL() !== "about:blank")
+    return false;
+  guest.close({ waitForBeforeUnload: false });
+  return true;
+}
+
 export function registerBrowserWebviewNavigationGuards(contents: WebContents): void {
+  contents.on("did-navigate", (_event, url) => {
+    if (url !== "about:blank") committedGuests.add(contents);
+  });
   contents.on("will-navigate", (event) => {
     preventUnsafeBrowserWebviewNavigation(event, event.url);
   });

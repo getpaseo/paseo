@@ -619,6 +619,14 @@ export const zhCN: TranslationResources = {
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
       },
       session: "浏览器会话 {{browserId}}",
+      profiles: {
+        shared: "共享",
+        label: "浏览器配置文件 {{profile}}",
+        duplicateName: "此组中已存在同名配置文件。",
+        createShared: "新建共享配置文件…",
+        createWorkspace: "新建工作区配置文件…",
+        create: "创建",
+      },
       controls: {
         back: "后退",
         forward: "前进",
@@ -2460,7 +2468,7 @@ export const zhCN: TranslationResources = {
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
-        description: "浏览器标签页在 Paseo 中共享登录状态和网站数据。",
+        description: "使用同一配置文件的标签页共享登录状态和网站数据。",
         clear: "清除浏览器数据",
         clearing: "正在清除...",
         confirmTitle: "清除浏览器数据？",

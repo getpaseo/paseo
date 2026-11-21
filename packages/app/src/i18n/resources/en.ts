@@ -618,6 +618,14 @@ export const en = {
         subtitle: "Open this workspace in Electron to use the built-in browser.",
       },
       session: "Browser session {{browserId}}",
+      profiles: {
+        shared: "Shared",
+        label: "Browser profile {{profile}}",
+        duplicateName: "A profile with this name already exists in this group.",
+        createShared: "Create new shared profile…",
+        createWorkspace: "Create new workspace profile…",
+        create: "Create",
+      },
       controls: {
         back: "Back",
         forward: "Forward",
@@ -2615,7 +2623,7 @@ export const en = {
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",
-        description: "Browser tabs share sign-ins and site data across Paseo.",
+        description: "Tabs using the same profile share sign-ins and site data.",
         clear: "Clear browser data",
         clearing: "Clearing...",
         confirmTitle: "Clear browser data?",

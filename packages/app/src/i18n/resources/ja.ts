@@ -625,6 +625,14 @@ export const ja: TranslationResources = {
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",
       },
       session: "ブラウザセッション{{browserId}}",
+      profiles: {
+        shared: "共有",
+        label: "ブラウザープロファイル {{profile}}",
+        duplicateName: "このグループには同じ名前のプロファイルがすでにあります。",
+        createShared: "共有プロファイルを作成…",
+        createWorkspace: "ワークスペースのプロファイルを作成…",
+        create: "作成",
+      },
       controls: {
         back: "戻る",
         forward: "進む",
@@ -2508,7 +2516,7 @@ export const ja: TranslationResources = {
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
-        description: "ブラウザータブ間でログイン情報とサイトデータが共有されます。",
+        description: "同じプロファイルのタブはログイン情報とサイトデータを共有します。",
         clear: "ブラウザーデータを消去",
         clearing: "消去中...",
         confirmTitle: "ブラウザーデータを消去しますか？",

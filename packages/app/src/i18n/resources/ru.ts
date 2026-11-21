@@ -626,6 +626,14 @@ export const ru: TranslationResources = {
           "Откройте это рабочее пространство в Electron, чтобы использовать встроенный браузер.",
       },
       session: "Сеанс браузера {{browserId}}",
+      profiles: {
+        shared: "Общие",
+        label: "Профиль браузера {{profile}}",
+        duplicateName: "В этой группе уже есть профиль с таким именем.",
+        createShared: "Создать общий профиль…",
+        createWorkspace: "Создать профиль рабочего пространства…",
+        create: "Создать",
+      },
       controls: {
         back: "Назад",
         forward: "Вперед",
@@ -2522,7 +2530,7 @@ export const ru: TranslationResources = {
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
-        description: "Вкладки браузера в Paseo используют общие данные входа и данные сайтов.",
+        description: "Вкладки одного профиля используют общие данные сайтов и входа.",
         clear: "Очистить данные браузера",
         clearing: "Очистка...",
         confirmTitle: "Очистить данные браузера?",

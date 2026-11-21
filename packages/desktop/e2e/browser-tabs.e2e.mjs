@@ -14,6 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { chromium } from "playwright";
 import { expect } from "@playwright/test";
 import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
+import { runProfileJourney, accountFixture } from "./browser-profiles.electron.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
@@ -91,7 +92,7 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function seedPaseoHome(paseoHome, listen, workspaceRoot) {
+function seedPaseoHome(paseoHome, listen, workspaceRoot, useSiblingWorkspace = false) {
   const timestamp = "2026-01-01T00:00:00.000Z";
   const projects = workspaceIds.map((workspaceId, index) => {
     const cwd = path.join(workspaceRoot, `workspace-${index + 1}`);
@@ -109,7 +110,7 @@ function seedPaseoHome(paseoHome, listen, workspaceRoot) {
   });
   const workspaces = workspaceIds.map((workspaceId, index) => ({
     workspaceId,
-    projectId: projects[index].projectId,
+    projectId: projects[useSiblingWorkspace && index === 1 ? 0 : index].projectId,
     cwd: projects[index].rootPath,
     kind: "directory",
     displayName: `Desktop browser workspace ${index + 1}`,
@@ -201,9 +202,9 @@ async function waitForDesktopStatus(page) {
 }
 
 async function settleDesktopStartup(page) {
-  await expect(
-    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
-  ).toBeVisible({ timeout: timeoutMs });
+  await expect(page.getByTestId(/^sidebar-workspace-row-.*:desktop-browser-original$/)).toBeVisible(
+    { timeout: 300_000 },
+  );
   // The dev launcher supplies its package directory as an open-project request.
   // Before the local host connects, that request opens the connection prompt.
   // Finish startup before exercising the unrelated Settings/browser workflows.
@@ -219,6 +220,14 @@ const CSP_PAGE_PATH = "/csp-no-eval";
 async function startTargetPage() {
   const fillFixture = await buildFillFixture();
   const server = createServer((request, response) => {
+    if (request.url?.startsWith("/profile-account")) {
+      response.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      response.end(accountFixture(request.headers.cookie ?? ""));
+      return;
+    }
     if (request.url === "/react-fill") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(fillFixture);
@@ -238,6 +247,7 @@ async function startTargetPage() {
         <head><title>Desktop browser target</title>
           <style>body { min-height: 100vh; background: rgb(255, 0, 0); }</style>
           <script>
+            window.firstCookie = ${JSON.stringify(request.headers.cookie ?? "").replaceAll("<", "\\u003c")};
             window.frameCount = 0;
             function tick() { window.frameCount++; requestAnimationFrame(tick); }
             requestAnimationFrame(tick);
@@ -711,6 +721,7 @@ async function evaluateDesktopWindow(inspectorPort, expression) {
               params: {
                 expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${expression} })()`,
                 returnByValue: true,
+                awaitPromise: true,
               },
             }),
           ),
@@ -1332,8 +1343,9 @@ async function runRegression({
   };
 }
 
-async function main() {
+async function main(profileOnly, outputDirectory) {
   const artifactDir =
+    outputDirectory ??
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
     fs.mkdtempSync(path.join(os.tmpdir(), "paseo-desktop-browser-e2e-artifacts-"));
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-desktop-browser-e2e-"));
@@ -1351,7 +1363,7 @@ async function main() {
     reservePort(),
   ]);
   const listen = `127.0.0.1:${daemonPort}`;
-  seedPaseoHome(paseoHome, listen, workspaceRoot);
+  seedPaseoHome(paseoHome, listen, workspaceRoot, profileOnly);
   const target = await startTargetPage();
   seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
   const remoteHome = path.join(runtimeDir, "remote-home");
@@ -1395,24 +1407,26 @@ async function main() {
     children.push(daemon.child);
     await waitForPort(daemonPort, "daemon", daemon);
 
-    const remoteDaemon = spawnLogged(
-      "remote-daemon",
-      process.execPath,
-      ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
-      {
-        cwd: rootDir,
-        env: {
-          ...commonEnv,
-          PASEO_HOME: remoteHome,
-          PASEO_LISTEN: `127.0.0.1:${remotePort}`,
-          PASEO_SERVER_ID: "plugin-links-remote",
-          PASEO_NODE_ENV: "development",
+    if (!profileOnly) {
+      const remoteDaemon = spawnLogged(
+        "remote-daemon",
+        process.execPath,
+        ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
+        {
+          cwd: rootDir,
+          env: {
+            ...commonEnv,
+            PASEO_HOME: remoteHome,
+            PASEO_LISTEN: `127.0.0.1:${remotePort}`,
+            PASEO_SERVER_ID: "plugin-links-remote",
+            PASEO_NODE_ENV: "development",
+          },
         },
-      },
-      artifactDir,
-    );
-    children.push(remoteDaemon.child);
-    await waitForPort(remotePort, "remote daemon", remoteDaemon);
+        artifactDir,
+      );
+      children.push(remoteDaemon.child);
+      await waitForPort(remotePort, "remote daemon", remoteDaemon);
+    }
 
     const desktopArgs = [
       process.execPath,
@@ -1425,32 +1439,74 @@ async function main() {
       process.platform === "linux"
         ? ["-a", "--server-args=-screen 0 1280x800x24", ...desktopArgs]
         : desktopArgs;
-    const desktop = spawnLogged(
-      "desktop",
-      desktopCommand,
-      desktopCommandArgs,
-      {
-        cwd: rootDir,
-        env: {
-          ...commonEnv,
-          EXPO_UNSTABLE_HEADLESS: "1",
-          EXPO_PORT: String(expoPort),
-          EXPO_DEV_URL: `http://localhost:${expoPort}`,
-          PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
-          PASEO_ELECTRON_USER_DATA_DIR: userData,
-          PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+    let desktop;
+    async function launchDesktop() {
+      desktop = spawnLogged(
+        "desktop",
+        desktopCommand,
+        desktopCommandArgs,
+        {
+          cwd: rootDir,
+          env: {
+            ...commonEnv,
+            EXPO_UNSTABLE_HEADLESS: "1",
+            EXPO_PORT: String(expoPort),
+            EXPO_DEV_URL: `http://localhost:${expoPort}`,
+            PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
+            PASEO_ELECTRON_USER_DATA_DIR: userData,
+            PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+          },
         },
-      },
-      artifactDir,
-    );
-    children.push(desktop.child);
-    await waitForPort(cdpPort, "Electron CDP", desktop);
+        artifactDir,
+      );
+      children.push(desktop.child);
+      await waitForPort(cdpPort, "Electron CDP", desktop);
 
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const page = await waitForAppPage(browser, expoPort);
-    await hideDeveloperToasts(page);
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+      const opened = await waitForAppPage(browser, expoPort);
+      await hideDeveloperToasts(opened);
+      await waitForDesktopStatus(opened);
+      await settleDesktopStartup(opened);
+      return opened;
+    }
+    const page = await launchDesktop();
     const status = await waitForDesktopStatus(page);
-    await settleDesktopStartup(page);
+    async function checkProfiles() {
+      const caller = await createCallerAgent(daemonPort);
+      const profileClient = await connectBrowserToolClient(daemonPort, caller);
+      const inspect = (expression) => evaluateDesktopWindow(inspectorPort, expression);
+      try {
+        return await runProfileJourney({
+          page,
+          inspect,
+          artifactDir,
+          url: target.url + "profile-account",
+          workspaceIds,
+          serverId: status.serverId,
+          tool: (name, args) => callBrowserTool(profileClient, name, args),
+          openWorkspace: openBrowserWorkspace,
+          restart: async () => {
+            await inspect(
+              "setTimeout(() => process.mainModule.require('electron').app.quit(), 100); return true;",
+            );
+            await expect
+              .poll(() => desktop.child.exitCode !== null || desktop.child.signalCode !== null, {
+                timeout: 30000,
+              })
+              .toBe(true);
+            return launchDesktop();
+          },
+        });
+      } finally {
+        await profileClient.close();
+      }
+    }
+    if (profileOnly) {
+      const profiles = await checkProfiles();
+      writeJson(path.join(artifactDir, "result.json"), { profiles });
+      console.log("Per-tab browser profile journey passed.");
+      return;
+    }
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({
@@ -1544,4 +1600,16 @@ async function main() {
   }
 }
 
-await main();
+const profilesOnly = process.env.PASEO_DESKTOP_BROWSER_PROFILES_ONLY === "1";
+await main(profilesOnly);
+if (
+  !profilesOnly &&
+  ![
+    "PASEO_DESKTOP_PLUGIN_LINKS_ONLY",
+    "PASEO_DESKTOP_SETTINGS_SCROLL_ONLY",
+    "PASEO_DESKTOP_SETTINGS_MEMORY_ONLY",
+  ].some((key) => process.env[key] === "1")
+) {
+  const artifacts = process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR;
+  await main(true, artifacts && path.join(artifacts, "profiles"));
+}

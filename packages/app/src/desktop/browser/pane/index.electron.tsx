@@ -1,3 +1,7 @@
+import { useFetchQuery } from "@/data/query";
+import { profilePartition, workspaceProfile, sameProfile, sharedDefault } from "../profiles";
+import { ProfileSelector } from "./profile-selector.electron";
+import type { BrowserProfileEntry } from "@/desktop/host";
 import {
   useCallback,
   useEffect,
@@ -63,6 +67,7 @@ import {
   normalizeWorkspaceBrowserUrl,
   RESPONSIVE_BROWSER_VIEWPORT,
   useBrowserStore,
+  waitForBrowserHydration,
 } from "@/desktop/browser/store";
 import {
   applyInactiveBrowserWebviewViewport,
@@ -86,6 +91,7 @@ type ElectronWebview = HTMLElement & {
   goForward?: () => void;
   reload?: () => void;
   stop?: () => void;
+  getWebContentsId(): number;
   loadURL?: (url: string) => Promise<void>;
   getURL?: () => string;
   isLoading?: () => boolean;
@@ -581,6 +587,8 @@ function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElem
 // eslint-disable-next-line complexity
 export function BrowserPane({
   browserId,
+  projectId,
+  workspaceName,
   serverId,
   workspaceId,
   cwd,
@@ -589,6 +597,8 @@ export function BrowserPane({
 }: {
   browserId: string;
   serverId: string;
+  projectId: string | null;
+  workspaceName: string;
   workspaceId: string;
   cwd: string | null;
   isInteractive?: boolean;
@@ -597,6 +607,52 @@ export function BrowserPane({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
+  const stored = browser?.profile;
+  const {
+    data: resolved,
+    error: partitionError,
+    refetch,
+  } = useFetchQuery({
+    dataShape: "value",
+    queryKey: [
+      "browser-profile",
+      browserId,
+      stored,
+      serverId,
+      projectId,
+      workspaceId,
+      workspaceName,
+    ],
+    enabled: Boolean(projectId && stored),
+    queryFn: async () => {
+      await waitForBrowserHydration();
+      const list = getDesktopHost()?.browser?.listProfiles;
+      if (!projectId || !list) throw new Error("Cannot resolve browser profiles");
+      const automatic = await workspaceProfile(serverId, projectId, workspaceId, workspaceName);
+      const catalog = await list();
+      const choice = stored === "pending" ? automatic : stored;
+      const selected =
+        choice &&
+        typeof choice !== "string" &&
+        [sharedDefault, automatic, ...catalog].find((row) => sameProfile(row, choice));
+      if (!selected) throw new Error("Unknown browser profile");
+      return { selected, automatic, catalog, partition: await profilePartition(selected) };
+    },
+    immutableWhen: () => true,
+    retry: false,
+    gcTime: 0,
+  });
+  const partition =
+    projectId && !partitionError && stored !== "pending" ? resolved?.partition : undefined;
+  useEffect(() => {
+    if (
+      stored === "pending" &&
+      resolved &&
+      useBrowserStore.getState().browsersById[browserId]?.profile === "pending"
+    )
+      useBrowserStore.getState().updateBrowser(browserId, { profile: resolved.selected });
+  }, [browserId, stored, resolved]);
+  const [registered, setRegistered] = useState<string | undefined>(undefined);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
   const browserViewport = browser?.viewport ?? RESPONSIVE_BROWSER_VIEWPORT;
@@ -609,7 +665,8 @@ export function BrowserPane({
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
   const webviewClipRef = useRef<HTMLElement | null>(null);
   const urlInputRef = useRef<EditingTextInputHandle | null>(null);
-  const initialUrlRef = useRef(browser?.url ?? "https://example.com");
+  const initialUrlRef = useRef(browser?.url ?? "about:blank");
+  initialUrlRef.current = browser?.url ?? "about:blank";
   const browserIdRef = useRef(browserId);
   browserIdRef.current = browserId;
   const browserRef = useRef(browser);
@@ -631,7 +688,9 @@ export function BrowserPane({
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [draftUrl, setDraftUrl] = useState(
+    browser?.url === "about:blank" ? "" : (browser?.url ?? ""),
+  );
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -675,10 +734,11 @@ export function BrowserPane({
   browserErrorLabelsRef.current = browserErrorLabels;
 
   useEffect(() => {
-    const nextUrl = browser?.url ?? "https://example.com";
+    const nextUrl =
+      browser?.url === "about:blank" && browser.phase === "pristine" ? "" : (browser?.url ?? "");
     urlInputRef.current?.replaceText(nextUrl);
     setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
-  }, [browser?.url]);
+  }, [browser?.url, browser?.phase]);
 
   const updateBrowserRef = useRef(updateBrowser);
   updateBrowserRef.current = updateBrowser;
@@ -709,7 +769,7 @@ export function BrowserPane({
       const patch = {
         canGoBack: webview.canGoBack?.() ?? false,
         canGoForward: webview.canGoForward?.() ?? false,
-        ...(input?.syncUrl === false
+        ...(input?.syncUrl === false || !currentUrl
           ? {}
           : { url: normalizeWorkspaceBrowserUrl(pendingNavigationUrlRef.current ?? currentUrl) }),
       };
@@ -726,7 +786,7 @@ export function BrowserPane({
 
     const host = webviewHostRef.current;
     const clip = webviewClipRef.current;
-    if (!host || !clip) {
+    if (!host || !clip || !partition) {
       return;
     }
 
@@ -737,10 +797,18 @@ export function BrowserPane({
       browserErrorLabelsRef.current,
     );
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
+    if (residentWebview && residentWebview.getAttribute("partition") !== partition) {
+      updateBrowser(browserId, { lastError: t("desktop.settings.loadFailed") });
+      return;
+    }
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
+    const onRegistered = () => setRegistered(webview.dataset.registeredPartition);
+    onRegistered();
+    webview.addEventListener("paseo-profile-registered", onRegistered);
     if (!residentWebview) {
       prepareBrowserWebview(webview, {
+        partition,
         browserId,
         workspaceId,
         initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
@@ -779,6 +847,11 @@ export function BrowserPane({
       syncNavigationState();
     };
     const handleNavigate = (event: Event) => {
+      if (
+        !webview.isConnected ||
+        (event as Event & { isMainFrame?: boolean }).isMainFrame === false
+      )
+        return;
       const nextUrl =
         typeof (event as Event & { url?: unknown }).url === "string"
           ? ((event as Event & { url?: string }).url ?? "")
@@ -792,6 +865,7 @@ export function BrowserPane({
         lastError: null,
       });
       setDraftUrl((current) => {
+        if (normalized === "about:blank" && browserRef.current?.phase === "pristine") return "";
         return current === normalized ? current : normalized;
       });
       syncNavigationState();
@@ -881,6 +955,7 @@ export function BrowserPane({
     }
 
     return () => {
+      webview.removeEventListener("paseo-profile-registered", onRegistered);
       sizeObserver?.disconnect();
       webview.removeEventListener("did-start-loading", handleStartLoading);
       webview.removeEventListener("did-stop-loading", handleStopLoading);
@@ -896,9 +971,9 @@ export function BrowserPane({
       const browserStillExists = Boolean(
         useBrowserStore.getState().browsersById[browserIdRef.current],
       );
-      if (browserStillExists) {
+      if (browserStillExists && webview.isConnected) {
         releaseResidentBrowserWebview(browserIdRef.current, webview);
-      } else {
+      } else if (!browserStillExists) {
         removeResidentBrowserWebview(browserIdRef.current);
       }
       selectorControllerRef.current?.stopForWebview(webview);
@@ -907,7 +982,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId, onFocusPane, partition]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -936,18 +1011,16 @@ export function BrowserPane({
 
   const navigate = useCallback(
     (nextUrl: string) => {
+      if (
+        !nextUrl.trim() ||
+        !webviewRef.current?.isConnected ||
+        !webviewRef.current.dataset.registeredPartition
+      )
+        return;
       const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
       const webview = webviewRef.current;
       const unsafeNavigationMessage = getUnsafeNavigationMessage(normalizedUrl, browserErrorLabels);
       const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
-      pendingNavigationUrlRef.current = unsafeNavigationMessage ? null : normalizedUrl;
-      updateBrowserRef.current(browserIdRef.current, {
-        url: normalizedUrl,
-        isLoading: unsafeNavigationMessage === null,
-        ...(normalizedUrl !== previousUrl ? { faviconUrl: null } : {}),
-        lastError: null,
-      });
-      setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
       if (unsafeNavigationMessage) {
         updateBrowserRef.current(browserIdRef.current, {
           isLoading: false,
@@ -955,6 +1028,15 @@ export function BrowserPane({
         });
         return;
       }
+      pendingNavigationUrlRef.current = normalizedUrl;
+      updateBrowserRef.current(browserIdRef.current, {
+        url: normalizedUrl,
+        isLoading: true,
+        ...(normalizedUrl === "about:blank" ? {} : { phase: "in-flight" }),
+        ...(normalizedUrl !== previousUrl ? { faviconUrl: null } : {}),
+        lastError: null,
+      });
+      setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
       if (webview?.loadURL) {
         void webview.loadURL(normalizedUrl).catch((error: unknown) => {
           const message = getLoadUrlRejectionMessage(error, browserErrorLabels.failedToLoad);
@@ -973,6 +1055,31 @@ export function BrowserPane({
       }
     },
     [browserErrorLabels],
+  );
+
+  const refreshProfiles = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+  const selectProfile = useCallback(
+    (entry: BrowserProfileEntry) => {
+      const current = useBrowserStore.getState().browsersById[browserId];
+      const webview = webviewRef.current;
+      if (
+        !webview ||
+        current?.phase !== "pristine" ||
+        typeof current.profile !== "object" ||
+        sameProfile(current.profile, entry)
+      )
+        return;
+      const retire = getDesktopHost()?.browser?.retirePristineGuest;
+      if (!webview.dataset.registeredPartition || !retire?.(browserId, webview.getWebContentsId()))
+        return;
+      removeResidentBrowserWebview(browserId);
+      webviewRef.current = null;
+      setRegistered(undefined);
+      updateBrowser(browserId, { profile: entry, lastError: null });
+    },
+    [browserId, updateBrowser],
   );
 
   const handleBack = useCallback(() => {
@@ -1479,6 +1586,16 @@ export function BrowserPane({
             initialValue={draftUrl}
           />
         </View>
+        {resolved && registered === partition && partition ? (
+          <ProfileSelector
+            selected={resolved.selected}
+            automatic={resolved.automatic}
+            catalog={resolved.catalog}
+            editable={browser?.phase === "pristine"}
+            onSelect={selectProfile}
+            refresh={refreshProfiles}
+          />
+        ) : null}
         <View style={styles.chromeRight}>
           <DeviceSizeMenu
             selectedId={selectedDeviceSizeId}
@@ -1528,11 +1645,16 @@ export function BrowserPane({
           </ToolbarButton>
         </View>
       </View>
-      {browser?.lastError ? (
+      {partitionError || browser?.lastError ? (
         <View style={styles.errorRow}>
           <Text numberOfLines={1} style={errorTextStyle}>
-            {browser.lastError}
+            {partitionError ? t("desktop.settings.loadFailed") : browser?.lastError}
           </Text>
+          {partitionError && (
+            <Button variant="ghost" onPress={refreshProfiles}>
+              {t("common.actions.retry")}
+            </Button>
+          )}
         </View>
       ) : null}
       <View
