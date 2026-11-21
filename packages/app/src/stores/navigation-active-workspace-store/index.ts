@@ -2,7 +2,7 @@ import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import { usePanelStore } from "@/stores/panel-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import {
   createLastWorkspaceSelectionStore,
   LAST_WORKSPACE_SELECTION_STORAGE_KEY,
@@ -20,6 +20,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
+import { appVisitHistory, type WorkspaceVisit } from "@/navigation/app-visit-history";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 export type { NavigateToWorkspaceInput } from "./navigation";
@@ -76,6 +77,27 @@ export function navigateToLastWorkspace(): boolean {
     ...navigateDeps(),
     getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
   });
+}
+
+export function useRecordWorkspaceVisit({
+  serverId,
+  workspaceId,
+  tabId,
+  routeFocused,
+  workspaceExists,
+  layoutHydrated,
+  hasPendingOpen,
+}: Omit<WorkspaceVisit, "kind"> & {
+  routeFocused: boolean;
+  workspaceExists: boolean;
+  layoutHydrated: boolean;
+  hasPendingOpen: boolean;
+}): void {
+  useLayoutEffect(() => {
+    if (routeFocused && workspaceExists && layoutHydrated && !hasPendingOpen) {
+      appVisitHistory.record({ kind: "workspace", serverId, workspaceId, tabId });
+    }
+  }, [routeFocused, workspaceExists, layoutHydrated, hasPendingOpen, serverId, workspaceId, tabId]);
 }
 
 export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {

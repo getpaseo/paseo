@@ -14,6 +14,11 @@ Keyboard navigation needs the sidebar's filtered workspace model even when its v
 panel is hidden. Retain that model while keyboard navigation is active; gating it on
 panel visibility leaves number shortcuts with no targets after a compact startup.
 
+Back and Forward record focused workspace tabs and full-page plugin screens. Tab selection lives
+in the workspace layout, so router history alone cannot restore it. Plugin screen URLs include the
+host and screen parameters. Record visits after the destination commits. From a detour such as
+Settings, Back returns to the current history entry before moving deeper into the stack.
+
 Composer send-key customization remains a separate capability. Native retains its
 existing Return submission path; advertising its web-only customization would expose
 settings the native composer does not implement.

@@ -124,9 +124,13 @@ function isBrowserNativeNavigationPrefix(prefix: BrowserShortcutPrefix, isMac: b
 }
 
 function canCrossBrowserBoundary(binding: ParsedShortcutBinding, isMac: boolean): boolean {
+  const isWorkspaceHistory =
+    binding.action === "workspace.history.back" || binding.action === "workspace.history.forward";
   return binding.parsedChord.every((combo) => {
     const prefix = prefixFromCombo(combo, isMac, binding.when?.editable);
-    return prefix !== null && !isBrowserNativeNavigationPrefix(prefix, isMac);
+    return (
+      prefix !== null && (isWorkspaceHistory || !isBrowserNativeNavigationPrefix(prefix, isMac))
+    );
   });
 }
 
