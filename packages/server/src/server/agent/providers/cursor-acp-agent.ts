@@ -19,8 +19,18 @@ interface CursorACPAgentClientOptions {
 }
 
 const CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS = 10_000;
-const CURSOR_CLIENT_CAPABILITY_META = {
+// Cursor enables its ACP subagent lifecycle only when the client sends
+// `clientCapabilities._meta.subagents`; `true` or a non-null object enables it. It has to live in
+// `_meta`: Cursor drops a top-level `subagents` property before the check, and
+// `options.clientCapabilities` cannot carry it because `ACPProviderOptionsSchema` strips unknown
+// keys and `buildACPClientCapabilities` replaces `_meta` with the provider's (configured `fs` and
+// `terminal` still apply). With the capability set, the parent turn stays open until child agents
+// finish and the parent's follow-up reports their result inside that turn.
+// COMPAT(cursorAcpSubagents): added unreleased on 2026-10-31 (after v0.14.0); remove after 2027-05-01 once Cursor negotiates
+// subagents through a standard ACP capability.
+export const CURSOR_CLIENT_CAPABILITY_META = {
   parameterizedModelPicker: true,
+  subagents: {},
 };
 
 export const CURSOR_FAST_FEATURE_OPTION: ACPConfigFeatureOption = {
