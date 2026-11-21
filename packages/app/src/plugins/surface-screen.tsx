@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { useFocusEffect } from "expo-router/react-navigation";
 import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
@@ -44,6 +45,21 @@ import {
 import { resolvePluginPlatform } from "./platform";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
+/** A few frames: long enough for the commit that removed a measuring view to finish. */
+const PLUGIN_SURFACE_RETRY_DELAY_MS = 120;
+
+function useFocusResetGeneration(): number {
+  const [generation, setGeneration] = useState(0);
+  const hasFocused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (hasFocused.current) setGeneration((current) => current + 1);
+      hasFocused.current = true;
+      return undefined;
+    }, []),
+  );
+  return generation;
+}
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
@@ -155,6 +171,10 @@ export function PluginSurfaceScreen() {
   const pluginId = routeParam(routeParams.pluginId);
   const contributionKind = routeParam(routeParams.contributionKind);
   const contributionId = routeParam(routeParams.contributionId);
+  // A plugin read can throw on a layout callback that arrives for a view the same commit removed
+  // (Android delivers a null payload), which leaves the boundary showing "Plugin failed" until the
+  // surface identity changes. Returning to the screen is the user's retry, so bump the reset key.
+  const focusGeneration = useFocusResetGeneration();
   const paramsKey = JSON.stringify(pluginScreenParamsFromRoute(routeParams));
   // Keyed by content: the route hands back a new object on every render.
   const params = useMemo<PluginScreenParams>(() => JSON.parse(paramsKey), [paramsKey]);
@@ -260,6 +280,8 @@ export function PluginSurfaceScreen() {
             key={`${serverId}/${pluginId}/${identity?.kind}/${contributionId}`}
             installation={plugin}
             Surface={surface.Component}
+            resetKey={focusGeneration}
+            retryDelayMs={PLUGIN_SURFACE_RETRY_DELAY_MS}
           >
             <ThemedSurfaceRenderer
               Surface={surface.Component}

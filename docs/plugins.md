@@ -344,6 +344,16 @@ not interrupt host teardown. Client installation retention and disposal follow t
 
 Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
+A surface that throws is retried once after a short delay before the error is shown, and the failure
+stays on screen if it repeats; returning to the screen retries once more.
+
+The retry exists because React pools synthetic events. Reading `event.nativeEvent` outside the
+handler that received it — in a `setTimeout`, a `requestAnimationFrame`, or a state updater — can see
+`null`, because the pool nulls the payload when the dispatch ends. Destructure
+`const { width } = event.nativeEvent.layout` inside the handler instead of keeping the event. A
+boundary cannot catch a throw from a handler, so a null it sees came from a read that already left
+the dispatch.
+
 The plugin owns the header's text through the screen's `title` (`resolvePluginScreenTitle` in
 `plugins/surface-contribution.ts`). A legacy `addSidebarItem` route (`/sidebar/<id>`) shows the
 item's title and icon instead, as before screens had titles; the `addSurface` alias titles its
