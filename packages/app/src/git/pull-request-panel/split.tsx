@@ -3,6 +3,7 @@ import { ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ResizeHandle } from "@/components/resize-handle";
+import { resolveDraggedShare } from "@/components/resize-handle-share";
 
 /** Most of the pane the overview may take before it scrolls, until the user drags the separator. */
 const DEFAULT_OVERVIEW_SHARE = 0.5;
@@ -118,17 +119,6 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
       </View>
     </View>
   );
-}
-
-/**
- * The share a drag leaves the overview. Short content stops the separator at the content's
- * bottom, so a drag that ends there or below saves what was drawn and keeps any larger share
- * the overview already had. The separator then neither jumps to the pointer nor stays pinned
- * at the old content height when the content grows.
- */
-function resolveDraggedShare(pointerShare: number, currentShare: number, contentShare: number) {
-  if (pointerShare < contentShare) return pointerShare;
-  return Math.max(currentShare, contentShare);
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import type { AppLanguage } from "@/i18n/locales";
 import type { SidebarNavPreference } from "@/sidebar-nav/model";
+import { DEFAULT_SIDEBAR_NAV_SHARE, parseSidebarNavShare } from "@/sidebar-nav/share";
 import {
   DEFAULT_USAGE_PREFERENCES,
   UsagePreferencesSchema,
@@ -105,6 +106,8 @@ export interface AppSettings {
   sidebarNavItems: SidebarNavPreference[];
   /** Sidebar footer items in display order; empty means the default order, all visible. */
   sidebarFooterItems: SidebarNavPreference[];
+  /** Largest share of the desktop sidebar's height the top nav block takes before it scrolls. */
+  sidebarNavShare: number;
   /** How usage reads and which windows the sidebar summary shows. */
   usage: UsagePreferences;
   autoExpandReasoning: boolean;
@@ -164,6 +167,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarPluginRowBadgeItems: {},
   sidebarNavItems: [],
   sidebarFooterItems: [],
+  sidebarNavShare: DEFAULT_SIDEBAR_NAV_SHARE,
   usage: DEFAULT_USAGE_PREFERENCES,
   autoExpandReasoning: false,
   chatDisplay: "collapseTurns",
@@ -264,6 +268,11 @@ const StoredAppSettingsSchema = z
     sidebarPluginRowBadgeItems: z.record(z.string(), z.boolean()).catch({}),
     sidebarNavItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     sidebarFooterItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
+    sidebarNavShare: z
+      .unknown()
+      .transform(parseSidebarNavShare)
+      .pipe(z.number())
+      .catch(DEFAULT_SIDEBAR_NAV_SHARE),
     usage: UsagePreferencesSchema,
     autoExpandReasoning: z.boolean().catch(false),
     chatDisplay: z.enum(["full", "collapseToolCalls", "collapseTurns"]).optional().catch("full"),

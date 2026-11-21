@@ -4,6 +4,7 @@ import { usePanelStore } from ".";
 import {
   DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
+  PanelPersistedStateSchema,
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
   setMobilePanelTarget,
@@ -81,6 +82,22 @@ describe("panel-store migration", () => {
 
     expect(state.mobileView).toBeUndefined();
     expect(state.mobilePanel).toBeUndefined();
+  });
+});
+
+describe("panel-store persisted schema", () => {
+  // The schema is strict: an unknown key fails the whole parse and an older build resets the
+  // panel layout. The desktop sidebar's nav share therefore lives in app settings (a loose
+  // schema), and must never become a panel-store key.
+  it("rejects unknown keys, so no setting may be added to the panel state casually", () => {
+    expect(PanelPersistedStateSchema.safeParse({ sidebarNavShare: 0.3 }).success).toBe(false);
+    expect(PanelPersistedStateSchema.safeParse({ desktop: { sidebarNavShare: 0.3 } }).success).toBe(
+      false,
+    );
+  });
+
+  it("does not carry the sidebar nav share", () => {
+    expect(Object.keys(PanelPersistedStateSchema.shape)).not.toContain("sidebarNavShare");
   });
 });
 

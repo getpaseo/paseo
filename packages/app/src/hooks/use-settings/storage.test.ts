@@ -300,6 +300,51 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.sidebarNavItems).toEqual([]);
   });
 
+  it("defaults the sidebar nav share to the half-height cap the nav block always had", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).sidebarNavShare).toBe(0.5);
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarNavShare).toBe(0.5);
+  });
+
+  it.each([
+    [0.3, 0.3],
+    [0.02, 0.1],
+    [4, 0.5],
+    ["0.3", 0.5],
+    [null, 0.5],
+    [{}, 0.5],
+  ])("loads a stored sidebar nav share %j as %j", async (stored, expected) => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarNavShare: stored, vimKeybindings: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavShare).toBe(expected);
+    expect(result.vimKeybindings).toBe(true);
+  });
+
+  it("saves a dragged nav share and keeps the other stored keys, including unknown ones", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "dark", futureSetting: { enabled: true } }),
+      }),
+    });
+
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      deps,
+      updates: { sidebarNavShare: 0.25 },
+    });
+
+    const stored = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
+    expect(stored.sidebarNavShare).toBe(0.25);
+    expect(stored.theme).toBe("dark");
+    expect(stored.futureSetting).toEqual({ enabled: true });
+    expect((await loadAppSettingsFromStorage(deps)).sidebarNavShare).toBe(0.25);
+  });
+
   it("loads stored sidebar footer items in order and defaults them to empty", async () => {
     expect((await loadAppSettingsFromStorage(makeDeps())).sidebarFooterItems).toEqual([]);
 

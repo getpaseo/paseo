@@ -52,6 +52,10 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
+import { ResizeHandle } from "@/components/resize-handle";
+import { resolveDraggedShare } from "@/components/resize-handle-share";
+import { useAppSettings } from "@/hooks/use-settings";
+import { clampSidebarNavShare } from "@/sidebar-nav/share";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
@@ -683,43 +687,156 @@ function MobileSidebar({
   );
 }
 
-interface SidebarNavScrollProps {
+interface SidebarNavViewportProps {
   closeGestureRef: RefObject<GestureType | undefined>;
   /** Web only: the viewport emits no window regions (see WINDOW_CONTENT_DATASET). */
   windowContent?: boolean;
+  /** Share of the parent's height the viewport may take; the default cap is half. */
+  maxShare?: number;
+  onLayout?: (event: LayoutChangeEvent) => void;
+  onContentSizeChange?: (width: number, height: number) => void;
   children: ReactNode;
 }
 
-// The capped, scrolling nav block shared by the mobile and desktop sidebars, with the
-// divider below it. The divider is a sibling because Unistyles does not patch the
-// gesture-handler ScrollView.
-function SidebarNavScroll({ closeGestureRef, windowContent, children }: SidebarNavScrollProps) {
+// The capped, scrolling nav block shared by the mobile and desktop sidebars. The divider is
+// the caller's sibling because Unistyles does not patch the gesture-handler ScrollView.
+function SidebarNavViewport({
+  closeGestureRef,
+  windowContent,
+  maxShare,
+  onLayout,
+  onContentSizeChange,
+  children,
+}: SidebarNavViewportProps) {
+  const viewportStyle = useMemo(
+    () =>
+      maxShare === undefined
+        ? styles.navScroll
+        : [styles.navScroll, { maxHeight: `${maxShare * 100}%` as const }],
+    [maxShare],
+  );
+  return platformIsNative ? (
+    <GHScrollView
+      // Same contract as the workspace list: vertical drags scroll the nav
+      // block, a clear horizontal intent still activates the close pan.
+      simultaneousHandlers={closeGestureRef}
+      style={viewportStyle}
+      showsVerticalScrollIndicator={false}
+      alwaysBounceVertical={false}
+      onLayout={onLayout}
+      onContentSizeChange={onContentSizeChange}
+      testID="sidebar-nav-scroll"
+    >
+      {children}
+    </GHScrollView>
+  ) : (
+    <ScrollView
+      dataSet={windowContent ? WINDOW_CONTENT_DATASET : undefined}
+      style={viewportStyle}
+      showsVerticalScrollIndicator={false}
+      alwaysBounceVertical={false}
+      onLayout={onLayout}
+      onContentSizeChange={onContentSizeChange}
+      testID="sidebar-nav-scroll"
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
+// The mobile sidebar's nav block: the capped viewport and a fixed divider below it.
+function SidebarNavScroll({
+  closeGestureRef,
+  children,
+}: {
+  closeGestureRef: RefObject<GestureType | undefined>;
+  children: ReactNode;
+}) {
   return (
     <>
-      {platformIsNative ? (
-        <GHScrollView
-          // Same contract as the workspace list: vertical drags scroll the nav
-          // block, a clear horizontal intent still activates the close pan.
-          simultaneousHandlers={closeGestureRef}
-          style={styles.navScroll}
-          showsVerticalScrollIndicator={false}
-          alwaysBounceVertical={false}
-          testID="sidebar-nav-scroll"
-        >
-          {children}
-        </GHScrollView>
-      ) : (
-        <ScrollView
-          dataSet={windowContent ? WINDOW_CONTENT_DATASET : undefined}
-          style={styles.navScroll}
-          showsVerticalScrollIndicator={false}
-          alwaysBounceVertical={false}
-          testID="sidebar-nav-scroll"
-        >
-          {children}
-        </ScrollView>
-      )}
+      <SidebarNavViewport closeGestureRef={closeGestureRef}>{children}</SidebarNavViewport>
       <SidebarSeparator testID="sidebar-nav-separator" />
+    </>
+  );
+}
+
+const SIDEBAR_NAV_GROUP_ID = "sidebar-nav";
+
+interface DesktopSidebarNavProps {
+  closeGestureRef: RefObject<GestureType | undefined>;
+  /** Height the viewport's percentage cap resolves against; 0 until measured. */
+  containerHeight: number;
+  onBeforeNavigate: () => void;
+}
+
+// The desktop nav block. Its divider drags: a smaller share gives the Workspaces list more room
+// and the nav rows scroll inside what is left. The share is saved in app settings.
+function DesktopSidebarNav({
+  closeGestureRef,
+  containerHeight,
+  onBeforeNavigate,
+}: DesktopSidebarNavProps) {
+  const { settings, updateSettings } = useAppSettings();
+  const savedShare = settings.sidebarNavShare;
+  // The pointer's share while a drag is in progress. The saved share is decided once, when the
+  // drag ends, so moves along the way cannot overwrite the share the nav had before it.
+  const [dragShare, setDragShare] = useState<number | null>(null);
+  const [navHeight, setNavHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+
+  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    setNavHeight(event.nativeEvent.layout.height);
+  }, []);
+  const handleContentSizeChange = useCallback((_width: number, height: number) => {
+    setContentHeight(height);
+  }, []);
+  const handlePreviewResize = useCallback((_groupId: string, sizes: number[]) => {
+    const [share] = sizes;
+    if (share !== undefined) setDragShare(clampSidebarNavShare(share));
+  }, []);
+  const handleResize = useCallback(
+    (_groupId: string, sizes: number[]) => {
+      setDragShare(null);
+      const [share] = sizes;
+      if (share === undefined || containerHeight <= 0) return;
+      const contentShare = contentHeight / containerHeight;
+      const next = clampSidebarNavShare(resolveDraggedShare(share, savedShare, contentShare));
+      if (next === savedShare) return;
+      updateSettings({ sidebarNavShare: next }).catch((error: unknown) => {
+        console.error("[Sidebar] Failed to save the nav share:", error);
+      });
+    },
+    [containerHeight, contentHeight, savedShare, updateSettings],
+  );
+
+  // The viewport stops at its content height, so a drag starts from where the divider is drawn
+  // rather than from the share the viewport may grow to.
+  const separatorSizes = useMemo(() => {
+    const share = containerHeight > 0 ? navHeight / containerHeight : savedShare;
+    return [share, 1 - share];
+  }, [containerHeight, navHeight, savedShare]);
+
+  return (
+    <>
+      <SidebarNavViewport
+        closeGestureRef={closeGestureRef}
+        windowContent
+        maxShare={dragShare ?? savedShare}
+        onLayout={handleViewportLayout}
+        onContentSizeChange={handleContentSizeChange}
+      >
+        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={onBeforeNavigate} />
+      </SidebarNavViewport>
+      <ResizeHandle
+        testID="sidebar-nav-separator"
+        direction="vertical"
+        groupId={SIDEBAR_NAV_GROUP_ID}
+        index={0}
+        sizes={separatorSizes}
+        containerSize={containerHeight}
+        onPreviewResizeSplit={handlePreviewResize}
+        onResizeSplit={handleResize}
+      />
     </>
   );
 }
@@ -844,6 +961,13 @@ function DesktopSidebar({
     ],
     [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
+  // The nav viewport's percentage cap resolves against this view's content box, so the divider
+  // drag measures against the same box: the laid-out height less the safe-area padding.
+  const [sidebarHeight, setSidebarHeight] = useState(0);
+  const handleSidebarLayout = useCallback((event: LayoutChangeEvent) => {
+    setSidebarHeight(event.nativeEvent.layout.height);
+  }, []);
+  const navContainerHeight = Math.max(0, sidebarHeight - insetsTop - insets.bottom);
   const inTopBand = useTopBand() !== null;
   // Windows and Linux draw their window controls top-right, so the sidebar has no chrome
   // row there. The strip above the scrolling rows is then its window drag surface.
@@ -860,7 +984,7 @@ function DesktopSidebar({
       closeGesture={closeGesture}
     >
       <Animated.View style={desktopSidebarStyle}>
-        <View style={desktopSidebarBorderStyle}>
+        <View style={desktopSidebarBorderStyle} onLayout={handleSidebarLayout}>
           <View style={styles.sidebarDragArea}>
             {showsChromeRow ? (
               <View style={styles.desktopChromeRow}>
@@ -890,9 +1014,11 @@ function DesktopSidebar({
               app-region rects to scroll viewports, so a scrolled-out row would
               still claim its no-drag rect. */}
           {hasNavRows ? (
-            <SidebarNavScroll closeGestureRef={closeGestureRef} windowContent>
-              <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
-            </SidebarNavScroll>
+            <DesktopSidebarNav
+              closeGestureRef={closeGestureRef}
+              containerHeight={navContainerHeight}
+              onBeforeNavigate={closeSidebar}
+            />
           ) : null}
 
           <SidebarViewSlot dismiss={closeSidebar}>
