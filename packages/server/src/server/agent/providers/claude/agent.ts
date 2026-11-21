@@ -2545,6 +2545,8 @@ class ClaudeAgentSession implements AgentSession {
   private queryRestartNeeded = false;
   /** True from the moment a query's launch options are copied until the query exists. */
   private queryStarting = false;
+  /** The launch every overlapping ensureQuery() caller shares until it settles. */
+  private queryCreation: Promise<Query> | null = null;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -3832,7 +3834,19 @@ class ClaudeAgentSession implements AgentSession {
     if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
       return this.query;
     }
+    // Each launch replaces this.query and this.childProcess, so a second launch
+    // started while one is in flight would orphan the first Claude process.
+    if (this.queryCreation) {
+      return this.queryCreation;
+    }
+    const creation = this.createQuery(launchMode).finally(() => {
+      if (this.queryCreation === creation) this.queryCreation = null;
+    });
+    this.queryCreation = creation;
+    return creation;
+  }
 
+  private async createQuery(launchMode: PermissionMode): Promise<Query> {
     if (this.queryRestartNeeded && this.query) {
       await this.retireQuery();
     }
