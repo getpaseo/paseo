@@ -16,9 +16,26 @@ const systemPromptCapability = z.object({
 });
 
 const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
+const fileEdit = z.object({
+  Path: z.string(),
+  Target: z.string().optional(),
+  Replacement: z.string().optional(),
+});
+const shellCommand = z.object({ CommandLine: z.string() });
+const toolOutput = z.object({
+  output: z.string().optional(),
+  exit_code: z.number().int().nullable().optional(),
+});
 
 const antigravity: AcpTransformer = {
   toolCall(call) {
+    const parsedOutput = toolOutput.safeParse(call.output);
+    const outputText =
+      parsedOutput.success && typeof parsedOutput.data.output === "string"
+        ? parsedOutput.data.output
+        : typeof call.output === "string"
+          ? call.output
+          : undefined;
     if (call.name === "write_file") {
       const input = fileWrite.safeParse(call.input);
       if (input.success) {
@@ -28,8 +45,45 @@ const antigravity: AcpTransformer = {
         };
       }
     }
+    if (call.name === "edit_file") {
+      const input = fileEdit.safeParse(call.input);
+      if (input.success) {
+        return {
+          ...call,
+          detail: {
+            type: "edit",
+            filePath: input.data.Path,
+            oldString: input.data.Target,
+            newString: input.data.Replacement,
+          },
+        };
+      }
+    }
+    if (call.name === "run_command" || call.kind === "execute") {
+      const input = shellCommand.safeParse(call.input);
+      if (input.success) {
+        return {
+          ...call,
+          detail: {
+            type: "shell",
+            command: input.data.CommandLine,
+            ...(outputText !== undefined ? { output: outputText } : {}),
+            ...(parsedOutput.success && parsedOutput.data.exit_code !== undefined
+              ? { exitCode: parsedOutput.data.exit_code }
+              : {}),
+          },
+        };
+      }
+    }
     if (call.kind === "read" && call.locations[0]) {
-      return { ...call, detail: { type: "read", filePath: call.locations[0] } };
+      return {
+        ...call,
+        detail: {
+          type: "read",
+          filePath: call.locations[0],
+          ...(outputText !== undefined ? { content: outputText } : {}),
+        },
+      };
     }
     return call;
   },

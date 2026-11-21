@@ -72,6 +72,20 @@ it.each([true, false])(
               sessionUpdate: "tool_call", toolCallId: "write", name: "write_file", title: "File notes.txt",
               status: "completed", kind: "edit", rawInput: { Path: "/repo/notes.txt", Content: "hello" },
             } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "edit", name: "edit_file", title: "File notes.txt",
+              status: "completed", kind: "edit", rawInput: { Path: "/repo/notes.txt", Target: "old", Replacement: "new" },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "shell", name: "run_command", title: "ls -la",
+              status: "completed", kind: "execute", rawInput: { CommandLine: "ls -la" },
+              rawOutput: { output: "total 0\\n", exit_code: 0 },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "read", name: "read_file", title: "File notes.txt",
+              status: "completed", kind: "read", locations: [{ path: "/repo/notes.txt" }],
+              rawInput: { Path: "/repo/notes.txt" }, rawOutput: { output: "1: hello" },
+            } } });
             send({ id, result: { configOptions } });
             break;
           case "session/set_config_option":
@@ -151,6 +165,47 @@ it.each([true, false])(
           item: expect.objectContaining({
             type: "tool_call",
             detail: { type: "write", filePath: "/repo/notes.txt", content: "hello" },
+          }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({
+            type: "tool_call",
+            detail: {
+              type: "edit",
+              filePath: "/repo/notes.txt",
+              oldString: "old",
+              newString: "new",
+            },
+          }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({
+            type: "tool_call",
+            detail: {
+              type: "shell",
+              command: "ls -la",
+              output: "total 0\n",
+              exitCode: 0,
+            },
+          }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({
+            type: "tool_call",
+            detail: {
+              type: "read",
+              filePath: "/repo/notes.txt",
+              content: "1: hello",
+            },
           }),
         }),
       );
