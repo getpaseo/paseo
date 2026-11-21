@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   balanceToneFromRemaining,
   hashAccountKey,
+  fetchWithAutoProxy,
   unavailable,
   type UsageAccount,
   type UsageScope,
@@ -186,7 +187,7 @@ function usageWindows({
 
 export async function fetchUsage(
   input: CodexUsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
   lookup: StoreLookup = {},
 ): Promise<UsageReport> {
   const auth = await readAuth(input, lookup);
