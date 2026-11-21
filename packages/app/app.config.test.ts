@@ -112,3 +112,52 @@ describe("hardware keyboard scene integration", () => {
     expect(configureHardwareKeyboardAppDelegate(configured)).toBe(configured);
   });
 });
+
+// Android Bold text bolds unstyled text at draw time after React Native measured it
+// unbolded, which clips trailing words (#4057). The activity must opt out.
+describe("Android Bold text opt-out", () => {
+  const {
+    configureIgnoreBoldTextMainActivity,
+  } = require("./plugins/with-android-ignore-bold-text.js");
+  const mainActivity = [
+    "package sh.paseo",
+    "import expo.modules.splashscreen.SplashScreenManager",
+    "",
+    "import android.os.Build",
+    "import android.os.Bundle",
+    "",
+    "import com.facebook.react.ReactActivity",
+    "",
+    "class MainActivity : ReactActivity() {",
+    "  override fun onCreate(savedInstanceState: Bundle?) {",
+    "    super.onCreate(null)",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  it("zeroes fontWeightAdjustment before the activity attaches and is idempotent", () => {
+    const configured = configureIgnoreBoldTextMainActivity(mainActivity);
+    expect(configured).toMatch(/^import android\.content\.Context$/m);
+    expect(configured).toMatch(/^import android\.content\.res\.Configuration$/m);
+    expect(configured).toContain("override fun attachBaseContext(newBase: Context)");
+    expect(configured).toContain("override.fontWeightAdjustment = 0");
+    expect(configured).toContain(
+      "super.attachBaseContext(newBase.createConfigurationContext(override))",
+    );
+    expect(configured.indexOf("attachBaseContext")).toBeLessThan(configured.indexOf("onCreate"));
+    expect(configureIgnoreBoldTextMainActivity(configured)).toBe(configured);
+  });
+
+  it("fails the prebuild when the MainActivity template changes shape", () => {
+    expect(() => configureIgnoreBoldTextMainActivity("package sh.paseo\n")).toThrow(
+      /MainActivity class declaration/,
+    );
+  });
+
+  it("is registered in the app config", async () => {
+    const { exp } = await getPrebuildConfigAsync(__dirname, { platforms: ["android"] });
+    // Expo records function plugins by name.
+    expect(exp.plugins).toContain("withAndroidIgnoreBoldText");
+  }, 30_000);
+});
