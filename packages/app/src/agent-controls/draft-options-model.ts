@@ -47,6 +47,7 @@ export interface DraftOptionsModel {
   applyProfile: (profile: { provider: string; options: ProviderOptions }) => void;
   setRemembered: (remembered: ProviderOptions) => void;
   setOption: (key: string, value: unknown) => void;
+  retainResolvedOption: (key: string, requestKey: string) => ProviderOptions | undefined;
   applyResolved: (resolved: ResolvedDraftOptions) => void;
 }
 
@@ -111,6 +112,17 @@ export function openDraftOptions(input: {
           ? current
           : { ...current, edits: { ...current.edits, [key]: value } },
       );
+    },
+    retainResolvedOption: (key, requestKey) => {
+      const resolved = state.resolved;
+      if (resolved?.requestKey !== requestKey || key in state.edits) return undefined;
+      const value = resolved.options[key];
+      if (value === undefined || !resolved.controls.some((control) => control.key === key)) {
+        return undefined;
+      }
+      const patch = { [key]: value };
+      publish((current) => ({ ...current, edits: { ...current.edits, ...patch } }));
+      return patch;
     },
     applyResolved: (resolved) =>
       publish((current) => ({

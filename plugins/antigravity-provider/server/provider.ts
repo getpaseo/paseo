@@ -1,171 +1,153 @@
-import { createHash } from "node:crypto";
+import { execCommand } from "@getpaseo/plugin/server";
+import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import {
-  negotiateProviderCapabilities,
-  requireProviderCapabilities,
-  type ProviderCatalog,
-  type ProviderConnection,
-  type ProviderEvent,
-  type ProviderInput,
-  type ProviderLaunch,
+  PROVIDER_PROTOCOL_VERSION,
+  type ProviderInstallationLaunch,
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
-import { getCatalog, getStatus } from "./internal/catalog.js";
-import { Session } from "./internal/session.js";
-import { AntigravityError } from "./internal/wire.js";
+import { z } from "zod";
+import { mapToolCall } from "./tool-calls.js";
 
-const capabilities = [
-  "prompt.message",
-  "prompt.image",
-  "session.configure",
-  "session.persistence",
-] as const;
+const legacySession = z.object({
+  version: z.literal(1),
+  data: z.object({ conversationId: z.string().min(1) }),
+});
+const systemPromptCapability = z.object({
+  antigravity: z.object({ systemPrompt: z.object({ append: z.literal(true) }) }),
+});
 
-export function createAntigravityProvider(): ProviderRegistration {
-  return {
-    id: "antigravity",
-    label: "Antigravity",
-    icon: "icon.svg",
-    command: ["agy"],
-    description: "Antigravity CLI on your host",
-    async status({ launch }) {
-      if (!launch)
-        return {
-          available: false,
-          diagnostic: "agy not found on PATH. Install Antigravity, then run `agy` and sign in.",
-        };
-      return getStatus(launch);
-    },
-    async getCatalogCacheKey({ launch }) {
-      if (!launch) return undefined;
-      const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
-      return createHash("sha256")
-        .update(JSON.stringify([launch.command, launch.args, env]))
-        .digest("hex");
-    },
-    async connect(request) {
-      if (!request.versions.includes(1))
-        throw new AntigravityError("Provider protocol version 1 is required");
-      if (!request.launch)
-        throw new AntigravityError("The daemon must supply the Antigravity launch");
-      const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
-      return createConnection(request.launch, negotiated);
-    },
-  };
+// agy 1.5.13 advertises these built-in commands and its invocable skills in one ACP list.
+const builtInCommands = new Set([
+  "goal",
+  "compact",
+  "schedule",
+  "browser",
+  "plan",
+  "grill-me",
+  "teamwork",
+  "learn",
+  "boost",
+]);
+
+const antigravity: AcpTransformer = {
+  command(command) {
+    return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
+  },
+  toolCall: mapToolCall,
+  sessionOpen({ persistence, systemPrompt, agentMetadata }) {
+    // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
+    const saved = legacySession.safeParse(persistence);
+    return {
+      sessionId: saved.success ? saved.data.data.conversationId : undefined,
+      metadata:
+        systemPrompt && systemPromptCapability.safeParse(agentMetadata).success
+          ? { antigravity: { systemPrompt: { append: systemPrompt } } }
+          : undefined,
+    };
+  },
+  async configure(change, { apply, catalog }) {
+    // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
+    if (change.target === "model" && change.value) {
+      const legacyModel = /^(.*)-(xhigh|high|medium|low|minimal)$/.exec(change.value);
+      if (legacyModel) {
+        const { models } = catalog();
+        const [, model, effort] = legacyModel;
+        if (
+          !models.some((option) => option.id === change.value) &&
+          models.some((option) => option.id === model)
+        ) {
+          await apply({ target: "model", value: model });
+          if (catalog().thinkingOptions?.some((option) => option.id === effort)) {
+            await apply({ target: "thinking", value: effort });
+          }
+          return "handled";
+        }
+      }
+    }
+    return "pass";
+  },
+};
+
+/** The release `agy --version` reports, or its first line when it names no release. */
+async function readAgyVersion(
+  launch: ProviderInstallationLaunch,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  // The launch ends with the `acp` subcommand and its flags; the version comes from the CLI itself.
+  const acp = launch.args.indexOf("acp");
+  const prefix = acp === -1 ? launch.args : launch.args.slice(0, acp);
+  const { stdout } = await execCommand(launch.command, [...prefix, "--version"], {
+    env: launch.env,
+    timeout: 5000,
+    maxBuffer: 8192,
+    signal,
+  });
+  const firstLine = stdout.trim().split("\n")[0]?.trim();
+  return /\b\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? (firstLine || undefined);
 }
 
-function createConnection(
-  launch: ProviderLaunch,
-  negotiated: readonly string[],
-): ProviderConnection {
-  const sessions = new Map<string, Session>();
-  const listeners = new Set<(event: ProviderEvent) => void>();
-  let discovered: ProviderCatalog | null = null;
-  let closed = false;
-  let pending = Promise.resolve();
-
-  function emit(event: ProviderEvent): void {
-    if (closed) return;
-    for (const listener of listeners) listener(event);
-  }
-  function catalog(): ProviderCatalog {
-    if (discovered === null)
-      throw new AntigravityError("Antigravity catalog has not been discovered");
-    return discovered;
-  }
-  function session(id: string): Session {
-    const found = sessions.get(id);
-    if (!found) throw new AntigravityError(`Unknown Antigravity session: ${id}`);
-    return found;
-  }
-  async function dispatch(input: ProviderInput): Promise<void> {
-    switch (input.type) {
-      case "catalog":
-        discovered = await getCatalog(launch, input.cwd);
-        emit({
-          type: "catalog",
-          requestId: input.requestId,
-          catalog: catalog(),
-        });
-        return;
-      case "session.open": {
-        if (sessions.has(input.sessionId))
-          throw new AntigravityError(`Session already exists: ${input.sessionId}`);
-        if (discovered === null) discovered = await getCatalog(launch, input.config.cwd);
-        const opened = new Session({
-          id: input.sessionId,
-          config: input.config,
-          persistence: input.persistence,
-          catalog,
-          launch,
-          emit,
-        });
-        sessions.set(input.sessionId, opened);
-        try {
-          await opened.open(input.requestId, negotiated);
-        } catch (error) {
-          sessions.delete(input.sessionId);
-          await opened.close();
-          throw error;
-        }
-        return;
-      }
-      case "session.prompt":
-        await session(input.sessionId).prompt(input.prompt);
-        return;
-      case "session.configure":
-        session(input.sessionId).configure(input.changes);
-        break;
-      case "session.interrupt":
-        await session(input.sessionId).interrupt();
-        break;
-      case "session.close": {
-        await session(input.sessionId).close();
-        sessions.delete(input.sessionId);
-        emit({ type: "session.closed", sessionId: input.sessionId });
-        break;
-      }
-      default:
-        throw new AntigravityError(`Unsupported Antigravity operation: ${input.type}`);
-    }
-    emit({ type: "request.completed", requestId: input.requestId });
-  }
-  function failed(input: ProviderInput, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof AntigravityError ? error.code : "ANTIGRAVITY_ERROR";
-    if (input.type === "session.prompt")
-      emit({
-        type: "session.prompt_result",
-        sessionId: input.sessionId,
-        clientMessageId: input.prompt.clientMessageId,
-        result: { type: "failed", error: { message, code } },
-      });
-    else if ("requestId" in input)
-      emit({ type: "request.failed", requestId: input.requestId, error: { message, code } });
-  }
+export function createAntigravityProvider(): ProviderRegistration {
+  const provider = runAcpProvider({
+    id: "antigravity",
+    label: "Antigravity",
+    description: "Antigravity CLI on your host",
+    icon: "icon.svg",
+    command: ["agy", "acp", "--disable-telemetry"],
+    acpOptions: {
+      waitForInitialCommands: true,
+      loadReplayQuietPeriodMs: 200,
+      // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
+      deferTurnOnRunningTools: {
+        keepsTurnOpen(toolCall) {
+          const input = toolCall.input;
+          if (typeof input === "object" && input !== null && !Array.isArray(input)) {
+            return input.IsDaemon !== true;
+          }
+          return true;
+        },
+      },
+      autoAcceptMode: {
+        mode: {
+          id: "full-access",
+          label: "Full access",
+          description: "Approve tool requests without asking.",
+          icon: "ShieldOff",
+          colorTier: "dangerous",
+        },
+        nativeMode: "default",
+        default: true,
+      },
+    },
+    transformers: [antigravity],
+  });
   return {
-    version: 1,
-    capabilities: negotiated,
-    async send(input) {
-      if (closed) throw new AntigravityError("Antigravity connection is closed");
-      requireProviderCapabilities(negotiated, input);
-      pending = pending
-        .then(async () => {
-          if (!closed) await dispatch(input);
-          return undefined;
-        })
-        .catch((error) => failed(input, error));
+    ...provider,
+    // agy documents no update command and no release source, so there is nothing to check or run.
+    installation: {
+      installUrl: "https://antigravity.google/docs/getting-started?tab=cli",
+      async inspect({ launch, signal }) {
+        if (!launch?.resolved) return { status: "not_installed" };
+        const version = await readAgyVersion(launch, signal);
+        return version ? { status: "installed", version } : { status: "installed" };
+      },
     },
-    onEvent(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    async close() {
-      if (closed) return;
-      closed = true;
-      await pending;
-      await Promise.all([...sessions.values()].map((opened) => opened.close()));
-      sessions.clear();
-      listeners.clear();
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "Install Antigravity 1.5.0 or later." };
+      try {
+        const connection = await provider.connect({
+          launch,
+          versions: [PROVIDER_PROTOCOL_VERSION],
+          capabilities: [],
+        });
+        await connection.close();
+        return { available: true };
+      } catch {
+        return {
+          available: false,
+          diagnostic:
+            "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        };
+      }
     },
   };
 }

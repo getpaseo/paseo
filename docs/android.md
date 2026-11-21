@@ -121,6 +121,14 @@ from `packages/app/android`:
 
 These check terminal arrow ownership, held-key repeats and modifiers, and ordinary text-field editing.
 
+Run the display density regression tests the same way:
+
+```bash
+./gradlew :paseo-display-metrics:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+These check that React Native sizes text at the window's density when the window is on another display, such as Samsung DeX.
+
 ### Diagnostic logs without ADB
 
 In a dogfood build, open Android's Files app → Downloads → **Paseo diagnostics** and share all

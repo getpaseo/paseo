@@ -20,6 +20,14 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Picker trigger tooltips
+
+Keep the picker surface outside `TooltipTrigger`. React focus events bubble
+through portals, so putting the surface inside the trigger makes focus in its
+search field look like focus on the button when a shortcut opens the picker.
+For new `ComboboxTrigger` buttons, pass the hint through the `tooltip` prop. An
+explicit `TooltipTrigger` wrapper is also safe when it wraps only the button.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow
