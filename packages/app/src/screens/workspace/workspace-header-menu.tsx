@@ -20,6 +20,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
 import {
   extraMutedIconColorMapping,
@@ -221,6 +222,7 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
   onExitFocusMode?: () => void;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  management: { pages: readonly MenuPageDefinition[]; items: React.ReactNode };
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
@@ -239,6 +241,7 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   normalizedWorkspaceId,
+  management,
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
@@ -276,8 +279,8 @@ export function WorkspaceHeaderMenuMobile({
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
   const pluginMenu = usePluginWorkspaceMenu(normalizedServerId, normalizedWorkspaceId);
   const pages = useMemo(
-    () => [...scriptsMenu.pages, ...pluginMenu.pages],
-    [scriptsMenu.pages, pluginMenu.pages],
+    () => [...scriptsMenu.pages, ...pluginMenu.pages, ...management.pages],
+    [scriptsMenu.pages, pluginMenu.pages, management.pages],
   );
 
   return (
@@ -343,6 +346,7 @@ export function WorkspaceHeaderMenuMobile({
           </DropdownMenuItem>
         ) : null}
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
+        {management.items}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           testID="workspace-header-archive-workspace"

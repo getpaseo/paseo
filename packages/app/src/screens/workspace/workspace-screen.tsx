@@ -216,6 +216,7 @@ import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
 } from "@/screens/workspace/workspace-header-menu";
+import { useWorkspaceHeaderManagement } from "@/screens/workspace/workspace-header-management";
 import { PluginHeaderButtons } from "@/plugins";
 import {
   createWorkspaceFileTabTarget,
@@ -1060,6 +1061,11 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  const workspaceHeaderManagement = useWorkspaceHeaderManagement({
+    serverId: normalizedServerId,
+    workspace: workspaceDescriptor,
+    isRouteFocused,
+  });
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
     void getHostRuntimeStore()
@@ -3423,6 +3429,7 @@ function WorkspaceScreenContent({
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
             scripts={compactHeaderScripts}
+            management={workspaceHeaderManagement}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
             showCreateBrowserTab={showCreateBrowserTab}
@@ -3464,6 +3471,7 @@ function WorkspaceScreenContent({
       showCreateBrowserTab,
       showWorkspaceSetup,
       workspaceDirectory,
+      workspaceHeaderManagement,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
     ],

@@ -17,6 +17,7 @@ import { getServerId } from "../support/helpers/server-id";
 import {
   clickArchiveWorkspaceMenuItem,
   expectWorkspaceAbsentFromSidebar,
+  openMobileAgentSidebar,
 } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
@@ -314,6 +315,11 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     return entries.some((entry) => entry.id === workspaceId);
   }
 
+  async function archiveFromCompactHeader(page: Page) {
+    await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Archive workspace", exact: true }).click();
+  }
+
   test("a risky workspace archive is gated by confirmation and removes its worktree after acceptance", async ({
     page,
   }) => {
@@ -344,6 +350,54 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
       .toBe(false);
 
     createdWorktreeDirectories.delete(worktree.workspaceDirectory);
+  });
+
+  test("the compact workspace header confirms risky worktree archive", async ({ page }) => {
+    const worktree = await createWorktree("archive-risk-header");
+    await seedRiskyWorktree(client, worktree.workspaceDirectory);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const route = buildHostWorkspaceRoute(getServerId(), worktree.workspaceId);
+    await page.goto(route);
+    const openArchive = () => archiveFromCompactHeader(page);
+
+    const warning = await answerArchiveWarning(page, "dismiss", openArchive);
+    expect(warning.message()).toContain("Uncommitted changes");
+    expect(warning.message()).toContain("1 unpushed commit");
+    await expectAppRoute(page, route);
+    expect(await hostListsWorkspace(worktree.workspaceId)).toBe(true);
+    expect(existsSync(worktree.workspaceDirectory)).toBe(true);
+
+    await answerArchiveWarning(page, "accept", openArchive);
+    await expect(page).toHaveURL(/\/new(?:\?|$)/);
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    await expect.poll(() => existsSync(worktree.workspaceDirectory)).toBe(false);
+    createdWorktreeDirectories.delete(worktree.workspaceDirectory);
+  });
+
+  test("the compact workspace header archive keeps a subsequently opened workspace active", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const worktree = await createWorktree("archive-risk-header-switch");
+    const statusRequest = await holdCheckoutStatusRequest(page, worktree);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(buildHostWorkspaceRoute(serverId, worktree.workspaceId));
+
+    await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
+    await expect(
+      page.getByRole("menuitem", { name: "Copy branch name", exact: true }),
+    ).toBeVisible();
+    statusRequest.arm();
+    await page.getByRole("menuitem", { name: "Archive workspace", exact: true }).click();
+    await statusRequest.waitForHeld();
+    await openMobileAgentSidebar(page);
+    await workspaceRow(page, worktree.project.workspaceId).click();
+    const openedRoute = buildHostWorkspaceRoute(serverId, worktree.project.workspaceId);
+    await expectAppRoute(page, openedRoute);
+
+    statusRequest.release();
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    await expectAppRoute(page, openedRoute);
   });
 
   test("the row's archive button warns from the host's git state while the row has none, and Cancel keeps the worktree", async ({

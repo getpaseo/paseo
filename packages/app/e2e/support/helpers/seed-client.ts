@@ -14,6 +14,7 @@ export interface SeedWorkspaceDescriptor {
   workspaceDirectory: string;
   diffStat: { additions: number; deletions: number } | null;
   labels?: string[];
+  status: import("@getpaseo/protocol/messages").WorkspaceDescriptorPayload["status"];
 }
 
 interface SeedProjectDescriptor {
