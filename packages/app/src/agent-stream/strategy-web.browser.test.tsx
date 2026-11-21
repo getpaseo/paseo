@@ -282,6 +282,22 @@ describe("web disclosure hold", () => {
   });
 });
 
+describe("web output following", () => {
+  it("keeps the reading position when stream output grows before the wheel scroll event", async () => {
+    const history = Array.from({ length: 20 }, (_, index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    const readingOffset = timeline.scrollTop() - 400;
+    timeline.wheelUpTo(readingOffset);
+    // Stream output can commit before the browser delivers the scroll event.
+    timeline.render({ historyMounted: [...history, row(20)] });
+    await timeline.settle();
+    expect(timeline.scrollTop()).toBe(readingOffset);
+  });
+});
+
 describe("web history start", () => {
   it("loads older history when an upward wheel lands at the start after the reader stopped following", async () => {
     let olderHistoryLoads = 0;

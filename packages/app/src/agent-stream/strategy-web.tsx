@@ -1052,12 +1052,27 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
     const handleWheel = (event: WheelEvent) => {
       if (
-        !event.ctrlKey &&
-        event.deltaY < 0 &&
-        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.deltaY >= 0 ||
+        !scrollEnabled ||
+        canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardViewportInput();
+        return;
       }
+
+      // The browser can apply the wheel movement after stream output has
+      // already requested another scroll to the bottom.
+      if (
+        followOutputRef.current &&
+        Math.max(scrollContainer.scrollTop, lastKnownScrollTopRef.current) >
+          USER_SCROLL_DELTA_EPSILON
+      ) {
+        stopFollowingOutputFromUserIntent();
+        return;
+      }
+
+      markUpwardViewportInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isUpwardViewportScrollKey(event)) {
@@ -1184,6 +1199,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
+    scrollEnabled,
+    stopFollowingOutputFromUserIntent,
   ]);
 
   useEffect(() => {
