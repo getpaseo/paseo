@@ -1,3 +1,4 @@
+import { phase } from "./checkout-phase.js";
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import { resolve, dirname, basename } from "path";
 import {
@@ -4449,12 +4450,23 @@ export async function getPullRequestStatus(
   if (!options?.force) {
     const cached = pullRequestStatusCache.get(cacheKey);
     if (cached) {
+      phase({ name: "forge_cache", fields: { cacheHit: true } })("ok");
       return cached;
     }
 
     const existing = pullRequestStatusInFlight.get(cacheKey);
     if (existing) {
-      return existing;
+      const end = phase({ name: "forge_cache", fields: { alreadyActive: true } });
+      return existing.then(
+        (value) => {
+          end("joined");
+          return value;
+        },
+        (error) => {
+          end("error");
+          throw error;
+        },
+      );
     }
   }
 

@@ -1,3 +1,4 @@
+import { bindCheckoutPhase, phase } from "./checkout-phase.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
@@ -302,7 +303,16 @@ function executeGitCommand<Output>(
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
-  const startCommand = () => {
+  const endQueue = phase({
+    name: "git_queue",
+    fields: {
+      active: gitProcessScheduler.activeCount,
+      pending: gitProcessScheduler.pendingCount,
+    },
+  });
+  const startCommand = bindCheckoutPhase(() => {
+    endQueue();
+    const endSpawn = phase({ name: "git_spawn" });
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -572,8 +582,12 @@ function executeGitCommand<Output>(
         settle(() => resolve(result));
       });
     });
+    void resultPromise.then(
+      () => endSpawn(),
+      () => endSpawn("error"),
+    );
     return { result: resultPromise, exited };
-  };
+  });
   const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,

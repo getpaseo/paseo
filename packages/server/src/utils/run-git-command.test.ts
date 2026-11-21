@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CheckoutPhaseRow } from "./checkout-phase.js";
 
 interface FakeSpawnBehavior {
   closeDelayMs?: number;
@@ -229,9 +230,109 @@ describe("runGitCommand", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     fakeSpawnController.reset();
     vi.resetModules();
     vi.unstubAllEnvs();
+  });
+
+  it("carries independent checkout correlation through queued scheduler admission and spawn", async () => {
+    vi.useFakeTimers();
+    const git = await loadRunGitCommand(1);
+    const { closeRefresh, joinRefresh, newRefresh, runRefresh, traceCheckoutRequest } =
+      await import("./checkout-phase.js");
+    const cwd = "/tmp/git-cwd-sentinel";
+    const argv = ["diff", "argv-sentinel-ref"];
+    const binaryPath = "/tmp/git-bin-sentinel";
+    const rawError = new Error("git-raw-error-sentinel");
+    enqueueSpawnBehaviors(
+      { delayMs: 1_000 },
+      { delayMs: 0 },
+      { emitError: rawError, delayMs: 600 },
+    );
+    git.startGitCommandMetrics();
+    const firstRows: CheckoutPhaseRow[] = [];
+    const secondRows: CheckoutPhaseRow[] = [];
+    const firstRefresh = newRefresh();
+    const secondRefresh = newRefresh();
+    const submit = (id: string, refresh: typeof firstRefresh, rows: CheckoutPhaseRow[]) =>
+      traceCheckoutRequest({
+        id,
+        sink: (row) => rows.push(row),
+        run: () => {
+          joinRefresh({ refresh, alreadyActive: false });
+          return runRefresh(refresh, () =>
+            git.runGitCommand(argv, { cwd, envOverlay: { PATH: binaryPath } }),
+          ).finally(() => closeRefresh(refresh));
+        },
+      });
+    const firstId = "11111111-1111-4111-8111-111111111111";
+    const secondId = "22222222-2222-4222-8222-222222222222";
+    const first = submit(firstId, firstRefresh, firstRows);
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    const second = submit(secondId, secondRefresh, secondRows);
+    await vi.waitFor(() => expect(git.getGitCommandMetrics().pending).toBe(1));
+    expect(fakeSpawnController.processes).toHaveLength(1);
+    expect(git.getGitCommandMetrics()).toMatchObject({ active: 1, pending: 1 });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(secondRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requestId: secondId,
+          refreshId: secondRefresh.id,
+          cycleId: secondRefresh.cycleId,
+          phase: "git_queue",
+          outcome: "start",
+          operation: "other-read",
+        }),
+      ]),
+    );
+    expect(secondRows.some((row) => row.phase === "git_spawn")).toBe(false);
+    expect(fakeSpawnController.processes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(2));
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ exitCode: 0 }),
+      expect.objectContaining({ exitCode: 0 }),
+    ]);
+    const secondRowsForRefresh = secondRows.filter(
+      (row) => row.refreshId === secondRefresh.id && row.cycleId === secondRefresh.cycleId,
+    );
+    expect(secondRowsForRefresh).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ requestId: secondId, phase: "git_queue", outcome: "start" }),
+        expect.objectContaining({ requestId: secondId, phase: "git_queue", outcome: "ok" }),
+        expect.objectContaining({ requestId: secondId, phase: "git_spawn", outcome: "start" }),
+        expect.objectContaining({ requestId: secondId, phase: "git_spawn", outcome: "ok" }),
+      ]),
+    );
+    expect(secondRows.every((row) => row.requestId === secondId)).toBe(true);
+    expect(secondRows.some((row) => row.refreshId === firstRefresh.id)).toBe(false);
+    expect(firstRows.every((row) => row.requestId === firstId)).toBe(true);
+    expect(firstRows.some((row) => row.refreshId === secondRefresh.id)).toBe(false);
+    const errorRefresh = newRefresh();
+    const errorRows: CheckoutPhaseRow[] = [];
+    const failed = submit("77777777-7777-4777-8777-777777777777", errorRefresh, errorRows);
+    const rejection = expect(failed).rejects.toBe(rawError);
+    await vi.advanceTimersByTimeAsync(600);
+    await rejection;
+    expect(errorRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ refreshId: errorRefresh.id, phase: "git_queue", outcome: "ok" }),
+        expect.objectContaining({
+          refreshId: errorRefresh.id,
+          phase: "git_spawn",
+          outcome: "error",
+        }),
+      ]),
+    );
+    for (const rows of [firstRows, secondRows, errorRows]) {
+      for (const sentinel of [cwd, ...argv, binaryPath, rawError.message]) {
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      }
+    }
+    expect(git.stopGitCommandMetrics().pending).toBe(0);
   });
 
   it("throttles concurrent git commands to the configured limit", async () => {

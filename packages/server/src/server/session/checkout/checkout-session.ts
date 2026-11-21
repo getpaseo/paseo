@@ -1,3 +1,4 @@
+import { traceCheckoutRequest, phase } from "../../../utils/checkout-phase.js";
 import type pino from "pino";
 import type { SessionDelivery } from "../owned-subscriptions/index.js";
 import { isAbsolute } from "node:path";
@@ -131,6 +132,7 @@ export interface CheckoutSessionOptions {
   paseoHome: string;
   worktreesRoot: string | undefined;
   logger: pino.Logger;
+  phaseLogger?: pino.Logger;
 }
 
 /**
@@ -158,6 +160,7 @@ export class CheckoutSession {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
+  private readonly phaseLogger?: pino.Logger;
   private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
@@ -170,6 +173,7 @@ export class CheckoutSession {
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
     this.logger = options.logger;
+    this.phaseLogger = options.phaseLogger;
   }
 
   private async resolveForgeService(
@@ -239,37 +243,57 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
     const resolvedCwd = expandTilde(cwd);
 
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
-      this.host.emit({
-        type: "checkout_status_response",
-        payload: buildCheckoutStatusPayloadFromSnapshot({
-          cwd,
-          requestId,
-          snapshot,
-        }),
-      });
-    } catch (error) {
-      this.host.emit({
-        type: "checkout_status_response",
-        payload: {
-          cwd,
-          isGit: false,
-          repoRoot: null,
-          currentBranch: null,
-          isDirty: null,
-          baseRef: null,
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          behindOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-          isPaseoOwnedWorktree: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
+    return traceCheckoutRequest({
+      id: requestId,
+      sink: (row) => this.phaseLogger?.info(row, "checkout_phase"),
+      run: async () => {
+        try {
+          const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
+          const endResponse = phase({ name: "response" });
+          try {
+            this.host.emit({
+              type: "checkout_status_response",
+              payload: buildCheckoutStatusPayloadFromSnapshot({
+                cwd,
+                requestId,
+                snapshot,
+              }),
+            });
+            endResponse();
+          } catch (error) {
+            endResponse("error");
+            throw error;
+          }
+        } catch (error) {
+          const endResponse = phase({ name: "response" });
+          try {
+            this.host.emit({
+              type: "checkout_status_response",
+              payload: {
+                cwd,
+                isGit: false,
+                repoRoot: null,
+                currentBranch: null,
+                isDirty: null,
+                baseRef: null,
+                aheadBehind: null,
+                aheadOfOrigin: null,
+                behindOfOrigin: null,
+                hasRemote: false,
+                remoteUrl: null,
+                isPaseoOwnedWorktree: false,
+                error: toCheckoutError(error),
+                requestId,
+              },
+            });
+            endResponse();
+          } catch (emitError) {
+            endResponse("error");
+            throw emitError;
+          }
+        }
+      },
+    });
   }
 
   async handleCommitsListRequest(msg: CheckoutCommitsListRequest): Promise<void> {

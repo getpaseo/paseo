@@ -1,3 +1,4 @@
+import { phase, withPhase } from "../utils/checkout-phase.js";
 import { LRUCache } from "lru-cache";
 import {
   normalizeHost,
@@ -157,11 +158,16 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
   async function probeHostForge(host: string): Promise<string | null> {
     const cached = readFreshProbe(host);
     if (cached !== undefined) {
+      phase({ name: "forge_cache", fields: { cacheHit: true } })("ok");
       return cached;
     }
     const existing = inFlightProbes.get(host);
     if (existing) {
-      return existing;
+      return withPhase({
+        name: "forge_cache",
+        run: () => existing,
+        fields: { alreadyActive: true },
+      });
     }
     const pending = (async () => {
       try {

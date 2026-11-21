@@ -499,6 +499,7 @@ export interface SessionOptions {
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
+  checkoutPhaseLogger?: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
   paseoHome: string;
@@ -900,6 +901,7 @@ export class Session {
       onWorkspaceRecovered,
       publishScriptStatusUpdate,
       logger,
+      checkoutPhaseLogger,
       downloadTokenStore,
       pushNotifications,
       paseoHome,
@@ -1068,6 +1070,7 @@ export class Session {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.sessionLogger,
+      phaseLogger: checkoutPhaseLogger,
     });
     this.workspaceGitObserver = createWorkspaceGitObserverService({
       workspaceGitService: this.workspaceGitService,
