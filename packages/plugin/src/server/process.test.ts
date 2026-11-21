@@ -51,3 +51,33 @@ test("spawnProcess delivers shell arguments to the real child unchanged", async 
   });
   expect(JSON.parse(stdout)).toEqual(argumentsToPreserve);
 });
+
+// A multiline `-f query=<GraphQL>` argument must survive the Windows spawn
+// path. cmd.exe cuts a value at the first newline, so gh used to receive an
+// empty/partial query. Bypassing the shell for newline-bearing arguments
+// preserves it byte for byte.
+test("execCommand preserves a multiline argument", async () => {
+  const script = await writeArgumentReader();
+  const multiline = "query=query Q {\n  rateLimit { limit }\n}";
+  const { stdout } = await execCommand("node", [script, multiline]);
+  expect(JSON.parse(stdout)).toEqual([multiline]);
+});
+
+test("spawnProcess preserves a multiline argument", async () => {
+  const script = await writeArgumentReader();
+  const multiline = "query=query Q {\n  rateLimit { limit }\n}";
+  const child = spawnProcess("node", [script, multiline], { stdio: "pipe" });
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Argument reader exited with ${code}`));
+    });
+  });
+  expect(JSON.parse(stdout)).toEqual([multiline]);
+});
