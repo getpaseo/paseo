@@ -5,7 +5,7 @@ import type { V2Api } from "./api.js";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
-import { spawnProcess } from "../../../../../utils/spawn.js";
+import { spawnProviderProcess } from "../../../provider-process/spawn.js";
 import { terminateWithTreeKill } from "../../../../../utils/tree-kill.js";
 import {
   createProviderEnvSpec,
@@ -259,10 +259,11 @@ export class V2Runtime {
       ? configured
       : decorateOpenCodeV2Env(configured, plugin, bridge ? {} : { mode: "structured-only" });
     const args = [...launch.args, "serve", "--hostname", "127.0.0.1", "--port", "0"];
-    const process = spawnProcess(launch.command, args, {
+    const process = spawnProviderProcess(launch.command, args, {
       cwd,
       detached: globalThis.process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
+      logger,
       ...createProviderEnvSpec({
         runtimeSettings: settings,
         overlays: [{ ...decorated, OPENCODE_PASSWORD: password }],

@@ -1,5 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
@@ -493,3 +496,66 @@ describe("JSONL stdout byte admission", () => {
     child.stderr.end();
   });
 });
+
+describe("JSONL RPC provider process exit", () => {
+  test("stops a command the provider left running when the provider crashes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jsonl-rpc-leftover-"));
+    const providerPidPath = join(directory, "provider.pid");
+    const commandPidPath = join(directory, "command.pid");
+    // The command leads its own session, as Pi's foreground shell does, so the provider's
+    // process group does not reach it once the provider is gone.
+    const command = `
+      require("node:fs").writeFileSync(${JSON.stringify(commandPidPath)}, String(process.pid));
+      setInterval(() => {}, 1000);
+    `;
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(command)}], { detached: true, stdio: "ignore" }).unref();
+      require("node:fs").writeFileSync(${JSON.stringify(providerPidPath)}, String(process.pid));
+      process.stdin.resume();
+    `;
+    const transport = startProcess({ source });
+    let commandPid: number | null = null;
+    try {
+      const providerPid = await waitForPid(providerPidPath);
+      commandPid = await waitForPid(commandPidPath);
+      const exit = nextExit(transport);
+
+      process.kill(providerPid, "SIGKILL");
+      await exit;
+
+      await waitUntil(() => !isRunning(commandPid ?? -1), "the provider's command kept running");
+    } finally {
+      if (commandPid !== null && isRunning(commandPid)) process.kill(commandPid, "SIGKILL");
+      await transport.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntil(check: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForPid(path: string): Promise<number> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const pid = Number.parseInt(await readFile(path, "utf8").catch(() => ""), 10);
+    if (Number.isInteger(pid) && isRunning(pid)) return pid;
+    if (Date.now() > deadline) throw new Error(`no running process recorded in ${path}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}

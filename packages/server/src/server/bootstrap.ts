@@ -227,6 +227,7 @@ import {
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
 import { withTimeout } from "../utils/promise-timeout.js";
+import { settleProviderCleanups } from "./agent/provider-process/spawn.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
@@ -2065,6 +2066,12 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
+    // Providers closed above stop their leftover processes after they exit; let that finish.
+    await withTimeout({
+      promise: settleProviderCleanups(),
+      timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+      label: "stop processes left by providers",
+    }).catch((error) => logger.warn({ err: error }, "Provider leftovers were not all stopped"));
     await pluginRuntime.stopAllPlugins();
     try {
       if (keepTerminals) {

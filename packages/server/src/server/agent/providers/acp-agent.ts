@@ -133,6 +133,7 @@ import {
   createStringCommandShellEnvOverlay,
 } from "../../../utils/string-command-shell.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { spawnProviderProcess } from "../provider-process/spawn.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
@@ -1548,13 +1549,14 @@ export class ACPAgentClient implements AgentClient {
     client: ACPClient = this.buildProbeClient(),
   ): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
-    const child = spawnProcess(command, args, {
+    const child = spawnProviderProcess(command, args, {
       cwd: process.cwd(),
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
         overlays: [launchEnv],
       }),
       stdio: ["pipe", "pipe", "pipe"],
+      logger: this.logger,
     });
     assertChildWithPipes(child);
 
@@ -3132,13 +3134,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
-    const child = spawnProcess(command, args, {
+    const child = spawnProviderProcess(command, args, {
       cwd: await this.resolveProcessCwd(),
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
         overlays: [this.launchEnv],
       }),
       stdio: ["pipe", "pipe", "pipe"],
+      logger: this.logger,
     });
     assertChildWithPipes(child);
 

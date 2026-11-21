@@ -6,7 +6,8 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
+import type { Logger } from "pino";
+import { spawnProviderProcess } from "../../provider-process/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -17,6 +18,7 @@ export type ClaudeQueryInput = Parameters<typeof query>[0] & { options: ClaudeOp
 export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 
 export interface ClaudeQueryContext {
+  logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
@@ -57,7 +59,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { logger, runtimeSettings, launchEnv, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -82,7 +84,7 @@ function applyRuntimeSettingsToClaudeOptions(
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
+      const child = spawnProviderProcess(command, args, {
         cwd: spawnOptions.cwd,
         ...(selfNodeCommand
           ? { env: selfNodeCommand.env, envMode: "internal" as const }
@@ -93,6 +95,7 @@ function applyRuntimeSettingsToClaudeOptions(
         // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
         // The command is always a resolved binary path, so shell routing is unnecessary.
         shell: false,
+        logger,
       });
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {
@@ -108,7 +111,7 @@ function applyRuntimeSettingsToClaudeOptions(
   };
 }
 
-export function claudeQuery(input: ClaudeQueryInput, context: ClaudeQueryContext = {}): Query {
+export function claudeQuery(input: ClaudeQueryInput, context: ClaudeQueryContext): Query {
   const launchQuery = context.queryFactory ?? query;
   return launchQuery({
     ...input,
