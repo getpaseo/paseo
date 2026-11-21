@@ -658,9 +658,7 @@ describe("file explorer", () => {
 describe("commit file diffs", () => {
   test.each([".", "apps/web"])("opens committed files from %s workspaces", async (relativePath) => {
     const cwd = tmpCwd();
-    onTestFinished(() =>
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
-    );
+    onTestFinished(() => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     const workspace = path.join(cwd, relativePath);
     const filePath = "apps/web/notes.txt";
     function git(args: string[]): string {

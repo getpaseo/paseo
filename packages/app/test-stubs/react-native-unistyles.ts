@@ -158,7 +158,10 @@ export const StyleSheet = {
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
 
-type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<string, unknown>;
+type UniPropsMapping = (
+  theme: typeof testTheme,
+  runtime: typeof UnistylesRuntime,
+) => Record<string, unknown>;
 
 /**
  * Applies the theme mapping and `uniProps` with the test theme, the way Unistyles maps theme values
@@ -166,10 +169,9 @@ type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<stri
  */
 export const withUnistyles = <T>(Component: T, mapping?: UniPropsMapping): T => {
   function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
-    // Explicit props win over mapped ones, as in Unistyles' `deepMergeObjects(mappings, uniProps, props)`.
     return createElement(Component as ElementType, {
-      ...mapping?.(testTheme, {}),
-      ...uniProps?.(testTheme, {}),
+      ...mapping?.(testTheme, UnistylesRuntime),
+      ...uniProps?.(testTheme, UnistylesRuntime),
       ...props,
     });
   }
