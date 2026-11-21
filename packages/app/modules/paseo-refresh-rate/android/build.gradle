@@ -1,0 +1,19 @@
+apply plugin: 'com.android.library'
+
+group = 'sh.paseo.refreshrate'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace "sh.paseo.refreshrate"
+}
+
+dependencies {
+  testImplementation "junit:junit:4.13.2"
+}
