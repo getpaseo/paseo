@@ -888,6 +888,58 @@ describe("OMP history mapper", () => {
     expect(events[1]).toMatchObject({ type: "timeline", timestamp: "2026-10-05T04:31:19.537Z" });
   });
 
+  // repro: getpaseo/paseo#6854 — OMP writes credential_pin between messages for OAuth account affinity
+  test("ignores credential_pin control entries during history replay", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omp-credential-pin-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    try {
+      await writeFile(
+        sessionFile,
+        [
+          { type: "session", id: "root", parentId: null },
+          {
+            type: "message",
+            id: "prompt-1",
+            parentId: "root",
+            message: { role: "user", content: "Check status" },
+          },
+          {
+            type: "credential_pin",
+            id: "pin-1",
+            parentId: "prompt-1",
+            timestamp: "2026-10-14T00:00:01.000Z",
+            provider: "openai-codex",
+            hash: "acct-scope-hash",
+          },
+          {
+            type: "message",
+            id: "answer-1",
+            parentId: "pin-1",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "All clear." }],
+              responseId: "resp-1",
+            },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n"),
+      );
+
+      const events: AgentStreamEvent[] = [];
+      for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+        events.push(event);
+      }
+
+      expect(events.map((event) => event.item)).toEqual([
+        { type: "user_message", text: "Check status", messageId: "prompt-1" },
+        { type: "assistant_message", text: "All clear.", messageId: "resp-1" },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("maps omp 18.1 custom_message entries like live custom messages", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-custom-message-history-"));
     const sessionFile = join(dir, "session.jsonl");
