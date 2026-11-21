@@ -4,10 +4,12 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
+import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { expect, test, type Page } from "../support/fixtures";
 import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
   connectNewWorkspaceDaemonClient,
+  loadSessionMessageReaders,
   openProjectViaDaemon,
   type OpenedProject,
 } from "../support/helpers/new-workspace";
@@ -30,6 +32,8 @@ test.use({
         omp: { enabled: false },
         opencode: { enabled: false },
         pi: { enabled: false },
+        antigravity: { enabled: false },
+        muse: { enabled: false },
         [brokenProvider]: {
           extends: "acp",
           label: "Broken ACP",
@@ -134,6 +138,58 @@ test("an open Import Session row keeps its age current", async ({ page }) => {
   await expect(row).toContainText("1m ago");
   await page.clock.fastForward("03:00");
   await expect(row).toContainText("4m ago");
+});
+
+test("shows listing failure details beside healthy sessions and retries the failed provider", async ({
+  page,
+}, testInfo) => {
+  const frames = await loadSessionMessageReaders();
+  const requests: FetchRecentProviderSessionsRequestMessage[] = [];
+  const completed = new Set<string>();
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const request = frames.client(payload);
+      if (request?.type === "fetch_recent_provider_sessions_request") {
+        requests.push(request);
+      }
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const response = frames.server(payload);
+      if (response?.type === "fetch_recent_provider_sessions_response") {
+        completed.add(response.payload.requestId);
+      }
+    });
+  });
+  const flow = new ImportSessionFlow(page);
+  for (const width of [1280, 390]) {
+    await flow.openWorkspace(scenario.project.workspaceId, { width, height: 844 });
+    await flow.openGlobally();
+    await flow.expectProviderError("Broken ACP");
+    const healthySession = page.getByTestId(
+      `import-session-session-claude-${scenario.importSessionId}`,
+    );
+    await expect(healthySession).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`listing-failure-${width}.png`) });
+    await expect(page.getByTestId("import-session-provider-errors")).toContainText(
+      "missing-agent-command",
+    );
+
+    const requestOffset = requests.length;
+    await flow.retryProvider(brokenProvider, "Broken ACP");
+    await expect
+      .poll(() => requests.slice(requestOffset).map((request) => request.providers))
+      .toEqual([[brokenProvider]]);
+    const retriedRequest = requests[requestOffset];
+    if (!retriedRequest) throw new Error("Retry did not send a provider listing request");
+    await expect.poll(() => completed.has(retriedRequest.requestId)).toBe(true);
+    await expect(page.getByTestId(`import-session-retry-${brokenProvider}`)).toBeEnabled();
+    await expect(page.getByTestId("import-session-provider-errors")).toContainText(
+      "missing-agent-command",
+    );
+    await expect(healthySession).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`listing-failure-retry-${width}.png`) });
+    await flow.close();
+  }
 });
 
 test("captures the compact import-session journey", async ({ page }, testInfo) => {
