@@ -1,6 +1,8 @@
-import { mkdir, rename, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,6 +36,80 @@ async function commitAll(repository: string, message: string): Promise<string> {
   await runGitCommand(["commit", "-m", message], { cwd: repository });
   const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
   return stdout.trim();
+}
+
+async function serveGitHttp({
+  request,
+  response,
+  root,
+  traffic,
+}: {
+  request: IncomingMessage;
+  response: ServerResponse;
+  root: string;
+  traffic: { bytes: number };
+}) {
+  const url = new URL(request.url!, "http://localhost");
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  const body = Buffer.concat(chunks);
+  const child = spawn("git", ["http-backend"], {
+    env: {
+      ...process.env,
+      GIT_PROJECT_ROOT: root,
+      GIT_HTTP_EXPORT_ALL: "1",
+      PATH_INFO: url.pathname,
+      QUERY_STRING: url.search.slice(1),
+      REQUEST_METHOD: request.method,
+      CONTENT_TYPE: request.headers["content-type"],
+      CONTENT_LENGTH: String(body.length),
+      HTTP_GIT_PROTOCOL: request.headers["git-protocol"] as string | undefined,
+    },
+  });
+  const closed = once(child, "close");
+  child.stdin.end(body);
+  const output: Buffer[] = [];
+  for await (const chunk of child.stdout) output.push(chunk as Buffer);
+  const [code] = await closed;
+  const data = Buffer.concat(output);
+  const end = data.indexOf("\r\n\r\n");
+  if (code !== 0 || end < 0) throw new Error("git http-backend failed");
+  for (const line of data.subarray(0, end).toString().split("\r\n")) {
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const name = line.slice(0, colon);
+    const value = line.slice(colon + 1).trim();
+    if (name.toLowerCase() === "status") response.statusCode = Number(value.slice(0, 3));
+    else response.setHeader(name, value);
+  }
+  const responseBody = data.subarray(end + 4);
+  traffic.bytes += responseBody.length;
+  response.end(responseBody);
+}
+
+function createGitFixtureServer({
+  root,
+  posts,
+  traffic = { bytes: 0 },
+}: {
+  root: string;
+  posts: string[];
+  traffic?: { bytes: number };
+}) {
+  return createServer((request, response) => {
+    if (
+      request.headers.authorization !==
+      `Basic ${Buffer.from("fixture:fake-secret").toString("base64")}`
+    ) {
+      response.writeHead(401, { "WWW-Authenticate": 'Basic realm="fixture"' }).end();
+      return;
+    }
+    const url = new URL(request.url!, "http://localhost");
+    if (request.method === "POST") posts.push(url.pathname);
+    void serveGitHttp({ request, response, root, traffic }).catch(() =>
+      response.writeHead(500).end(),
+    );
+  });
 }
 
 /** Points https://github.com/fixture/repository.git at a local repository for the callback. */
@@ -118,6 +194,376 @@ describe("managed Git plugin sources", () => {
         await sources.discard(candidate);
       }
     });
+  }, 30_000);
+
+  it("downloads only the files of the installed commit, not every blob in history", async () => {
+    const repository = await createRepository();
+    // A file that exists only in history, like screenshots a plugin repository later dropped.
+    await writeFile(path.join(repository, "history-only.bin"), "x".repeat(256 * 1024));
+    await commitAll(repository, "add a large asset");
+    const { stdout: historyBlob } = await runGitCommand(["rev-parse", "HEAD:history-only.bin"], {
+      cwd: repository,
+    });
+    await rm(path.join(repository, "history-only.bin"));
+    await commitAll(repository, "drop the asset");
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: repository });
+    await runGitCommand(["config", "uploadpack.allowAnySHA1InWant", "true"], { cwd: repository });
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+
+    let candidate = await sources.prepareInstall({
+      source: `git:${pathToFileURL(repository).href}`,
+    });
+    candidate = await sources.place("managed-example", candidate);
+
+    expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+      "export default",
+    );
+    const { stdout: checkoutRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: candidate.directory,
+    });
+    const { stdout: missing } = await runGitCommand(
+      ["rev-list", "--objects", "--all", "--missing=print"],
+      { cwd: checkoutRoot.trim() },
+    );
+    expect(missing.split("\n")).toContain(`?${historyBlob.trim()}`);
+  }, 30_000);
+
+  it("downloads only declared files for a Git plugin inside a repository", async () => {
+    const repository = await createRepository();
+    const plugin = path.join(repository, "plugins", "review");
+    await mkdir(path.join(plugin, "src"), { recursive: true });
+    await writeFile(
+      path.join(plugin, "paseo-plugin.json"),
+      JSON.stringify({ id: "review", gitFiles: ["index.server.ts", "src", "a file.txt"] }),
+    );
+    await writeFile(path.join(plugin, "index.server.ts"), "export default () => {};\n");
+    await writeFile(path.join(plugin, "src", "needed.ts"), "export const needed = true;\n");
+    await writeFile(path.join(plugin, "a file.txt"), "needed\n");
+    await writeFile(path.join(plugin, "unused.bin"), "unneeded plugin file\n");
+    await writeFile(path.join(repository, "unrelated.bin"), "unneeded repository file\n");
+    const revision = await commitAll(repository, "nested plugin");
+    const pluginBlob = (
+      await runGitCommand(["rev-parse", `${revision}:plugins/review/unused.bin`], {
+        cwd: repository,
+      })
+    ).stdout.trim();
+    const otherBlob = (
+      await runGitCommand(["rev-parse", `${revision}:unrelated.bin`], { cwd: repository })
+    ).stdout.trim();
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: repository });
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-sparse-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+    let candidate = await sources.prepareInstall({
+      source: `git:${pathToFileURL(repository).href}`,
+      pluginPath: "plugins/review",
+      ref: revision,
+    });
+    expect(await readFile(path.join(candidate.directory, "src", "needed.ts"), "utf8")).toContain(
+      "needed",
+    );
+    expect(await readFile(path.join(candidate.directory, "a file.txt"), "utf8")).toBe("needed\n");
+    expect(existsSync(path.join(candidate.directory, "unused.bin"))).toBe(false);
+    expect(existsSync(path.join(candidate.versionRoot, "checkout", "unrelated.bin"))).toBe(false);
+    const missing = (
+      await runGitCommand(["rev-list", "--objects", "--all", "--missing=print"], {
+        cwd: candidate.directory,
+      })
+    ).stdout.split("\n");
+    expect(missing).toContain(`?${pluginBlob}`);
+    expect(missing).toContain(`?${otherBlob}`);
+
+    candidate = await sources.place("review", candidate);
+    sources.commit("review", candidate.record);
+    await writeFile(
+      path.join(plugin, "paseo-plugin.json"),
+      JSON.stringify({ id: "review", gitFiles: ["index.server.ts", "new.txt"] }),
+    );
+    await writeFile(path.join(plugin, "new.txt"), "new selection\n");
+    const next = await commitAll(repository, "change selected files");
+    const preview = await sources.preview("review", candidate.directory);
+    expect(preview.target).toEqual({ kind: "git", commit: next });
+    const updated = await sources.prepareUpdate(preview.proposal!, candidate.directory);
+    expect(await readFile(path.join(updated.directory, "new.txt"), "utf8")).toBe("new selection\n");
+    expect(existsSync(path.join(updated.directory, "src", "needed.ts"))).toBe(false);
+    expect(await readFile(path.join(candidate.directory, "src", "needed.ts"), "utf8")).toContain(
+      "needed",
+    );
+  }, 30_000);
+
+  it("rejects a missing declared Git file without replacing the installed plugin", async () => {
+    const repository = await createRepository();
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-sparse-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+    const remote = `git:${pathToFileURL(repository).href}`;
+    let installed = await sources.prepareInstall({ source: remote });
+    installed = await sources.place("managed-example", installed);
+    sources.commit("managed-example", installed.record);
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "managed-example", gitFiles: ["missing.ts"] }),
+    );
+    await commitAll(repository, "invalid selection");
+    const preview = await sources.preview("managed-example", installed.directory);
+    await expect(sources.prepareUpdate(preview.proposal!, installed.directory)).rejects.toThrow(
+      "Git plugin installation path does not exist: missing.ts",
+    );
+    expect(await readFile(path.join(installed.directory, "index.server.ts"), "utf8")).toContain(
+      "export default",
+    );
+  }, 30_000);
+
+  it.each(["main", "v1"])(
+    "selects declared files from Git ref %s",
+    async (ref) => {
+      const repository = await createRepository();
+      await writeFile(
+        path.join(repository, "paseo-plugin.json"),
+        JSON.stringify({ id: "managed-example", gitFiles: ["index.server.ts"] }),
+      );
+      await writeFile(path.join(repository, "unused.txt"), "not needed");
+      await commitAll(repository, "select files");
+      await runGitCommand(["tag", "v1"], { cwd: repository });
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-ref-home-"));
+      roots.push(home);
+      const sources = new ManagedPluginSources(home);
+      const candidate = await sources.prepareInstall({
+        source: `git:${pathToFileURL(repository).href}`,
+        ref,
+      });
+      expect(candidate.defaultId).toBe("managed-example");
+      expect(existsSync(path.join(candidate.directory, "index.server.ts"))).toBe(true);
+      expect(existsSync(path.join(candidate.directory, "unused.txt"))).toBe(false);
+    },
+    30_000,
+  );
+
+  it("retains all files when a Git plugin has no file list", async () => {
+    const repository = await createRepository();
+    await writeFile(path.join(repository, "extra.txt"), "kept");
+    await commitAll(repository, "extra file");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-full-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+    const candidate = await sources.prepareInstall({
+      source: `git:${pathToFileURL(repository).href}`,
+    });
+    expect(await readFile(path.join(candidate.directory, "extra.txt"), "utf8")).toBe("kept");
+  }, 30_000);
+
+  it("continues to install a plugin with a symlinked manifest", async () => {
+    const repository = await createRepository();
+    await rename(
+      path.join(repository, "paseo-plugin.json"),
+      path.join(repository, "manifest.json"),
+    );
+    await symlink("manifest.json", path.join(repository, "paseo-plugin.json"));
+    await commitAll(repository, "symlinked manifest");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-symlink-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+    const candidate = await sources.prepareInstall({
+      source: `git:${pathToFileURL(repository).href}`,
+    });
+    expect(candidate.defaultId).toBe("managed-example");
+    expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+      "export default",
+    );
+  }, 30_000);
+
+  it("initializes a selected submodule", async () => {
+    const repository = await createRepository();
+    const module = await createRepository();
+    await runGitCommand(
+      [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        pathToFileURL(module).href,
+        "module",
+      ],
+      { cwd: repository },
+    );
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "managed-example", gitFiles: ["index.server.ts", "module"] }),
+    );
+    await commitAll(repository, "select submodule");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-submodule-home-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'protocol.file.allow=always'"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const sources = new ManagedPluginSources(home);
+      const candidate = await sources.prepareInstall({
+        source: `git:${pathToFileURL(repository).href}`,
+      });
+      expect(
+        await readFile(path.join(candidate.directory, "module", "index.server.ts"), "utf8"),
+      ).toContain("export default");
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+    }
+  }, 30_000);
+
+  it("continues to install a plugin located inside a Git submodule", async () => {
+    const repository = await createRepository();
+    const module = await createRepository();
+    await runGitCommand(
+      [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        pathToFileURL(module).href,
+        "module",
+      ],
+      { cwd: repository },
+    );
+    await commitAll(repository, "add plugin submodule");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-submodule-home-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'protocol.file.allow=always'"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const sources = new ManagedPluginSources(home);
+      const candidate = await sources.prepareInstall({
+        source: `git:${pathToFileURL(repository).href}`,
+        pluginPath: "module",
+      });
+      expect(candidate.defaultId).toBe("managed-example");
+      expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+        "export default",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+    }
+  }, 30_000);
+
+  it("transfers fewer bytes when current files are excluded", async () => {
+    const repository = await createRepository();
+    const bytes = Buffer.alloc(512 * 1024);
+    let state = 0x12345678;
+    for (let i = 0; i < bytes.length; i++) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      bytes[i] = state & 255;
+    }
+    await writeFile(path.join(repository, "unused.bin"), bytes);
+    const baseline = await commitAll(repository, "full checkout");
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "managed-example", gitFiles: ["index.server.ts"] }),
+    );
+    const selected = await commitAll(repository, "select plugin files");
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-plugin-transfer-"));
+    roots.push(root);
+    await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], {
+      cwd: path.join(root, "plugin.git"),
+    });
+    const traffic = { bytes: 0 };
+    const server = createGitFixtureServer({ root, posts: [], traffic });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-transfer-home-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'credential.helper='"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/plugin.git`;
+      const sources = new ManagedPluginSources(home);
+      const full = await sources.prepareInstall({ source: remote, ref: baseline });
+      expect(existsSync(path.join(full.directory, "unused.bin"))).toBe(true);
+      const fullBytes = traffic.bytes;
+      const sparse = await sources.prepareInstall({ source: remote, ref: selected });
+      expect(existsSync(path.join(sparse.directory, "unused.bin"))).toBe(false);
+      const sparseBytes = traffic.bytes - fullBytes;
+      expect(fullBytes - sparseBytes).toBeGreaterThan(256 * 1024);
+      console.log(`Git HTTP fixture: full ${fullBytes} bytes; selected ${sparseBytes} bytes`);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it("fetches filtered checkout blobs for credentialed Git installs and updates", async () => {
+    const repository = await createRepository();
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "managed-example", gitFiles: ["index.server.ts"] }),
+    );
+    await writeFile(path.join(repository, "unused.txt"), "not part of the plugin");
+    await commitAll(repository, "declare installation files");
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-plugin-smart-http-"));
+    roots.push(root);
+    await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
+    const bare = path.join(root, "plugin.git");
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: bare });
+    const posts: string[] = [];
+    const server = createGitFixtureServer({ root, posts });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-filter-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'credential.helper='"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/plugin.git`;
+      const sources = new ManagedPluginSources(home);
+      let candidate = await sources.prepareInstall({ source: remote });
+      candidate = await sources.place("managed-example", candidate);
+      sources.commit("managed-example", candidate.record);
+      expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+        "export default",
+      );
+      expect(existsSync(path.join(candidate.directory, "unused.txt"))).toBe(false);
+      expect(posts.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(posts)).toEqual(new Set(["/plugin.git/git-upload-pack"]));
+      const installFetches = posts.length;
+      const config = await readFile(path.join(candidate.directory, ".git", "config"), "utf8");
+      expect(config).not.toMatch(/fixture:fake-secret/);
+      expect(config).toContain("https://paseo.invalid/plugin.git");
+      expect(config).toContain("partialclonefilter = blob:none");
+
+      await writeFile(
+        path.join(repository, "index.server.ts"),
+        "export default () => 'updated';\n",
+      );
+      const revision = await commitAll(repository, "update");
+      await runGitCommand(["push", bare, "main"], { cwd: repository });
+      const preview = await sources.preview("managed-example", candidate.directory);
+      expect(preview.target).toEqual({ kind: "git", commit: revision });
+      const updated = await sources.prepareUpdate(preview.proposal!, candidate.directory);
+      expect(await readFile(path.join(updated.directory, "index.server.ts"), "utf8")).toContain(
+        "updated",
+      );
+      expect(posts.length - installFetches).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   }, 30_000);
 
   it("offers current default HEAD after installing a tag", async () => {
