@@ -474,6 +474,46 @@ values are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_
 `PASEO_WORKTREE_PATH`. The script must print one valid TCP port. Paseo trusts the external allocator,
 so the port may already be bound. `portScript` takes precedence when both values are present.
 
+## Linux agent resource management
+
+Use `node scripts/agent-resources.mjs` on a host with a systemd user manager and
+cgroup v2. Provider launchers can call `run -- <provider> <args...>` to place the
+provider in `agent-workloads.slice`. Keep the daemon outside that slice so a
+workload memory limit cannot kill the control interface.
+
+Configure the aggregate slice before using the launcher. On a 32 GiB host, start
+with `MemoryHigh=12G`, `MemoryMax=16G`, `MemorySwapMax=1G`, `CPUQuota=500%`, and
+`TasksMax=1800`. These are host budgets; tune them for the machine. A scope has
+an 8 GiB memory limit, 768 MiB swap limit, 600 tasks and three CPU cores. Set
+`PASEO_RESOURCE_MEMORY_HIGH` and `PASEO_RESOURCE_MEMORY_MAX` on a provider launcher
+to tune its memory budget. A missing user manager or unsupported property fails
+launch rather than running without containment.
+
+| Command                                | Purpose                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `list`                                 | Aggregate and per-scope memory, swap, CPU time, task counts and limits as JSON                         |
+| `stop <scope>`                         | Stop an agent scope, including detached descendants; refuses the calling session's scope               |
+| `run [--timeout seconds] -- <command>` | Supervise a bounded scope and clean it after command exit or parent loss                               |
+| `job [--timeout seconds] -- <command>` | Queue a heavy job in one of two per-user slots; default deadline 30 minutes, queue deadline 10 minutes |
+| `reap`                                 | Stop scopes whose supervising wrapper has died, checking PID start time against reuse                  |
+
+Run builds and tests through `job`; the slot limit applies to commands admitted
+through that runner. Keep persistent dev servers in [workspace scripts](../public-docs/workspaces.md),
+where their lifecycle and stop control remain visible. A heavy job receives its
+own scope and budget under the aggregate slice, even when launched by an agent.
+It is bounded by its deadline rather than the parent agent's scope.
+Cancelling a job or losing its wrapper also cancels its queued submission; it cannot
+start later when a slot opens. An admitted job releases its scope on cancellation.
+
+Install the launcher and its `is-main-module.mjs` dependency at a stable path
+outside a disposable worktree. Schedule `reap` in a user systemd timer once a
+minute to cover wrapper SIGKILL or crashes. Ordinary exit and SIGTERM clean up
+immediately. Scope names carry the Paseo agent ID when `PASEO_AGENT_ID` is present;
+resource reports omit provider argv and environment values. Old `codex-*` and
+`claude-*` scopes can be inspected or stopped explicitly, but automatic reaping
+never guesses their owners. Existing runtimes keep their old launch behavior
+until reopened; installing a new wrapper does not restart them.
+
 ## Bundled daemon web UI
 
 > The user-facing guide for this feature (enabling it, reverse proxy, TLS, tunnels, security) lives at [public-docs/web-ui.md](../public-docs/web-ui.md). This section is the contributor/build reference: how the artifact is produced, bundled, and excluded from desktop packaging.
