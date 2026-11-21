@@ -857,13 +857,14 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     await expect(card.getByText("resets in 30m", { exact: false }).first()).toBeVisible();
     const forecast = card.getByText(exhaustionClock);
     await expect(forecast).toBeVisible();
-    const forecastAt = await forecast.innerText();
+    const forecastTime = (await forecast.innerText()).replace(/^[^0-9]+/, "");
     // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
     // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
     await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
     await expect(card.getByText(/resets in (28|29)m/).first()).toBeVisible();
-    await expect(forecast).toHaveText(forecastAt);
+    // The weekday drops off at local midnight, but the forecast time stays fixed.
+    await expect(forecast).toHaveText(new RegExp(` ${forecastTime}$`));
     await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
       /^resets in (28|29)m\s·\s/,
     );
