@@ -1,6 +1,7 @@
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { getFileNameFromPath } from "@/attachments/utils";
+import { getFileExtension, isRasterImagePath } from "@/attachments/file-types";
 import type { AssistantImageSourceResolution } from "@/utils/assistant-image-source";
 import {
   createAssistantImageFileAcquisitionKey,
@@ -42,6 +43,11 @@ export function createAssistantImageFileAcquisition(input: {
     }),
     locate: async () => {
       if (!port) {
+        throw new Error(input.unavailableMessage);
+      }
+      const isImagePath =
+        isRasterImagePath(resolution.path) || getFileExtension(resolution.path) === ".svg";
+      if (!isImagePath) {
         throw new Error(input.unavailableMessage);
       }
       const file = await port.readFile(resolution.cwd, resolution.path);
