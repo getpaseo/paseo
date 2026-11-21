@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import {
   runOnJS,
@@ -6,10 +6,19 @@ import {
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
+import {
+  beginSidebarResize,
+  endSidebarResize,
+  resolveSidebarResizePreviewOffset,
+} from "@/components/sidebar-resize-activity";
+import {
+  hideSidebarResizeShift,
+  useSidebarResizePreviewValues,
+} from "@/components/sidebar-resize-preview";
+import { isNative } from "@/constants/platform";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -34,7 +43,14 @@ export function useExplorerGeometry({
   const resizeWidth = useSharedValue(width);
   const startWidth = useSharedValue(width);
   const resize = useSharedValue<ExplorerSidebarResize | null>(null);
-  const [resizePressed, setResizePressed] = useState(false);
+  // A shared value so pressing and releasing the grip does not re-render the workspace.
+  const resizePressed = useSharedValue(false);
+  // The width the finger asks for. Under a held drag it reaches the frame only when the drag ends.
+  const targetWidth = useSharedValue(width);
+  const preview = useSidebarResizePreviewValues();
+  // On native the drag holds the committed width and shifts the dock, so the workspace column
+  // beside it lays out once, when the drag ends. Web follows the drag live.
+  const heldPreview = isNative ? preview : null;
   useAnimatedReaction(
     () => ({ resize: resize.value, width, containerWidth, overlay, resizeEnabled }),
     ({ resize: currentResize, ...allocation }) => {
@@ -44,17 +60,18 @@ export function useExplorerGeometry({
     [containerWidth, overlay, resize, resizeEnabled, width],
   );
 
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
         .enabled(resizeEnabled)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onBegin(() => scheduleOnRN(showResizeGrip))
+        .onBegin(() => {
+          resizePressed.value = true;
+        })
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          runOnJS(beginSidebarResize)();
           const currentWidth = resolveExplorerSidebarFrameWidth({
             width,
             containerWidth,
@@ -71,15 +88,32 @@ export function useExplorerGeometry({
           });
           startWidth.value = currentWidth + event.translationX;
           resizeWidth.value = currentWidth;
+          targetWidth.value = currentWidth;
+          if (heldPreview) {
+            heldPreview.offset.value = 0;
+            heldPreview.visible.value = true;
+          }
         })
         .onUpdate((event) => {
           if (!resize.value) return;
-          resizeWidth.value = resolveExplorerSidebarWidth({
+          targetWidth.value = resolveExplorerSidebarWidth({
             requestedWidth: startWidth.value - event.translationX,
             containerWidth,
           });
+          if (heldPreview) {
+            heldPreview.offset.value = resolveSidebarResizePreviewOffset({
+              grows: "left",
+              committedWidth: resizeWidth.value,
+              targetWidth: targetWidth.value,
+            });
+          } else resizeWidth.value = targetWidth.value;
         })
         .onEnd((_event, success) => {
+          // The width lands in the frame that returns the shift to 0; the pending resize keeps it
+          // there until React acknowledges it.
+          if (success) resizeWidth.value = targetWidth.value;
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          runOnJS(endSidebarResize)();
           {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, success);
             if (!success || !resize.value) return;
@@ -90,18 +124,20 @@ export function useExplorerGeometry({
           if (!success) {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, false);
           }
-          scheduleOnRN(hideResizeGrip);
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          resizePressed.value = false;
         }),
     [
+      heldPreview,
       resizeEnabled,
       onResize,
       containerWidth,
-      hideResizeGrip,
       overlay,
       resize,
+      resizePressed,
       resizeWidth,
-      showResizeGrip,
       startWidth,
+      targetWidth,
       width,
     ],
   );
@@ -134,8 +170,10 @@ export function useExplorerGeometry({
         edge="left"
         gesture={resizeGesture}
         pressed={resizePressed}
+        held={heldPreview?.visible}
         testID="native-explorer-sidebar-resize-handle"
       />
     ),
+    resizeShift: heldPreview,
   };
 }

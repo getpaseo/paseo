@@ -4,6 +4,21 @@ export function shouldUseCompactWorkspaceHeader(width: number): boolean {
   return width < COMPACT_CONTENT_WIDTH;
 }
 
+/**
+ * The width to store for a new measurement: the current one while it gives the same compact
+ * decision, so resizing within one side of the threshold does not re-render the chrome.
+ */
+export function retainWorkspaceChromeWidth(
+  current: number | null,
+  measured: number,
+): number | null {
+  if (measured <= 0) return current;
+  if (current === null) return measured;
+  return shouldUseCompactWorkspaceHeader(current) === shouldUseCompactWorkspaceHeader(measured)
+    ? current
+    : measured;
+}
+
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
 
 export interface WorkspaceTabLayoutMetrics {

@@ -224,7 +224,10 @@ describe("resolveWorkspaceTabChipBackdrop", () => {
   });
 });
 
-import { shouldUseCompactWorkspaceHeader } from "./workspace-tab-layout";
+import {
+  retainWorkspaceChromeWidth,
+  shouldUseCompactWorkspaceHeader,
+} from "./workspace-tab-layout";
 it.each([
   [349, true],
   [499, true],
@@ -256,4 +259,23 @@ it("gives the tab switcher a readable popover width independent of its 16pt coun
     availableHeight: 600,
   }) as Array<{ minWidth?: number }>;
   expect(frame[0].minWidth).toBeGreaterThanOrEqual(320);
+});
+
+describe("retainWorkspaceChromeWidth", () => {
+  // A sidebar drag reports every width it passes; only crossing the compact threshold may update.
+  it("keeps the stored width while the compact decision is unchanged", () => {
+    expect(retainWorkspaceChromeWidth(800, 760)).toBe(800);
+    expect(retainWorkspaceChromeWidth(300, 420)).toBe(300);
+  });
+
+  it("takes the measured width when it crosses the compact threshold", () => {
+    expect(retainWorkspaceChromeWidth(800, 420)).toBe(420);
+    expect(retainWorkspaceChromeWidth(420, 800)).toBe(800);
+  });
+
+  it("takes the first measurement and ignores empty ones", () => {
+    expect(retainWorkspaceChromeWidth(null, 640)).toBe(640);
+    expect(retainWorkspaceChromeWidth(640, 0)).toBe(640);
+    expect(retainWorkspaceChromeWidth(null, 0)).toBeNull();
+  });
 });
