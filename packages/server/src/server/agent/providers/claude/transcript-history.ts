@@ -177,8 +177,18 @@ async function readOptionalFile(file: string): Promise<string | null> {
 
 /** Discover sources without retaining transcript contents. Unrelated sidechains stay excluded
  * by the replay ownership resolver; workflow children retain their separate run ownership. */
+/** Where a read of a transcript ended: the file it read, and how far. */
+export interface TranscriptCursor {
+  file: string;
+  dev: number;
+  ino: number;
+  offset: number;
+}
+
 export interface ClaudeReplayHistory {
   parentEntries: AsyncIterable<TranscriptEntry>;
+  /** Where the read of the parent transcript ended, for reading what is appended later. */
+  parentCursor: TranscriptCursor;
   subagents: {
     agentId: string;
     meta: ClaudeSubagentMeta | null;
@@ -249,12 +259,19 @@ async function indexHistory(
   }
   const parentLocations: RecordLocation[] = [];
   const locationsByAgentId = new Map<string, RecordLocation[]>();
+  let parentCursor: TranscriptCursor | null = null;
   async function scan(
     file: string,
     visit: (entry: TranscriptEntry, location: RecordLocation) => void,
   ): Promise<void> {
     const fd = await fs.open(file, "r");
     descriptors.set(file, fd);
+    if (file === historyPath) {
+      // Read before the scan: what grows meanwhile is read again by a sync, whose callers
+      // skip records they already hold.
+      const stat = await fd.stat();
+      parentCursor = { file, dev: stat.dev, ino: stat.ino, offset: stat.size };
+    }
     for await (const { entry, location } of locatedRecords(file, fd)) visit(entry, location);
   }
   for (const file of sidechainFiles) {
@@ -283,6 +300,7 @@ async function indexHistory(
   }
   return {
     parentEntries: indexedRecords(parentLocations, descriptors),
+    parentCursor: parentCursor ?? { file: historyPath, dev: 0, ino: 0, offset: 0 },
     subagents: [...locationsByAgentId].map(([agentId, locations]) => ({
       agentId,
       meta: metaByAgentId.get(agentId) ?? null,
@@ -312,4 +330,74 @@ async function optionalDirectory(directory: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/** How far back a read looks for the start of the line its cursor ends in. */
+const MAX_LINE_LOOKBACK = 4 * 1024 * 1024;
+
+export type AppendedTranscript =
+  | { kind: "rewritten" }
+  | { kind: "read"; entries: ClaudeReplayEntry[]; cursor: TranscriptCursor };
+
+/**
+ * The records appended to a transcript since `cursor`: complete lines only, from the start of
+ * the line the cursor fell in. A file that was replaced or shortened is `rewritten`.
+ */
+export async function readAppendedTranscript(
+  cursor: TranscriptCursor,
+): Promise<AppendedTranscript> {
+  let fd: FileHandle;
+  try {
+    fd = await fs.open(cursor.file, "r");
+  } catch {
+    return { kind: "rewritten" };
+  }
+  try {
+    const stat = await fd.stat();
+    if (stat.dev !== cursor.dev || stat.ino !== cursor.ino || stat.size < cursor.offset) {
+      return { kind: "rewritten" };
+    }
+    if (stat.size === cursor.offset) {
+      return { kind: "read", entries: [], cursor };
+    }
+    const start = await lineStart(fd, cursor.offset);
+    if (start === null) return { kind: "rewritten" };
+    const buffer = Buffer.allocUnsafe(stat.size - start);
+    let read = 0;
+    while (read < buffer.length) {
+      const { bytesRead } = await fd.read(buffer, read, buffer.length - read, start + read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    // A line still being written is left for the next read.
+    const end = buffer.lastIndexOf(10, read - 1);
+    if (end === -1) return { kind: "read", entries: [], cursor };
+    const entries: ClaudeReplayEntry[] = [];
+    let from = 0;
+    while (from <= end) {
+      const newline = buffer.indexOf(10, from);
+      const entry = parseRecord(buffer.subarray(from, newline).toString("utf8"));
+      if (entry) entries.push(entry);
+      from = newline + 1;
+    }
+    // Task notifications are numbered across the whole history; readers that meet one in an
+    // appended part replay the whole history instead.
+    return { kind: "read", entries, cursor: { ...cursor, offset: start + end + 1 } };
+  } finally {
+    await fd.close();
+  }
+}
+
+/** Where the line holding byte `offset - 1` starts: `offset` itself after a newline. */
+async function lineStart(fd: FileHandle, offset: number): Promise<number | null> {
+  let position = offset;
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  while (position > 0 && offset - position < MAX_LINE_LOOKBACK) {
+    const size = Math.min(chunk.length, position);
+    const { bytesRead } = await fd.read(chunk, 0, size, position - size);
+    const newline = chunk.subarray(0, bytesRead).lastIndexOf(10);
+    if (newline !== -1) return position - size + newline + 1;
+    position -= size;
+  }
+  return position === 0 ? 0 : null;
 }
