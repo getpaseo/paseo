@@ -453,12 +453,36 @@ async function waitForCapturedLog(
           workspaceOverrides: [{ workspaceId: workspace.id, policy: "ask" }],
         });
         if (!registration) throw new Error("Expected instruction registration");
+        // Simulate losing the first response by reading back only the saved policy.
+        const saved = (await destinationClient.manageHostInstructions({ action: "list" }))
+          .hostPolicies?.[0];
+        expect(saved?.id).toBe(registration.id);
+        const registrationStatus = {
+          action: "has_registration" as const,
+          destinationId: serverId,
+          id: registration.id,
+        };
+        expect(
+          (await sourceClient.manageHostInstructions(registrationStatus)).hasRegistration,
+        ).toBe(false);
+        const recovered = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "ask" }],
+          recoverRegistration: true,
+        });
+        expect(recovered.registration).toEqual(registration);
+        if (!recovered.registration) throw new Error("Expected recovered registration");
         await sourceClient.manageHostInstructions({
           action: "register",
           destinationId: serverId,
-          offer: registration.offer,
-          token: registration.token,
+          offer: recovered.registration.offer,
+          token: recovered.registration.token,
         });
+        expect(
+          (await sourceClient.manageHostInstructions(registrationStatus)).hasRegistration,
+        ).toBe(true);
         const mcp = new McpClient({ name: "instruction-source", version: "1" });
         cleanup.push(() => mcp.close());
         await mcp.connect(
@@ -640,6 +664,48 @@ async function waitForCapturedLog(
           .toEqual([
             expect.objectContaining({ id: preserved.structuredContent?.id, agentId: agent.id }),
           ]);
+
+        const restoredHost = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!restoredHost.registration) throw new Error("Expected restored host grant");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: restoredHost.registration.offer,
+          token: restoredHost.registration.token,
+        });
+        await destinationClient.manageHostInstructions({
+          action: "revoke",
+          id: narrow.registration.id,
+        });
+        const hostOnly = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(hostOnly.structuredContent?.targets).toEqual([
+          expect.objectContaining({
+            destinationId: serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+          }),
+        ]);
+        const first = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, prompt: "Use the host grant on the first try" },
+        });
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id: first.structuredContent?.id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("awaiting_approval");
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();

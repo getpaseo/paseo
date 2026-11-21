@@ -138,8 +138,24 @@ describe("host instruction inbox", () => {
     ).toBe("queued");
   });
 
+  it("reissues a legacy policy credential without invalidating accepted requests", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, workspaceOverrides: [] });
+    const admitted = await inbox.submit(grant, {
+      ...instruction,
+      target: { kind: "conversation", workspaceId: "workspace", agentId: "recipient" },
+    });
+    const recover = async () => (id: string) => `${id}.${"b".repeat(43)}`;
+    const recovered = await inbox.setHostPolicy(grant.sourceId, "ask", [], recover, true);
+    if (!recovered) throw new Error("Expected recovered registration");
+    expect(recovered.id).toBe(grant.id);
+    expect(await inbox.authenticate(grant.token)).toBeNull();
+    const principal = await inbox.authenticate(recovered.token);
+    if (!principal) throw new Error("Recovered registration was refused");
+    expect(await inbox.submit(principal, admitted.instruction)).toEqual(admitted);
+  });
+
   it("uses the host default and tightens queued instructions when a workspace rule changes", async () => {
-    const prepare = async () => {};
+    const prepare = async () => (id: string) => `${id}.${"a".repeat(43)}`;
     const grant = await inbox.setHostPolicy(
       "worker",
       "unattended",
@@ -162,6 +178,9 @@ describe("host instruction inbox", () => {
 
     expect(await inbox.setHostPolicy("worker", "ask", [], prepare)).toBeNull();
     expect(await inbox.authenticate(grant.token)).toEqual({ id: grant.id, sourceId: "worker" });
+    inbox = await HostInstructionInbox.open(home, () => now);
+    const recovered = await inbox.setHostPolicy("worker", "ask", [], prepare, true);
+    expect(recovered).toEqual({ id: grant.id, token: grant.token });
     expect((await inbox.status(grant, normal.id))?.state).toBe("awaiting_approval");
     await inbox.decide("worker", normal.id, true);
     expect((await inbox.claim("worker", normal.id, normal.target))?.state).toBe("dispatching");

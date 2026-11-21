@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import path from "node:path";
 import { createHostTransportFactory, parseHostTarget } from "@getpaseo/client/node";
 import type {
@@ -82,6 +82,7 @@ interface RuntimeOptions {
 export class HostInstructionsRuntime {
   private relay: RelayRuntime | undefined;
   private relayOffer: Promise<string> | undefined;
+  private credentialKey: Promise<string> | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly active = new Set<string>();
   private readonly discoveredTargets = new Map<string, ConversationTarget[]>();
@@ -166,7 +167,10 @@ export class HostInstructionsRuntime {
           command.workspaceOverrides,
           async () => {
             await this.getRelayOffer();
+            const key = await this.getCredentialKey();
+            return (id) => `${id}.${createHmac("sha256", key).update(id).digest("base64url")}`;
           },
+          command.recoverRegistration,
         );
         if (!grant) return {};
         return {
@@ -193,6 +197,14 @@ export class HostInstructionsRuntime {
             token: grant.token,
             workspaceId: target.workspaceId,
           },
+        };
+      }
+      case "has_registration": {
+        await this.registrationWriter.settled();
+        const registration = this.registrations.get(command.id);
+        return {
+          hasRegistration:
+            registration?.destinationId === command.destinationId && !registration.agentId,
         };
       }
       case "register": {
@@ -272,15 +284,17 @@ export class HostInstructionsRuntime {
       (registration) => registration.destinationId === destinationId,
     );
     const host = entries.findLast((registration) => !registration.agentId);
-    const existing = entries.findLast((registration) => registration.agentId === agentId);
-    // A conversation grant remains useful even after a host grant is revoked. The receiver
-    // applies the current workspace policy to this narrower credential as well.
-    const entry = existing ?? host;
+    const conversation = entries.findLast((registration) => registration.agentId === agentId);
+    // Check for revocation before choosing when both credentials could route this instruction.
+    // A missing response leaves the host credential eligible for offline queueing.
+    const targets = host && (conversation || !workspaceId) ? await this.discover(host) : [];
+    const entry = (host && this.registrations.get(registrationKey(host))) ?? conversation;
     if (!entry) throw new Error("This conversation has no instruction grant");
     const targetWorkspace =
       entry.workspaceId ??
       workspaceId ??
-      (await this.discover(entry)).find((target) => target.agentId === agentId)?.workspaceId;
+      targets.find((target) => target.agentId === agentId)?.workspaceId ??
+      conversation?.workspaceId;
     if (!targetWorkspace)
       throw new Error(
         "Conversation unavailable. List instruction targets first or pass its workspace ID",
@@ -300,6 +314,23 @@ export class HostInstructionsRuntime {
     this.stopped = true;
     clearInterval(this.timer);
     await this.relay?.stop();
+  }
+
+  private getCredentialKey(): Promise<string> {
+    this.credentialKey ??= this.loadCredentialKey().catch((error: unknown) => {
+      this.credentialKey = undefined;
+      throw error;
+    });
+    return this.credentialKey;
+  }
+
+  private async loadCredentialKey() {
+    const file = path.join(this.options.paseoHome, "host-instructions", "credential-key.json");
+    const key = await readInstructionFile(file, z.string().min(43).nullable().parse, null);
+    if (key) return key;
+    const generated = randomBytes(32).toString("base64url");
+    await new InstructionFileWriter(file).persist(generated);
+    return generated;
   }
 
   private async getRelayOffer(): Promise<string> {

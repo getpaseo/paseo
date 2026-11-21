@@ -140,40 +140,48 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
   const save = useCallback(() => {
     if (!sourceId || !directory) return;
     void act(async () => {
+      const current = findSourcePolicy(
+        await client.manageHostInstructions({ action: "list" }),
+        sourceId,
+      );
       const source = getHostRuntimeStore().getClient(sourceId);
       if (
-        !saved &&
+        !current &&
         (!source?.isConnected ||
           !source.getLastServerInfoMessage()?.features?.hostInstructionWorkspacePolicies)
       ) {
         throw new Error(t("settings.host.instructions.updateSource"));
       }
+      const canRecover =
+        source?.isConnected &&
+        source.getLastServerInfoMessage()?.features?.hostInstructionRegistrationRecovery &&
+        client.getLastServerInfoMessage()?.features?.hostInstructionRegistrationRecovery;
+      const installed =
+        current && canRecover
+          ? await source.manageHostInstructions({
+              action: "has_registration",
+              destinationId: host.serverId,
+              id: current.id,
+            })
+          : undefined;
       const { registration } = await client.manageHostInstructions({
         action: "set_policy",
         sourceId,
         policy,
         workspaceOverrides,
+        recoverRegistration: installed?.hasRegistration === false,
       });
       if (registration) {
-        try {
-          if (!source) throw new Error(t("settings.host.instructions.updateSource"));
-          await source.manageHostInstructions({
-            action: "register",
-            destinationId: host.serverId,
-            offer: registration.offer,
-            token: registration.token,
-          });
-        } catch (cause) {
-          await client.manageHostInstructions({
-            action: "revoke",
-            id: registration.id,
-            keepConversationGrants: true,
-          });
-          throw cause;
-        }
+        if (!source) throw new Error(t("settings.host.instructions.updateSource"));
+        await source.manageHostInstructions({
+          action: "register",
+          destinationId: host.serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
       }
     });
-  }, [act, client, directory, host.serverId, policy, saved, sourceId, t, workspaceOverrides]);
+  }, [act, client, directory, host.serverId, policy, sourceId, t, workspaceOverrides]);
 
   const policies = useMemo(
     () =>

@@ -114,9 +114,12 @@ export class HostInstructionInbox {
     return inbox;
   }
 
-  async createGrant(input: Omit<HostInstructionGrant, "id">) {
+  async createGrant(
+    input: Omit<HostInstructionGrant, "id">,
+    credential = (id: string) => `${id}.${randomBytes(32).toString("base64url")}`,
+  ) {
     const grant = Grant.parse({ ...input, id: randomUUID() });
-    const token = `${grant.id}.${randomBytes(32).toString("base64url")}`;
+    const token = credential(grant.id);
     const stored = { ...grant, tokenDigest: digestToken(token).toString("hex") };
     await this.commit({ ...this.data, grants: [...this.data.grants, stored] });
     return { ...structuredClone(grant), token };
@@ -126,30 +129,41 @@ export class HostInstructionInbox {
     sourceId: string,
     policy: HostInstructionGrant["policy"],
     workspaceOverrides: NonNullable<HostInstructionGrant["workspaceOverrides"]>,
-    prepare: () => Promise<void>,
+    prepare: () => Promise<(id: string) => string>,
+    recoverRegistration = false,
   ) {
     await this.writer.settled();
+    const credential =
+      !this.hostGrant(sourceId) || recoverRegistration ? await prepare() : undefined;
     const current = this.hostGrant(sourceId);
     if (!current) {
-      await prepare();
-      if (this.hostGrant(sourceId)) throw new Error("Sending host already has a policy");
-      return this.createGrant({
-        sourceId,
-        policy,
-        workspaceOverrides,
-        start: {},
-        promptWorkspaces: [],
-        promptConversations: [],
-        excludedConversations: [],
-      });
+      if (!credential) throw new Error("Host instruction policy changed. Try saving again");
+      return this.createGrant(
+        {
+          sourceId,
+          policy,
+          workspaceOverrides,
+          start: {},
+          promptWorkspaces: [],
+          promptConversations: [],
+          excludedConversations: [],
+        },
+        credential,
+      );
     }
-    const updated = StoredGrant.parse({ ...current, policy, workspaceOverrides });
+    const token = credential?.(current.id);
+    const updated = StoredGrant.parse({
+      ...current,
+      policy,
+      workspaceOverrides,
+      tokenDigest: token ? digestToken(token).toString("hex") : current.tokenDigest,
+    });
     await this.commit({
       ...this.data,
       grants: this.data.grants.map((grant) => (grant === current ? updated : grant)),
       requests: this.data.requests.map((request) => this.reconcilePolicy(request, updated)),
     });
-    return null;
+    return token ? { id: current.id, token } : null;
   }
 
   async canDiscover(principal: Principal, target: HostInstruction["target"]): Promise<boolean> {

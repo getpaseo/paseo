@@ -3574,6 +3574,12 @@ export const HostInstructionsCommandSchema = z.discriminatedUnion("action", [
     sourceId: z.string().min(1).max(256),
     policy: z.enum(["ask", "unattended"]),
     workspaceOverrides: HostInstructionWorkspaceOverridesSchema,
+    recoverRegistration: z.boolean().optional(),
+  }),
+  z.object({
+    action: z.literal("has_registration"),
+    destinationId: z.string().min(1).max(256),
+    id: z.uuid(),
   }),
   z.object({
     action: z.literal("grant"),
@@ -3611,6 +3617,7 @@ export const HostInstructionsResponseSchema = z.object({
   type: z.literal("host.instructions.manage.response"),
   payload: z.object({
     requestId: z.string(),
+    hasRegistration: z.boolean().optional(),
     registration: z
       .object({
         id: z.string(),
@@ -4083,6 +4090,7 @@ export const ServerInfoStatusPayloadSchema = z
         connectedHosts: z.boolean().optional(),
         hostInstructions: z.boolean().optional(),
         hostInstructionWorkspacePolicies: z.boolean().optional(),
+        hostInstructionRegistrationRecovery: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
