@@ -88,7 +88,7 @@ In the Slack channel you invited the bot to, send a mention:
 @Paseo summarize this repository
 ```
 
-Hub starts the agent on your daemon and posts the reply in the Slack thread. Open **Triggers** or **Activity** in Hub to inspect the delivery and run. When Hub runs behind HTTPS, replies also include an **Open in Paseo** link so organization members can jump straight to the live session.
+Hub starts the agent on your daemon and posts the reply in the Slack thread. In Hub, open **Activity** to see the run status. When Hub runs behind HTTPS, replies also include an **Open in Paseo** link so organization members can jump straight to the live session.
 
 If nothing runs, check [Activity](/docs/hub/activity) to tell a filtered mention from an unrouted event.
 

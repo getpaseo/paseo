@@ -14,7 +14,11 @@ Hub keeps provider tokens on the server and enforces the connection, action, and
 
 ## Configure in the dashboard or YAML
 
-In the Hub trigger editor, open **Integration tools**, select a connected Slack or Discord integration, enter the allowed channel IDs, and choose **Read**, **Post**, or both.
+1. In the Hub trigger editor, open **Integration access**.
+2. Select **Add integration**, then select **Slack** or **Discord**.
+3. Select the integration in **Connection**.
+4. Enter the allowed channel IDs in **Channel IDs**.
+5. Select **Read messages**, **Post messages**, or both.
 
 In `.paseo/triggers/*.yml`, add `run.tools`:
 

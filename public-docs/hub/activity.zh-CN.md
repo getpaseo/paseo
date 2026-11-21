@@ -10,7 +10,7 @@ Hub 会记录每一次已接受的事件，无论它是否启动了运行。使�
 
 ## 在哪里查看 {#where-to-look}
 
-**Activity** 列出组织的触发器运行记录，包括触发来源、daemon、执行状态、回复和错误。
+**Activity** 列出组织最近的触发器运行记录。每行显示触发器、Provider、来源、状态和 Hub 收到事件的时间。
 
 **Integrations → Known unrouted events** 显示 Hub 最近接受但未启动运行的 50 条 Provider 事件。Hub 记录以下四种原因之一：
 
@@ -36,6 +36,6 @@ Hub 会记录每一次已接受的事件，无论它是否启动了运行。使�
 
 ## Webhook 与定时运行 {#webhook-and-schedule-runs}
 
-入站 webhook 投递会以 `webhook.received` 出现在 **Activity** 中。如果 HTTP `POST` 返回错误状态码（`400`、`401`、`403`、`409`、`413` 或 `429`），参见[入站 webhook](/docs/hub/triggers/webhooks#request-limits-and-responses)。
+由入站 webhook 启动的运行会以 `webhook.received` 出现在 **Activity** 中。如果 HTTP `POST` 返回错误状态码（`400`、`401`、`403`、`409`、`413` 或 `429`），参见[入站 webhook](/docs/hub/triggers/webhooks#request-limits-and-responses)。
 
 定时运行会以 `schedule.tick` 出现在 **Activity** 中。当某次定时运行仍在进行时，Hub 会跳过该触发器新到期的计划，直到当前运行完成或失败。

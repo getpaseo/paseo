@@ -26,7 +26,7 @@ GitHub / Linear / Slack / Discord / Schedule / Webhook
 - **Integration** 是在 **Integrations** 下连接到你 Hub 组织的工作区、账号或服务器。每个已连接的账号都有唯一的连接 slug（例如 `acme-github` 或 `acme-slack`），供触发器引用。
 - **Daemon** 是运行 Paseo daemon 并注册到你 Hub 组织 **Daemons** 下的机器。只有在机器上授予 `hub.execute` 后，daemon 才会接受 Agent 启动请求。
 - **Trigger** 是一条自包含规则，将事件、定时任务或 webhook 映射到目标 daemon、工作目录、Agent 配置、提示词，以及可选的工具或输出。
-- **Activity** 记录组织内每一次已接受的投递、路由决策、执行状态、回复和错误。
+- [**Activity**](/docs/hub/activity) 显示最近的触发器运行记录和状态。
 
 ## 从事件到 Agent {#from-event-to-agent}
 

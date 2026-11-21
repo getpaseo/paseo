@@ -12,7 +12,11 @@ Hub 将 Provider 令牌保留在服务端，并在每次工具调用时校验连
 
 ## 在控制台或 YAML 中配置 {#configure-in-the-dashboard-or-yaml}
 
-在 Hub 触发器编辑器中打开 **Integration tools**，选择已连接的 Slack 或 Discord 集成，填写允许的频道 ID，然后选择 **Read**、**Post** 或两者。
+1. 在 Hub 触发器编辑器中打开 **Integration access**。
+2. 选择 **Add integration**，然后选择 **Slack** 或 **Discord**。
+3. 在 **Connection** 中选择集成。
+4. 在 **Channel IDs** 中输入允许访问的频道 ID。
+5. 选择 **Read messages**、**Post messages** 或两者。
 
 在 `.paseo/triggers/*.yml` 中添加 `run.tools`：
 

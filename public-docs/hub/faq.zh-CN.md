@@ -38,7 +38,7 @@ GitHub、Slack 和 Discord 触发器支持 `from_users: ["*"]`，这是控制台
 
 ## 定时任务或 webhook 可以发送到 Slack 或 Discord 吗？ {#can-a-schedule-or-webhook-post-to-slack-or-discord}
 
-可以。添加 [`run.tools`](/docs/hub/tools)（或在控制台中配置 **Integration tools**），即可为任意触发器授予针对显式 Slack 或 Discord 频道 ID 的受控 `read` 或 `post` 工具。
+可以。添加 [`run.tools`](/docs/hub/tools)（或在控制台中配置 **Integration access**），即可为任意触发器授予针对显式 Slack 或 Discord 频道 ID 的受控 `read` 或 `post` 工具。
 
 ## daemon 离线时会发生什么？ {#what-happens-when-a-daemon-is-offline}
 

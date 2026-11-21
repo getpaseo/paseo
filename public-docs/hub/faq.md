@@ -40,7 +40,7 @@ Add `run.outputs` to set `max` or `required: true`, and tell the agent to call `
 
 ## Can a schedule or webhook post to Slack or Discord?
 
-Yes. Add [`run.tools`](/docs/hub/tools) (or configure **Integration tools** in the dashboard) to grant any trigger scoped `read` or `post` tools for explicit Slack or Discord channel IDs.
+Yes. Add [`run.tools`](/docs/hub/tools) (or configure **Integration access** in the dashboard) to grant any trigger scoped `read` or `post` tools for explicit Slack or Discord channel IDs.
 
 ## What happens when a daemon is offline?
 

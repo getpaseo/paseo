@@ -12,7 +12,7 @@ Hub records every accepted event, whether or not it started a run. Use **Activit
 
 ## Where to look
 
-**Activity** lists organization trigger runs, including the triggering source, daemon, execution status, replies, and errors.
+**Activity** lists recent trigger runs for the organization. Each row shows the trigger, provider, source, status, and when Hub received the event.
 
 **Integrations → Known unrouted events** shows the 50 most recent accepted provider events that did not start a run. Hub records one of four reasons:
 
@@ -38,6 +38,6 @@ Check these items in order:
 
 ## Webhook and schedule runs
 
-Inbound webhook deliveries appear in **Activity** under `webhook.received`. If an HTTP `POST` returns an error status (`400`, `401`, `403`, `409`, `413`, or `429`), see [Inbound webhooks](/docs/hub/triggers/webhooks#request-limits-and-responses).
+Runs started by inbound webhooks appear in **Activity** under `webhook.received`. If an HTTP `POST` returns an error status (`400`, `401`, `403`, `409`, `413`, or `429`), see [Inbound webhooks](/docs/hub/triggers/webhooks#request-limits-and-responses).
 
 Scheduled runs appear in **Activity** under `schedule.tick`. While a scheduled run is still active, Hub skips newly due occurrences for that trigger until the active run completes or fails.

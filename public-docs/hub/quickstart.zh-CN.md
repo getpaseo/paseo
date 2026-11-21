@@ -86,7 +86,7 @@ paseo hub init
 @Paseo summarize this repository
 ```
 
-Hub 会在你的 daemon 上启动 Agent，并在 Slack 讨论串中发布回复。在 Hub 中打开 **Triggers** 或 **Activity** 可以查看投递和运行记录。当 Hub 运行在 HTTPS 下时，回复还会附带 **Open in Paseo** 链接，方便组织成员直接打开实时会话。
+Hub 会在你的 daemon 上启动 Agent，并在 Slack 讨论串中发布回复。在 Hub 中打开 **Activity** 查看运行状态。当 Hub 运行在 HTTPS 下时，回复还会附带 **Open in Paseo** 链接，方便组织成员直接打开实时会话。
 
 如果没有运行，请检查 [Activity](/docs/hub/activity) 区分被过滤的提及和未路由的事件。
 

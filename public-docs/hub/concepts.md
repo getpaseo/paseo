@@ -28,7 +28,7 @@ GitHub / Linear / Slack / Discord / Schedule / Webhook
 - An **integration** is a workspace, account, or server connected to your Hub organization under **Integrations**. Each connected account has a unique connection slug, such as `acme-github` or `acme-slack`, that triggers reference.
 - A **daemon** is a machine running the Paseo daemon and enrolled in your Hub organization under **Daemons**. Daemons accept agent launches only after you grant `hub.execute` from that machine.
 - A **trigger** is one self-contained rule that maps an event, schedule, or webhook to a target daemon, working directory, agent configuration, prompt, and optional tools or outputs.
-- **Activity** records every accepted delivery, routing decision, execution status, reply, and error across the organization.
+- [**Activity**](/docs/hub/activity) shows recent trigger runs and their status.
 
 ## From event to agent
 
