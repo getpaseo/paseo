@@ -141,7 +141,7 @@
     "turndown-plugin-gfm": "^1.0.2",
     "use-sync-external-store": "^1.6.0",
     "yaml": "^2.8.4",
-    "zod": "^4.4.3",
+    "zod": "^4.6.7",
     "zustand": "^5.0.9"
   },
   "devDependencies": {
