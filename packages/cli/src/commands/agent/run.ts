@@ -28,9 +28,11 @@ export function addRunOptions(cmd: Command): Command {
       .description("Create and start an agent with a task")
       .argument("<prompt>", "The task/prompt for the agent")
       .option("--no-wait", "Return immediately without waiting for completion")
-      // COMPAT(backgroundRunFlag): --background was the documented spelling of
-      // --no-wait. Added in v0.2.0; remove after 2027-04-01.
-      .addOption(new Option("-d, --background", "Legacy alias for --no-wait").hideHelp())
+      .option("--background", "Hide the agent and any workspace created for this run")
+      .option("--no-background", "Override background visibility inherited from the caller")
+      // COMPAT(backgroundRunFlag): -d used to be the short form of --no-wait.
+      // Added in v0.2.0; remove after 2027-04-01.
+      .addOption(new Option("-d", "Legacy alias for --no-wait").hideHelp())
       // COMPAT(detachRunFlag): --detach used to mean background execution, not
       // ownership transfer. Added in v0.2.0; remove after 2027-01-17.
       .addOption(new Option("--detach", "Legacy alias for --no-wait").hideHelp())
@@ -116,6 +118,7 @@ export const agentRunSchema: OutputSchema<AgentRunResult> = {
 export interface AgentRunOptions extends CommandOptions {
   wait?: boolean;
   background?: boolean;
+  d?: boolean;
   detach?: boolean;
   title?: string;
   name?: string;
@@ -393,8 +396,8 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     } satisfies CommandError;
   }
 
-  if (options.background) {
-    console.error("Warning: --background (-d) is deprecated. Use --no-wait instead.");
+  if (options.d) {
+    console.error("Warning: -d is deprecated. Use --no-wait instead.");
   }
 
   validateRunWorkspaceOptions(options);
@@ -408,10 +411,8 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
   }
 }
 
-export function waitsForFinish(
-  options: Pick<AgentRunOptions, "wait" | "background" | "detach">,
-): boolean {
-  return options.wait !== false && !options.background && !options.detach;
+export function waitsForFinish(options: Pick<AgentRunOptions, "wait" | "d" | "detach">): boolean {
+  return options.wait !== false && !options.d && !options.detach;
 }
 
 function parseWaitTimeoutOption(waitTimeout: string | undefined): number {
@@ -509,22 +510,11 @@ interface RunWorkspace {
   cwd: string;
 }
 
-export interface RunWorkspaceLookupClient {
-  fetchWorkspaces(options: { filter: { query: string }; page: { limit: number } }): Promise<{
-    entries: Array<{ id: string; workspaceDirectory: string }>;
-    pageInfo: { nextCursor: string | null };
-  }>;
-}
-
 export async function resolveExistingRunWorkspace(
-  client: RunWorkspaceLookupClient,
+  client: Pick<ConnectedDaemonClient, "findWorkspace">,
   workspaceId: string,
 ): Promise<RunWorkspace> {
-  const result = await client.fetchWorkspaces({
-    filter: { query: workspaceId },
-    page: { limit: 200 },
-  });
-  const workspace = result.entries.find((entry) => entry.id === workspaceId);
+  const workspace = await client.findWorkspace(workspaceId);
   if (workspace) {
     return { id: workspace.id, cwd: workspace.workspaceDirectory };
   }
@@ -570,6 +560,7 @@ async function resolveRunWorkspace(
   const result = await client.createWorkspace({
     source,
     ...(callerAgentId ? { callerAgentId } : {}),
+    ...(options.background !== undefined ? { background: options.background } : {}),
   });
 
   if (!result.workspace) {
@@ -587,6 +578,22 @@ async function resolveRunWorkspace(
     "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
   );
   return { id: result.workspace.id, cwd: result.workspace.workspaceDirectory ?? cwd };
+}
+
+function resolveRunBackground(
+  client: ConnectedDaemonClient,
+  background: boolean | undefined,
+): { background?: boolean } {
+  if (background === undefined) return {};
+  // Check before allocating any workspace. Older hosts reject explicit agent
+  // visibility when the creation request names a workspace or caller.
+  if (client.getLastServerInfoMessage()?.features?.backgroundAgents !== true) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to use background agents.",
+    } satisfies CommandError;
+  }
+  return { background };
 }
 
 export async function runRunCommand(
@@ -624,10 +631,23 @@ export async function runRunCommand(
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
+    const backgroundOptions = resolveRunBackground(client, options.background);
     const callerAgentId = await resolveCallerAgentId(client);
     const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
-    const workspaceId = workspace.id;
-    const runCwd = workspace.cwd;
+    const agentOptions = {
+      provider: resolvedProviderModel.provider,
+      cwd: workspace.cwd,
+      workspaceId: workspace.id,
+      callerAgentId,
+      ...backgroundOptions,
+      title: resolvedTitle,
+      modeId: options.mode,
+      model: resolvedProviderModel.model,
+      thinkingOptionId,
+      images,
+      env: requestEnv,
+      labels: Object.keys(labels).length > 0 ? labels : undefined,
+    };
 
     if (outputSchema) {
       let structuredAgent: AgentSnapshotPayload | null = null;
@@ -635,19 +655,9 @@ export async function runRunCommand(
       const callStructuredTurn = async (structuredPrompt: string): Promise<string> => {
         if (!structuredAgent) {
           structuredAgent = await client.createAgent({
-            provider: resolvedProviderModel.provider,
-            cwd: runCwd,
-            workspaceId,
-            callerAgentId,
-            title: resolvedTitle,
-            modeId: options.mode,
-            model: resolvedProviderModel.model,
-            thinkingOptionId,
+            ...agentOptions,
             initialPrompt: structuredPrompt,
             outputSchema,
-            images,
-            env: requestEnv,
-            labels: Object.keys(labels).length > 0 ? labels : undefined,
           });
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
@@ -704,21 +714,7 @@ export async function runRunCommand(
       };
     }
 
-    // Create the agent
-    const agent = await client.createAgent({
-      provider: resolvedProviderModel.provider,
-      cwd: runCwd,
-      workspaceId,
-      callerAgentId,
-      title: resolvedTitle,
-      modeId: options.mode,
-      model: resolvedProviderModel.model,
-      thinkingOptionId,
-      initialPrompt: prompt,
-      images,
-      env: requestEnv,
-      labels: Object.keys(labels).length > 0 ? labels : undefined,
-    });
+    const agent = await client.createAgent({ ...agentOptions, initialPrompt: prompt });
 
     // Default run behavior is foreground: wait for completion unless --no-wait is set.
     if (waitsForFinish(options)) {

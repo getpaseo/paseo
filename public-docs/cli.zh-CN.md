@@ -123,7 +123,9 @@ paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"str
 
 `paseo run` 默认等待完成。使用 `--no-wait` 可以立即返回，同时让 Agent 继续运行，`paseo send` 也使用同一个参数。
 
-旧的 `run --background` 和 `-d` 别名仍然表示 `--no-wait`。它们已被弃用，不会出现在帮助中，并会向 stderr 输出警告。请在脚本中使用 `--no-wait`。工作区的可见性通过 `workspace create --background` 单独选择；本版本不会改变 `run --background` 的含义。
+使用 `--background` 可以让新 Agent 不出现在标签页、默认列表和父 Agent 的子 Agent 轨道中。同一次运行新建的工作区也会隐藏。现有工作区的可见性保持原样。省略此参数时，Agent 继承调用方的设置，从人工 shell 启动的 Agent 默认可见。使用 `--no-background` 显式覆盖继承的设置。两个可见性参数都要求主机支持后台 Agent。
+
+同时传入 `--background --no-wait` 可以启动隐藏的 Agent 并立即返回。如果脚本在旧版 CLI 中用 `run --background` 立即返回，请改用 `--no-wait`。已弃用的 `-d` 仍是 `--no-wait` 的别名。
 
 ## 项目 {#projects}
 
