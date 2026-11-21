@@ -2179,10 +2179,12 @@ test(
 );
 
 test(
-  "remote finish observation survives a permission checkpoint until resumed completion",
+  "a remote child permission update does not cause an early parent finish push",
   { timeout: 30000 },
   async () => {
     const parentPrompts: string[] = [];
+    const finishPushes: string[] = [];
+    let childReleased = false;
     const finish = Promise.withResolvers<void>();
     cleanup.push(async () => {
       finish.resolve();
@@ -2190,6 +2192,15 @@ test(
     const a = await daemon({
       mcpEnabled: true,
       logger: completionLogger(),
+      pushNotificationSender: {
+        async send(payload) {
+          if (payload.title === "Agent finished") {
+            finishPushes.push(
+              childReleased ? "after the child completed" : "while the child was running",
+            );
+          }
+        },
+      },
       agentClients: createTestAgentClients({
         onStartTurn: (prompt) => {
           if (String(prompt).includes('kind="agent-notification"'))
@@ -2247,6 +2258,10 @@ test(
     });
     expect(parentPrompts).toHaveLength(1);
     expect((await destination.client.fetchAgent(childId))?.agent.status).toBe("running");
+    await expect
+      .poll(async () => (await origin.client.fetchAgent(parent.id))?.agent.status)
+      .toBe("idle");
+    childReleased = true;
     finish.resolve();
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(2);
     expect(parentPrompts[1]).toContain('event="finished"');
@@ -2261,6 +2276,8 @@ test(
         },
       )
       .toEqual([]);
+    await expect.poll(() => finishPushes.length).toBeGreaterThan(0);
+    expect(finishPushes).toEqual(["after the child completed"]);
   },
 );
 
