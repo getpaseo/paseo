@@ -1054,6 +1054,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (
         event.defaultPrevented ||
         event.ctrlKey ||
+        event.shiftKey || // Browsers use Shift+wheel to scroll horizontally.
         event.deltaY >= 0 ||
         !scrollEnabled ||
         canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)

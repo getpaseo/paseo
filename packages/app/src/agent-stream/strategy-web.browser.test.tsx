@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cdp } from "vitest/browser";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
@@ -119,6 +120,23 @@ function mountTimeline(
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1000 }));
       scrollContainer.scrollTop = top;
     },
+    shiftWheelUp: () =>
+      act(async () => {
+        const bounds = scrollContainer.getBoundingClientRect();
+        const frame = window.frameElement?.getBoundingClientRect();
+        const wheelDelivered = new Promise<void>((resolve) => {
+          scrollContainer.addEventListener("wheel", () => resolve(), { once: true });
+        });
+        await cdp().send("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: (frame?.left ?? 0) + bounds.left + bounds.width / 2,
+          y: (frame?.top ?? 0) + bounds.top + bounds.height / 2,
+          deltaX: 0,
+          deltaY: -120,
+          modifiers: 8, // Shift
+        });
+        await wheelDelivered;
+      }),
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
     scrollTop: () => scrollContainer.scrollTop,
@@ -295,6 +313,21 @@ describe("web output following", () => {
     timeline.render({ historyMounted: [...history, row(20)] });
     await timeline.settle();
     expect(timeline.scrollTop()).toBe(readingOffset);
+  });
+
+  it("keeps following output after horizontal Shift+wheel", async () => {
+    const history = Array.from({ length: 20 }, (_, index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    await timeline.shiftWheelUp();
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    timeline.render({ historyMounted: [...history, row(20)] });
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
   });
 });
 
