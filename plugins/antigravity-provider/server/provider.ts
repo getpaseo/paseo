@@ -6,6 +6,7 @@ import {
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import { mapToolCall } from "./tool-calls.js";
 
 const legacySession = z.object({
   version: z.literal(1),
@@ -14,8 +15,6 @@ const legacySession = z.object({
 const systemPromptCapability = z.object({
   antigravity: z.object({ systemPrompt: z.object({ append: z.literal(true) }) }),
 });
-
-const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
 
 // agy 1.5.13 advertises these built-in commands and its invocable skills in one ACP list.
 const builtInCommands = new Set([
@@ -34,21 +33,7 @@ const antigravity: AcpTransformer = {
   command(command) {
     return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
   },
-  toolCall(call) {
-    if (call.name === "write_file") {
-      const input = fileWrite.safeParse(call.input);
-      if (input.success) {
-        return {
-          ...call,
-          detail: { type: "write", filePath: input.data.Path, content: input.data.Content },
-        };
-      }
-    }
-    if (call.kind === "read" && call.locations[0]) {
-      return { ...call, detail: { type: "read", filePath: call.locations[0] } };
-    }
-    return call;
-  },
+  toolCall: mapToolCall,
   sessionOpen({ persistence, systemPrompt, agentMetadata }) {
     // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
     const saved = legacySession.safeParse(persistence);

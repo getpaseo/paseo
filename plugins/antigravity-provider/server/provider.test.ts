@@ -252,6 +252,215 @@ it.each([true, false])(
   },
 );
 
+const completedToolCalls = [
+  {
+    toolCallId: "shell",
+    name: "run_command",
+    kind: "execute",
+    rawInput: {
+      CommandLine: "printf test; exit 7",
+      WaitMsBeforeAsync: 5000,
+      toolSummary: "Run exit code test",
+    },
+    rawOutput: { output: "Command exited with code 7.\n\nCommand output:\ntest", exit_code: 7 },
+  },
+  {
+    toolCallId: "read",
+    name: "read_file",
+    kind: "read",
+    locations: [{ path: "/repo/probe.txt" }],
+    rawInput: { Path: "/repo/probe.txt", StartLine: 2, EndLine: 2 },
+  },
+  {
+    toolCallId: "write",
+    name: "write_file",
+    kind: "edit",
+    locations: [{ path: "/repo/probe.txt" }],
+    rawInput: { Path: "/repo/probe.txt", Content: "alpha\nbeta\ngamma\n", Overwrite: true },
+    rawOutput: {},
+    content: [{ type: "diff", path: "/repo/probe.txt", newText: "alpha\nbeta\ngamma\n" }],
+  },
+  {
+    toolCallId: "edit",
+    name: "edit_file",
+    kind: "edit",
+    locations: [{ path: "/repo/probe.txt" }],
+    rawInput: { Path: "/repo/probe.txt", Target: "beta", Replacement: "delta" },
+    rawOutput: {},
+    content: [
+      {
+        type: "diff",
+        path: "/repo/probe.txt",
+        oldText: "alpha\nbeta\ngamma\n",
+        newText: "alpha\ndelta\ngamma\n",
+      },
+    ],
+  },
+  {
+    toolCallId: "web",
+    name: "search_web",
+    kind: "search",
+    rawInput: { query: "IANA example domains" },
+  },
+  {
+    toolCallId: "paseo",
+    name: "mcp_paseo_get_agent_activity",
+    kind: "other",
+    rawInput: { agentId: "agent-1", limit: 30, toolSummary: "Get agent activity" },
+  },
+  {
+    toolCallId: "mcp",
+    name: "mcp_local_tools_echo_message",
+    kind: "other",
+    rawInput: { message: "hello", toolSummary: "Echo message hello" },
+  },
+];
+
+it.each(["live", "replay"] as const)(
+  "maps Antigravity tool calls in %s timelines",
+  async (source) => {
+    const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    const tools = ${JSON.stringify(completedToolCalls)};
+    const modes = { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] };
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      const update = (update) => send({ method: "session/update", params: { sessionId: params.sessionId ?? "agy-session", update } });
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", modes } });
+          update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+          break;
+        case "session/load":
+        case "session/prompt":
+          for (const { rawOutput, content, ...tool } of tools) {
+            const completed = { status: "completed", rawOutput, content };
+            if (method === "session/load") {
+              update({ sessionUpdate: "tool_call", title: tool.name, ...tool, ...completed });
+            } else {
+              update({ sessionUpdate: "tool_call", title: tool.name, ...tool, status: "in_progress" });
+              update({ sessionUpdate: "tool_call_update", toolCallId: tool.toolCallId, ...completed });
+            }
+          }
+          send({ id, result: method === "session/load" ? { modes } : { stopReason: "end_turn" } });
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+    const connection = await createAntigravityProvider().connect({
+      launch,
+      versions: [1],
+      capabilities: ["session.persistence", "prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open",
+        sessionId: "test",
+        history: source === "replay" ? "replay" : "skip",
+        persistence:
+          source === "replay" ? { version: 1, data: { sessionId: "agy-session" } } : undefined,
+        config: {
+          cwd: directory,
+          env: {},
+          mcpServers: {
+            local: { type: "stdio", command: "local" },
+            local_tools: { type: "stdio", command: "echo-mcp" },
+          },
+          settings: {},
+          persist: true,
+        },
+      });
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) => event.type === "session.ready" || event.type === "request.failed",
+            ),
+          { timeout: 4_000 },
+        )
+        .toMatchObject({ type: "session.ready" });
+      if (source === "live") {
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "test",
+          prompt: {
+            clientMessageId: "exercise-tools",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "Exercise tools" }] },
+          },
+        });
+      }
+      const calls = () =>
+        events.flatMap((event) =>
+          event.type === "timeline.item" && event.item.type === "tool_call" ? [event.item] : [],
+        );
+      await expect
+        .poll(() => calls().filter((call) => call.status === "completed").length)
+        .toBe(completedToolCalls.length);
+      const completed = Object.fromEntries(calls().map((call) => [call.id, call]));
+      expect(completed.shell.detail).toEqual({
+        type: "shell",
+        command: "printf test; exit 7",
+        output: "Command exited with code 7.\n\nCommand output:\ntest",
+        exitCode: 7,
+      });
+      expect(completed.read.detail).toEqual({
+        type: "read",
+        filePath: "/repo/probe.txt",
+        offset: 2,
+        limit: 1,
+      });
+      expect(completed.write.detail).toEqual({
+        type: "write",
+        filePath: "/repo/probe.txt",
+        content: "alpha\nbeta\ngamma\n",
+      });
+      expect(completed.edit.detail).toEqual({
+        type: "edit",
+        filePath: "/repo/probe.txt",
+        oldString: "alpha\nbeta\ngamma\n",
+        newString: "alpha\ndelta\ngamma\n",
+      });
+      expect(completed.web.detail).toEqual({
+        type: "search",
+        toolName: "web_search",
+        query: "IANA example domains",
+      });
+      expect(completed.paseo).toMatchObject({
+        name: "paseo.get_agent_activity",
+        detail: { type: "unknown", input: { agentId: "agent-1", limit: 30 }, output: null },
+      });
+      expect(completed.paseo.detail).not.toHaveProperty("input.toolSummary");
+      expect(completed.mcp).toMatchObject({
+        name: "local_tools.echo_message",
+        detail: { type: "unknown", input: { message: "hello" }, output: null },
+      });
+      expect(completed.mcp.detail).not.toHaveProperty("input.toolSummary");
+      if (source === "live") {
+        expect(calls()).toContainEqual(
+          expect.objectContaining({
+            id: "shell",
+            status: "running",
+            detail: { type: "shell", command: "printf test; exit 7" },
+          }),
+        );
+      }
+    } finally {
+      await connection.close();
+    }
+  },
+);
+
 describe("installation", () => {
   const signal = new AbortController().signal;
 
