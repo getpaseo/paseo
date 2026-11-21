@@ -92,6 +92,17 @@ function typeErrors(code: string): string[] {
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
 }
 describe("plugin SDK import boundaries", () => {
+  it("typechecks a project icon image consumer", () => {
+    expect(
+      typeErrors(`
+      import { ProjectIconImage } from "@getpaseo/plugin/client/ui";
+      import { Text } from "react-native";
+      const image = <ProjectIconImage dataUri="data:image/png;base64,AAAA" style={{ width: 16, height: 16 }} fallback={<Text>P</Text>} />;
+      // @ts-expect-error dataUri is required
+      const missing = <ProjectIconImage style={{ width: 16 }} fallback={<Text>P</Text>} />;
+    `),
+    ).toEqual([]);
+  });
   it("publishes process capabilities without their Windows implementation helpers", () => {
     expect(Object.keys(server).sort()).toEqual([
       "defineAgentTool",

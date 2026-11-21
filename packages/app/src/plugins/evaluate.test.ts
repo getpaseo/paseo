@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { useRevealedText } from "@/hooks/use-revealed-text";
+import { ProjectIconImage } from "@/components/project-icon-image";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
 const runtime = {
@@ -780,6 +781,18 @@ describe("evaluatePluginClientBundle", () => {
     expect(Component).toBeTypeOf("function");
     const element = (Component as (props: never) => { props: unknown })({} as never);
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
+  });
+
+  it("provides the host project icon renderer to plugins", () => {
+    const plugin = evaluatePluginClientBundle(
+      "project-icon",
+      bundle(`
+        const { ProjectIconImage } = require("@getpaseo/plugin/client/ui");
+        if (typeof ProjectIconImage !== "function") throw new Error("Missing project icon renderer");
+        plugin.addScreen({ id: "icon", title: "Icon", Component: ProjectIconImage });
+      `),
+    );
+    expect(plugin.surfaces[0]?.Component).toBe(ProjectIconImage);
   });
 
   it("provides Paseo UI through @getpaseo/plugin/client/ui", () => {
