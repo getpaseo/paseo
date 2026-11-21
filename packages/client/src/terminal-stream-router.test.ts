@@ -45,6 +45,28 @@ test("two registrations for one terminal retain independent slots and release", 
   expect(b).toHaveLength(2);
 });
 
+test("a stale disposer preserves a rebound slot after clearing slots", () => {
+  const router = new TerminalStreamRouter();
+  const events: TerminalStreamEvent[] = [];
+  const releaseOld = router.attach("old", "old-terminal", 7, (event) => events.push(event));
+  router.clearSlots();
+  const releaseNew = router.attach("new", "new-terminal", 7, (event) => events.push(event));
+
+  releaseOld();
+  const payload = new TextEncoder().encode("still connected");
+  const frame = { opcode: TerminalStreamOpcode.Output, slot: 7, payload };
+  router.handleFrame(frame);
+
+  expect(events).toEqual([
+    { terminalId: "new-terminal", subscriptionId: "new", type: "output", data: payload },
+  ]);
+
+  releaseNew();
+  events.length = 0;
+  router.handleFrame(frame);
+  expect(events).toEqual([]);
+});
+
 test("legacy listeners share a terminal slot without releasing each other", () => {
   const router = new TerminalStreamRouter();
   const received: string[] = [];
