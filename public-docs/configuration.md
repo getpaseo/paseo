@@ -212,6 +212,37 @@ Or write the hash directly in `config.json`:
 
 After setting a password, restart the daemon for the change to take effect.
 
+### Scoped credentials
+
+Give another system its own password with less authority than yours. Each entry in `daemon.auth.credentials` authenticates as its own principal with only the listed permissions, instead of the owner's full access:
+
+```json
+{
+  "daemon": {
+    "auth": {
+      "password": "$2b$12$...",
+      "credentials": [
+        {
+          "name": "delegator",
+          "password": "$2b$12$...",
+          "permissions": ["daemon.read", "workspace.read", "workspace.write"],
+          "denyModes": ["bypassPermissions"]
+        }
+      ]
+    }
+  }
+}
+```
+
+- `password` is a bcrypt hash, for example from `htpasswd -bnBC 12 "" <secret> | tr -d ':\n'`.
+- `permissions` are `daemon.read`, `daemon.manage`, `tunnel.manage`, `access.manage`, `workspace.read`, `workspace.write`, `workspace.manage`, `automation.manage`, and `hub.execute`.
+- `denyModes` lists agent mode IDs the credential cannot create an agent in or switch an agent to. The daemon checks the mode an agent will actually run in, including a provider's default.
+- The owner password stays required. The daemon refuses to start with credentials but no owner password.
+
+Clients send a scoped credential the same way as the owner password: in the WebSocket hello, as a WebSocket bearer, or as `Authorization: Bearer <secret>` on the [agent MCP endpoint](/docs/mcp) (`/mcp/agents`). The MCP endpoint requires `workspace.write`, hides schedule and heartbeat tools without `automation.manage`, hides workspace create, rename and archive without `workspace.manage`, and does not route to connected hosts. Other HTTP API routes accept only the owner password.
+
+Grant `automation.manage` only to credentials you trust with every mode: schedules run later without the creating credential's `denyModes`.
+
 ### Connecting with a password
 
 The CLI picks up a password from, in order:

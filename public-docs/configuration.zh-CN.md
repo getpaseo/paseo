@@ -204,6 +204,37 @@ PASEO_PASSWORD=my-secret paseo daemon start
 
 设置密码后，重启 daemon 使更改生效。
 
+### 受限凭据 {#scoped-credentials}
+
+为其他系统分配独立密码，权限低于你自己的。`daemon.auth.credentials` 中的每一项都作为独立的 principal 进行身份验证，只拥有列出的权限，而不是 owner 的完整访问权限：
+
+```json
+{
+  "daemon": {
+    "auth": {
+      "password": "$2b$12$...",
+      "credentials": [
+        {
+          "name": "delegator",
+          "password": "$2b$12$...",
+          "permissions": ["daemon.read", "workspace.read", "workspace.write"],
+          "denyModes": ["bypassPermissions"]
+        }
+      ]
+    }
+  }
+}
+```
+
+- `password` 是 bcrypt 哈希，例如由 `htpasswd -bnBC 12 "" <secret> | tr -d ':\n'` 生成。
+- `permissions` 可选 `daemon.read`、`daemon.manage`、`tunnel.manage`、`access.manage`、`workspace.read`、`workspace.write`、`workspace.manage`、`automation.manage` 和 `hub.execute`。
+- `denyModes` 列出该凭据不能用来创建 Agent、也不能把 Agent 切换到的模式 ID。daemon 检查 Agent 实际运行的模式，包括 Provider 的默认模式。
+- owner 密码仍然必需。配置了凭据但没有 owner 密码时，daemon 拒绝启动。
+
+客户端发送受限凭据的方式与 owner 密码相同：放在 WebSocket hello 中、作为 WebSocket bearer，或在 [Agent MCP 端点](/docs/mcp)（`/mcp/agents`）上使用 `Authorization: Bearer <secret>`。MCP 端点要求 `workspace.write`；没有 `automation.manage` 时隐藏 schedule 和 heartbeat 工具；没有 `workspace.manage` 时隐藏创建、重命名和归档 workspace 的工具；并且不会路由到已连接的主机。其他 HTTP API 路由只接受 owner 密码。
+
+只把 `automation.manage` 授予你信任可使用所有模式的凭据：schedule 稍后运行时不受创建它的凭据的 `denyModes` 限制。
+
 ### 使用密码连接 {#connecting-with-a-password}
 
 CLI 按以下顺序获取密码：

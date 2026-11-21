@@ -110,7 +110,8 @@ import {
   extractHttpBearerToken,
   extractWsBearerProtocol,
   extractWsBearerToken,
-  isBearerTokenValidAsync,
+  OWNER_PRINCIPAL,
+  resolveDaemonSecret,
   type DaemonAuthConfig,
 } from "./auth.js";
 import { resolveSessionAdmission } from "./session-admission-auth.js";
@@ -130,7 +131,7 @@ import type { SecurityMode } from "@getpaseo/relay/e2ee";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
-import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
+import type { DaemonPermission } from "./authorization/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
@@ -156,6 +157,8 @@ export interface ExternalSocketMetadata {
 export interface SessionAdmission {
   principalId: string;
   permissions: readonly DaemonPermission[];
+  /** Agent modes this principal may not create agents in or switch agents to. */
+  deniedModes?: readonly string[];
   hubExecutionAgents?: HubExecutionAgents;
 }
 
@@ -500,6 +503,7 @@ interface SocketSessionOptions {
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
   permissions: readonly DaemonPermission[];
+  deniedModes?: readonly string[];
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void | Promise<void>;
@@ -526,11 +530,6 @@ const WS_CLOSE_INCOMPATIBLE_PROTOCOL = 4003;
 const WS_CLOSE_SERVER_SHUTDOWN = 1001;
 const WS_PROTOCOL_VERSION = 1;
 const WS_RUNTIME_METRICS_FLUSH_MS = 30_000;
-const OWNER_SESSION_ADMISSION: SessionAdmission = {
-  principalId: "owner",
-  permissions: OWNER_PERMISSIONS,
-};
-
 export class MissingDaemonVersionError extends Error {
   constructor() {
     super("VoiceAssistantWebSocketServer requires a non-empty daemonVersion.");
@@ -594,7 +593,7 @@ export class VoiceAssistantWebSocketServer {
   toolHosts() {
     return createToolHosts(this.connectedHosts);
   }
-  private readonly passwordHash: string | undefined;
+  private readonly authConfig: Pick<DaemonAuthConfig, "password" | "credentials"> | undefined;
   private readonly credentialSource: DaemonAuthConfig | undefined;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
@@ -801,7 +800,7 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
-    this.passwordHash = auth?.password;
+    this.authConfig = auth;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
     this.assignOptionalServices({
@@ -934,7 +933,7 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      void this.attachAuthenticatedSocket(ws, request, auth);
     });
     return wss;
   }
@@ -1014,7 +1013,7 @@ export class VoiceAssistantWebSocketServer {
   private async attachAuthenticatedSocket(
     ws: WebSocket,
     request: IncomingMessage,
-    password: string | undefined,
+    auth: DaemonAuthConfig | undefined,
   ): Promise<void> {
     // Header validation is asynchronous. Buffer frames until the socket has a
     // pending hello handler so an eager client cannot lose its first message.
@@ -1024,11 +1023,12 @@ export class VoiceAssistantWebSocketServer {
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
       const token =
         extractHttpBearerToken(request.headers.authorization) ?? extractWsBearerToken(protocol);
-      const hasHeaderCredential = token !== null;
-      if (password && hasHeaderCredential) {
+      let headerAdmission: SessionAdmission | null = null;
+      if (token !== null && !auth?.password) headerAdmission = OWNER_PRINCIPAL;
+      if (token !== null && auth?.password) {
         const requestMetadata = extractSocketRequestMetadata(request);
-        const isAuthorized = await isBearerTokenValidAsync({ password, token });
-        if (!isAuthorized) {
+        headerAdmission = await resolveDaemonSecret(auth, token);
+        if (!headerAdmission) {
           const reason = "Incorrect password";
           this.logger.warn(
             { ...requestMetadata, hasToken: true },
@@ -1039,13 +1039,7 @@ export class VoiceAssistantWebSocketServer {
         }
       }
 
-      await this.attachSocket(
-        ws,
-        request,
-        undefined,
-        false,
-        hasHeaderCredential ? OWNER_SESSION_ADMISSION : null,
-      );
+      await this.attachSocket(ws, request, undefined, false, headerAdmission);
     } finally {
       ws.resume();
     }
@@ -1131,7 +1125,7 @@ export class VoiceAssistantWebSocketServer {
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolve);
     try {
-      await this.attachSocket(ws, undefined, undefined, true, OWNER_SESSION_ADMISSION);
+      await this.attachSocket(ws, undefined, undefined, true, OWNER_PRINCIPAL);
     } catch (error) {
       this.pluginSocketIds.delete(ws);
       this.finishPluginSocketCleanup(ws);
@@ -1584,6 +1578,7 @@ export class VoiceAssistantWebSocketServer {
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
+      ...(admission.deniedModes ? { deniedModes: admission.deniedModes } : {}),
       sourceId:
         lifecycle.kind === "ephemeral-plugin"
           ? `plugin:${lifecycle.pluginId}`
@@ -1674,6 +1669,7 @@ export class VoiceAssistantWebSocketServer {
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
+      ...(options.deniedModes ? { deniedModes: options.deniedModes } : {}),
       onMessage: options.onMessage,
       onMessageToSource: options.onMessageToSource,
       onBinaryMessage: options.onBinaryMessage,
@@ -1912,7 +1908,7 @@ export class VoiceAssistantWebSocketServer {
     try {
       const resolved = await resolveSessionAdmission({
         credential: message.auth,
-        passwordHash: this.passwordHash,
+        auth: this.authConfig,
         localCredential: this.credentialSource?.localCredential?.() ?? null,
       });
       if (this.pendingConnections.get(ws) !== pending) return false;

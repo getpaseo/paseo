@@ -1,6 +1,5 @@
-import { compare } from "bcryptjs";
 import type { WSHelloMessage } from "@getpaseo/protocol/messages";
-import { OWNER_PERMISSIONS } from "./authorization/index.js";
+import { type DaemonAuthConfig, OWNER_PRINCIPAL, resolveDaemonSecret } from "./auth.js";
 import { matchesLocalCredential } from "./local-credential.js";
 import type { SessionAdmission } from "./websocket-server.js";
 
@@ -10,23 +9,22 @@ type AdmissionResolution = { admission: SessionAdmission } | { rejection: Admiss
 
 export async function resolveSessionAdmission(input: {
   credential: WSHelloMessage["auth"];
-  passwordHash: string | undefined;
+  auth: Pick<DaemonAuthConfig, "password" | "credentials"> | undefined;
   localCredential: string | null;
 }): Promise<AdmissionResolution> {
-  const { credential, passwordHash, localCredential } = input;
-  if (!passwordHash) {
-    return { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } };
+  const { credential, auth, localCredential } = input;
+  if (!auth?.password) {
+    return { admission: OWNER_PRINCIPAL };
   }
   if (!credential) {
     return { rejection: "password_required" };
   }
   if (credential.kind === "localCredential") {
     if (localCredential && matchesLocalCredential(localCredential, credential.token)) {
-      return { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } };
+      return { admission: OWNER_PRINCIPAL };
     }
     return { rejection: "incorrect_password" };
   }
-  return (await compare(credential.password, passwordHash))
-    ? { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } }
-    : { rejection: "incorrect_password" };
+  const principal = await resolveDaemonSecret(auth, credential.password);
+  return principal ? { admission: principal } : { rejection: "incorrect_password" };
 }

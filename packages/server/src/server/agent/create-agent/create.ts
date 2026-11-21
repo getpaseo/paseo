@@ -28,6 +28,7 @@ import {
 } from "./intent.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { foldFeatureValues, type LegacyFeatureValues } from "../option-controls.js";
+import { assertAgentModeAllowed } from "../../authorization/mode-policy.js";
 
 /** How a workspace this creation makes inherits its creator's visibility. */
 interface McpWorkspaceIntent {
@@ -74,6 +75,8 @@ export interface CreateAgentFromSessionInput {
   env?: Record<string, string>;
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
+  /** Modes the requesting principal may not use; checked against the resolved mode. */
+  deniedModes?: readonly string[];
 }
 
 export interface CreateAgentFromMcpInput {
@@ -103,6 +106,8 @@ export interface CreateAgentFromMcpInput {
   }) => void;
   onWorktreeCreated?: (createdWorktree: CreatePaseoWorktreeWorkflowResult) => void;
   callerAgentId?: string;
+  /** Modes the requesting principal may not use; checked against the resolved mode. */
+  deniedModes?: readonly string[];
   callerContext?: {
     lockedCwd?: string;
     allowCustomCwd?: boolean;
@@ -178,6 +183,8 @@ export async function createAgentCommand(
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
       : await resolveMcpCreateAgent(dependencies, input);
+  // Checked after resolution so provider defaults and inherited parent modes are covered.
+  assertAgentModeAllowed(resolved.config.modeId, input.deniedModes);
 
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
@@ -290,6 +297,8 @@ async function resolveMcpCreateAgent(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
 ): Promise<ResolvedCreateAgent> {
+  // Reject an explicitly denied mode before any worktree or workspace exists.
+  assertAgentModeAllowed(input.mode ?? input.config?.modeId, input.deniedModes);
   const resolvedProviderModel = resolveProviderModel(input.provider);
   const provider = resolvedProviderModel.provider;
   const parentAgent = input.callerAgentId

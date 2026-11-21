@@ -294,6 +294,11 @@ import {
 } from "./workspace-archive-operations.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
+import {
+  AgentModeDeniedError,
+  assertAgentModeAllowed,
+  requestedModeForInbound,
+} from "./authorization/mode-policy.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -487,6 +492,8 @@ export interface SessionOptions {
   browserToolsBroker?: BrowserToolsBroker | null;
   clientId: string;
   permissions: readonly DaemonPermission[];
+  /** Agent modes this session's principal may not create agents in or switch agents to. */
+  deniedModes?: readonly string[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -776,6 +783,7 @@ export class Session {
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
+  private readonly deniedModes: readonly string[] | undefined;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
@@ -948,6 +956,7 @@ export class Session {
     this.browserToolsBroker = options.browserToolsBroker;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
+    this.deniedModes = options.deniedModes;
 
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
@@ -2442,6 +2451,22 @@ export class Session {
               requestType: msg.type,
               error: `Session is not authorized for ${msg.type}`,
               code: msg.type.startsWith("hosts.") ? "permission_denied" : "access_denied",
+            },
+          });
+        }
+        return;
+      }
+      const requestedMode = requestedModeForInbound(msg);
+      if (requestedMode !== undefined && this.deniedModes?.includes(requestedMode)) {
+        const requestId = sessionRequestId(msg);
+        if (requestId) {
+          this.emit({
+            type: "rpc_error",
+            payload: {
+              requestId,
+              requestType: msg.type,
+              error: new AgentModeDeniedError(requestedMode).message,
+              code: "access_denied",
             },
           });
         }
@@ -4945,6 +4970,8 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
       this.validatePublicAgentWorkspaceIntent(msg);
+      // Reject an explicitly denied mode before any worktree exists.
+      assertAgentModeAllowed(config.modeId, this.deniedModes);
       const trimmedPrompt = initialPrompt?.trim();
       const { provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
@@ -5005,6 +5032,7 @@ export class Session {
           env,
           provisionalTitle,
           firstAgentContext,
+          ...(this.deniedModes ? { deniedModes: this.deniedModes } : {}),
         },
       );
       createdAgentId = snapshot.id;
@@ -5125,6 +5153,7 @@ export class Session {
         : overrides;
       let snapshot: ManagedAgent;
       try {
+        assertAgentModeAllowed(effectiveOverrides?.modeId, this.deniedModes);
         snapshot = await this.agentManager.resumeAgentFromPersistence(
           handle,
           effectiveOverrides,

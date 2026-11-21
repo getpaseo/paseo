@@ -1,13 +1,63 @@
 import { compare, hashSync } from "bcryptjs";
 import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
+import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { matchesLocalCredential } from "./local-credential.js";
 
 export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
+/** A named, non-owner daemon credential from `daemon.auth.credentials`. */
+export interface ScopedDaemonCredential {
+  name: string;
+  /** bcrypt hash of the credential secret. */
+  password: string;
+  permissions: readonly DaemonPermission[];
+  /** Agent modes this credential may not create agents in or switch agents to. */
+  denyModes: readonly string[];
+}
+
 export interface DaemonAuthConfig {
+  /** bcrypt hash of the owner password. */
   password?: string;
+  credentials?: readonly ScopedDaemonCredential[];
   localCredential?: () => string | null;
+}
+
+/** The principal a daemon secret authenticates. */
+export interface DaemonCredentialPrincipal {
+  principalId: string;
+  permissions: readonly DaemonPermission[];
+  deniedModes?: readonly string[];
+}
+
+export const OWNER_PRINCIPAL: DaemonCredentialPrincipal = {
+  principalId: "owner",
+  permissions: OWNER_PERMISSIONS,
+};
+
+export function scopedCredentialPrincipalId(name: string): string {
+  return `credential:${name}`;
+}
+
+/**
+ * Resolves a presented secret to the owner or a scoped credential principal.
+ * The owner password is checked first. Returns null when nothing matches.
+ */
+export async function resolveDaemonSecret(
+  auth: Pick<DaemonAuthConfig, "password" | "credentials"> | undefined,
+  secret: string,
+): Promise<DaemonCredentialPrincipal | null> {
+  if (auth?.password && (await compare(secret, auth.password))) return OWNER_PRINCIPAL;
+  for (const credential of auth?.credentials ?? []) {
+    if (await compare(secret, credential.password)) {
+      return {
+        principalId: scopedCredentialPrincipalId(credential.name),
+        permissions: credential.permissions,
+        ...(credential.denyModes.length > 0 ? { deniedModes: credential.denyModes } : {}),
+      };
+    }
+  }
+  return null;
 }
 
 export interface BearerAuthRejectContext {
@@ -129,27 +179,28 @@ export function shouldBypassBearerAuth(method: string, path: string): boolean {
  * Authorizes a request to the Agent MCP endpoint (/mcp/agents), which is exempt
  * from the global daemon-password middleware. Accepts either the per-daemon-run
  * capability token the daemon injects into its own agents' configs and MCP
- * client, or a valid daemon-password bearer (so existing password-authenticated
- * callers keep working). When no daemon password is configured the endpoint is
- * open, matching the global middleware's behavior.
+ * client, the owner password, or a scoped credential. Returns the authenticated
+ * principal, or null when the request is unauthorized. When no daemon password
+ * is configured the endpoint is open, matching the global middleware's behavior.
  */
-export async function isAgentMcpRequestAuthorized(input: {
-  password: string | undefined;
+export async function resolveAgentMcpRequestPrincipal(input: {
+  auth: Pick<DaemonAuthConfig, "password" | "credentials"> | undefined;
   capabilityToken: string | null;
   authorizationHeader: string | undefined;
-}): Promise<boolean> {
-  if (!input.password) {
-    return true;
+}): Promise<DaemonCredentialPrincipal | null> {
+  if (!input.auth?.password) {
+    return OWNER_PRINCIPAL;
   }
   const token = extractHttpBearerToken(input.authorizationHeader);
-  if (input.capabilityToken !== null && token !== null) {
+  if (token === null) return null;
+  if (input.capabilityToken !== null) {
     // Constant-time compare; length-guard first because timingSafeEqual throws
     // on differing buffer lengths.
     const provided = Buffer.from(token);
     const expected = Buffer.from(input.capabilityToken);
     if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
-      return true;
+      return OWNER_PRINCIPAL;
     }
   }
-  return isBearerTokenValidAsync({ password: input.password, token });
+  return resolveDaemonSecret(input.auth, token);
 }

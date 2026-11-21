@@ -50,6 +50,10 @@ export interface PaseoToolCatalog {
 export interface PaseoToolRuntimeContext {
   callerAgentId?: string;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
+  /** Agent modes the calling principal may not create agents in or switch agents to. */
+  deniedModes?: readonly string[];
+  /** Omit connected-host routing; tools act on this host only. */
+  localOnly?: boolean;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
 }

@@ -253,6 +253,48 @@
             "password": {
               "type": "string",
               "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
+            },
+            "credentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
+                  },
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "daemon.read",
+                        "daemon.manage",
+                        "tunnel.manage",
+                        "access.manage",
+                        "workspace.read",
+                        "workspace.write",
+                        "workspace.manage",
+                        "automation.manage",
+                        "hub.execute"
+                      ]
+                    }
+                  },
+                  "denyModes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": ["name", "password", "permissions"],
+                "additionalProperties": false
+              }
             }
           },
           "additionalProperties": false

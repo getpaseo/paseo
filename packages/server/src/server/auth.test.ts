@@ -8,8 +8,10 @@ import {
   extractWsBearerProtocol,
   extractWsBearerToken,
   hashDaemonPassword,
-  isAgentMcpRequestAuthorized,
   isBearerTokenValidAsync,
+  resolveAgentMcpRequestPrincipal,
+  resolveDaemonSecret,
+  type ScopedDaemonCredential,
   shouldBypassBearerAuth,
 } from "./auth.js";
 import { resolveSessionAdmission } from "./session-admission-auth.js";
@@ -20,6 +22,14 @@ import {
 } from "./local-credential.js";
 
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
+// bcrypt("delegator-secret") at a low cost to keep the suite fast.
+const DELEGATOR: ScopedDaemonCredential = {
+  name: "delegator",
+  password: "$2b$04$mXCFml/2YrYvgv1oXkF23.I21jmJV2A/TPGX8iGJ0wOQ.JZ7XE2da",
+  permissions: ["daemon.read", "workspace.read", "workspace.write"],
+  denyModes: ["bypassPermissions"],
+};
+const SCOPED_AUTH = { password: CORRECT_PASSWORD_HASH, credentials: [DELEGATOR] };
 
 describe("daemon bearer validator", () => {
   test("allows any token when no password is configured", async () => {
@@ -68,7 +78,7 @@ describe("daemon bearer validator", () => {
     // Guarded by its own single-use download token, not the daemon password.
     expect(shouldBypassBearerAuth("GET", "/api/files/download")).toBe(true);
     // Guarded by its own per-daemon-run capability token (see
-    // isAgentMcpRequestAuthorized), not the daemon password.
+    // resolveAgentMcpRequestPrincipal), not the daemon password.
     expect(shouldBypassBearerAuth("POST", "/mcp/agents")).toBe(true);
     // Everything else stays behind the daemon password.
     expect(shouldBypassBearerAuth("GET", "/api/status")).toBe(false);
@@ -79,51 +89,85 @@ describe("daemon bearer validator", () => {
 describe("agent MCP request authorizer", () => {
   const CAPABILITY_TOKEN = "cap-token-abc123";
 
-  test("allows any request when no daemon password is configured", async () => {
+  test("admits any request as owner when no daemon password is configured", async () => {
     expect(
-      await isAgentMcpRequestAuthorized({
-        password: undefined,
+      await resolveAgentMcpRequestPrincipal({
+        auth: undefined,
         capabilityToken: CAPABILITY_TOKEN,
         authorizationHeader: undefined,
       }),
-    ).toBe(true);
+    ).toMatchObject({ principalId: "owner" });
   });
 
-  test("accepts the injected capability token", async () => {
+  test("admits the injected capability token as owner", async () => {
     expect(
-      await isAgentMcpRequestAuthorized({
-        password: CORRECT_PASSWORD_HASH,
+      await resolveAgentMcpRequestPrincipal({
+        auth: SCOPED_AUTH,
         capabilityToken: CAPABILITY_TOKEN,
         authorizationHeader: `Bearer ${CAPABILITY_TOKEN}`,
       }),
-    ).toBe(true);
+    ).toMatchObject({ principalId: "owner" });
   });
 
-  test("still accepts a valid daemon-password bearer", async () => {
+  test("still admits a valid daemon-password bearer as owner", async () => {
     expect(
-      await isAgentMcpRequestAuthorized({
-        password: CORRECT_PASSWORD_HASH,
+      await resolveAgentMcpRequestPrincipal({
+        auth: SCOPED_AUTH,
         capabilityToken: CAPABILITY_TOKEN,
         authorizationHeader: "Bearer correct-password",
       }),
-    ).toBe(true);
+    ).toMatchObject({ principalId: "owner" });
+  });
+
+  test("admits a scoped credential bearer with its permissions and denied modes", async () => {
+    expect(
+      await resolveAgentMcpRequestPrincipal({
+        auth: SCOPED_AUTH,
+        capabilityToken: CAPABILITY_TOKEN,
+        authorizationHeader: "Bearer delegator-secret",
+      }),
+    ).toEqual({
+      principalId: "credential:delegator",
+      permissions: DELEGATOR.permissions,
+      deniedModes: ["bypassPermissions"],
+    });
   });
 
   test("rejects requests presenting neither the token nor a valid password", async () => {
     expect(
-      await isAgentMcpRequestAuthorized({
-        password: CORRECT_PASSWORD_HASH,
+      await resolveAgentMcpRequestPrincipal({
+        auth: SCOPED_AUTH,
         capabilityToken: CAPABILITY_TOKEN,
         authorizationHeader: undefined,
       }),
-    ).toBe(false);
+    ).toBeNull();
     expect(
-      await isAgentMcpRequestAuthorized({
-        password: CORRECT_PASSWORD_HASH,
+      await resolveAgentMcpRequestPrincipal({
+        auth: SCOPED_AUTH,
         capabilityToken: CAPABILITY_TOKEN,
         authorizationHeader: "Bearer wrong-token",
       }),
-    ).toBe(false);
+    ).toBeNull();
+  });
+});
+
+describe("daemon secret resolution", () => {
+  test("resolves the owner password before scoped credentials", async () => {
+    expect(await resolveDaemonSecret(SCOPED_AUTH, "correct-password")).toMatchObject({
+      principalId: "owner",
+    });
+  });
+
+  test("omits denied modes for a scoped credential without any", async () => {
+    const auth = { ...SCOPED_AUTH, credentials: [{ ...DELEGATOR, denyModes: [] }] };
+    expect(await resolveDaemonSecret(auth, "delegator-secret")).toEqual({
+      principalId: "credential:delegator",
+      permissions: DELEGATOR.permissions,
+    });
+  });
+
+  test("returns null for an unknown secret", async () => {
+    expect(await resolveDaemonSecret(SCOPED_AUTH, "nope")).toBeNull();
   });
 });
 
@@ -132,7 +176,7 @@ describe("hello admission", () => {
     expect(
       await resolveSessionAdmission({
         credential: { kind: "localCredential", token: "stale" },
-        passwordHash: undefined,
+        auth: undefined,
         localCredential: "current",
       }),
     ).toMatchObject({ admission: { principalId: "owner" } });
@@ -143,7 +187,7 @@ describe("hello admission", () => {
       const first = await writeLocalCredential(home);
       const second = await writeLocalCredential(home);
       const input = {
-        passwordHash: CORRECT_PASSWORD_HASH,
+        auth: SCOPED_AUTH,
         localCredential: second,
       };
       expect(
@@ -152,6 +196,18 @@ describe("hello admission", () => {
           credential: { kind: "password", password: "correct-password" },
         }),
       ).toMatchObject({ admission: { principalId: "owner" } });
+      expect(
+        await resolveSessionAdmission({
+          ...input,
+          credential: { kind: "password", password: "delegator-secret" },
+        }),
+      ).toEqual({
+        admission: {
+          principalId: "credential:delegator",
+          permissions: DELEGATOR.permissions,
+          deniedModes: ["bypassPermissions"],
+        },
+      });
       expect(
         await resolveSessionAdmission({
           ...input,
