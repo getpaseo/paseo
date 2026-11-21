@@ -27,6 +27,7 @@ export type AgentRunController = Pick<
 export class AgentTurnBusyError extends Error {}
 
 export interface StartAgentRunOptions {
+  allowOutOfBand?: boolean;
   idleOnly?: boolean;
   admit?: () => boolean;
   /** Called after selecting the run, before consuming its events. */
@@ -41,8 +42,10 @@ export interface StartAgentRunOptions {
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
 
 /** A dispatched prompt. A started turn carries its sender's start outcome. */
+type PromptTurnOutcome = "completed" | "failed" | "cancelled" | "outcome_unknown";
+
 export type PromptDispatchResult =
-  | { disposition: "turn_started"; started: Promise<void> }
+  | { disposition: "turn_started"; started: Promise<void>; finished: Promise<PromptTurnOutcome> }
   | { disposition: Exclude<PromptDispatchDisposition, "turn_started"> };
 
 async function steerOrReplaceActiveRun(
@@ -99,10 +102,25 @@ async function startOrReplaceRun(
 
 async function drainAgentRunIterator(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>,
-): Promise<void> {
-  for await (const _ of iterator) {
-    // Events are broadcast via AgentManager subscribers.
+): Promise<PromptTurnOutcome> {
+  let outcome: PromptTurnOutcome = "outcome_unknown";
+  for await (const event of iterator) {
+    if (event.type === "turn_completed") outcome = "completed";
+    if (event.type === "turn_failed") outcome = "failed";
+    if (event.type === "turn_canceled") outcome = "cancelled";
   }
+  return outcome;
+}
+
+function tryPromptOutOfBand(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  options: StartAgentRunOptions | undefined,
+  admit: (() => void) | undefined,
+): Promise<boolean> {
+  if (options?.allowOutOfBand === false) return Promise.resolve(false);
+  return agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions, admit);
 }
 
 export async function startAgentRun(
@@ -134,7 +152,7 @@ export async function startAgentRun(
         if (!admit()) throw new Error("Queued agent message was withdrawn");
       }
     : undefined;
-  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions, admitCommand)) {
+  if (await tryPromptOutOfBand(agentManager, agentId, prompt, options, admitCommand)) {
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
@@ -192,10 +210,11 @@ async function startAgentRunInner(
     "agent.session.start_stream.iterator_returned",
   );
   options?.onDispatch?.("turn_started");
-  void (async () => {
+  const finished = (async (): Promise<PromptTurnOutcome> => {
     try {
+      let outcome: PromptTurnOutcome;
       try {
-        await drainAgentRunIterator(iterator);
+        outcome = await drainAgentRunIterator(iterator);
       } catch (error) {
         if (!isStaleProviderSessionError(error)) throw error;
         logger.info(
@@ -204,7 +223,7 @@ async function startAgentRunInner(
         );
         await agentManager.reloadAgentSession(agentId);
         const retry = await startOrReplaceRun(agentManager, agentId, prompt, options, promptStart);
-        await drainAgentRunIterator(retry.iterator);
+        outcome = await drainAgentRunIterator(retry.iterator);
       }
       logger.trace(
         {
@@ -214,6 +233,7 @@ async function startAgentRunInner(
         },
         "agent.session.iterator.drained",
       );
+      return outcome;
     } catch (error) {
       logger.trace(
         {
@@ -225,11 +245,12 @@ async function startAgentRunInner(
         "agent.session.iterator.error",
       );
       logger.error({ err: error, agentId }, "Agent stream failed");
+      return "outcome_unknown";
     } finally {
       promptStart.end();
     }
   })();
-  return { disposition: "turn_started", started: promptStart.started };
+  return { disposition: "turn_started", started: promptStart.started, finished };
 }
 
 /**
@@ -251,6 +272,7 @@ export async function unarchiveAgentState(
 
 export interface SendPromptToAgentParams {
   idleOnly?: boolean;
+  allowOutOfBand?: boolean;
   admit?: StartAgentRunOptions["admit"];
   /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
   beforeDispatch?: () => Promise<void>;
@@ -389,7 +411,11 @@ export async function sendPreparedPromptToAgent(
   let archivedAtToRestore: string | null = null;
   if (record?.archivedAt) {
     if (!unarchive) {
-      return { disposition: "turn_started", started: Promise.resolve() };
+      return {
+        disposition: "turn_started",
+        started: Promise.resolve(),
+        finished: Promise.resolve("outcome_unknown"),
+      };
     }
     if (await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId)) {
       archivedAtToRestore = record.archivedAt;
@@ -425,6 +451,7 @@ export async function sendPreparedPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: !params.idleOnly,
     idleOnly: params.idleOnly,
+    allowOutOfBand: params.allowOutOfBand,
     admit: params.admit,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,

@@ -1,3 +1,4 @@
+import type { HostInstructionsRuntime } from "./host-instructions/runtime.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -512,6 +513,7 @@ export interface SessionOptions {
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
   paseoHome: string;
+  hostInstructions?: HostInstructionsRuntime;
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -808,6 +810,7 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly hostInstructions: HostInstructionsRuntime | undefined;
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
@@ -917,6 +920,7 @@ export class Session {
       downloadTokenStore,
       pushNotifications,
       paseoHome,
+      hostInstructions,
       worktreesRoot,
       agentManager,
       agentStorage,
@@ -981,6 +985,7 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.hostInstructions = hostInstructions;
     this.messageReceipts = options.messageReceipts;
     this.agentMessages = options.agentMessages;
     this.creationService = options.creationService;
@@ -3655,6 +3660,15 @@ export class Session {
   }
 
   private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
+    if (msg.type === "host.instructions.manage.request") {
+      if (!this.hostInstructions) throw new Error("Host instructions are unavailable");
+      const result = await this.hostInstructions.manage(msg.command);
+      this.emit({
+        type: "host.instructions.manage.response",
+        payload: { requestId: msg.requestId, ...result },
+      });
+      return;
+    }
     switch (msg.type) {
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);
