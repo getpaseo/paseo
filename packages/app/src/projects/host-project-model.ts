@@ -176,6 +176,19 @@ export function resolveExactHostProjectCandidate(input: {
     if (exactPlacement) return exactPlacement;
   }
 
+  // A remembered project starts as one host-local placement. It may now belong to a verified
+  // local-link group, whose view key and project key deliberately differ from the old snapshot.
+  // Resolve that exact source placement when the selected host has no surviving exact placement.
+  const linkedProject = input.projects.find(
+    (project) =>
+      getHostProjectPlacement(project, input.serverId) !== null &&
+      input.candidate.hosts.some(
+        (candidateHost) =>
+          getHostProjectId(project, candidateHost.serverId) === candidateHost.projectId,
+      ),
+  );
+  if (linkedProject) return linkedProject;
+
   const exactView = input.projects.find((project) => project.viewKey === input.candidate.viewKey);
   if (input.candidate.projectKey !== null && exactView?.projectKey === input.candidate.projectKey) {
     return exactView;

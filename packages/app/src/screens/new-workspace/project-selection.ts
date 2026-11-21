@@ -61,6 +61,22 @@ export function createProjectSelection({
   };
 }
 
+function sharesHostProjectPlacement(
+  left: HostProjectListItem | null | undefined,
+  right: HostProjectListItem | null | undefined,
+): boolean {
+  return Boolean(
+    left?.hosts.some(
+      (leftHost) =>
+        Boolean(leftHost.projectId) &&
+        right?.hosts.some(
+          (rightHost) =>
+            rightHost.serverId === leftHost.serverId && rightHost.projectId === leftHost.projectId,
+        ),
+    ),
+  );
+}
+
 export function resolveInitialProjectSelectionSource(input: {
   initialProject: HostProjectListItem | null;
   routeProject: HostProjectListItem | null;
@@ -71,19 +87,13 @@ export function resolveInitialProjectSelectionSource(input: {
   }
   if (
     input.routeProject?.viewKey === input.initialProject.viewKey ||
-    input.routeProject?.hosts.some((routeHost) =>
-      input.initialProject?.hosts.some(
-        (host) =>
-          host.serverId === routeHost.serverId &&
-          Boolean(host.projectId) &&
-          host.projectId === routeHost.projectId,
-      ),
-    )
+    sharesHostProjectPlacement(input.routeProject, input.initialProject)
   ) {
     return "route";
   }
   if (
     input.lastActiveProject?.viewKey === input.initialProject.viewKey ||
+    sharesHostProjectPlacement(input.lastActiveProject, input.initialProject) ||
     (input.lastActiveProject?.projectKey !== null &&
       input.lastActiveProject?.projectKey !== undefined &&
       input.lastActiveProject.projectKey === input.initialProject.projectKey)

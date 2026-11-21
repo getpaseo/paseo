@@ -16,6 +16,14 @@ names, and workspace foreign keys. Attached workspaces are independently refresh
 from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
 are observed too.
 
+The app can also keep **device-local project links** in its own storage. A link is a presentation
+override over two or more host-local `(serverId, projectId)` entries, admitted only when the latest
+workspace projection proves the same normalized Git remote and selected subdirectory. It never
+writes a daemon record or changes `projectId`, `projectKey`, workspace membership, settings, or
+files. A missing or changed cached Git fact disables the link's grouping instead of falling back to
+automatic grouping; users can review or remove it. This deliberately does not make links available
+to other clients or devices.
+
 The workspace registry model defines placement once: initial directory/worktree construction,
 mutable reconciliation fields, and the persisted-to-wire checkout projection. Its update policy
 preserves `displayName` and `baseBranch`. `WorkspaceProvisioningService` owns the corresponding

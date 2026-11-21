@@ -5,6 +5,7 @@ import {
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
+  ProjectPlacementPayloadSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
@@ -338,6 +339,9 @@ const StoredWorkspaceSchema = z.strictObject({
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
   forgeWeb: ForgeWebSchema.optional(),
+  // Optional so caches written before project placement was available can still be restored.
+  // Current rows retain checkout facts because directory cursors do not resend unchanged workspaces.
+  project: ProjectPlacementPayloadSchema.optional(),
 });
 
 const StoredProjectSchema = z.strictObject({
@@ -776,6 +780,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
     forgeWeb: workspace.forgeWeb,
+    project: workspace.project,
   };
 }
 
