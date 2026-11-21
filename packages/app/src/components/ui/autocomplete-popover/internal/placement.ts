@@ -19,7 +19,6 @@ export interface PopoverFrameProps {
   /** Taken asynchronously; the frame follows the anchor's live size between measurements. */
   anchorAtRest: AnchorAtRest;
   reservedLift: DerivedValue<number>;
-  topInset: number;
   children: ReactNode;
 }
 

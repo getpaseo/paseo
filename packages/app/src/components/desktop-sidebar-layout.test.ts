@@ -10,6 +10,7 @@ import {
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarInsetLeft,
+  resolveDesktopSidebarInsetTop,
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
   resolveDesktopSidebarWidth,
@@ -247,4 +248,14 @@ it("reserves room for Explorer and the workspace before showing app navigation",
 it("insets an overlay sidebar's content by the left safe area and leaves the dock to app chrome", () => {
   expect(resolveDesktopSidebarInsetLeft({ overlay: true, safeAreaLeft: 20 })).toBe(20);
   expect(resolveDesktopSidebarInsetLeft({ overlay: false, safeAreaLeft: 20 })).toBe(0);
+});
+
+it("gives the overlay sidebar the window's top inset, which a wide layout surface spends", () => {
+  // A wide web surface pads the status bar itself and leaves its content a top inset of 0.
+  expect(
+    resolveDesktopSidebarInsetTop({ overlay: true, safeAreaTop: 0, windowSafeAreaTop: 32 }),
+  ).toBe(32);
+  expect(
+    resolveDesktopSidebarInsetTop({ overlay: false, safeAreaTop: 0, windowSafeAreaTop: 32 }),
+  ).toBe(0);
 });

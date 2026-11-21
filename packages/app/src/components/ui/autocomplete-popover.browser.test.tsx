@@ -4,10 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { PortalProvider } from "@gorhom/portal";
 import { View } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaInsetsContext, SafeAreaProvider } from "react-native-safe-area-context";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RetainedPanel } from "@/components/retained-panel";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
+import { WindowLayoutProvider, WindowLayoutSurface } from "@/window-layout";
 import type { AutocompleteOption } from "./autocomplete";
 import { AutocompletePopover } from "./autocomplete-popover";
 import { FloatingPanelPortalHost } from "./floating-panel-portal";
@@ -571,4 +572,65 @@ it("scrolls towards rows further from the composer when the wheel turns up", asy
   expect(bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER - 120);
   expect(isRowInView("/skill-7")).toBe(true);
   expect(popover.getBoundingClientRect().bottom).toBe(rectOf("composer-input")!.top - 12);
+});
+
+const STATUS_BAR_INSETS = { top: 32, left: 0, right: 0, bottom: 0 };
+const SURFACE_STYLE = { flex: 1 };
+const COMPOSER_NEAR_TOP_STYLE = { position: "absolute" as const, top: 60, left: 16, width: 358 };
+
+/**
+ * A wide browser layout surface pads the status bar and gives its content a top inset of 0. The
+ * root portal host sits outside that surface, against the window's top edge, so a composer inside
+ * the surface that portals there still has to keep the popover below the status bar.
+ */
+function ComposerNearTop(): ReactNode {
+  return (
+    <View style={COMPOSER_NEAR_TOP_STYLE}>
+      <AutocompletePopover
+        visible
+        options={OPTIONS}
+        selectedIndex={OPTIONS.length - 1}
+        onSelect={ignoreSelection}
+      >
+        <View testID="composer-input" style={inputStyle(40)} />
+      </AutocompletePopover>
+    </View>
+  );
+}
+
+/** A composer near the top of a wide surface, portalling into the root host outside it. */
+function WideSurfaceScreen(): ReactNode {
+  return (
+    <View style={SCREEN_STYLE}>
+      <WindowLayoutSurface compact={false} style={SURFACE_STYLE}>
+        <ComposerNearTop />
+      </WindowLayoutSurface>
+      <FloatingPanelPortalHost />
+    </View>
+  );
+}
+
+function WideSurfaceWindow(): ReactNode {
+  return (
+    <Providers>
+      <SafeAreaInsetsContext.Provider value={STATUS_BAR_INSETS}>
+        <WindowLayoutProvider>
+          <RetainedPanel active>
+            <WideSurfaceScreen />
+          </RetainedPanel>
+        </WindowLayoutProvider>
+      </SafeAreaInsetsContext.Provider>
+    </Providers>
+  );
+}
+
+it("keeps its top below the status bar when it portals out of a wide layout surface", async () => {
+  render(<WideSurfaceWindow />);
+  const popover = await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const screenTop = container!.getBoundingClientRect().top;
+  expect(popover.getBoundingClientRect().top - screenTop).toBeGreaterThanOrEqual(
+    STATUS_BAR_INSETS.top,
+  );
 });
