@@ -45,7 +45,7 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
   if (params.serverId) sections.push(`Server: ${params.serverId}`);
   if (params.reason === "needs permission" && params.permissionRequest) {
     sections.push(
-      "Respond with `respond_to_permission` using the `agentId` and `requestId` below.",
+      "Respond with `respond_to_permission` using the `agentId`, `requestId`, and optional `serverId` below.",
       `<permission-request>\n${JSON.stringify(
         {
           agentId: params.childAgentId,
