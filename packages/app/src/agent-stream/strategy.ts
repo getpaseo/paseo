@@ -185,6 +185,7 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     },
     collectAssistantResponseContent: (items, startIndex) => {
       const messages: string[] = [];
+      const seenSourceIds = new Set<string>();
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -197,6 +198,16 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         }
         if (currentItem.kind === "assistant_message") {
           messages.push(currentItem.text);
+        } else if (
+          currentItem.kind === "plugin" &&
+          currentItem.sourceKind === "assistant_message" &&
+          currentItem.sourceText !== undefined
+        ) {
+          const sourceKey = currentItem.sourceId ?? currentItem.id;
+          if (!seenSourceIds.has(sourceKey)) {
+            seenSourceIds.add(sourceKey);
+            messages.push(currentItem.sourceText);
+          }
         }
         laterItem = currentItem;
       }

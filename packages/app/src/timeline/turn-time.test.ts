@@ -247,3 +247,44 @@ it("times a heartbeat that ends with tools and no assistant text", () => {
   });
   assert.equal(timing.byItemId.get("last")?.durationMs, 5000);
 });
+
+it("derives turn timing for plugin-projected assistant replies", () => {
+  const userAt = new Date("2026-05-15T00:00:00.000Z");
+  const replyAt = new Date("2026-05-15T00:00:06.000Z");
+  const part1: StreamItem = {
+    kind: "plugin",
+    id: "genui/a1/0",
+    sourceId: "a1",
+    sourceKind: "assistant_message",
+    timestamp: replyAt,
+    pluginId: "genui",
+    pluginItemId: "a1/0",
+    itemKind: "genui-text",
+    version: 1,
+    data: { text: "Intro" },
+  };
+  const part2: StreamItem = {
+    kind: "plugin",
+    id: "genui/a1/1",
+    sourceId: "a1",
+    sourceKind: "assistant_message",
+    timestamp: replyAt,
+    pluginId: "genui",
+    pluginItemId: "a1/1",
+    itemKind: "genui-block",
+    version: 1,
+    data: { code: 'Card("Hi", [])' },
+  };
+
+  const timing = deriveStreamTurnTiming({
+    isTurnActive: false,
+    activeTurnStartedAt: null,
+    tail: [user("u1", userAt), part1, part2],
+    head: [],
+  });
+
+  assert.deepEqual(timing.byItemId.get("genui/a1/1"), {
+    completedAt: replyAt,
+    durationMs: 6000,
+  });
+});

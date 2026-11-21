@@ -791,6 +791,15 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
+export function isAssistantReplyItem(
+  item: StreamItem | null | undefined,
+): item is AssistantMessageItem | (PluginTimelineStreamItem & { sourceKind: "assistant_message" }) {
+  return (
+    item?.kind === "assistant_message" ||
+    (item?.kind === "plugin" && item.sourceKind === "assistant_message")
+  );
+}
+
 type NotificationLevel = "info" | "warning" | "error";
 
 export interface NotificationItem {
@@ -820,8 +829,12 @@ export interface PluginTimelineStreamItem {
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */
   sourceId?: string;
-  /** The original row kind, retained by projection for turn folding. */
+  /** The original row kind, retained by projection for turn folding and footers. */
   sourceKind?: StreamItem["kind"];
+  /** The provider message id of a replaced assistant reply, for turn fork boundaries. */
+  sourceMessageId?: string;
+  /** The original text of a replaced assistant reply, for turn copy. */
+  sourceText?: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
