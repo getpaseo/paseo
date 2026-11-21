@@ -3503,6 +3503,7 @@ class HeldTurnAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private turnStartGate: Promise<void> | null = null;
   private cancelHeldStart: (() => void) | null = null;
+  private interruptGate: Promise<void> | null = null;
   private nextStartError: Error | null = null;
 
   constructor(
@@ -3515,6 +3516,15 @@ class HeldTurnAgentSession implements AgentSession {
   holdTurnStart(): () => void {
     let release!: () => void;
     this.turnStartGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** Hold the next interrupt, as a provider that takes a moment to stop does. */
+  holdInterrupt(): () => void {
+    let release!: () => void;
+    this.interruptGate = new Promise((resolve) => {
       release = resolve;
     });
     return release;
@@ -3666,6 +3676,9 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    const gate = this.interruptGate;
+    this.interruptGate = null;
+    await gate;
     this.cancelHeldStart?.();
     const turnId = this.activeTurnId;
     if (!turnId) {
@@ -4626,6 +4639,8 @@ describe("message order for one recipient", () => {
         invokeToolWithParsedInput(personSend, { agentId: recipient.id, prompt }),
       /** The person's prompts that have taken their place in the recipient's queue. */
       personPromptsAdmitted: () => personPromptsAdmitted,
+      /** Stop reached the queue: what it holds waits for the recipient's next prompt. */
+      queueIsHeld: () => !delivery.hasPending(recipient.id),
       stop: () =>
         invokeToolWithParsedInput(registeredTool(agentServer, "cancel_agent"), {
           agentId: recipient.id,
@@ -4761,6 +4776,36 @@ describe("message order for one recipient", () => {
       expect(recipient.prompt(2)).toEqual([
         { from: recipient.senderId, text: "Skip the backup" },
         { from: "person", text: "Carry on" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("a steer sent while the provider is still stopping does not release the interrupt Stop held", async () => {
+    const recipient = await setupRecipient();
+    try {
+      recipient.session.holdTurnStart();
+      const person = recipient.personSends("Run the migration").catch(() => undefined);
+      await vi.waitFor(() => expect(recipient.session.prompts).toHaveLength(2));
+      await recipient.agentSends("Skip the backup", "interrupt", false);
+
+      const providerStops = recipient.session.holdInterrupt();
+      const stopping = recipient.stop();
+      await vi.waitFor(() => expect(recipient.queueIsHeld()).toBe(true));
+      await recipient.agentSends("Use the staging database");
+      providerStops();
+      await stopping;
+      await person;
+      expect(recipient.session.prompts).toHaveLength(2);
+
+      // The interrupt from before the Stop waits for the later steer's quiet window.
+      recipient.advance(2000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(3);
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Skip the backup" },
+        { from: recipient.senderId, text: "Use the staging database" },
       ]);
     } finally {
       await recipient.cleanup();

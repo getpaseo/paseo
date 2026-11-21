@@ -1007,6 +1007,7 @@ function createRecipient(
   let running = options.running ?? true;
   const answered = Promise.resolve();
   let providerAnswer: Promise<void> = answered;
+  let managerReady: Promise<void> = answered;
   const outOfBand = options.outOfBand;
   const delivery = createAgentMessageDelivery({
     schedule: clock.schedule,
@@ -1029,6 +1030,7 @@ function createRecipient(
       : undefined,
     dispatch: async (request) => {
       // The manager admits the prompt, the provider gets it, and the provider answers.
+      await managerReady;
       if (!request.admit()) throw new Error("The prompt was not admitted");
       received.push(...request.messageIds);
       sent.push({
@@ -1063,6 +1065,20 @@ function createRecipient(
         prompt: messageId,
         activeTurnBehavior,
       }).messageId;
+    },
+    /** The manager waits, as it does for a turn that is still starting, before it admits a prompt. */
+    holdAdmission() {
+      let ready!: () => void;
+      managerReady = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      return {
+        async release() {
+          ready();
+          managerReady = answered;
+          await settle();
+        },
+      };
     },
     /** The provider takes its time to answer the dispatches that follow. */
     holdProviderAnswer() {
@@ -1527,4 +1543,104 @@ test("an interrupt the provider runs as a command beside the turn takes no queue
     behavior: "interrupt",
   });
   await recipient.delivery.close();
+});
+
+test("an interrupt keeps its place ahead of a later person's prompt when a queue step is already in line", async () => {
+  // The provider is offered waiting messages as commands, so a closed window lines up a
+  // queue step behind the dispatch in flight.
+  const recipient = createRecipient({ outOfBand: () => false });
+  const provider = recipient.holdProviderAnswer();
+  recipient.send("interrupt", "first");
+  await recipient.settle();
+  recipient.send("steer", "older");
+  await recipient.tick();
+
+  recipient.send("interrupt", "pause");
+  const person = recipient.person("carry on", "person-1");
+  await provider.accept();
+
+  // The interrupt replaces the turn itself; the person's prompt follows it and carries nothing.
+  expect((await person).prompt).toBe("carry on");
+  expect(recipient.sent.at(-1)).toEqual({
+    ids: ["older", "pause"],
+    behavior: "interrupt",
+    idleOnly: false,
+    mode: undefined,
+  });
+  expect(recipient.received).toEqual(["first", "older", "pause", "person-1"]);
+  await recipient.delivery.close();
+});
+
+test("an interrupt that was waiting when Stop arrived stays held when a later message reopens the queue", async () => {
+  const recipient = createRecipient();
+  const manager = recipient.holdAdmission();
+  recipient.send("interrupt", "pause");
+  await recipient.settle();
+
+  // The later steer arrives before the manager gets back to the interrupt.
+  await recipient.stop();
+  recipient.send("steer", "later");
+  await manager.release();
+  expect(recipient.sent).toEqual([]);
+
+  // The held interrupt goes with the later message, as a steer.
+  await recipient.tick();
+  expect(recipient.sent).toEqual([
+    { ids: ["pause", "later"], behavior: "steer", idleOnly: true, mode: undefined },
+  ]);
+  await recipient.delivery.close();
+});
+
+test("messages whose starting turn Stop canceled are kept when a later message reopens the queue", async () => {
+  const recipient = createRecipient({ running: false });
+  const provider = recipient.holdProviderAnswer();
+  const report = recipient.delivery.enqueue({
+    recipientId: "recipient",
+    source: { kind: "agent-message", agentId: "sender" },
+    messageId: "report",
+    prompt: "report",
+  });
+  await recipient.tick();
+  expect(recipient.ids()).toEqual(["report"]);
+
+  await recipient.stop();
+  recipient.send("steer", "later");
+  await provider.refuse(new Error("run was canceled before its turn started"));
+
+  await recipient.tick();
+  expect(recipient.sent.at(-1)).toMatchObject({ ids: ["report", "later"] });
+  await expect(report.dispatched).resolves.toBe("turn_started");
+  await recipient.delivery.close();
+});
+
+test("shutdown delivers the messages a rejected person's turn returns to the queue", async () => {
+  const recipient = createRecipient();
+  const report = recipient.delivery.enqueue({
+    recipientId: "recipient",
+    source: { kind: "agent-message", agentId: "sender" },
+    messageId: "report",
+    prompt: "report",
+  });
+  await recipient.tick();
+  let rejectStart!: (error: Error) => void;
+  const started = new Promise<void>((_resolve, reject) => {
+    rejectStart = reject;
+  });
+  void started.catch(() => undefined);
+  await recipient.person("hello", "person-1", { started });
+
+  // Shutdown begins while the provider is still deciding, then the provider rejects the turn.
+  let closed = false;
+  const closing = recipient.delivery.close().then(() => {
+    closed = true;
+    return undefined;
+  });
+  rejectStart(new Error("provider rejected the turn"));
+  await recipient.settle();
+  await recipient.settle();
+
+  expect(closed).toBe(true);
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["report"]]);
+  await expect(report.dispatched).resolves.toBe("turn_started");
+  await closing;
 });
