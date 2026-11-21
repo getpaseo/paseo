@@ -4610,6 +4610,7 @@ export class Session {
 
     try {
       await sendPromptToAgent({
+        agentMessages: this.agentMessages,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         agentId,
@@ -9177,6 +9178,7 @@ export class Session {
           return;
         }
         const result = await sendPromptToAgent({
+          agentMessages: this.agentMessages,
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,

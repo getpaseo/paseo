@@ -755,6 +755,7 @@ export class VoiceAssistantWebSocketServer {
           },
           { replayState: false },
         ),
+      onStop: (notify) => agentManager.onStop(notify),
       dispatch: async (batch) => {
         const dispatch = await sendPreparedPromptToAgent({
           agentManager,
@@ -774,6 +775,8 @@ export class VoiceAssistantWebSocketServer {
           await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId, dispatch.started);
         return dispatch.disposition;
       },
+      awaitStart: (agentId, started) =>
+        waitForAgentRunStartWithTimeout(agentManager, agentId, started),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
