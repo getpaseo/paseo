@@ -16,7 +16,6 @@ interface FakeSpawnBehavior {
 
 interface FakeSpawnController {
   activeCount: number;
-  nextPid: number;
   peakActiveCount: number;
   processes: FakeChildProcess[];
   queue: FakeSpawnBehavior[];
@@ -25,7 +24,6 @@ interface FakeSpawnController {
 
 const fakeSpawnController = vi.hoisted<FakeSpawnController>(() => ({
   activeCount: 0,
-  nextPid: 1000,
   peakActiveCount: 0,
   processes: [],
   queue: [],
@@ -35,7 +33,6 @@ const fakeSpawnController = vi.hoisted<FakeSpawnController>(() => ({
     }
 
     this.activeCount = 0;
-    this.nextPid = 1000;
     this.peakActiveCount = 0;
     this.processes = [];
     this.queue = [];
@@ -43,7 +40,8 @@ const fakeSpawnController = vi.hoisted<FakeSpawnController>(() => ({
 }));
 
 class FakeChildProcess extends EventEmitter {
-  public readonly pid: number;
+  // This is not an OS process; tree cleanup must use the direct-child fallback.
+  public readonly pid = undefined;
   public readonly stderr = new EventEmitter();
   public readonly stdout = new EventEmitter();
   public killed = false;
@@ -57,8 +55,6 @@ class FakeChildProcess extends EventEmitter {
   public constructor(behavior: FakeSpawnBehavior) {
     super();
     this.behavior = behavior;
-    this.pid = fakeSpawnController.nextPid;
-    fakeSpawnController.nextPid += 1;
 
     fakeSpawnController.activeCount += 1;
     fakeSpawnController.peakActiveCount = Math.max(
