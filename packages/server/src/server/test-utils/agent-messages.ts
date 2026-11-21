@@ -31,6 +31,7 @@ export function createTestAgentMessages(params: {
         },
         { replayState: false },
       ),
+    onStop: (notify) => params.agentManager.onStop(notify),
     schedule:
       params.schedule ??
       ((_delay, callback) => {

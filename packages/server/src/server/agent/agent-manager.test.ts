@@ -7972,6 +7972,75 @@ test("replaceAgentRun does not emit idle or resolve waiters between interrupted 
   unsubscribe();
 });
 
+test("onStop hears a stop before the agent settles and ignores a replacing prompt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-on-stop-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+
+  class HeldTurnSession extends TestAgentSession {
+    private turns = 0;
+    private activeTurnId: string | null = null;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `held-turn-${++this.turns}`;
+      this.activeTurnId = turnId;
+      setTimeout(() => {
+        if (this.activeTurnId === turnId)
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      const turnId = this.activeTurnId;
+      if (!turnId) return;
+      this.activeTurnId = null;
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "interrupted",
+        turnId,
+      });
+    }
+  }
+
+  class HeldTurnClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HeldTurnSession(config);
+    }
+  }
+
+  const manager = new AgentManager({ clients: { codex: new HeldTurnClient() }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const stops: Array<{ agentId: string; lifecycle: string | undefined }> = [];
+  const unsubscribe = manager.onStop((agentId) => {
+    stops.push({ agentId, lifecycle: manager.getAgent(agentId)?.lifecycle });
+  });
+  const drain = async (run: AsyncGenerator<AgentStreamEvent>) => {
+    for await (const _event of run) {
+      // Drain events so lifecycle updates are applied.
+    }
+  };
+
+  const first = drain(manager.streamAgent(agent.id, "first run"));
+  await manager.waitForAgentRunStart(agent.id);
+  const second = drain(await manager.replaceAgentRun(agent.id, "second run"));
+  await manager.waitForAgentRunStart(agent.id);
+  expect(stops).toEqual([]);
+
+  await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+  expect(stops).toEqual([{ agentId: agent.id, lifecycle: "running" }]);
+  expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+  // Nothing is running, so there is no turn to stop.
+  await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "not_running" });
+  expect(stops).toHaveLength(1);
+
+  unsubscribe();
+  await Promise.all([first, second]);
+});
+
 test("replaceAgentRun stays running when a stale old terminal arrives before the replacement turn is current", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replace-stale-terminal-"));
   const storagePath = join(workdir, "agents");

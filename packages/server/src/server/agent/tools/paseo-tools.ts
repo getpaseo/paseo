@@ -1287,7 +1287,7 @@ function createToolCatalog(
     .strict();
   const commonSendAgentPromptInputSchema = {
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
+      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it at once and delivers the messages queued before it first, in the same turn. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
     ),
     agentId: z.string(),
     prompt: z.string(),
@@ -1974,7 +1974,7 @@ function createToolCatalog(
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient and waits for the current turn to end unless interrupt is requested. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        "Send a task. Agent callers receive an immediate queued receipt. The recipient reads messages in the order they were queued: a steer follows two quiet seconds and waits for the current turn to end; an interrupt replaces the turn at once and takes the messages queued before it along. A later message does not cancel an earlier one. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -2050,14 +2050,17 @@ function createToolCatalog(
             deliveryStatus: receipt.status,
             messageId: receipt.messageId,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
-            guidance: notifying
-              ? `Queued for delivery after two quiet seconds and the current turn ends. ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
-              : "Queued for delivery after two quiet seconds and the current turn ends; provider dispatch has not occurred.",
+            guidance: `${
+              activeTurnBehavior === "interrupt"
+                ? "Queued to replace the current turn now, after the messages queued before it."
+                : "Queued for delivery after two quiet seconds and the current turn ends."
+            } ${notifying ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE : "Provider dispatch has not occurred."}`,
           },
         };
       }
 
       const dispatch = await sendPromptToAgent({
+        agentMessages: agentMessages(),
         agentManager,
         agentStorage,
         agentId,

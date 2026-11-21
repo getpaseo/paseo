@@ -389,14 +389,18 @@ test("a turn starting during dispatch preparation keeps receipts queued and join
   await delivery.close();
 });
 
-test("explicit interrupt bypasses a running turn while ordinary messages keep waiting", async () => {
+test("an interrupt takes the messages queued before it along in one replacing dispatch", async () => {
   const clock = createClock();
-  const sent: Array<readonly string[]> = [];
+  const sent: Array<{ ids: readonly string[]; behavior: string; idleOnly: boolean }> = [];
   const delivery = createAgentMessageDelivery({
     schedule: clock.schedule,
     isRunning: () => true,
     dispatch: async (request) => {
-      sent.push(request.messageIds);
+      sent.push({
+        ids: request.messageIds,
+        behavior: request.activeTurnBehavior,
+        idleOnly: request.idleOnly,
+      });
       return "turn_started";
     },
     onError: (error) => {
@@ -414,12 +418,12 @@ test("explicit interrupt bypasses a running turn while ordinary messages keep wa
     messageId: "interrupt",
     activeTurnBehavior: "interrupt",
   });
-  clock.advance(2000);
+  // No quiet window: the interrupt releases at admission.
   await interrupt.dispatched;
-  expect(sent).toEqual([["interrupt"]]);
-  expect(delivery.hasPending("parent")).toBe(true);
+  expect(sent).toEqual([{ ids: ["wait", "interrupt"], behavior: "interrupt", idleOnly: false }]);
+  expect(delivery.hasPending("parent")).toBe(false);
   await delivery.close();
-  expect(sent).toEqual([["interrupt"], ["wait"]]);
+  expect(sent).toHaveLength(1);
 });
 
 test("shutdown flushes a dispatch that discovered a concurrent turn during preparation", async () => {
@@ -503,7 +507,7 @@ test("conflicting modes dispatch on separate turn ends without changing the acti
   await delivery.close();
 });
 
-test("interrupts retain separate mode choices while the recipient is busy", async () => {
+test("each interrupt releases at admission and keeps its own mode choice", async () => {
   const clock = createClock();
   const sent: Array<{ ids: readonly string[]; mode?: string }> = [];
   const delivery = createAgentMessageDelivery({
@@ -525,7 +529,6 @@ test("interrupts retain separate mode choices while the recipient is busy", asyn
   };
   const a = delivery.enqueue({ ...message, messageId: "A", sessionMode: "plan" });
   const b = delivery.enqueue({ ...message, messageId: "B", sessionMode: "default" });
-  clock.advance(2000);
   await Promise.all([a.dispatched, b.dispatched]);
   expect(sent).toEqual([
     { ids: ["A"], mode: "plan" },
@@ -975,4 +978,279 @@ test("a declined child command offer cannot bring back a withdrawn digest", asyn
     release.resolve();
     await delivery.close();
   }
+});
+
+interface Dispatched {
+  ids: readonly string[];
+  behavior: string;
+  idleOnly: boolean;
+  mode?: string;
+}
+
+/** One recipient with a running turn, observed the way the daemon wires the queue. */
+function createRecipient(options: { running?: boolean } = {}) {
+  const clock = createClock();
+  const sent: Dispatched[] = [];
+  const settleListeners = new Set<(recipientId: string) => void>();
+  const stopListeners = new Set<(recipientId: string) => void>();
+  let running = options.running ?? true;
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      settleListeners.add(listener);
+      return () => settleListeners.delete(listener);
+    },
+    onStop: (listener) => {
+      stopListeners.add(listener);
+      return () => stopListeners.delete(listener);
+    },
+    dispatch: async (request) => {
+      sent.push({
+        ids: request.messageIds,
+        behavior: request.activeTurnBehavior,
+        idleOnly: request.idleOnly,
+        mode: request.sessionMode,
+      });
+      // An accepted dispatch leaves the recipient with a running turn.
+      running = true;
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+  let next = 0;
+  return {
+    clock,
+    sent,
+    delivery,
+    settle,
+    ids: () => sent.flatMap((dispatch) => dispatch.ids),
+    send(activeTurnBehavior: "steer" | "interrupt", messageId = `m${next++}`, agentId = "sender") {
+      delivery.enqueue({
+        recipientId: "recipient",
+        source: { kind: "agent-message", agentId },
+        messageId,
+        prompt: messageId,
+        activeTurnBehavior,
+      });
+      return messageId;
+    },
+    /** A person's prompt: the provider turn it starts is running afterwards. */
+    async person(prompt: string, messageId: string, fail?: Error) {
+      const prompts: AgentPromptInput[] = [];
+      const result = await delivery
+        .sendDirect({ recipientId: "recipient", prompt, messageId }, async (joined) => {
+          prompts.push(joined.prompt);
+          if (fail) throw fail;
+          running = true;
+          return { disposition: "turn_started" as const, started: Promise.resolve() };
+        })
+        .catch((error: unknown) => error);
+      return { prompt: prompts[0], result };
+    },
+    async endTurn() {
+      running = false;
+      for (const listener of settleListeners) listener("recipient");
+      await settle();
+    },
+    /** Stop / cancel_agent: the manager announces the stop, then the turn settles. */
+    async stop() {
+      for (const listener of stopListeners) listener("recipient");
+      running = false;
+      for (const listener of settleListeners) listener("recipient");
+      await settle();
+    },
+    async tick(ms = 2000) {
+      clock.advance(ms);
+      await settle();
+    },
+  };
+}
+
+test.each(["sender", "another-sender"])(
+  "a steer that waited ten minutes is delivered ahead of a later interrupt from %s, never after it",
+  async (interrupter) => {
+    const recipient = createRecipient();
+    recipient.send("steer", "go-ahead", "sender");
+    for (let elapsed = 0; elapsed < 600_000; elapsed += 2000) await recipient.tick();
+    expect(recipient.sent).toEqual([]);
+
+    recipient.send("interrupt", "pause", interrupter);
+    await recipient.settle();
+    expect(recipient.sent).toEqual([
+      { ids: ["go-ahead", "pause"], behavior: "interrupt", idleOnly: false, mode: undefined },
+    ]);
+
+    await recipient.endTurn();
+    await recipient.tick();
+    expect(recipient.sent).toHaveLength(1);
+    expect(recipient.delivery.hasPending("recipient")).toBe(false);
+    await recipient.delivery.close();
+  },
+);
+
+test("a steer admitted after an interrupt waits for the replacement turn to end", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "A");
+  recipient.send("interrupt", "B");
+  recipient.send("steer", "C");
+  await recipient.tick();
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["A", "B"]]);
+
+  await recipient.endTurn();
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["A", "B"], ["C"]]);
+  expect(recipient.sent[1]).toMatchObject({ behavior: "steer", idleOnly: true });
+  await recipient.delivery.close();
+});
+
+test("an interrupt is dispatched at admission while other messages keep arriving", async () => {
+  const recipient = createRecipient();
+  recipient.send("interrupt", "pause");
+  await recipient.settle();
+  expect(recipient.ids()).toEqual(["pause"]);
+  // Reports that keep the quiet window open cannot hold a later interrupt back either.
+  for (let i = 0; i < 5; i++) {
+    recipient.send("steer", `report-${i}`);
+    await recipient.tick(1900);
+  }
+  recipient.send("interrupt", "pause-again");
+  await recipient.settle();
+  expect(recipient.sent.at(-1)).toMatchObject({
+    ids: ["report-0", "report-1", "report-2", "report-3", "report-4", "pause-again"],
+    behavior: "interrupt",
+  });
+  await recipient.delivery.close();
+});
+
+test("steady arrivals cannot keep an idle recipient's quiet window open past ten seconds", async () => {
+  const recipient = createRecipient({ running: false });
+  for (let i = 0; i < 6; i++) {
+    recipient.send("steer", `report-${i}`);
+    await recipient.tick(1900);
+  }
+  // 11.4 seconds of arrivals under two seconds apart: the window closed at ten.
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([
+    ["report-0", "report-1", "report-2", "report-3", "report-4", "report-5"],
+  ]);
+  await recipient.delivery.close();
+});
+
+test("delivery order equals admission order for every short interleaving of sends and turn ends", async () => {
+  const actions = ["steer", "interrupt", "end-turn", "tick"] as const;
+  const length = 5;
+  for (let scenario = 0; scenario < actions.length ** length; scenario++) {
+    const recipient = createRecipient();
+    const admitted: string[] = [];
+    const script: string[] = [];
+    for (let step = 0, rest = scenario; step < length; step++, rest = Math.floor(rest / 4)) {
+      const action = actions[rest % 4]!;
+      script.push(action);
+      if (action === "end-turn") await recipient.endTurn();
+      else if (action === "tick") await recipient.tick();
+      else admitted.push(recipient.send(action));
+      await recipient.settle();
+    }
+    // Let every remaining message out: turns end and quiet windows close.
+    for (let i = 0; i < 4; i++) {
+      await recipient.tick();
+      await recipient.endTurn();
+    }
+    expect(recipient.ids(), script.join(" → ")).toEqual(admitted);
+    await recipient.delivery.close();
+  }
+});
+
+test("a person's prompt carries the queued messages ahead of it in the same prompt", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "go-ahead");
+  await recipient.tick();
+
+  const { prompt, result } = await recipient.person("pause it", "person-1");
+  expect(result).toMatchObject({ disposition: "turn_started" });
+  expect(typeof prompt === "string" ? parseAgentMessages(prompt) : null).toEqual([
+    { id: "go-ahead", source: { kind: "agent-message", agentId: "sender" }, text: "go-ahead" },
+    { id: "person-1", source: null, text: "pause it" },
+  ]);
+  expect(recipient.delivery.hasPending("recipient")).toBe(false);
+
+  // Nothing is left to start a turn of its own when the person's turn ends.
+  await recipient.endTurn();
+  await recipient.tick();
+  expect(recipient.sent).toEqual([]);
+  await recipient.delivery.close();
+});
+
+test("a person's prompt is untouched when nothing is queued, and a command travels alone", async () => {
+  const recipient = createRecipient();
+  expect((await recipient.person("hello", "person-1")).prompt).toBe("hello");
+
+  recipient.send("steer", "report");
+  await recipient.tick();
+  // Providers parse commands from raw text, so the queue stays where it is.
+  expect((await recipient.person("/compact", "person-2")).prompt).toBe("/compact");
+  expect(recipient.delivery.hasPending("recipient")).toBe(true);
+  await recipient.endTurn();
+  expect(recipient.ids()).toEqual(["report"]);
+  await recipient.delivery.close();
+});
+
+test("queued messages survive a person's prompt that fails to send", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "report");
+  await recipient.tick();
+  const failure = new Error("provider refused the prompt");
+  expect((await recipient.person("hello", "person-1", failure)).result).toBe(failure);
+  expect(recipient.delivery.hasPending("recipient")).toBe(true);
+  await recipient.endTurn();
+  expect(recipient.ids()).toEqual(["report"]);
+  await recipient.delivery.close();
+});
+
+test("Stop holds the messages queued before it until the recipient's next prompt", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "go-ahead");
+  await recipient.tick();
+
+  await recipient.stop();
+  await recipient.tick();
+  await recipient.tick(60_000);
+  // The stopped recipient stays stopped: no queued message starts a turn.
+  expect(recipient.sent).toEqual([]);
+  // Held messages need a prompt, so neither completion waits nor runtime guards wait for them.
+  expect(recipient.delivery.hasPending("recipient")).toBe(false);
+  await recipient.delivery.waitForDispatch("recipient", new AbortController().signal);
+
+  // A message admitted after the Stop is a new prompt: the held one goes ahead of it.
+  recipient.send("steer", "later");
+  await recipient.tick();
+  expect(recipient.sent).toEqual([
+    { ids: ["go-ahead", "later"], behavior: "steer", idleOnly: true, mode: undefined },
+  ]);
+  await recipient.delivery.close();
+});
+
+test("a person's prompt after Stop carries the held messages", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "go-ahead");
+  await recipient.stop();
+
+  const { prompt } = await recipient.person("continue", "person-1");
+  expect(
+    typeof prompt === "string" ? parseAgentMessages(prompt)?.map((message) => message.id) : null,
+  ).toEqual(["go-ahead", "person-1"]);
+  await recipient.endTurn();
+  expect(recipient.sent).toEqual([]);
+  await recipient.delivery.close();
+});
+
+test("a turn that ends on its own still releases the queue", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "report");
+  await recipient.tick();
+  await recipient.endTurn();
+  expect(recipient.ids()).toEqual(["report"]);
+  await recipient.delivery.close();
 });

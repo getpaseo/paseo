@@ -150,13 +150,22 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
 
-Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch. Idle recipients retain the two-second quiet window. While a recipient has a running or starting turn (including compaction), messages stay queued across quiet windows and are delivered together after that turn settles, including failure or cancellation. A ready batch is released when the daemon observes the recipient settle; the two-second timer also retries it. Agent callers using `steer`, including the default, wait for the turn to end; only explicit `interrupt` replaces a running turn. An explicit interrupt or a command the provider accepts out of band runs before earlier queued messages. Those messages stay queued and are delivered after the running or replacement turn ends. Human prompts dispatch directly with their existing behavior. Conflicting session-mode choices retain separate ordered dispatches.
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch. The module keeps one ordered queue per recipient, and the recipient reads its prompts in the order the daemon admitted them. Nothing overtakes an older queued message.
 
-The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
-crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
+- **`steer`** (the agent default) waits. An idle recipient gets the queue after two quiet seconds; steady arrivals cannot hold that window open past ten seconds. While the recipient has a running or starting turn (including compaction), the queue waits and is delivered together when that turn ends on its own or fails. The daemon releases it when it observes the recipient settle; a two-second timer also retries.
+- **`interrupt`** waits for neither the quiet window nor the turn. It is dispatched at admission as one prompt that replaces the running turn: the messages queued before it, then the interrupt. An older `steer` cannot start a turn after the newer `interrupt` that countermands it.
+- **A person's prompt** (app, CLI, top-level MCP) is dispatched directly with its existing steer or interrupt behavior and takes the queue along the same way: queued messages first, then the person's text, in one provider prompt. The person's text keeps its own transcript row.
+- **Stop** (the stop button, Escape, `cancel_agent`, a Hub interrupt) starts nothing. Messages admitted before the Stop are held, not dropped. They go ahead of the recipient's next prompt, in that prompt's turn: a person's prompt, or an agent message or notification admitted after the Stop. A replacing prompt, a reload, and a rewind are not a Stop.
+
+A command the provider accepts out of band is the one exception to admission order: it runs alone without ending the turn. A queued command runs ahead of older messages, and a person's command leaves the queue where it is.
+
+One provider prompt has one session mode. A batch released by an interrupt or a person's prompt uses the latest explicit choice in it, the person's own first. Steers with conflicting choices keep separate ordered dispatches.
+
+The pending message window is in memory. Clean shutdown flushes it, held messages included, before
+closing agents; an abrupt crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
 acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
-admission within their original timeout and cancellation scope, and return permission checkpoints
-while messages are waiting.
+admission within their original timeout and cancellation scope, and return at permission
+checkpoints and when a Stop holds the queue.
 
 Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
 persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
