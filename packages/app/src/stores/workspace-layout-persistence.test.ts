@@ -276,3 +276,39 @@ it.each([1, 2])(
     expect(visible).toEqual(["agent-a"]);
   },
 );
+
+it("keeps a renamed tab's name across reloads and drops it when cleared", async () => {
+  const values = new Map<string, string>();
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  const workspaceKey = "server:workspace";
+  const tabId = store.getState().openTab({
+    workspaceKey,
+    target: { kind: "browser", browserId: "browser-1" },
+    intent: "reveal",
+  });
+  if (!tabId) throw new Error("Expected a browser tab");
+  const titleOf = (target: typeof store) =>
+    collectAllTabs(target.getState().layoutByWorkspace[workspaceKey].root).find(
+      (tab) => tab.tabId === tabId,
+    )?.title;
+
+  store.getState().setTabTitle(workspaceKey, tabId, "  Staging contract  ");
+  expect(titleOf(store)).toBe("Staging contract");
+
+  const restored = createWorkspaceLayoutStore(undefined, storage);
+  await restored.persist.rehydrate();
+  expect(titleOf(restored)).toBe("Staging contract");
+
+  restored.getState().setTabTitle(workspaceKey, tabId, "   ");
+  expect(titleOf(restored)).toBeUndefined();
+});

@@ -131,6 +131,11 @@ function buildCloseAfterTestIDSuffix(surface: WorkspaceTabMenuSurface): string {
   return surface === "mobile" ? "close-below" : "close-right";
 }
 
+/** Tabs that can take a name: everything but the empty new tab and a draft about to become an agent. */
+export function canRenameWorkspaceTab(tab: WorkspaceTabDescriptor): boolean {
+  return tab.target.kind !== "new_tab" && tab.target.kind !== "draft";
+}
+
 function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "agent") {
     return `workspace-agent-close-${tab.target.agentId}`;
@@ -249,7 +254,7 @@ export function buildWorkspaceTabMenuEntries(
     entries.push({ kind: "file-panel-open-with", key: "file-panel-open-with" });
   }
 
-  if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
+  if (canRenameWorkspaceTab(tab)) {
     entries.push({
       kind: "item",
       key: "rename",

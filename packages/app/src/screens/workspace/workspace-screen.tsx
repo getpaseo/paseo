@@ -1757,6 +1757,7 @@ function WorkspaceScreenContent({
     useWorkspaceTabRename({
       client,
       normalizedServerId,
+      workspaceKey: persistenceKey,
       queryClient,
       terminalsData: terminalsQuery.data,
       terminalsQueryKey,
@@ -1770,6 +1771,7 @@ function WorkspaceScreenContent({
         tabId: tab.tabId,
         kind: tab.target.kind,
         target: tab.target,
+        title: tab.title,
       });
     }
     return map;
@@ -3815,6 +3817,8 @@ function WorkspaceScreenContent({
         />
         <WorkspaceTabRenameModal
           renamingTab={isRouteFocused ? renamingTab : null}
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
           onSubmit={handleRenameModalSubmit}
           onClose={handleRenameModalClose}
         />

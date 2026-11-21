@@ -76,7 +76,7 @@ function WorkspaceTabPresentationResolverInner({
     () => ({
       key: tab.key,
       kind: tab.kind,
-      label: descriptor.label,
+      label: tab.title ?? descriptor.label,
       subtitle: descriptor.subtitle,
       tooltip: descriptor.tooltip,
       modified: attributes.modified,
@@ -89,6 +89,7 @@ function WorkspaceTabPresentationResolverInner({
       descriptor.icon,
       descriptor.label,
       descriptor.tooltip,
+      tab.title,
       descriptor.statusBucket,
       descriptor.subtitle,
       descriptor.titleState,
