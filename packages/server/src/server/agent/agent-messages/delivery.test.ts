@@ -1741,3 +1741,25 @@ test("a queue step reserved before Stop releases nothing once the queue reopens"
   ]);
   await recipient.delivery.close();
 });
+
+test("held messages stay held when the message that reopened the queue is withdrawn", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "older");
+  await recipient.stop();
+
+  // A later message reopens the queue, then its sender takes it back before the window closes.
+  recipient.send("steer", "update", "watcher");
+  expect(
+    recipient.delivery.withdrawPending(
+      "recipient",
+      (source) => source.kind === "agent-message" && source.agentId === "watcher",
+    ),
+  ).toBe(1);
+  await recipient.tick();
+  await recipient.tick(60_000);
+  expect(recipient.sent).toEqual([]);
+  expect(recipient.delivery.hasPending("recipient")).toBe(false);
+
+  expect((await recipient.person("continue", "person-1")).ids).toEqual(["older", "person-1"]);
+  await recipient.delivery.close();
+});

@@ -34,6 +34,8 @@ interface Admitted extends Message {
   state: "queued" | "claimed" | "withdrawn" | "rejected";
   /** An interrupt that was not released yet. After a Stop it waits like any other message. */
   urgent: boolean;
+  /** A Stop found it in the queue. It waits for a prompt admitted after that Stop. */
+  held: boolean;
   outOfBandDeclined: boolean;
   receipt: Receipt;
   resolve(disposition: PromptDispatchDisposition): void;
@@ -504,20 +506,28 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     for (const message of riders) claim(message, result.disposition, request);
   }
 
+  /**
+   * The stopped recipient stays stopped. Its queue, interrupts included, goes with whatever
+   * prompts it next.
+   */
+  function hold(inbox: Inbox): void {
+    inbox.cancelTimer();
+    inbox.cancelCap();
+    inbox.phase = "held";
+    inbox.stops++;
+    for (const message of inbox.messages) {
+      message.urgent = false;
+      message.held = true;
+    }
+  }
+
   const unsubscribe = dependencies.subscribe?.((recipientId) => {
     if (inboxes.get(recipientId)?.phase === "waiting" && !isRunning(recipientId))
       attempt(recipientId);
   });
   const unsubscribeStop = dependencies.onStop?.((recipientId) => {
     const inbox = inboxes.get(recipientId);
-    if (!inbox) return;
-    // The stopped recipient stays stopped. Its queue, interrupts included, goes with whatever
-    // prompts it next.
-    inbox.cancelTimer();
-    inbox.cancelCap();
-    inbox.phase = "held";
-    inbox.stops++;
-    for (const message of inbox.messages) message.urgent = false;
+    if (inbox) hold(inbox);
   });
 
   return {
@@ -529,6 +539,9 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         settle(message, "withdrawn");
         message.reject(new DOMException("Agent message withdrawn", "AbortError"));
       }
+      // Without the message that reopened it after a Stop, the queue is held again.
+      const inbox = inboxes.get(recipientId);
+      if (withdrawn.length && inbox?.messages.every((message) => message.held)) hold(inbox);
       return withdrawn.length;
     },
     hasPending(recipientId) {
@@ -556,6 +569,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         reject,
         state: "queued",
         urgent: message.activeTurnBehavior === "interrupt",
+        held: false,
         outOfBandDeclined: false,
       });
       return receipt;
