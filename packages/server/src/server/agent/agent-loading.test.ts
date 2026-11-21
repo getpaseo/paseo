@@ -318,6 +318,36 @@ test("timeline requests read unarchived stored history with a deleted cwd", asyn
   }
 }, 30000);
 
+test("a timeline read of a closed agent publishes only its settled status", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = await mkdtemp(path.join(tmpdir(), "timeline-settled-status-"));
+  try {
+    const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
+    await ctx.daemon.daemon.agentManager.flush();
+    // This round trip also drains the close update. The client then holds two agent
+    // subscriptions, so each update arrives twice; the assertion compares distinct statuses.
+    await ctx.client.fetchAgents({ subscribe: {} });
+    const statuses: string[] = [];
+    const stop = ctx.client.on("agent_update", (message) => {
+      if (message.payload.kind === "upsert" && message.payload.agent.id === agent.id) {
+        statuses.push(message.payload.agent.status);
+      }
+    });
+    try {
+      await ctx.client.fetchAgentTimeline(agent.id);
+      await expect.poll(() => statuses.at(-1)).toBe("idle");
+      // Clients count initializing as working, so a read must not flash the agent busy.
+      expect([...new Set(statuses)]).toEqual(["idle"]);
+    } finally {
+      stop();
+    }
+  } finally {
+    await ctx.cleanup();
+    await rm(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("timeline reads keep runnable unarchived agents interactive for the next prompt", async () => {
   const clients = createTestAgentClients();
   const base = clients.codex!;
