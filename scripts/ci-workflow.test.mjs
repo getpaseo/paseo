@@ -370,8 +370,13 @@ test("packaging runs on main without allocating pull-request runners", () => {
   const docker = readFileSync(dockerWorkflowPath, "utf8");
   assert.match(
     docker,
-    /cancel-in-progress: \$\{\{ !startsWith\(github\.ref, 'refs\/tags\/'\) \}\}/,
-    "Docker cancels superseded non-tag main builds while preserving tag publishes",
+    /group: docker-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true' && format\('publish-\{0\}', inputs\.paseo_version \|\| github\.run_id\) \|\| github\.ref \}\}/,
+    "manual Docker release retries use their own concurrency group so main pushes never cancel them",
+  );
+  assert.match(
+    docker,
+    /cancel-in-progress: \$\{\{ !startsWith\(github\.ref, 'refs\/tags\/'\) && !\(github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true'\) \}\}/,
+    "Docker cancels superseded non-tag main checks while preserving tag and manual publish runs",
   );
   const nix = readFileSync(nixWorkflowPath, "utf8");
   assert.match(nix.split("jobs:", 1)[0], /^\s+workflow_dispatch:/m);

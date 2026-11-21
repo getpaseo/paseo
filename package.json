@@ -123,17 +123,9 @@
     "release:publish": "node scripts/publish-release-packages.mjs",
     "release:publish:beta": "node scripts/publish-release-packages.mjs --beta",
     "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:ship": "npm run release:publish && npm run release:push",
-    "release:ship:beta": "npm run release:publish:beta && npm run release:push",
-    "release:reconcile": "node scripts/reconcile-release.mjs",
-    "release:beta:patch": "npm run release:prep:beta:patch && npm run release:ship:beta",
-    "release:beta:minor": "npm run release:prep:beta:minor && npm run release:ship:beta",
-    "release:beta:major": "npm run release:prep:beta:major && npm run release:ship:beta",
-    "release:beta:next": "npm run release:prep:beta:next && npm run release:ship:beta",
-    "release:promote": "npm run release:prep:promote && npm run release:ship",
-    "release:patch": "npm run release:prep:patch && npm run release:ship",
-    "release:minor": "npm run release:prep:minor && npm run release:ship",
-    "release:major": "npm run release:prep:major && npm run release:ship"
+    "release:ship": "node scripts/push-current-release-tag.mjs --check && npm run release:publish && npm run release:push",
+    "release:ship:beta": "node scripts/push-current-release-tag.mjs --check && npm run release:publish:beta && npm run release:push",
+    "release:reconcile": "node scripts/reconcile-release.mjs"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

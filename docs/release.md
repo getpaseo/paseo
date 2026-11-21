@@ -115,6 +115,12 @@ An explicit user instruction can select another base.
 7. Start [Reconcile `main`](#reconcile-main) immediately so its PR checks overlap with desktop and
    EAS builds.
 
+When promoting or branching from a tag created before `release:prep:*`, `release:ship`, and the
+`release/**` workflow triggers existed (for example `v0.17.0-beta.1`), either cherry-pick the
+release-tooling commit onto the release branch (leaving product code unchanged) or follow the
+older tag's scripts (`version:all:*`, manual `gh workflow run ci.yml --ref <branch>`,
+`release:publish`, and `release:push`) until the next tag carries the new tooling.
+
 A stable hotfix can take the version a patch beta line would promote to, such as `0.13.3`
 shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version. Continue the line
 as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
@@ -295,7 +301,7 @@ npm run release:ship
 - Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
 - The user-facing beta instructions, including the public TestFlight join link for the `Paseo Beta` group, live in `public-docs/updates.md` and its `zh-CN` pair. Update them when a beta path is added or removed.
 - Betas publish desktop assets and APKs for testing. They also build iOS, upload it to TestFlight, add it to the `Paseo Beta` external group, and submit it for Beta App Review. They do not submit mobile builds to the production stores.
-- `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
+- `release:prep:promote` + `release:ship` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Require the Linux artifact CI checks with both restricted and usable user namespaces to pass before publication; see [packaged desktop smoke](testing.md#packaged-desktop-smoke). Keep the installed-package and AppImage checks together.
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
@@ -323,17 +329,17 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 ### Default behavior
 
-`npm run release:patch` or `npm run release:minor` → tag push → 36h ramp. No extra action needed.
+`npm run release:prep:patch` or `npm run release:prep:minor` → push release branch → green checks → `npm run release:ship` → tag push → 36h ramp. No extra action needed.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
 ### Instant-admit release (rollout_hours=0)
 
-`npm run release:patch` and `npm run release:minor` tag-push, and tag-push runs always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), cut the release normally, wait for it to publish, then flip the manifests:
+Tag-push runs from `npm run release:ship` always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), ship the release normally, wait for it to publish, then flip the manifests:
 
 ```bash
-# 1. Cut and publish (36h ramp from tag push).
-npm run release:patch
+# 1. Ship the verified release branch (36h ramp from tag push).
+npm run release:ship
 
 # 2. Wait for Desktop Release to publish the GitHub Release.
 gh run watch <desktop-release-run-id> --exit-status
@@ -384,7 +390,7 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases cut via `npm run release:patch` or `npm run release:minor` — those paths always tag-push and stamp 36. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+This does **not** apply to fresh releases shipped via `npm run release:ship` — tag-push runs always stamp 36. For a fresh release with a custom ramp, ship normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
 
 ### Releasing during an active rollout
 

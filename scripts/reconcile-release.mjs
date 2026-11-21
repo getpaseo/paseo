@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -127,6 +127,24 @@ function defaultRunNpm(args, cwd) {
   });
 }
 
+function lockfileMatchesVersion(cwd, rootPackage, version) {
+  const lockfilePath = path.join(cwd, "package-lock.json");
+  if (!existsSync(lockfilePath)) {
+    return true;
+  }
+  const lockfile = JSON.parse(readFileSync(lockfilePath, "utf8"));
+  if (lockfile.version !== version || lockfile.packages?.[""]?.version !== version) {
+    return false;
+  }
+  const workspaces = Array.isArray(rootPackage.workspaces) ? rootPackage.workspaces : [];
+  for (const workspace of workspaces) {
+    if (lockfile.packages?.[workspace] && lockfile.packages[workspace].version !== version) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function reconcileRelease(options, deps = {}) {
   const cwd = options.cwd ?? rootDir;
   const tag = normalizeReleaseTag(options.tag);
@@ -171,11 +189,17 @@ export function reconcileRelease(options, deps = {}) {
   const rootPackagePath = path.join(cwd, "package.json");
   const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
   const currentMainVersion = rootPackage.version;
+  const versionComparison = compareReleaseVersions(version, currentMainVersion);
 
   let versionUpdated = false;
-  if (compareReleaseVersions(version, currentMainVersion) > 0) {
-    rootPackage.version = version;
-    writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`);
+  if (
+    versionComparison > 0 ||
+    (versionComparison === 0 && !lockfileMatchesVersion(cwd, rootPackage, version))
+  ) {
+    if (rootPackage.version !== version) {
+      rootPackage.version = version;
+      writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`);
+    }
     runNpm(["run", "version:sync-internal"]);
     runNpm(["run", "release:prepare"]);
     versionUpdated = true;

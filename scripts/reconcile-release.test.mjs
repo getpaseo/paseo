@@ -191,3 +191,70 @@ test("reconcileRelease updates changelogs, F-Droid files, and versions only when
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("reconcileRelease retries version sync and lockfile install when a prior run failed before updating package-lock.json", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "reconcile-retry-"));
+  try {
+    writeFileSync(path.join(dir, "CHANGELOG.md"), MAIN_CHANGELOG_WITH_BETA);
+    writeFileSync(
+      path.join(dir, "CHANGELOG.zh-CN.md"),
+      "# Changelog\n\n## 0.17.0-beta.1 - 2026-11-19\n\n- 旧内容\n",
+    );
+    // Simulate a previous reconcile attempt where package.json was bumped to 0.17.0-beta.2
+    // before `npm run release:prepare` failed, leaving package-lock.json at 0.17.0-beta.1.
+    writeFileSync(
+      path.join(dir, "package.json"),
+      `${JSON.stringify({ name: "paseo", version: "0.17.0-beta.2" }, null, 2)}\n`,
+    );
+    writeFileSync(
+      path.join(dir, "package-lock.json"),
+      `${JSON.stringify({ name: "paseo", version: "0.17.0-beta.1", packages: { "": { version: "0.17.0-beta.1" } } }, null, 2)}\n`,
+    );
+
+    const tagFiles = new Map([
+      ["CHANGELOG.md", "# Changelog\n\n## 0.17.0-beta.2 - 2026-11-21\n\n- Beta 2\n"],
+      ["CHANGELOG.zh-CN.md", "# Changelog\n\n## 0.17.0-beta.2 - 2026-11-21\n\n- Beta 2\n"],
+    ]);
+
+    const ranCommands = [];
+    const result = reconcileRelease(
+      { tag: "v0.17.0-beta.2", cwd: dir },
+      {
+        readTagFile: (_tag, filePath) => tagFiles.get(filePath),
+        verifyTag: () => {},
+        runNpm(args) {
+          ranCommands.push(args);
+          if (args[1] === "release:prepare") {
+            writeFileSync(
+              path.join(dir, "package-lock.json"),
+              `${JSON.stringify({ name: "paseo", version: "0.17.0-beta.2", packages: { "": { version: "0.17.0-beta.2" } } }, null, 2)}\n`,
+            );
+          }
+        },
+      },
+    );
+
+    assert.equal(result.versionUpdated, true);
+    assert.deepEqual(ranCommands, [
+      ["run", "version:sync-internal"],
+      ["run", "release:prepare"],
+    ]);
+
+    // A third run once package-lock.json matches is a no-op for version/lockfile sync.
+    ranCommands.length = 0;
+    const idempotent = reconcileRelease(
+      { tag: "v0.17.0-beta.2", cwd: dir },
+      {
+        readTagFile: (_tag, filePath) => tagFiles.get(filePath),
+        verifyTag: () => {},
+        runNpm(args) {
+          ranCommands.push(args);
+        },
+      },
+    );
+    assert.equal(idempotent.versionUpdated, false);
+    assert.deepEqual(ranCommands, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
