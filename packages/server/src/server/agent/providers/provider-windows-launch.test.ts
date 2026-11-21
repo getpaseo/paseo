@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { createOmpRuntime } from "./omp/agent.js";
 import { PiCliRuntime } from "./pi/cli-runtime.js";
 
 interface SpawnResult {
@@ -22,7 +23,7 @@ interface ProviderLaunchCase {
   binaryName: string;
   args: string[];
   shell?: boolean;
-  launchMode?: "spawnProcess" | "piRuntime";
+  launchMode?: "spawnProcess" | "piRuntime" | "ompRuntime";
 }
 
 const JSON_ARG = '{"mcpServers":{"paseo":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
@@ -31,7 +32,7 @@ const tempDirs: string[] = [];
 function makeFixture(
   binaryName: string,
   expectedArgs: string[],
-  launchMode: "spawnProcess" | "piRuntime" = "spawnProcess",
+  launchMode: "spawnProcess" | "piRuntime" | "ompRuntime" = "spawnProcess",
 ) {
   const root = mkdtempSync(path.join(tmpdir(), `paseo ${binaryName} launch `));
   tempDirs.push(root);
@@ -88,6 +89,18 @@ if (${JSON.stringify(launchMode)} === "piRuntime") {
       }
     }
   });
+  process.stdin.on("end", () => process.exit(0));
+} else if (${JSON.stringify(launchMode)} === "ompRuntime") {
+  process.stdout.write(
+    JSON.stringify({
+      type: "ready",
+      protocolVersion: 1,
+      supportedProtocolVersions: [1],
+      maxFrameBytes: 1048576,
+      maxReassembledFrameBytes: 67108864,
+    }) + "\\n",
+  );
+  process.stdin.resume();
   process.stdin.on("end", () => process.exit(0));
 } else {
   process.stdout.write("ARGV_OK\\n", () => process.exit(0));
@@ -178,11 +191,14 @@ async function runPiRuntimeFixture(params: { command: string; cwd: string }): Pr
   }
 }
 
+function pathEnvKey(): string {
+  return process.platform === "win32"
+    ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
+    : "PATH";
+}
+
 function withPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
-  const pathKey =
-    process.platform === "win32"
-      ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
-      : "PATH";
+  const pathKey = pathEnvKey();
   const previousPath = process.env[pathKey];
   process.env[pathKey] = previousPath ? `${dir}${path.delimiter}${previousPath}` : dir;
 
@@ -282,4 +298,36 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
       expect(result.stdout.trim()).toBe("ARGV_OK");
     },
   );
+
+  test("omp launches the resolved binary when the child cannot resolve the bare name (#8920)", async () => {
+    const args = ["--mode", "rpc", "--no-session"];
+    const fixture = makeFixture("omp", args, "ompRuntime");
+
+    await withPathEntry(fixture.root, async () => {
+      // The fixture shim must be what resolution picks, otherwise this test could
+      // pass by launching a real OMP from the machine's PATH.
+      expect((await findExecutable("omp"))?.toLowerCase()).toBe(fixture.shim.toLowerCase());
+
+      // The child runs from a directory without a shim: cmd.exe searches the
+      // current directory for an extensionless command before PATH, so a cwd that
+      // contains `omp.cmd` would resolve the bare name and hide the bug.
+      const emptyCwd = mkdtempSync(path.join(tmpdir(), "paseo omp launch cwd "));
+      tempDirs.push(emptyCwd);
+      const runtime = createOmpRuntime(pino({ level: "silent" }), undefined, {
+        readyTimeoutMs: 10_000,
+        rpcTimeoutMs: 10_000,
+      });
+      // The daemon child cannot resolve the shim by name: its shell searches a
+      // PATH without the shim directory. Resolution still finds the shim on the
+      // daemon's PATH, so the launch has to use that path instead of the bare name.
+      const pathKey = pathEnvKey();
+      const session = await runtime.startSession({
+        cwd: emptyCwd,
+        noSession: true,
+        env: { [pathKey]: "" },
+      });
+
+      await session.close();
+    });
+  });
 });
