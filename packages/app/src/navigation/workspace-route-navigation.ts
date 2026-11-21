@@ -21,9 +21,28 @@ const defaultNavigateToHostWorkspaceRouteDeps: NavigateToHostWorkspaceRouteDeps 
   dismissTo: (route) => router.dismissTo(route as Href),
 };
 
+interface NavigateToHostLeafDeps {
+  push(route: string): void;
+}
+
+const defaultNavigateToHostLeafDeps: NavigateToHostLeafDeps = {
+  push: (route) => router.push(route as Href),
+};
+
+/** A screen of the host stack, named the way `h/[serverId]/_layout.tsx` registers it. */
+export interface HostLeafTarget {
+  /** The full `/h/...` URL, used when no covered host route can take the leaf. */
+  route: string;
+  serverId: string;
+  screen: string;
+  params: Record<string, string>;
+}
+
+type NavigationIntent = (navigation: NavigationContainerRef<ReactNavigation.RootParamList>) => void;
+
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
-let pendingIntent: { route: string; deps: NavigateToHostWorkspaceRouteDeps } | null = null;
+let pendingIntent: NavigationIntent | null = null;
 
 export function registerWorkspaceRouteNavigationRef(
   ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
@@ -103,6 +122,45 @@ function findStackWithMountedRouteName(
   return null;
 }
 
+/**
+ * The stack holding a host route that an app-wide route (History, Settings, New) covers. Pushing a
+ * `/h/...` URL from there appends a second host route instead of reusing this one; the covered copy
+ * stays mounted and still reads the current pathname.
+ */
+function findCoveredHostStack(
+  navigation: NavigationContainerRef<ReactNavigation.RootParamList>,
+): MountedRouteStack | null {
+  const hostStack = findStackWithMountedRouteName(navigation.getRootState(), ROOT_HOST_ROUTE_NAME);
+  if (!hostStack || hostStack.focusedRouteName === ROOT_HOST_ROUTE_NAME) {
+    return null;
+  }
+  return hostStack;
+}
+
+function dispatchHostLeafPopTo(
+  leaf: HostLeafTarget,
+  navigation: NavigationContainerRef<ReactNavigation.RootParamList>,
+): boolean {
+  const hostStack = findCoveredHostStack(navigation);
+  if (!hostStack) {
+    return false;
+  }
+  // No `pop` hint: the leaf is pushed onto the host stack, so Back returns to the workspace.
+  navigation.dispatch({
+    type: "POP_TO",
+    target: hostStack.key,
+    payload: {
+      name: ROOT_HOST_ROUTE_NAME,
+      params: {
+        serverId: leaf.serverId,
+        screen: leaf.screen,
+        params: { serverId: leaf.serverId, ...leaf.params },
+      },
+    },
+  });
+  return true;
+}
+
 function dispatchHostWorkspacePopTo(
   route: string,
   navigation: NavigationContainerRef<ReactNavigation.RootParamList>,
@@ -112,9 +170,8 @@ function dispatchHostWorkspacePopTo(
     return false;
   }
 
-  const rootState = navigation.getRootState();
-  const hostStack = findStackWithMountedRouteName(rootState, ROOT_HOST_ROUTE_NAME);
-  if (!hostStack || hostStack.focusedRouteName === ROOT_HOST_ROUTE_NAME) {
+  const hostStack = findCoveredHostStack(navigation);
+  if (!hostStack) {
     return false;
   }
   const open = getHostWorkspaceOpenParamFromPathname(route);
@@ -147,7 +204,23 @@ export function navigateToHostWorkspaceRoute(
   route: string,
   deps: NavigateToHostWorkspaceRouteDeps = defaultNavigateToHostWorkspaceRouteDeps,
 ): void {
-  pendingIntent = { route, deps };
+  pendingIntent = (navigation) => {
+    if (!dispatchHostWorkspacePopTo(route, navigation)) deps.dismissTo(route);
+  };
+  flushPendingIntent();
+}
+
+/**
+ * Opens a host screen other than a workspace, such as a plugin screen. From an app-wide route it
+ * pops to the mounted host route and pushes the leaf there; otherwise it pushes the URL.
+ */
+export function navigateToHostLeaf(
+  leaf: HostLeafTarget,
+  deps: NavigateToHostLeafDeps = defaultNavigateToHostLeafDeps,
+): void {
+  pendingIntent = (navigation) => {
+    if (!dispatchHostLeafPopTo(leaf, navigation)) deps.push(leaf.route);
+  };
   flushPendingIntent();
 }
 
@@ -155,7 +228,7 @@ function flushPendingIntent(): void {
   const navigation = rootNavigationRef?.current;
   if (!pendingIntent || !navigation?.isReady()) return;
 
-  const { route, deps } = pendingIntent;
+  const intent = pendingIntent;
   pendingIntent = null;
-  if (!dispatchHostWorkspacePopTo(route, navigation)) deps.dismissTo(route);
+  intent(navigation);
 }

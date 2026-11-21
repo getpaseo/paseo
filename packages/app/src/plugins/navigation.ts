@@ -3,7 +3,8 @@ import { router } from "expo-router";
 import type { PluginPanelLocation } from "@getpaseo/plugin/client";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { buildPluginSurfaceRoute } from "./routes";
+import { navigateToHostLeaf } from "@/navigation/workspace-route-navigation";
+import { buildPluginSurfaceLeaf } from "./routes";
 import type { PluginNavigation } from "./actions";
 
 export function createPluginNavigation(input: {
@@ -24,8 +25,8 @@ export function createPluginNavigation(input: {
       router.push(buildPluginSettingsRoute(serverId, pluginId, screenId));
     },
     openSurface(pluginId, surfaceId, params) {
-      router.push(
-        buildPluginSurfaceRoute(serverId, pluginId, { kind: "surface", id: surfaceId }, params),
+      navigateToHostLeaf(
+        buildPluginSurfaceLeaf(serverId, pluginId, { kind: "surface", id: surfaceId }, params),
       );
     },
     openWorkspacePanel(pluginId, panelId, location) {
