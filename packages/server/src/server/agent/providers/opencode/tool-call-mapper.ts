@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { normalizeToolCallStatus } from "../tool-call-mapper-utils.js";
 import { deriveOpencodeToolDetail } from "./tool-call-detail-parser.js";
+import { questionToolMetadata } from "../question-metadata.js";
 
 interface OpencodeToolCallParams {
   toolName: string;
@@ -44,6 +45,8 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
   const rawStatus = typeof raw.status === "string" ? raw.status : undefined;
   const status = normalizeToolCallStatus(rawStatus, error, output);
   const detail = deriveOpencodeToolDetail(name, input, output, raw.metadata);
+  const questions = questionToolMetadata({ toolName: name, args: input, result: output });
+  const metadata = questions ? { ...raw.metadata, ...questions } : raw.metadata;
 
   if (status === "failed") {
     return {
@@ -53,7 +56,7 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
       status: "failed",
       detail,
       error: error ?? { message: "Tool call failed" },
-      ...(raw.metadata ? { metadata: raw.metadata } : {}),
+      ...(metadata ? { metadata } : {}),
     };
   }
   return {
@@ -63,6 +66,6 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
     status,
     detail,
     error: null,
-    ...(raw.metadata ? { metadata: raw.metadata } : {}),
+    ...(metadata ? { metadata } : {}),
   };
 }

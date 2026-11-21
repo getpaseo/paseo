@@ -1,5 +1,11 @@
+import { questionToolMetadata } from "../question-metadata.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
-import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import type {
+  AgentMetadata,
+  AgentStreamEvent,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from "../../agent-sdk-types.js";
 import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -194,6 +200,11 @@ export class PiHistoryMapper {
         if (!detail) {
           continue;
         }
+        const questionMetadata = questionToolMetadata({
+          toolName: tracked.toolName,
+          args: tracked.args,
+          result: null,
+        });
         events.push({
           type: "timeline",
           provider: this.provider,
@@ -203,6 +214,7 @@ export class PiHistoryMapper {
             name: mapping?.name ?? tracked.toolName,
             status: "running",
             detail,
+            ...(questionMetadata ? { metadata: questionMetadata } : {}),
             error: null,
           },
         });
@@ -250,6 +262,11 @@ export class PiHistoryMapper {
           name: mapping?.name ?? tracked.toolName,
           isError: Boolean(message.isError),
           detail,
+          metadata: questionToolMetadata({
+            toolName: tracked.toolName,
+            args: tracked.args,
+            result: splitResult,
+          }),
           errorText: extractTextFromToolResult(splitResult) ?? "Tool call failed",
         }),
       },
@@ -333,6 +350,7 @@ function toToolResultTimelineItem(input: {
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
+  metadata?: AgentMetadata;
 }): AgentTimelineItem {
   if (input.isError) {
     return {
@@ -341,6 +359,7 @@ function toToolResultTimelineItem(input: {
       name: input.name,
       status: "failed",
       detail: input.detail,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       error: input.errorText,
     };
   }
@@ -350,6 +369,7 @@ function toToolResultTimelineItem(input: {
     name: input.name,
     status: "completed",
     detail: input.detail,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
     error: null,
   };
 }
