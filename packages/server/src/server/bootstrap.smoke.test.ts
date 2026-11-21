@@ -1155,6 +1155,14 @@ test("disabled recovery closes stale active records without resuming sessions", 
     expect(
       Object.fromEntries(snapshot.entries.map((entry) => [entry.agent.id, entry.agent.status])),
     ).toEqual(Object.fromEntries(expected.map((record) => [record.id, record.lastStatus])));
+    const closedId = records.find((record) => record.lastStatus === "closed")!.id;
+    const beforeStop = await handle.daemon.agentStorage.get(closedId);
+    await expect(client.cancelAgent(closedId)).resolves.toBeUndefined();
+    await expect(client.cancelAgent(closedId)).resolves.toBeUndefined();
+    expect(await handle.daemon.agentStorage.get(closedId)).toEqual(beforeStop);
+    expect(handle.daemon.agentManager.listAgents()).toEqual([]);
+    expect(sessionsCreated).toBe(0);
+    await expect(client.cancelAgent("missing-agent")).rejects.toThrow("not found");
     const opened = await ensureAgentLoaded(records[0]!.id, {
       agentManager: handle.daemon.agentManager,
       agentStorage: handle.daemon.agentStorage,

@@ -64,7 +64,7 @@ function isAlive(pid: number): boolean {
 
 async function waitFor<T>(
   probe: () => Promise<T | null | undefined | false> | T | null | undefined | false,
-  message: string,
+  message: string | (() => string),
   timeoutMs = READY_TIMEOUT_MS,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -78,7 +78,8 @@ async function waitFor<T>(
     }
     await delay(100);
   }
-  throw new Error(`${message}${lastError ? ` (last error: ${String(lastError)})` : ""}`);
+  const detail = typeof message === "function" ? message() : message;
+  throw new Error(`${detail}${lastError ? ` (last error: ${String(lastError)})` : ""}`);
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -123,10 +124,14 @@ async function startSupervisor(
   supervisor.stderr?.on("data", (chunk) => (output = (output + String(chunk)).slice(-20_000)));
   const harness: Harness = { home, workDir, port, supervisor, output: () => output };
   harnesses.push(harness);
-  await waitFor(async () => {
-    const instance = await readDaemonInstance(home);
-    return instance?.pid === supervisor.pid && instance.listen ? instance : null;
-  }, `supervisor did not become ready:\n${output}`);
+  await waitFor(
+    async () => {
+      const instance = await readDaemonInstance(home);
+      return instance?.pid === supervisor.pid && instance.listen ? instance : null;
+    },
+    () =>
+      `supervisor did not become ready (exit=${supervisor.exitCode}, signal=${supervisor.signalCode}):\n${output}`,
+  );
   return harness;
 }
 
