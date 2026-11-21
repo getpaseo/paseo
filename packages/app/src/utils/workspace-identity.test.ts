@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity, resolveWorkspaceRouteId } from "./workspace-identity";
+import {
+  normalizeWorkspacePath,
+  resolveWorkspaceMapKeyByIdentity,
+  resolveWorkspaceRouteId,
+} from "./workspace-identity";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -23,6 +27,23 @@ function createWorkspace(
     scripts: input.scripts ?? [],
   };
 }
+
+describe("normalizeWorkspacePath", () => {
+  it("keeps a Windows drive root absolute", () => {
+    expect(normalizeWorkspacePath("E:\\")).toBe("E:/");
+    expect(normalizeWorkspacePath("E:/")).toBe("E:/");
+    expect(normalizeWorkspacePath("e:\\\\")).toBe("e:/");
+  });
+
+  it("drops the trailing separator from directories below a drive root", () => {
+    expect(normalizeWorkspacePath("E:\\04. VOC\\")).toBe("E:/04. VOC");
+  });
+
+  it("keeps the POSIX root", () => {
+    expect(normalizeWorkspacePath("/")).toBe("/");
+    expect(normalizeWorkspacePath("//")).toBe("/");
+  });
+});
 
 describe("resolveWorkspaceRouteId", () => {
   it("trims route workspace ids without path normalization", () => {
