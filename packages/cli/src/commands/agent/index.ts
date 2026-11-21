@@ -16,6 +16,7 @@ import { runUpdateCommand } from "./update.js";
 import { runDetachCommand } from "./detach.js";
 import { addOpenOptions, runOpenCommand } from "./open.js";
 import { withOutput } from "../../output/index.js";
+import { FEATURE_OPTION_DESCRIPTION } from "../../utils/agent-features.js";
 import {
   addDaemonHostOption,
   addJsonAndDaemonHostOptions,
@@ -101,6 +102,7 @@ export function createAgentCommand(): Command {
       .argument("<id>", "Agent ID (or prefix)")
       .option("--name <name>", "Update the agent's display name")
       .option("--thinking <id>", "Update the agent's thinking option ID")
+      .option("--feature <id=value>", FEATURE_OPTION_DESCRIPTION, collectMultiple, [])
       .option(
         "--label <label>",
         "Add/set label(s) on the agent (can be used multiple times or comma-separated)",
