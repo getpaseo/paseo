@@ -175,6 +175,7 @@ class ObservedPlacements {
   private readonly service: WorkspaceReconciliationService;
   private started = false;
   private checkoutReadCount = 0;
+  private readonly checkoutReadCwds: string[] = [];
 
   constructor(private readonly specs: ProjectSpec[]) {
     cleanupPaths.push(this.home);
@@ -324,6 +325,11 @@ class ObservedPlacements {
     return this.checkoutReadCount;
   }
 
+  /** Home-relative directories read since the last call, sorted. */
+  takeCheckoutReads(): string[] {
+    return this.checkoutReadCwds.splice(0).sort();
+  }
+
   get pendingTimers(): number {
     return this.clock.pendingCount;
   }
@@ -370,6 +376,7 @@ class ObservedPlacements {
 
   private async readCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
     this.checkoutReadCount += 1;
+    this.checkoutReadCwds.push(path.relative(this.home, cwd));
     const configured = [...this.checkoutByCwd.entries()].find(([root]) =>
       areEquivalentPaths(root, cwd),
     )?.[1];
@@ -396,6 +403,18 @@ class ObservedPlacements {
   private absolute(relative: string): string {
     return path.join(this.home, relative);
   }
+}
+
+/** Projects `a`, `b` and `c`, each rooted at `repo-<name>` with its own worktrees. */
+function threeProjects(worktreeCount: number): ProjectSpec[] {
+  return ["a", "b", "c"].map((name) => ({
+    id: `project-${name}`,
+    root: `repo-${name}`,
+    workspaces: Array.from({ length: worktreeCount }, (_, index) => ({
+      id: `${name}${index + 1}`,
+      cwd: `repo-${name}/worktree-${index + 1}`,
+    })),
+  }));
 }
 
 describe("observed workspace placement", () => {
@@ -459,6 +478,88 @@ describe("observed workspace placement", () => {
     observed.change("repo", null);
     await observed.advanceBy(DEBOUNCE_MS);
     expect(observed.gitReads).toBe(1);
+    observed.dispose();
+  });
+
+  test("reads only the workspaces of the project whose Git directory changed", async () => {
+    const observed = new ObservedPlacements(threeProjects(3));
+    await observed.start();
+
+    observed.change("repo-b", ".git");
+    await observed.advanceBy(DEBOUNCE_MS);
+
+    expect(observed.takeCheckoutReads()).toEqual([
+      "repo-b",
+      "repo-b/worktree-1",
+      "repo-b/worktree-2",
+      "repo-b/worktree-3",
+    ]);
+    observed.dispose();
+  });
+
+  test("turns Git changes under several roots into one read per changed root", async () => {
+    const observed = new ObservedPlacements(threeProjects(1));
+    await observed.start();
+
+    for (const root of ["repo-a", "repo-c", "repo-a", "repo-c", "repo-a"]) {
+      observed.change(root, ".git");
+    }
+    await observed.advanceBy(DEBOUNCE_MS);
+
+    expect(observed.takeCheckoutReads()).toEqual([
+      "repo-a",
+      "repo-a/worktree-1",
+      "repo-c",
+      "repo-c/worktree-1",
+    ]);
+    observed.dispose();
+  });
+
+  test("a change that lands during a pass queues a pass for only that root", async () => {
+    const observed = new ObservedPlacements(threeProjects(1));
+    await observed.start();
+    observed.makeProjectGit("project-a");
+    observed.makeProjectGit("project-b");
+    const firstPassRead = observed.holdNextReconciliation();
+    const firstBatch = observed.waitForWorkspaceBatch();
+    const secondBatch = firstBatch.then(() => observed.waitForWorkspaceBatch());
+
+    observed.change("repo-a", ".git");
+    const firstPass = observed.advanceBy(DEBOUNCE_MS);
+    await firstPassRead.started;
+    observed.change("repo-b", ".git");
+    observed.change("repo-b", ".git");
+    await observed.advanceBy(DEBOUNCE_MS);
+    firstPassRead.release();
+    await firstPass;
+    await secondBatch;
+
+    expect(observed.workspaceBatches).toEqual([["a1"], ["b1"]]);
+    expect(observed.takeCheckoutReads()).toEqual([
+      "repo-a",
+      "repo-a/worktree-1",
+      "repo-b",
+      "repo-b/worktree-1",
+    ]);
+    observed.dispose();
+  });
+
+  test("keeps the changed roots of a failed pass for the next one", async () => {
+    const observed = new ObservedPlacements([
+      { id: "project-a", root: "repo-a", workspaces: [{ id: "a1", cwd: "repo-a" }] },
+      { id: "project-b", root: "repo-b", workspaces: [{ id: "b1", cwd: "repo-b" }] },
+    ]);
+    await observed.start();
+    observed.makeProjectGit("project-a");
+    observed.failNextReconciliation(new Error("registry unavailable"));
+
+    observed.change("repo-a", ".git");
+    await observed.advanceBy(DEBOUNCE_MS);
+    observed.change("repo-b", ".git");
+    await observed.advanceBy(DEBOUNCE_MS);
+
+    expect(observed.takeCheckoutReads()).toEqual(["repo-a", "repo-b"]);
+    expect((await observed.placement("a1"))?.kind).toBe("local_checkout");
     observed.dispose();
   });
 
