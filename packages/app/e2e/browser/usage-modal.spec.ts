@@ -836,6 +836,8 @@ test("usage percentages state their meaning and follow the selected language", a
   }
 });
 
+const exhaustionClock = /^runs out (?:[A-Z][a-z]{2} )?\d{1,2}:\d{2}(?: [AP]M)?$/;
+
 test("open usage clocks advance without refreshing or reopening", async ({ page }) => {
   test.setTimeout(120_000);
   const now = new Date();
@@ -853,12 +855,16 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     const card = page.getByTestId("usage-report-login-journey:account");
     await expect(card.getByTestId("usage-freshness")).toHaveText("Updated just now");
     await expect(card.getByText("resets in 30m", { exact: false }).first()).toBeVisible();
+    const forecast = card.getByText(exhaustionClock);
+    await expect(forecast).toBeVisible();
+    const forecastTime = (await forecast.innerText()).replace(/^[^0-9]+/, "");
     // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
     // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
     await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
     await expect(card.getByText(/resets in (28|29)m/).first()).toBeVisible();
-    await expect(card.getByText(/runs out in (28|29)m/)).toBeVisible();
+    // The weekday drops off at local midnight, but the forecast time stays fixed.
+    await expect(forecast).toHaveText(new RegExp(` ${forecastTime}$`));
     await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
       /^resets in (28|29)m\s·\s/,
     );
@@ -867,7 +873,7 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
   }
 });
 
-test("Refresh all keeps quota visible and restores the forecast after a timeout", async ({
+test("Refresh all keeps quota visible after a timeout and shows only reset details when back on track", async ({
   page,
 }) => {
   const reading = new Date();
@@ -875,7 +881,7 @@ test("Refresh all keeps quota visible and restores the forecast after a timeout"
   try {
     const transport = await installDaemonWebSocketGate(page);
     await openCompactUsageWithClock(page, reading);
-    await expectQuota(page, "40% used", /runs out in /);
+    await expectQuota(page, "40% used", exhaustionClock);
 
     await timeOutUsageRefresh(page, transport);
     await expectQuota(page, "40% used", null);
@@ -884,7 +890,7 @@ test("Refresh all keeps quota visible and restores the forecast after a timeout"
     await login.setReport(usageReading(reading, 10));
     transport.releaseHeldClientRequest();
     await refreshAllUsage(page);
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expectQuota(page, "10% used", null);
     await expectUsageRefreshError(page).toBeHidden();
   } finally {
     await login.cleanup();
@@ -897,23 +903,29 @@ test("a card refresh timeout is visible alongside a newer quota forecast", async
   try {
     const transport = await installDaemonWebSocketGate(page);
     await openCompactUsageWithClock(page, reading);
-    await expectQuota(page, "40% used", /runs out in /);
+    await expectQuota(page, "40% used", exhaustionClock);
 
     await delayCardRefreshResponse(page, transport);
-    await login.setReport(usageReading(reading, 10));
+    await login.setReport(usageReading(reading, 45));
     await refreshAllUsage(page);
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expectQuota(page, "45% used", exhaustionClock);
 
     await advanceUsageClock(page, 61_000);
-    await expectUsageRefreshError(page).toBeVisible();
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expect(
+      usageModal(page)
+        .getByTestId("usage-report-login-journey:account")
+        .getByTestId("usage-refresh-error"),
+    ).toHaveText("Unable to refresh usage");
+    await expectQuota(page, "45% used", exhaustionClock);
   } finally {
     await login.cleanup();
   }
 });
 
 function expectUsageRefreshError(page: Page) {
-  return expect(usageModal(page).getByText("Unable to refresh usage", { exact: true }));
+  return expect(
+    usageModal(page).getByRole("alert").getByText("Unable to refresh usage", { exact: true }),
+  );
 }
 
 async function delayCardRefreshResponse(
@@ -947,7 +959,10 @@ async function expectQuota(page: Page, amount: string, forecast: string | RegExp
   await expect(usage.getByText(amount, { exact: true })).toBeVisible();
   await expect(usage.getByText(/^resets in /)).toBeVisible();
   if (forecast === null) {
-    await expect(usage.getByText(/^runs out in /)).toBeHidden();
+    await expect(usage.getByRole("checkbox", { name: /^Pin Claude Session/ })).toHaveAccessibleName(
+      /^Pin Claude Session, \d+% used · resets in [^·]+ · [^·]+$/,
+    );
+    await expect(usage.getByText(/^runs out /)).toBeHidden();
     return;
   }
   await expect(usage.getByText(forecast)).toBeVisible();

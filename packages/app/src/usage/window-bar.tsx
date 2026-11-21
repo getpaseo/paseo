@@ -7,7 +7,6 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   formatDisplayPct,
-  formatPct,
   formatProviderUsageLabel,
   formatResetLabel,
   formatResetTime,
@@ -18,6 +17,7 @@ import { displayPercent, usageWindowRowLabel } from "./model";
 import { usagePace } from "./pace";
 import { UsageDatapointLine } from "./datapoint-line";
 import type { UsageDisplayAs } from "./preferences";
+import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
 
@@ -55,13 +55,13 @@ export function UsageWindowBar({
   const value =
     shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage, t) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
+  const datapoints = [countdown, exactTime, forecast?.label ?? null];
   const content = {
     label: formatProviderUsageLabel(window.id, window.label, t),
     value,
-    countdown,
-    exactTime,
-    forecast,
+    datapoints,
     percent: shownPct ?? 0,
+    tone: forecast?.tone ?? windowTone(window),
     pinned,
   };
 
@@ -81,7 +81,7 @@ export function UsageWindowBar({
       accessibilityLabel={usageWindowRowLabel({
         pinLabel,
         value,
-        trailing: [countdown, exactTime, forecast?.label].filter(Boolean).join(" · "),
+        trailing: datapoints.filter(Boolean).join(" · "),
       })}
       accessibilityState={accessibilityState}
       aria-checked={pinned}
@@ -96,19 +96,17 @@ export function UsageWindowBar({
 function WindowRowContent({
   label,
   value,
-  countdown,
-  exactTime,
-  forecast,
+  datapoints,
   percent,
+  tone,
   pinnable,
   pinned,
 }: {
   label: string;
   value: string;
-  countdown: string | null;
-  exactTime: string | null;
-  forecast: PaceLabel | null;
+  datapoints: readonly (string | null)[];
   percent: number;
+  tone: UsageTone;
   pinnable: boolean;
   pinned: boolean;
 }) {
@@ -123,14 +121,14 @@ function WindowRowContent({
         </Text>
         {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
-      <UsageMeter percent={percent} tone={forecast?.tone ?? "default"} />
-      <UsageDatapointLine datapoints={[countdown, exactTime, forecast?.label ?? null]} />
+      <UsageMeter percent={percent} tone={tone} />
+      <UsageDatapointLine datapoints={datapoints} />
     </>
   );
 }
 
-interface PaceLabel {
-  label: string;
+interface PaceDisplay {
+  label: string | null;
   tone: UsageTone;
 }
 
@@ -138,7 +136,7 @@ function formatPace(
   pace: ReturnType<typeof usagePace>,
   now: number,
   t: TFunction,
-): PaceLabel | null {
+): PaceDisplay | null {
   switch (pace.kind) {
     case "reached":
       return { label: t("providerUsage.timing.limitReached"), tone: "danger" };
@@ -149,13 +147,10 @@ function formatPace(
           : formatRunsOutLabel(pace.at, now, t);
       return label ? { label, tone: "danger" } : null;
     }
-    case "remaining":
-      return {
-        label: t("providerUsage.timing.projectedLeftAtReset", {
-          percentage: formatPct(pace.remainingAtResetPct),
-        }),
-        tone: pace.remainingAtResetPct <= 10 ? "warning" : "default",
-      };
+    case "tight":
+      return { label: null, tone: "warning" };
+    case "onTrack":
+      return { label: null, tone: "default" };
     case "unknown":
       return null;
   }
