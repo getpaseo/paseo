@@ -1,4 +1,5 @@
 import type { UsageInput } from "../shared/input.js";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,21 @@ const ApiOptionalStringSchema = z.preprocess(
   z.coerce.string().optional(),
 );
 
-const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
+
+// The Kimi CLI's official deployments. A login writes its token to a credential
+// slot derived from the deployment, so a global (.ai) login never touches
+// kimi-code.json. Mirrors resolveKimiCodeOAuthKey in the Kimi CLI.
+const KIMI_CODE_DEPLOYMENTS = [
+  { oauthHost: "https://auth.kimi.com", baseUrl: KIMI_CODE_BASE_URL },
+  { oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding/v1" },
+];
+
+function credentialSlot(deployment: { oauthHost: string; baseUrl: string }): string {
+  if (deployment.baseUrl === KIMI_CODE_BASE_URL) return "kimi-code";
+  const hash = createHash("sha256").update(JSON.stringify(deployment)).digest("hex");
+  return `kimi-code-env-${hash.slice(0, 16)}`;
+}
 
 const KimiUsageFieldsSchema = z.object({
   limit: ApiOptionalStringSchema,
@@ -257,7 +272,7 @@ export async function fetchUsage(
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
   async function callUsageApi(token: string): Promise<Response> {
-    return fetchApi(KIMI_USAGE_URL, {
+    return fetchApi(`${input.baseUrl ?? KIMI_CODE_BASE_URL}/usages`, {
       signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
@@ -272,6 +287,7 @@ export async function fetchUsage(
     return unavailable({
       kind: "expired",
       expiresAt: new Date(credentials.expires_at * 1000).toISOString(),
+      refreshedBy: "kimi",
     });
 
   const res = await callUsageApi(credentials.access_token);
@@ -306,21 +322,29 @@ async function readCredentials(input: UsageInput): Promise<KimiCredentials | und
   }
 }
 export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = ["KIMI_TOKEN", "KIMI_API_KEY"].map((locator) => ({
-    store: "env",
-    locator,
-  }));
-  candidates.push(
-    ...[
-      join(
-        process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
-        "credentials",
-        "kimi-code.json",
-      ),
-      join(homedir(), ".kimi", "credentials", "kimi-code.json"),
-    ].map((locator) => ({ store: "file" as const, locator })),
-  );
-  for (const input of candidates)
+  for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
+    const input: UsageInput = { store: "env", locator };
     if (await readCredentials(input)) return [{ key: "default", input }];
-  return [];
+  }
+  const homes = [
+    process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
+    join(homedir(), ".kimi"),
+  ];
+  // A login to another deployment leaves the old slot behind with a dead token.
+  // The CLI keeps refreshing the slot it uses, so the latest expiry wins.
+  let found: { input: UsageInput; expiresAt: number } | undefined;
+  for (const home of homes) {
+    for (const deployment of KIMI_CODE_DEPLOYMENTS) {
+      const input: UsageInput = {
+        store: "file",
+        locator: join(home, "credentials", `${credentialSlot(deployment)}.json`),
+        baseUrl: deployment.baseUrl,
+      };
+      const credentials = await readCredentials(input);
+      if (!credentials) continue;
+      const expiresAt = credentials.expires_at ?? Number.POSITIVE_INFINITY;
+      if (!found || expiresAt > found.expiresAt) found = { input, expiresAt };
+    }
+  }
+  return found ? [{ key: "default", input: found.input }] : [];
 }

@@ -5,14 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { discover, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
-function kimiCredentialPath(dir: string): string {
-  return join(dir, "credentials", "kimi-code.json");
+// The slot the Kimi CLI writes for a login to the global (.ai) deployment.
+const GLOBAL_SLOT = "kimi-code-env-0e4f99c69cc27850";
+
+function kimiCredentialPath(dir: string, slot = "kimi-code"): string {
+  return join(dir, "credentials", `${slot}.json`);
 }
 
-function writeKimiCredentials(dir: string, accessToken: string, overrides: object = {}): void {
+function writeKimiCredentials(
+  dir: string,
+  accessToken: string,
+  overrides: object = {},
+  slot = "kimi-code",
+): void {
   mkdirSync(join(dir, "credentials"), { recursive: true });
   writeFileSync(
-    kimiCredentialPath(dir),
+    kimiCredentialPath(dir, slot),
     JSON.stringify({
       access_token: accessToken,
       refresh_token: "rt_kimi",
@@ -170,6 +178,56 @@ describe("kimi usage source", () => {
           resetsAt: "2026-06-23T05:12:17Z",
         }),
       ],
+    });
+  });
+
+  it("fetches usage from the global deployment for a kimi.ai login", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_global_token", {}, GLOBAL_SLOT);
+    let requestedUrl: string | null = null;
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      requestedUrl = url.toString();
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ usage: { limit: "100", remaining: "60" } });
+    }) as unknown as typeof fetch;
+
+    const kimi = findProvider(await service().listUsage(), "kimi");
+
+    expect(requestedUrl).toBe("https://api.kimi.ai/coding/v1/usages");
+    expect(authorization).toBe("Bearer kimi_global_token");
+    expect(kimi.status).toBe("available");
+  });
+
+  it("prefers the login the CLI still refreshes over a stale slot", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "kimi_stale_token", { expires_at: 1_791_426_752 });
+    writeKimiCredentials(kimiHome, "kimi_live_token", { expires_at: 1_793_292_337 }, GLOBAL_SLOT);
+
+    expect(await discover()).toEqual([
+      {
+        key: "default",
+        input: {
+          store: "file",
+          locator: kimiCredentialPath(kimiHome, GLOBAL_SLOT),
+          baseUrl: "https://api.kimi.ai/coding/v1",
+        },
+      },
+    ]);
+  });
+
+  it("asks the user to run kimi when the CLI token has expired", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_cli_token", {
+      expires_at: 1_700_000_000,
+    });
+
+    const kimi = findProvider(await service().listUsage(), "kimi");
+
+    expect(kimi).toEqual({
+      providerId: "kimi",
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "2023-11-14T22:13:20.000Z", refreshedBy: "kimi" },
+      error: null,
+      planLabel: null,
     });
   });
 
