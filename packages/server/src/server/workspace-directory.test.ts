@@ -79,6 +79,7 @@ class WorkspaceStatus {
     activity: TerminalActivity | null;
   }> = [];
   private readonly directory = new WorkspaceDirectory({
+    getArchivingAt: () => null,
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
     workspaceRegistry: {
@@ -632,6 +633,7 @@ describe("WorkspaceDirectory empty projects", () => {
     workspaces: PersistedWorkspaceRecord[];
   }): WorkspaceDirectory {
     return new WorkspaceDirectory({
+      getArchivingAt: () => null,
       logger: createTestLogger(),
       projectRegistry: { list: async () => input.projects },
       workspaceRegistry: {
@@ -793,6 +795,7 @@ test("Git observation targets exclude archived records without hydrating app des
     throw new Error("Watcher reconciliation hydrated app data");
   };
   const directory = new WorkspaceDirectory({
+    getArchivingAt: () => null,
     logger: createTestLogger(),
     projectRegistry: { list: async () => [project("active"), project("archived", NOW)] },
     workspaceRegistry: {
@@ -964,6 +967,7 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       isStoredProviderAvailable: () => true,
     });
     const directory = new WorkspaceDirectory({
+      getArchivingAt: () => null,
       logger,
       workspaceRegistry: registry,
       projectRegistry: {
