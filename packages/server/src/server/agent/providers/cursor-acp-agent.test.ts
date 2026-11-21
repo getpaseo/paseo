@@ -10,6 +10,7 @@ import type { AgentSessionConfig } from "../agent-sdk-types.js";
 import { CURSOR_FAST_FEATURE_OPTION, CursorACPAgentClient } from "./cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 
 function captureWarnings(): {
   logger: ReturnType<typeof createTestLogger>;
@@ -52,6 +53,10 @@ describe("CursorACPAgentClient model discovery", () => {
 
     private readonly response: SessionStateResponse;
 
+    override async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
     protected override async spawnProcess(): Promise<SpawnedACPProcess> {
       return {
         child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
@@ -71,6 +76,81 @@ describe("CursorACPAgentClient model discovery", () => {
 
     protected override async closeProbe(): Promise<void> {}
   }
+
+  test("shares global and workspace catalogs until refresh or provider config changes", async () => {
+    const client = new TestCursorACPAgentClient({
+      sessionId: "catalog-probe",
+      models: {
+        currentModelId: "composer-2.5",
+        availableModels: [{ modelId: "composer-2.5", name: "Composer 2.5" }],
+      },
+      modes: {
+        currentModeId: "agent",
+        availableModes: [{ id: "agent", name: "Agent" }],
+      },
+    });
+    const fetchCatalog = vi.spyOn(client, "fetchCatalog");
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        cursor: { extends: "acp", label: "Cursor", command: ["cursor-agent", "acp"] },
+      },
+      extraClients: { cursor: client },
+    });
+    try {
+      const [globalModes, workspaceModes] = await Promise.all([
+        manager.listModes({ provider: "cursor", wait: true }),
+        manager.listModes({ provider: "cursor", cwd: "/tmp/cursor-a", wait: true }),
+      ]);
+      expect(globalModes.map((mode) => mode.id)).toEqual(["agent"]);
+      expect(workspaceModes).toEqual(globalModes);
+      const models = await manager.listModels({
+        provider: "cursor",
+        cwd: "/tmp/cursor-b",
+        wait: true,
+      });
+      expect(models.map((model) => model.id)).toEqual(["composer-2.5"]);
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+
+      await manager.refreshSnapshotForCwd({ cwd: "/tmp/cursor-b", providers: ["cursor"] });
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+      expect(fetchCatalog.mock.calls[1]?.[0]).toEqual({
+        scope: "workspace",
+        cwd: path.resolve("/tmp/cursor-b"),
+        force: true,
+      });
+      await expect(
+        manager.listModes({
+          provider: "cursor",
+          cwd: "/tmp/cursor-a",
+          wait: true,
+        }),
+      ).resolves.toEqual(globalModes);
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+
+      manager.applyMutableProviderConfig(
+        {
+          cursor: {
+            extends: "acp",
+            label: "Cursor",
+            command: ["cursor-agent", "acp"],
+            env: { CURSOR_CONFIG_DIR: "/tmp/other-cursor-profile" },
+          },
+        },
+        { replace: true },
+      );
+      await expect(
+        manager.listModes({
+          provider: "cursor",
+          cwd: "/tmp/cursor-a",
+          wait: true,
+        }),
+      ).resolves.toEqual(globalModes);
+      expect(fetchCatalog).toHaveBeenCalledTimes(3);
+    } finally {
+      manager.destroy();
+    }
+  });
 
   test("returns only ACP model ids because Cursor CLI ids cannot select ACP models", async () => {
     const client = new TestCursorACPAgentClient({
