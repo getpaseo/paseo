@@ -102,6 +102,8 @@
               "server/agent/providers/claude/agent.ts": ["existsSync"],
               // TODO: new-session construction still resolves its project directory synchronously; move preparation before construction.
               "server/agent/providers/claude/project-dir.ts": ["realpathSync"],
+              // Provider spawn callback is synchronous by SDK contract: the inline MCP config must exist before the child starts and is removed with it.
+              "server/agent/providers/claude/query.ts": ["mkdtempSync", "rmSync", "writeFileSync"],
               // TODO: live subagent output is read by a synchronous event mapper; add bounded async loading at ingestion.
               "server/agent/providers/claude/subagents/workflow-output.ts": [
                 "closeSync",
