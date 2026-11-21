@@ -98,6 +98,7 @@ class WorkspaceStatus {
       return times;
     },
     listProviderSubagentActivity: async () => this.providerSubagents,
+    listHiddenRunningRollups: async () => [],
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -627,6 +628,350 @@ describe("WorkspaceDirectory", () => {
   });
 });
 
+// Real AgentDirectory over real storage: the rollup rule runs, not a canned answer.
+class HiddenWorkspaceActivity {
+  private readonly states = new Map<string, AgentState & { parent?: string }>();
+  private readonly live = new Map<string, ManagedAgent>();
+  private readonly workspaces = [
+    hiddenActivityWorkspace("open", false),
+    hiddenActivityWorkspace("side", false),
+    hiddenActivityWorkspace("worktree", false),
+    hiddenActivityWorkspace("hidden-1", true),
+    hiddenActivityWorkspace("hidden-2", true),
+    hiddenActivityWorkspace("hidden-3", true),
+  ];
+  private readonly storage: AgentStorage;
+  private readonly directory: WorkspaceDirectory;
+
+  private constructor(private readonly home: string) {
+    this.storage = new AgentStorage(home, createTestLogger());
+    const workspaceRegistry = {
+      listActive: async () => this.workspaces,
+      get: async (id: string) => this.workspaces.find((w) => w.workspaceId === id) ?? null,
+    };
+    const agents = new AgentDirectory({
+      storage: this.storage,
+      manager: {
+        listAgents: () => [...this.live.values()],
+        getAgentBackgroundWorkSummary: (agentId) => this.states.get(agentId)?.backgroundWork,
+      },
+      workspaces: workspaceRegistry,
+      projectLive: async (agent) => this.project(agent.id),
+      projectStored: (record) =>
+        buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
+      isProviderVisible: () => true,
+      isStoredProviderAvailable: () => true,
+    });
+    this.directory = new WorkspaceDirectory({
+      logger: createTestLogger(),
+      projectRegistry: { list: async () => [hiddenActivityProject] },
+      workspaceRegistry,
+      listAgentPayloads: (workspaceIds) =>
+        agents.list({ workspaceIds, includeBackground: true, includeAncestors: true }),
+      workspaceLastUserMessageTimes: (workspaceIds) =>
+        agents.workspaceLastUserMessageTimes(workspaceIds),
+      listProviderSubagentActivity: async () => [],
+      listHiddenRunningRollups: () => agents.listHiddenRunningRollups(),
+      listTerminalActivityContributions: async () => [],
+      isProviderVisibleToClient: () => true,
+      buildWorkspaceDescriptor: async ({ workspace }) => ({
+        id: workspace.workspaceId,
+        projectId: workspace.projectId,
+        projectDisplayName: "project",
+        projectRootPath: home,
+        projectKind: "non_git",
+        workspaceDirectory: workspace.cwd,
+        workspaceKind: workspace.kind,
+        background: workspace.background,
+        name: workspace.displayName,
+        status: "done",
+        activityAt: null,
+        diffStat: null,
+        scripts: [],
+        gitRuntime: null,
+        githubRuntime: null,
+      }),
+    });
+  }
+
+  static async create(): Promise<HiddenWorkspaceActivity> {
+    return new HiddenWorkspaceActivity(await mkdtemp(join(tmpdir(), "hidden-activity-")));
+  }
+
+  async dispose(): Promise<void> {
+    await rm(this.home, { recursive: true, force: true });
+  }
+
+  async hasLiveAgent(input: AgentState & { workspaceId: string; parent?: string }): Promise<void> {
+    const labels: Record<string, string> = input.parent
+      ? { [PARENT_AGENT_ID_LABEL]: input.parent }
+      : {};
+    this.states.set(input.id, input);
+    this.live.set(input.id, {
+      id: input.id,
+      provider: "codex",
+      cwd: this.home,
+      workspaceId: input.workspaceId,
+      lifecycle: input.status,
+      updatedAt: new Date(NOW),
+      labels,
+      ...(input.background ? { background: true } : {}),
+    } as ManagedAgent);
+    await this.storage.upsert({
+      id: input.id,
+      provider: "codex",
+      cwd: this.home,
+      workspaceId: input.workspaceId,
+      createdAt: NOW,
+      updatedAt: NOW,
+      labels,
+      lastStatus: input.status,
+      ...(input.background ? { background: true } : {}),
+    });
+  }
+
+  setStatus(id: string, status: AgentSnapshotPayload["status"]): void {
+    this.states.set(id, { ...this.states.get(id)!, status });
+    this.live.set(id, { ...this.live.get(id)!, lifecycle: status } as ManagedAgent);
+  }
+
+  // Archive persists the archived record, then closes the runtime.
+  async archive(id: string): Promise<void> {
+    const record = (await this.storage.get(id))!;
+    await this.storage.upsert({ ...record, archivedAt: NOW });
+  }
+
+  close(id: string): void {
+    this.live.delete(id);
+  }
+
+  async statuses(
+    workspaceIds?: string[],
+  ): Promise<Record<string, WorkspaceDescriptorPayload["status"]>> {
+    const descriptors = await this.directory.buildDescriptorMap({
+      includeGitData: false,
+      workspaceIds,
+    });
+    return Object.fromEntries(
+      Array.from(descriptors, ([id, descriptor]) => [id, descriptor.status]),
+    );
+  }
+
+  private async project(id: string): Promise<AgentSnapshotPayload> {
+    const state = this.states.get(id)!;
+    const live = this.live.get(id)!;
+    return createAgent({
+      ...state,
+      cwd: this.home,
+      workspaceId: live.workspaceId,
+      labels: live.labels,
+      archivedAt: (await this.storage.get(id))?.archivedAt ?? null,
+    });
+  }
+}
+
+const hiddenActivityProject: PersistedProjectRecord = {
+  projectId: "project",
+  rootPath: "/workspace/project",
+  kind: "non_git",
+  displayName: "project",
+  createdAt: NOW,
+  updatedAt: NOW,
+  archivedAt: null,
+};
+
+function hiddenActivityWorkspace(workspaceId: string, background: boolean) {
+  return createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId: hiddenActivityProject.projectId,
+    cwd: `/workspace/${workspaceId}`,
+    kind: "directory",
+    displayName: workspaceId,
+    background,
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+}
+
+async function withHiddenWorkspaceActivity(
+  run: (scene: HiddenWorkspaceActivity) => Promise<void>,
+): Promise<void> {
+  const scene = await HiddenWorkspaceActivity.create();
+  try {
+    await run(scene);
+  } finally {
+    await scene.dispose();
+  }
+}
+
+describe("WorkspaceDirectory activity in background workspaces", () => {
+  test("a running worker in a background workspace shows on its parent's workspace", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      await scene.hasLiveAgent({ id: "parent", workspaceId: "open", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "worker",
+        workspaceId: "hidden-1",
+        status: "running",
+        parent: "parent",
+      });
+      // Controls: a background helper adds nothing; a child with its own visible row keeps it.
+      await scene.hasLiveAgent({ id: "lead", workspaceId: "side", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "helper",
+        workspaceId: "hidden-2",
+        status: "running",
+        parent: "lead",
+        background: true,
+      });
+      await scene.hasLiveAgent({
+        id: "visible-child",
+        workspaceId: "worktree",
+        status: "running",
+        parent: "lead",
+      });
+
+      expect(await scene.statuses()).toEqual({
+        open: "running",
+        side: "done",
+        worktree: "running",
+        "hidden-1": "running",
+        "hidden-2": "done",
+        "hidden-3": "done",
+      });
+      // A build scoped to the parent's workspace alone still sees the worker.
+      expect(await scene.statuses(["open"])).toEqual({ open: "running" });
+    });
+  });
+
+  test("running background work keeps the parent running; waiting work does not", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      await scene.hasLiveAgent({ id: "parent", workspaceId: "open", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "worker",
+        workspaceId: "hidden-1",
+        status: "idle",
+        backgroundWork: { count: 1 },
+        parent: "parent",
+      });
+      await scene.hasLiveAgent({ id: "lead", workspaceId: "side", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "waiting-worker",
+        workspaceId: "hidden-2",
+        status: "idle",
+        backgroundWork: { count: 1, runningCount: 0 },
+        parent: "lead",
+      });
+
+      expect(await scene.statuses(["open", "side"])).toEqual({ open: "running", side: "done" });
+    });
+  });
+
+  test("a hidden grandchild shows on its nearest visible ancestor's workspace", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      // open <- hidden-1 <- hidden-2: the walk passes the hidden middle agent.
+      await scene.hasLiveAgent({ id: "root", workspaceId: "open", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "middle",
+        workspaceId: "hidden-1",
+        status: "idle",
+        parent: "root",
+      });
+      await scene.hasLiveAgent({
+        id: "grandchild",
+        workspaceId: "hidden-2",
+        status: "running",
+        parent: "middle",
+      });
+      // side <- worktree <- hidden-3: the visible middle agent's workspace shows it, not side.
+      await scene.hasLiveAgent({ id: "lead", workspaceId: "side", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "visible-middle",
+        workspaceId: "worktree",
+        status: "idle",
+        parent: "lead",
+      });
+      await scene.hasLiveAgent({
+        id: "deep-worker",
+        workspaceId: "hidden-3",
+        status: "running",
+        parent: "visible-middle",
+      });
+
+      expect(await scene.statuses()).toEqual({
+        open: "running",
+        side: "done",
+        worktree: "running",
+        "hidden-1": "done",
+        "hidden-2": "running",
+        "hidden-3": "running",
+      });
+    });
+  });
+
+  test("a running worker outranks the parent's unread finish, then gives it back", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      await scene.hasLiveAgent({
+        id: "parent",
+        workspaceId: "open",
+        status: "idle",
+        requiresAttention: true,
+        attentionReason: "finished",
+      });
+      expect(await scene.statuses(["open"])).toEqual({ open: "attention" });
+
+      await scene.hasLiveAgent({
+        id: "worker",
+        workspaceId: "hidden-1",
+        status: "running",
+        parent: "parent",
+      });
+      expect(await scene.statuses(["open"])).toEqual({ open: "running" });
+
+      scene.setStatus("worker", "idle");
+      expect(await scene.statuses(["open"])).toEqual({ open: "attention" });
+    });
+  });
+
+  test("the parent stays running until every hidden worker finishes", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      await scene.hasLiveAgent({ id: "parent", workspaceId: "open", status: "idle" });
+      for (const [id, workspaceId] of [
+        ["worker-1", "hidden-1"],
+        ["worker-2", "hidden-2"],
+      ]) {
+        await scene.hasLiveAgent({ id, workspaceId, status: "running", parent: "parent" });
+      }
+      expect(await scene.statuses(["open"])).toEqual({ open: "running" });
+
+      scene.setStatus("worker-1", "idle");
+      expect(await scene.statuses(["open"])).toEqual({ open: "running" });
+
+      scene.setStatus("worker-2", "idle");
+      expect(await scene.statuses(["open"])).toEqual({ open: "done" });
+    });
+  });
+
+  test("archiving the only running hidden worker returns the parent to done", async () => {
+    await withHiddenWorkspaceActivity(async (scene) => {
+      await scene.hasLiveAgent({ id: "parent", workspaceId: "open", status: "idle" });
+      await scene.hasLiveAgent({
+        id: "worker",
+        workspaceId: "hidden-1",
+        status: "running",
+        parent: "parent",
+      });
+      expect(await scene.statuses(["open"])).toEqual({ open: "running" });
+
+      // Still live and running, but already archived on disk.
+      await scene.archive("worker");
+      expect(await scene.statuses(["open"])).toEqual({ open: "done" });
+
+      scene.close("worker");
+      expect(await scene.statuses(["open"])).toEqual({ open: "done" });
+    });
+  });
+});
+
 describe("WorkspaceDirectory empty projects", () => {
   function makeDirectory(input: {
     projects: PersistedProjectRecord[];
@@ -643,6 +988,7 @@ describe("WorkspaceDirectory empty projects", () => {
       listAgentPayloads: async () => [],
       workspaceLastUserMessageTimes: async () => new Map(),
       listProviderSubagentActivity: async () => [],
+      listHiddenRunningRollups: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
       buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -808,6 +1154,7 @@ test("Git observation targets exclude archived records without hydrating app des
     listAgentPayloads: unexpectedHydration,
     workspaceLastUserMessageTimes: unexpectedHydration,
     listProviderSubagentActivity: unexpectedHydration,
+    listHiddenRunningRollups: unexpectedHydration,
     listTerminalActivityContributions: unexpectedHydration,
     buildWorkspaceDescriptor: unexpectedHydration,
     isProviderVisibleToClient: () => true,
@@ -988,6 +1335,7 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       workspaceLastUserMessageTimes: (workspaceIds) =>
         agents.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => [],
+      listHiddenRunningRollups: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
       buildWorkspaceDescriptor: async ({ workspace }) => ({

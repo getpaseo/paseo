@@ -8,6 +8,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import { AgentStorage } from "./agent-storage.js";
 import { AgentDirectory, type BackgroundVisibility } from "./directory.js";
+import type { ManagedAgent } from "./agent-manager.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 
 const NOW = "2026-03-01T12:00:00.000Z";
@@ -137,4 +138,83 @@ test("scoped status queries retain cross-workspace parent context", async () => 
   expect(
     (await directory.list({ workspaceIds: ["hidden"], includeBackground: true })).map((a) => a.id),
   ).not.toContain("parent");
+});
+
+test("a hidden agent's activity shows on its nearest ancestor outside a background workspace", async () => {
+  const base = { provider: "codex", cwd: home, createdAt: NOW, updatedAt: NOW };
+  const childOf = (parentId: string) => ({ "paseo.parent-agent-id": parentId });
+  await storage.upsert({ ...base, id: "parent", workspaceId: "open" });
+  await storage.upsert({ ...base, id: "worker", workspaceId: "hidden", labels: childOf("parent") });
+  await storage.upsert({ ...base, id: "nested", workspaceId: "hidden", labels: childOf("worker") });
+  await storage.upsert({ ...base, id: "row", workspaceId: "open", labels: childOf("parent") });
+  await storage.upsert({
+    ...base,
+    id: "helper",
+    workspaceId: "hidden",
+    background: true,
+    labels: childOf("parent"),
+  });
+  await storage.upsert({ ...base, id: "loop-a", workspaceId: "hidden", labels: childOf("loop-b") });
+  await storage.upsert({ ...base, id: "loop-b", workspaceId: "hidden", labels: childOf("loop-a") });
+  async function rollupOf(agentId: string): Promise<string | null> {
+    return directory.resolveRollupWorkspaceId((await storage.get(agentId))!);
+  }
+
+  // Structural only: an idle worker still resolves, so its finish can refresh the parent.
+  expect(await rollupOf("worker")).toBe("open");
+  expect(await rollupOf("nested")).toBe("open");
+  // A visible row of its own, an agent-level background agent, no parent, or a cycle: no rollup.
+  expect(await rollupOf("row")).toBeNull();
+  expect(await rollupOf("helper")).toBeNull();
+  expect(await rollupOf("in-background-workspace")).toBeNull();
+  expect(await rollupOf("loop-a")).toBeNull();
+});
+
+test("hidden activity reads loaded agents without projecting them and skips idle ones", async () => {
+  const base = { provider: "codex", cwd: home, createdAt: NOW, updatedAt: NOW };
+  await storage.upsert({ ...base, id: "parent", workspaceId: "open" });
+  function loaded(id: string, lifecycle: ManagedAgent["lifecycle"]): ManagedAgent {
+    return {
+      id,
+      provider: "codex",
+      workspaceId: "hidden",
+      lifecycle,
+      labels: { "paseo.parent-agent-id": "parent" },
+      updatedAt: new Date(NOW),
+    } as ManagedAgent;
+  }
+  const workspaces = [workspace("open", false), workspace("hidden", true)];
+  const lookedUp: string[] = [];
+  const hidden = new AgentDirectory({
+    storage,
+    manager: {
+      listAgents: () => [
+        loaded("turn", "running"),
+        loaded("waiting", "idle"),
+        loaded("background-work", "idle"),
+      ],
+      getAgentBackgroundWorkSummary: (agentId) =>
+        agentId === "background-work" ? { count: 1 } : undefined,
+    },
+    workspaces: {
+      get: async (id) => {
+        lookedUp.push(id);
+        return workspaces.find((entry) => entry.workspaceId === id) ?? null;
+      },
+    },
+    projectLive: () => {
+      throw new Error("Projected a live agent");
+    },
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
+    isProviderVisible: () => true,
+    isStoredProviderAvailable: () => true,
+  });
+
+  expect(await hidden.listHiddenRunningRollups()).toEqual([
+    { workspaceId: "open", updatedAt: NOW },
+    { workspaceId: "open", updatedAt: NOW },
+  ]);
+  // The idle agent never reaches a workspace lookup.
+  expect(lookedUp).toEqual(["hidden", "open", "hidden", "open"]);
 });
