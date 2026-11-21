@@ -6,12 +6,40 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
+import { createOpenCodeEventSource, OpenCodeAgentClient } from "./opencode-agent.js";
 import {
   OpenCodeEventConsumer,
   type OpenCodeEventConsumerTiming,
 } from "./opencode/event-consumer.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
+
+test("production event-source factory forwards the sustained-failure callback", () => {
+  class CapturingConsumer {
+    static lastOptions: Record<string, unknown> | undefined;
+    constructor(options: Record<string, unknown>) {
+      CapturingConsumer.lastOptions = options;
+    }
+    ready = async () => undefined;
+    subscribe = () => () => undefined;
+    diagnostics = () => ({ attempt: 0, phase: "first-record" as const, elapsedMs: 0 });
+    close = async () => undefined;
+  }
+
+  const onSustainedFailure = vi.fn(async () => undefined);
+  createOpenCodeEventSource(
+    () => ({}) as never,
+    {
+      serverUrl: "http://127.0.0.1:1",
+      processExit: new Promise<Error>(() => undefined),
+      logger: createTestLogger(),
+      listening: Promise.resolve(),
+      onSustainedFailure,
+    },
+    CapturingConsumer as never,
+  );
+
+  expect(CapturingConsumer.lastOptions?.onSustainedFailure).toBe(onSustainedFailure);
+});
 
 test("dispatches ascending OpenCode message identifiers through the public provider path", async () => {
   const upstream = await createRecoveryUpstream();
@@ -250,6 +278,111 @@ test("sends the next turn to the new OpenCode server after the old one exits", a
   await current.close();
 });
 
+test("rejects a pending turn if its generation exits during MCP setup", async () => {
+  const upstream = await createRecoveryUpstream();
+  const processes: RecoveryServerProcess[] = [];
+  const manager = new OpenCodeServerManager({
+    logger: createTestLogger(),
+    portAllocator: async () => upstream.port,
+    resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
+    resolveHomeDir: () => process.cwd(),
+    spawnServerProcess: () => {
+      const serverProcess = new RecoveryServerProcess();
+      processes.push(serverProcess);
+      return serverProcess as unknown as ChildProcess;
+    },
+    terminateProcess: async (serverProcess) => {
+      (serverProcess as unknown as RecoveryServerProcess).exit();
+      return "terminated";
+    },
+  });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: manager,
+    createClient: ({ baseUrl, directory }) => createOpencodeClient({ baseUrl, directory }),
+  });
+  try {
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace",
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:1/mcp" } },
+    });
+    await upstream.connected(1);
+    upstream.send(0, connectedRecord());
+
+    const releaseMcp = upstream.holdMcp();
+    const turn = session.startTurn("pending during exit");
+    await eventually(() => expect(upstream.mcpRequests()).toBe(1));
+    processes[0]?.exit();
+    // The exit handler resolves processExit before the held MCP response can complete on the
+    // event loop, so the session observes server-exited before startTurn resumes.
+    releaseMcp();
+
+    await expect(turn).rejects.toThrow("before the turn was dispatched");
+    expect(upstream.dispatchCount()).toBe(0);
+
+    await session.close();
+  } finally {
+    await manager.shutdown();
+    await upstream.close();
+  }
+});
+
+test("a failed Stop does not poison the replacement session", async () => {
+  const exited = await createRecoveryUpstream();
+  const current = await createRecoveryUpstream();
+  const ports = [exited.port, current.port];
+  const processes: RecoveryServerProcess[] = [];
+  const manager = new OpenCodeServerManager({
+    logger: createTestLogger(),
+    portAllocator: async () => ports.shift() as number,
+    resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
+    resolveHomeDir: () => process.cwd(),
+    spawnServerProcess: () => {
+      const serverProcess = new RecoveryServerProcess();
+      processes.push(serverProcess);
+      return serverProcess as unknown as ChildProcess;
+    },
+    terminateProcess: async (serverProcess) => {
+      (serverProcess as unknown as RecoveryServerProcess).exit();
+      return "terminated";
+    },
+  });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: manager,
+    createClient: ({ baseUrl, directory }) => createOpencodeClient({ baseUrl, directory }),
+  });
+  try {
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace" });
+    const observed: AgentStreamEvent[] = [];
+    session.subscribe((event) => observed.push(event));
+    await exited.connected(1);
+    exited.send(0, connectedRecord());
+    await session.startTurn("before failed stop");
+    await exited.dispatched(1);
+
+    exited.failAbort();
+    await expect(session.interrupt()).rejects.toThrow();
+    processes[0]?.exit();
+    await exited.close();
+
+    const turn = session.startTurn("after failed stop");
+    await current.connected(1);
+    current.send(0, connectedRecord());
+    await turn;
+    await current.dispatched(1);
+    current.send(0, idleRecord());
+    await eventually(() =>
+      expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(1),
+    );
+
+    await session.close();
+  } finally {
+    await manager.shutdown();
+    await current.close();
+    await exited.close();
+  }
+});
+
 test("adds the session's MCP servers to the new OpenCode server after the old one exits", async () => {
   const exited = await createRecoveryUpstream();
   const current = await createRecoveryUpstream();
@@ -380,6 +513,9 @@ async function createRecoveryUpstream() {
   const mcpAddNames: string[] = [];
   let messages: unknown[] = [];
   let messageReadCount = 0;
+  let mcpRequestCount = 0;
+  let mcpGate: Promise<void> | null = null;
+  let abortFails = false;
   let status: "busy" | "idle" = "idle";
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -396,9 +532,19 @@ async function createRecoveryUpstream() {
     if (request.method === "POST" && pathname === "/session") {
       return json(response, { id: "session-1", directory: "/workspace" });
     }
+    if (request.url?.includes("/abort")) {
+      if (abortFails) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "abort failed" }));
+        return;
+      }
+      return json(response, {});
+    }
     if (request.method === "POST" && pathname === "/mcp") {
       const body = JSON.parse(await readBody(request)) as { name: string };
+      mcpRequestCount += 1;
       mcpAddNames.push(body.name);
+      if (mcpGate) await mcpGate;
       return json(response, {});
     }
     if (request.url?.includes("/prompt_async")) {
@@ -437,6 +583,21 @@ async function createRecoveryUpstream() {
     },
     messageReads: () => messageReadCount,
     mcpAdds: () => [...mcpAddNames],
+    mcpRequests: () => mcpRequestCount,
+    holdMcp(): () => void {
+      let release!: () => void;
+      mcpGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => {
+        mcpGate = null;
+        release();
+      };
+    },
+    dispatchCount: () => dispatchIds.length,
+    failAbort(): void {
+      abortFails = true;
+    },
     setMessages(nextMessages: unknown[]) {
       messages = nextMessages;
     },
