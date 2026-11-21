@@ -84,6 +84,57 @@ export async function seedSubagent(
   return { id: child.id, title: input.title };
 }
 
+export async function seedRunningSubagent(
+  workspace: Pick<SeededWorkspace, "client" | "repoPath" | "workspaceId">,
+  input: { parentId: string; title: string },
+): Promise<{ id: string; title: string }> {
+  const child = await workspace.client.createAgent({
+    provider: "mock",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: input.title,
+    modeId: "load-test",
+    model: "five-minute-stream",
+    initialPrompt: "stay running",
+    labels: {
+      [PARENT_AGENT_ID_LABEL]: input.parentId,
+    },
+  });
+  await workspace.client.waitForAgentUpsert(
+    child.id,
+    (snapshot) => snapshot.status === "running",
+    15_000,
+  );
+  return { id: child.id, title: input.title };
+}
+
+export async function seedSubagentFanOut(
+  workspace: Pick<SeededWorkspace, "client" | "repoPath" | "workspaceId">,
+  input: { parentTitle: string; finishedTitles: string[]; runningTitles: string[] },
+): Promise<{ parent: { id: string; title: string }; workspaceId: string }> {
+  const parent = await workspace.client.createAgent({
+    provider: "mock",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: input.parentTitle,
+    modeId: "load-test",
+    model: "ten-second-stream",
+  });
+  for (const title of input.finishedTitles) {
+    await seedSubagent(workspace, { parentId: parent.id, title });
+  }
+  for (const title of input.runningTitles) {
+    await seedRunningSubagent(workspace, { parentId: parent.id, title });
+  }
+  return {
+    parent: {
+      id: parent.id,
+      title: input.parentTitle,
+    },
+    workspaceId: workspace.workspaceId,
+  };
+}
+
 export async function seedParentWithCrossWorkspaceSubagent(
   workspace: Pick<SeededWorkspace, "client" | "repoPath" | "workspaceId" | "projectId">,
   input: { parentTitle: string; childTitle: string },
@@ -178,6 +229,38 @@ export async function expectSubagentRowGone(page: Page, childId: string): Promis
   await expect(page.getByTestId(`subagents-track-row-${childId}`)).toHaveCount(0, {
     timeout: 30_000,
   });
+}
+
+export async function expectSubagentsWorkingSummary(
+  page: Page,
+  workingCount: number,
+): Promise<void> {
+  await expect(page.getByTestId("subagents-track-header")).toContainText(`${workingCount} working`);
+}
+
+export async function expectSubagentRowsInOrder(
+  page: Page,
+  input: { leadingTitles: string[]; finishedTitles: string[] },
+): Promise<void> {
+  const expectedNames = [
+    "Archive finished subagents",
+    ...input.leadingTitles,
+    ...input.finishedTitles,
+  ];
+  const items = page.getByTestId("subagents-track-header-panel").getByRole("menuitem");
+  await expect(items).toHaveCount(expectedNames.length);
+  for (const [index, name] of expectedNames.entries()) {
+    await expect(items.nth(index)).toHaveAccessibleName(name);
+  }
+  for (const title of input.leadingTitles) {
+    const row = page.getByRole("menuitem", { name: title, exact: true });
+    await expect(row).toBeInViewport();
+  }
+  if (input.leadingTitles[0]) {
+    await page
+      .getByRole("menuitem", { name: input.leadingTitles[0], exact: true })
+      .click({ trial: true });
+  }
 }
 
 export async function expectManagedSubagentUnarchived(
