@@ -165,11 +165,16 @@ export function useSidebarWorkspacesList(options?: {
       : EMPTY_PROJECT_NAMES;
 
   useEffect(() => {
+    // Stored arrangements only shape the sidebar under Manual sort. Maintaining them while an
+    // automatic sort is showing would freeze recency snapshots into the saved order.
+    if (sort !== "manual") {
+      return;
+    }
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder,
-      getWorkspaceOrder: sort === "manual" ? orderStore.getWorkspaceOrder : undefined,
+      getWorkspaceOrder: orderStore.getWorkspaceOrder,
     });
 
     if (updates.projectOrder) {

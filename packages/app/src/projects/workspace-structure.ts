@@ -100,6 +100,20 @@ export function buildWorkspaceStructureProjects(input: {
     }
   }
 
+  // Automatic sorts order the project sections by their most recent workspace, so the project a
+  // user just prompted floats to the top; projects without workspaces keep name order below.
+  // Manual sort keeps name order here: the stored sidebar arrangement decides the sections.
+  const recencyByViewKey = new Map<string, number>();
+  if (input.workspaceSort === "created" || input.workspaceSort === "lastPrompt") {
+    for (const [viewKey, draft] of byProject) {
+      let recency = 0;
+      for (const workspace of draft.workspaces) {
+        recency = Math.max(recency, workspace.sortTime);
+      }
+      recencyByViewKey.set(viewKey, recency);
+    }
+  }
+
   return Array.from(byProject.values())
     .map((draft) => ({
       viewKey: draft.viewKey,
@@ -112,13 +126,18 @@ export function buildWorkspaceStructureProjects(input: {
         .sort(input.workspaceSort ? compareWorkspaceTimes : compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
     }))
-    .sort(
-      (left, right) =>
+    .sort((left, right) => {
+      const recencyDelta =
+        (recencyByViewKey.get(right.viewKey) ?? 0) - (recencyByViewKey.get(left.viewKey) ?? 0);
+      return (
+        recencyDelta ||
         left.projectName.localeCompare(right.projectName, undefined, {
           numeric: true,
           sensitivity: "base",
-        }) || left.viewKey.localeCompare(right.viewKey),
-    );
+        }) ||
+        left.viewKey.localeCompare(right.viewKey)
+      );
+    });
 }
 
 export function createProjectViewKey(
