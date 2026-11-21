@@ -258,6 +258,38 @@ function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]
   return events.filter((event) => event.type === type);
 }
 
+test("preserves skills in a plugin session's command list", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+  });
+  try {
+    const open = harness.inputs.find((input) => input.type === "session.open")!;
+    harness.emit({
+      type: "session.commands",
+      sessionId: open.sessionId,
+      commands: [
+        { name: "compact", description: "Compact the conversation" },
+        { name: "diagnose", description: "Diagnose a bug", kind: "skill" },
+      ],
+    });
+    await expect(session.listCommands!()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact the conversation",
+        argumentHint: "",
+        kind: "command",
+      },
+      { name: "diagnose", description: "Diagnose a bug", argumentHint: "", kind: "skill" },
+    ]);
+  } finally {
+    await session.close();
+  }
+});
+
 function createRewindProviderHarness(
   options: {
     reuseAnswerId?: boolean;

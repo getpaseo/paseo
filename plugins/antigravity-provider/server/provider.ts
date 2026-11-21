@@ -17,7 +17,23 @@ const systemPromptCapability = z.object({
 
 const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
 
+// agy 1.5.13 advertises these built-in commands and its invocable skills in one ACP list.
+const builtInCommands = new Set([
+  "goal",
+  "compact",
+  "schedule",
+  "browser",
+  "plan",
+  "grill-me",
+  "teamwork",
+  "learn",
+  "boost",
+]);
+
 const antigravity: AcpTransformer = {
+  command(command) {
+    return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
+  },
   toolCall(call) {
     if (call.name === "write_file") {
       const input = fileWrite.safeParse(call.input);
