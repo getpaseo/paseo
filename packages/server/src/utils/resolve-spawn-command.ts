@@ -47,12 +47,27 @@ export function resolveSpawnCommand(
     return command;
   }
   const nowMs = options.nowMs ?? Date.now();
-  const key = `${pathValue}\0${command}`;
+  const key = resolutionKey(command, pathValue);
   const resolution = resolutions.get(key);
   if (!resolution || nowMs - resolution.resolvedAtMs >= RESOLUTION_TTL_MS) {
     startRefresh(key, command, pathValue, nowMs);
   }
   return resolution?.path ?? command;
+}
+
+/** Discard a path that failed to spawn and refresh the resolution in the background. */
+export function invalidateSpawnCommandResolution(
+  command: string,
+  pathValue: string | undefined,
+): void {
+  if (!pathValue) return;
+  const key = resolutionKey(command, pathValue);
+  resolutions.delete(key);
+  startRefresh(key, command, pathValue, Date.now());
+}
+
+function resolutionKey(command: string, pathValue: string): string {
+  return `${pathValue}\0${command}`;
 }
 
 /** Resolves once every PATH search started so far has finished. */

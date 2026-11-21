@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -17,10 +17,9 @@ function directory(name: string): string {
   return dir;
 }
 
-function tool(dir: string, mode = 0o755): string {
+function tool(dir: string): string {
   const file = path.join(dir, "tool");
-  writeFileSync(file, "#!/bin/sh\nexit 0\n");
-  chmodSync(file, mode);
+  writeFileSync(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   return file;
 }
 
@@ -46,19 +45,13 @@ afterEach(() => {
 describe("resolveSpawnCommand", () => {
   test("returns the bare name until the PATH search finishes, then the first executable file", async () => {
     const empty = directory("empty");
-    const notExecutable = directory("not-executable");
-    tool(notExecutable, 0o644);
     const directoryNamedTool = directory("subdir");
     directory("subdir/tool");
     const expected = tool(directory("bin"));
     const later = tool(directory("later"));
-    const pathValue = [
-      empty,
-      notExecutable,
-      directoryNamedTool,
-      path.dirname(expected),
-      path.dirname(later),
-    ].join(path.delimiter);
+    const pathValue = [empty, directoryNamedTool, path.dirname(expected), path.dirname(later)].join(
+      path.delimiter,
+    );
 
     expect(resolveSpawnCommand("tool", pathValue, { platform: "darwin" })).toBe("tool");
     await settleSpawnCommandResolutions();

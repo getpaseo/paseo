@@ -1,7 +1,7 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawnProcess as spawnCli, execCommand as execCli } from "@getpaseo/plugin/server";
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
-import { resolveSpawnCommand } from "./resolve-spawn-command.js";
+import { invalidateSpawnCommandResolution, resolveSpawnCommand } from "./resolve-spawn-command.js";
 
 interface ExternalEnvOptions {
   baseEnv?: ProcessEnvRecord;
@@ -48,13 +48,17 @@ export function spawnProcess(
     ? command
     : resolveSpawnCommand(command, childEnv.PATH);
 
-  return spawnCli(resolvedCommand, args, {
-    // Keep argv[0] as the caller wrote it; only the file the kernel opens changes.
-    ...(resolvedCommand !== command ? { argv0: command } : {}),
-    ...spawnOptions,
-    env: childEnv,
-    signal: options?.signal,
-  });
+  const childOptions = { ...spawnOptions, env: childEnv, signal: options?.signal };
+  if (resolvedCommand === command) return spawnCli(command, args, childOptions);
+
+  // Keep argv[0] as the caller wrote it. Only the file the kernel opens changes.
+  const child = spawnCli(resolvedCommand, args, { argv0: command, ...childOptions });
+  if (child.pid !== undefined) return child;
+
+  // The cached executable may have disappeared. Consume its queued error and retry the PATH search.
+  child.once("error", () => {});
+  invalidateSpawnCommandResolution(command, childEnv.PATH);
+  return spawnCli(command, args, childOptions);
 }
 
 export async function execCommand(

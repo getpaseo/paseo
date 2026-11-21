@@ -241,6 +241,20 @@ describe("spawnProcess", () => {
     return { code, stdout: Buffer.concat(chunks).toString() };
   }
 
+  function createGitPath() {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "spawn-stale-path-")));
+    tempDirs.push(root);
+    const firstBin = path.join(root, "first");
+    const secondBin = path.join(root, "second");
+    const firstGit = path.join(firstBin, "git");
+    const secondGit = path.join(secondBin, "git");
+    fs.mkdirSync(firstBin);
+    fs.mkdirSync(secondBin);
+    fs.writeFileSync(firstGit, "#!/bin/sh\necho first\n", { mode: 0o755 });
+    fs.writeFileSync(secondGit, "#!/bin/sh\necho second\n", { mode: 0o755 });
+    return { firstGit, secondGit, env: { PATH: [firstBin, secondBin].join(path.delimiter) } };
+  }
+
   // libuv on macOS finds a bare command by trying posix_spawn in each PATH directory, and every
   // miss runs on the event loop. Once spawnProcess knows where a command lives it hands libuv
   // that file instead.
@@ -274,6 +288,54 @@ describe("spawnProcess", () => {
       expect(second.spawnfile).toBe(tool);
       expect(second.spawnargs[0]).toBe("paseo-spawn-test-tool");
       expect(await runToCompletion(second)).toEqual({ code: 0, stdout: "tool-ran\n" });
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "finds the next git on PATH after the cached executable is removed",
+    async () => {
+      const { firstGit, secondGit, env } = createGitPath();
+
+      expect(await runToCompletion(spawnProcess("git", ["--version"], { env }))).toEqual({
+        code: 0,
+        stdout: "first\n",
+      });
+      await settleSpawnCommandResolutions();
+      const cached = spawnProcess("git", ["--version"], { env });
+      expect(cached.spawnfile).toBe(firstGit);
+      expect(await runToCompletion(cached)).toEqual({ code: 0, stdout: "first\n" });
+
+      fs.rmSync(firstGit);
+      const retried = spawnProcess("git", ["--version"], { env });
+      expect(await runToCompletion(retried)).toEqual({ code: 0, stdout: "second\n" });
+      expect(retried.spawnfile).toBe("git");
+      await settleSpawnCommandResolutions();
+      const refreshed = spawnProcess("git", ["--version"], { env });
+      expect(refreshed.spawnfile).toBe(secondGit);
+      expect(await runToCompletion(refreshed)).toEqual({ code: 0, stdout: "second\n" });
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "only surfaces the bare spawn error if both attempts fail",
+    async () => {
+      const { firstGit, secondGit, env } = createGitPath();
+      await runToCompletion(spawnProcess("git", [], { env }));
+      await settleSpawnCommandResolutions();
+      fs.rmSync(firstGit);
+      fs.rmSync(secondGit);
+
+      const unhandled = vi.fn();
+      process.on("uncaughtExceptionMonitor", unhandled);
+      try {
+        const child = spawnProcess("git", [], { env });
+        await expect(runToCompletion(child)).rejects.toMatchObject({ code: "ENOENT", path: "git" });
+        expect(child.spawnfile).toBe("git");
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off("uncaughtExceptionMonitor", unhandled);
+        await settleSpawnCommandResolutions();
+      }
     },
   );
 });
