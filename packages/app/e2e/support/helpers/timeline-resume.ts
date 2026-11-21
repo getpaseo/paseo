@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import type { LongTimelineAgent } from "./timeline-pagination";
 import {
@@ -240,4 +241,101 @@ export async function restoreUnchangedViewedTimeline(
 ): Promise<void> {
   gate.restore();
   await expectReconnectingToastGone(page);
+}
+
+export interface StreamingReplyAgent extends MockAgentWorkspace {
+  prompt: string;
+}
+
+/**
+ * A mock agent with no history whose reply streams one word every 100 ms. At 2,000 words the
+ * reply outlasts the test's timeout, so it is still streaming however long the app takes to
+ * reconnect. The test ends the turn with {@link stopStreamingReply}.
+ */
+export async function seedStreamingReplyAgent(): Promise<StreamingReplyAgent> {
+  const reply = Array.from({ length: 2_000 }, (_unused, index) => `word${index}`).join(" ");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "reply-reconnect-",
+    title: "Reply through reconnect",
+    featureValues: {
+      mockStreamingAssistantResponse: reply,
+      mockStreamingAssistantIntervalMs: 100,
+    },
+  });
+  return {
+    ...agent,
+    prompt: "stream through a reconnect",
+    cleanup: async () => {
+      await agent.client.cancelAgent(agent.agentId).catch(() => undefined);
+      await agent.cleanup();
+    },
+  };
+}
+
+interface TimelineReader {
+  fetchAgentTimeline(
+    agentId: string,
+    request: { direction: "tail"; limit: number },
+  ): Promise<{ entries: Array<{ item: { type: string; text?: string } }> }>;
+}
+
+async function readDaemonReply(agent: StreamingReplyAgent): Promise<string> {
+  const timeline = await (agent.client as unknown as TimelineReader).fetchAgentTimeline(
+    agent.agentId,
+    { direction: "tail", limit: 0 },
+  );
+  return timeline.entries
+    .map(({ item }) => (item.type === "assistant_message" ? (item.text ?? "") : ""))
+    .join("");
+}
+
+/** Waits for the empty chat's first catch-up, so the chat is synced with no range. */
+export async function expectEmptyChatSynced(page: Page, gate: DaemonWebSocketGate): Promise<void> {
+  await gate.waitForServerMessage(TIMELINE_RESPONSE);
+  await expect(page.getByTestId("agent-chat-scroll").filter({ visible: true })).toHaveCount(1, {
+    timeout: 30_000,
+  });
+}
+
+/** Another client sends the prompt, and the reply starts, while the chat is away. */
+export async function sendPromptWhileDisconnected(agent: StreamingReplyAgent): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, agent.prompt);
+  await expect.poll(() => readDaemonReply(agent), { timeout: 30_000 }).toContain("word10");
+}
+
+/** Reconnects with live reply chunks reaching the chat before the catch-up page that holds them. */
+export async function restoreViewedTimelineWithLiveRowsFirst(
+  gate: DaemonWebSocketGate,
+): Promise<void> {
+  gate.holdNextClientRequest(TIMELINE_REQUEST);
+  const chunksBeforeReconnect = gate.getAgentStreamItemCount("assistant_message");
+  gate.restore();
+  await gate.waitForHeldClientRequest();
+  await gate.waitForAgentStreamItem("assistant_message", chunksBeforeReconnect + 5);
+  gate.releaseHeldClientRequest();
+}
+
+/** Stops the turn and returns the reply as the daemon recorded it. */
+export async function stopStreamingReply(agent: StreamingReplyAgent): Promise<string> {
+  await agent.client.cancelAgent(agent.agentId);
+  await agent.client.waitForFinish(agent.agentId, 30_000);
+  const reply = (await readDaemonReply(agent)).trim();
+  expect(reply).toMatch(/^word0 word1 word2 .* word10 /);
+  return reply;
+}
+
+export async function expectPromptAndWholeReply(
+  page: Page,
+  agent: StreamingReplyAgent,
+  reply: string,
+): Promise<void> {
+  const chat = page.getByTestId("agent-chat-scroll").filter({ visible: true }).first();
+  await expect(chat.getByText(agent.prompt, { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () =>
+        (await chat.getByTestId("assistant-message").allInnerTexts()).map((text) => text.trim()),
+      { timeout: 30_000 },
+    )
+    .toEqual([reply]);
 }

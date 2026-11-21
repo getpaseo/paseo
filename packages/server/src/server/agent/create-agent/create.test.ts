@@ -10,6 +10,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
+import { ForegroundPromptStart } from "../agent-run-state.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
@@ -89,9 +90,12 @@ test("session create forwards clientMessageId to the initial prompt run options"
     firstAgentContext: { attachments: [] },
   });
 
-  expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
-    clientMessageId: "msg-create-1",
-  });
+  expect(streamAgent).toHaveBeenCalledWith(
+    "agent-1",
+    "hello from create",
+    { clientMessageId: "msg-create-1" },
+    expect.any(ForegroundPromptStart),
+  );
 });
 
 test("session create validates the requested mode against the provider's modes", async () => {

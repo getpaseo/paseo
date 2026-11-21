@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,7 +14,8 @@ import {
 } from "./format";
 import { UsageMeter } from "./meter";
 import { displayPercent, usageWindowRowLabel } from "./model";
-import { UsageResetLine } from "./reset-line";
+import { usagePace } from "./pace";
+import { UsageDatapointLine } from "./datapoint-line";
 import type { UsageDisplayAs } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
@@ -28,8 +30,10 @@ export function UsageWindowBar({
   pinLabel,
   pinTestID,
   retained = false,
+  forecastAt,
 }: {
   retained?: boolean;
+  forecastAt: string | null;
   window: UsageWindow;
   displayAs: UsageDisplayAs;
   /** Whether the row pins the window to the sidebar. When false the row is a plain bar. */
@@ -42,31 +46,22 @@ export function UsageWindowBar({
 }) {
   const { t, i18n } = useTranslation();
   const shownPct = displayPercent(window, displayAs);
-  const tone = windowTone(window);
-
   const now = useRelativeTimeTick({ enabled: window.runsOutAt != null || window.resetsAt != null });
-  const isAtRisk =
-    window.runsOutAt != null &&
-    window.shortfallPct != null &&
-    (!retained || Date.parse(window.runsOutAt) > now);
-  const countdown = isAtRisk
-    ? formatRunsOutLabel(window.runsOutAt, now, t)
-    : formatResetLabel(window.resetsAt, retained, now, t);
-  // The exact time belongs to the reset; beside a runs-out warning it would read as the moment
-  // the quota runs out.
-  const exactTime = isAtRisk ? null : formatResetTime(window.resetsAt, now, t);
+  const pace = usagePace(window, forecastAt, now);
+  const forecast = formatPace(pace, now, t);
+  const countdown = formatResetLabel(window.resetsAt, retained, now, t);
+  const exactTime = formatResetTime(window.resetsAt, now, t);
 
   const value =
     shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage, t) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
+  const datapoints = [countdown, exactTime, forecast?.label ?? null];
   const content = {
     label: formatProviderUsageLabel(window.id, window.label, t),
     value,
-    countdown,
-    exactTime,
-    isAtRisk,
+    datapoints,
     percent: shownPct ?? 0,
-    tone,
+    tone: forecast?.tone ?? windowTone(window),
     pinned,
   };
 
@@ -86,7 +81,7 @@ export function UsageWindowBar({
       accessibilityLabel={usageWindowRowLabel({
         pinLabel,
         value,
-        trailing: [countdown, exactTime].filter(Boolean).join(" · "),
+        trailing: datapoints.filter(Boolean).join(" · "),
       })}
       accessibilityState={accessibilityState}
       aria-checked={pinned}
@@ -101,9 +96,7 @@ export function UsageWindowBar({
 function WindowRowContent({
   label,
   value,
-  countdown,
-  exactTime,
-  isAtRisk,
+  datapoints,
   percent,
   tone,
   pinnable,
@@ -111,9 +104,7 @@ function WindowRowContent({
 }: {
   label: string;
   value: string;
-  countdown: string | null;
-  exactTime: string | null;
-  isAtRisk: boolean;
+  datapoints: readonly (string | null)[];
   percent: number;
   tone: UsageTone;
   pinnable: boolean;
@@ -131,9 +122,38 @@ function WindowRowContent({
         {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
       <UsageMeter percent={percent} tone={tone} />
-      <UsageResetLine countdown={countdown} exactTime={exactTime} atRisk={isAtRisk} />
+      <UsageDatapointLine datapoints={datapoints} />
     </>
   );
+}
+
+interface PaceDisplay {
+  label: string | null;
+  tone: UsageTone;
+}
+
+function formatPace(
+  pace: ReturnType<typeof usagePace>,
+  now: number,
+  t: TFunction,
+): PaceDisplay | null {
+  switch (pace.kind) {
+    case "reached":
+      return { label: t("providerUsage.timing.limitReached"), tone: "danger" };
+    case "runsOut": {
+      const label =
+        Date.parse(pace.at) <= now
+          ? t("providerUsage.timing.mayHaveRunOut")
+          : formatRunsOutLabel(pace.at, now, t);
+      return label ? { label, tone: "danger" } : null;
+    }
+    case "tight":
+      return { label: null, tone: "warning" };
+    case "onTrack":
+      return { label: null, tone: "default" };
+    case "unknown":
+      return null;
+  }
 }
 
 const ThemedPin = withUnistyles(Pin);

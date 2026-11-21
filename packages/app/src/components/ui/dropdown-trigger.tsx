@@ -1,5 +1,6 @@
+import { AppearanceText as Text } from "@/appearance/text";
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import {

@@ -31,6 +31,7 @@ export default defineConfig({
             ),
             CLOUDFLARE_INCLUDE_PROCESS_ENV: "true",
             PLUGINS_REGISTRY_URL: "http://127.0.0.1:8188",
+            VITE_HUB_PLANS_URL: "http://127.0.0.1:8188/hub-plans",
           },
         },
       ],

@@ -241,6 +241,23 @@ function mergeReasoningChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
   return output;
 }
 
+/**
+ * Whether `next`, the row right after `previous`, is another chunk of the same assistant
+ * message. A turn id or message id change starts a new message, which matters where rows
+ * replayed from provider history carry no turn id.
+ */
+export function continuesAssistantMessage(
+  previous: Pick<AgentTimelineRow, "item" | "turnId">,
+  next: Pick<AgentTimelineRow, "item" | "turnId">,
+): boolean {
+  return (
+    previous.item.type === "assistant_message" &&
+    next.item.type === "assistant_message" &&
+    previous.turnId === next.turnId &&
+    (next.item.messageId === undefined || next.item.messageId === previous.item.messageId)
+  );
+}
+
 function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
 
@@ -248,10 +265,8 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
     const previous = output[output.length - 1];
     const shouldMerge =
       previous &&
-      previous.item.type === "assistant_message" &&
-      entry.item.type === "assistant_message" &&
       previous.seqEnd + 1 === entry.seqStart &&
-      previous.turnId === entry.turnId;
+      continuesAssistantMessage(previous, entry);
 
     if (!shouldMerge || !previous) {
       output.push(entry);
@@ -262,13 +277,6 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       { type: "assistant_message" }
     >;
     const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
-    if (
-      entryAssistant.messageId !== undefined &&
-      previousAssistant.messageId !== entryAssistant.messageId
-    ) {
-      output.push(entry);
-      continue;
-    }
 
     const collapsedKinds = new Set<TimelineProjectionKind>([
       ...previous.collapsed,

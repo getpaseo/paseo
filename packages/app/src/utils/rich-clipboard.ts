@@ -1,6 +1,8 @@
 import { createAssistantMarkdownParser } from "./assistant-markdown-parser";
 
 const markdownRenderer = createAssistantMarkdownParser();
+// Disable linkify for selection HTML so text from unwrapped links stays unlinked.
+const unlinkedMarkdownRenderer = createAssistantMarkdownParser().set({ linkify: false });
 
 type ClipboardMimeType = "text/plain" | "text/html";
 
@@ -23,6 +25,21 @@ export function createMarkdownClipboardContent(markdown: string): MarkdownClipbo
   return {
     plainText: markdown,
     html: `<meta charset="utf-8">${markdownRenderer.render(markdown)}`,
+  };
+}
+
+/**
+ * Clipboard payload for Markdown text. `markdown` is escaped and feeds `text/html`, which
+ * renders it; `plainText` goes to `text/plain` unchanged, so callers that escape for the
+ * rich flavor can hand over the same text the user saw.
+ */
+export function createSelectionClipboardContent(
+  markdown: string,
+  plainText: string,
+): MarkdownClipboardContent {
+  return {
+    plainText,
+    html: `<meta charset="utf-8">${unlinkedMarkdownRenderer.render(markdown)}`,
   };
 }
 

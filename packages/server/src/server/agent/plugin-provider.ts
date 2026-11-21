@@ -12,9 +12,14 @@ import {
   ProviderInputSchema,
   ProviderStatusSchema,
   type ProviderStatus,
+  type ProviderInspection,
+  type ProviderUpdateCheck,
+  type ProviderUpdateResult,
+  type ProviderInstallationLaunch,
   type ProviderLaunch,
   requireProviderCapabilities,
   type ProviderCapability,
+  type ProviderCommand,
   type ProviderConfigChanges,
   type ProviderConfigState,
   type ProviderConnection,
@@ -31,6 +36,9 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentClientInstallation,
+  AgentClientUpdateCheckContext,
+  AgentClientUpdateContext,
   AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
@@ -130,6 +138,7 @@ function isProviderRequestReply(
 
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
+  connectedLaunch: ProviderLaunch | undefined;
   private connecting: Promise<ProviderConnection> | null = null;
   private closed = false;
   private generation = 0;
@@ -156,7 +165,8 @@ class ProviderRuntime {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+  /** The effective launch, including when its executable does not resolve. */
+  private async resolveEffectiveLaunch(): Promise<ProviderInstallationLaunch | undefined> {
     const command = this.registration.command;
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
@@ -167,8 +177,51 @@ class ProviderRuntime {
     const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
     const availability = await checkProviderLaunchAvailable(launch);
-    if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
-    return { command: resolvePath(availability.resolvedPath), args: launch.args, env };
+    if (!availability.resolvedPath)
+      return { command: launch.command, args: launch.args, env, resolved: false };
+    return {
+      command: resolvePath(availability.resolvedPath),
+      args: launch.args,
+      env,
+      resolved: true,
+    };
+  }
+
+  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+    const launch = await this.resolveEffectiveLaunch();
+    if (!launch) return undefined;
+    if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
+    return { command: launch.command, args: launch.args, env: launch.env };
+  }
+
+  async resolveUsageLaunch(): Promise<ProviderLaunch | undefined> {
+    const launch = await this.resolveEffectiveLaunch();
+    if (!launch?.resolved) return undefined;
+    return { command: launch.command, args: launch.args, env: launch.env };
+  }
+
+  async inspectInstallation(signal: AbortSignal): Promise<ProviderInspection> {
+    const inspect = this.registration.installation?.inspect;
+    if (!inspect) throw new Error("Provider does not report its installation");
+    const launch = await this.resolveEffectiveLaunch();
+    signal.throwIfAborted();
+    return await inspect.call(this.registration.installation, { launch, signal });
+  }
+
+  async checkForUpdates(context: AgentClientUpdateCheckContext): Promise<ProviderUpdateCheck> {
+    const checkForUpdates = this.registration.installation?.checkForUpdates;
+    if (!checkForUpdates) throw new Error("Provider does not check for updates");
+    const launch = await this.resolveEffectiveLaunch();
+    context.signal.throwIfAborted();
+    return await checkForUpdates.call(this.registration.installation, { ...context, launch });
+  }
+
+  async update(context: AgentClientUpdateContext): Promise<ProviderUpdateResult> {
+    const update = this.registration.installation?.update;
+    if (!update) throw new Error("Provider does not update itself");
+    const launch = await this.resolveEffectiveLaunch();
+    context.signal.throwIfAborted();
+    return await update.call(this.registration.installation, { ...context, launch });
   }
 
   async status(): Promise<ProviderStatus> {
@@ -380,8 +433,9 @@ class ProviderRuntime {
   }
 
   private async establishConnection(generation: number): Promise<ProviderConnection> {
+    const launch = await this.resolveLaunch();
     const rawConnection = await this.registration.connect({
-      launch: await this.resolveLaunch(),
+      launch,
       versions: [PROVIDER_PROTOCOL_VERSION],
       capabilities: PROVIDER_CAPABILITIES,
     });
@@ -395,6 +449,7 @@ class ProviderRuntime {
       await rawConnection.close().catch(() => undefined);
       throw error;
     }
+    this.connectedLaunch = launch;
     const connection = normalizeConnection(rawConnection);
     const unsubscribe = connection.onEvent((event) => this.accept(event));
     if (this.closed || generation !== this.generation) {
@@ -605,9 +660,11 @@ class ProviderRuntimeSession {
   >();
   private readonly activeTurnIds = new Set<string>();
   private terminal = false;
+  // The provider ended this session with session.closed, so it has nothing left to close.
+  private closedByProvider = false;
   private closePromise: Promise<void> | null = null;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [] };
-  commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
+  commands: ProviderCommand[] = [];
   persistence: ProviderPersistence | null = null;
 
   constructor(
@@ -683,6 +740,7 @@ class ProviderRuntimeSession {
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
+    if (this.terminal) throw new StaleProviderSessionError(this.id);
     const input: Extract<ProviderInput, { type: "session.configure" }> = {
       type: "session.configure",
       requestId: randomUUID(),
@@ -723,7 +781,7 @@ class ProviderRuntimeSession {
 
   async close(): Promise<void> {
     this.history.length = 0;
-    if (this.restoration === "parent") {
+    if (this.restoration === "parent" || this.closedByProvider) {
       this.runtime.removeSession(this.id, this.providerSessionId);
       return;
     }
@@ -788,6 +846,7 @@ class ProviderRuntimeSession {
       return;
     }
     if (event.type === "session.runtime_failed" || event.type === "session.closed") {
+      if (event.type === "session.closed") this.closedByProvider = true;
       if (this.terminal) return;
       this.terminal = true;
       this.publish(event);
@@ -961,13 +1020,31 @@ class PluginAgentClient implements AgentClient {
   private readonly pendingChildren: PendingChild[] = [];
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
+  readonly installation?: AgentClientInstallation;
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
+    const installation = registration.installation;
+    if (installation)
+      this.installation = {
+        installUrl: installation.installUrl,
+        updateUrl: installation.updateUrl,
+        inspect: installation.inspect
+          ? ({ signal }) => this.runtime.inspectInstallation(signal)
+          : undefined,
+        checkForUpdates: installation.checkForUpdates
+          ? (context) => this.runtime.checkForUpdates(context)
+          : undefined,
+        update: installation.update ? (context) => this.runtime.update(context) : undefined,
+      };
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
+  }
+
+  resolveUsageLaunch() {
+    return this.runtime.resolveUsageLaunch();
   }
 
   get capabilities(): AgentCapabilityFlags {
@@ -1135,6 +1212,12 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
       config.settings,
+      this.runtime.connectedLaunch
+        ? {
+            ...this.runtime.connectedLaunch,
+            env: { ...this.runtime.connectedLaunch.env, ...config.env },
+          }
+        : undefined,
     );
     bind(bridge);
     return session;
@@ -1202,6 +1285,8 @@ class PluginAgentSession implements AgentSession {
     { session: ProviderRuntimeSession; unsubscribe: () => void }
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
+  // Outcome of each child's latest finished turn, so a plain close does not report it as completed.
+  private readonly childTurnOutcomes = new Map<string, "completed" | "canceled" | "failed">();
   private unsubscribe: (() => void) | null = null;
   /** How the opened session differs from the options it was given. */
   readonly openOptionsPatch: Record<string, JsonValue>;
@@ -1233,6 +1318,7 @@ class PluginAgentSession implements AgentSession {
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     givenOptions: Readonly<Record<string, JsonValue>>,
+    private readonly usageLaunch: ProviderLaunch | undefined,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1246,6 +1332,17 @@ class PluginAgentSession implements AgentSession {
       (entry) => entry.item.type === "notification",
     );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
+  }
+
+  usageSession() {
+    if (this.closed || !this.usageLaunch) return null;
+    return {
+      provider: this.provider,
+      model: this.bridge.config.model,
+      env: this.usageLaunch.env,
+      launch: this.usageLaunch,
+      sessionKey: this.bridge.id,
+    };
   }
 
   get id(): string {
@@ -1405,7 +1502,7 @@ class PluginAgentSession implements AgentSession {
     return this.bridge.commands.map((command) => ({
       ...command,
       argumentHint: command.argumentHint ?? "",
-      kind: "command",
+      kind: command.kind ?? "command",
     }));
   }
 
@@ -1766,6 +1863,11 @@ class PluginAgentSession implements AgentSession {
       return;
     }
     if (event.type === "session.turn") {
+      if (event.state === "started") {
+        this.childTurnOutcomes.delete(childId);
+      } else {
+        this.childTurnOutcomes.set(childId, event.state);
+      }
       this.publish({
         type: "provider_subagent",
         provider: this.provider,
@@ -1784,7 +1886,10 @@ class PluginAgentSession implements AgentSession {
         event: {
           type: "upsert",
           id: childId,
-          status: event.type === "session.runtime_failed" || event.error ? "failed" : "completed",
+          status:
+            event.type === "session.runtime_failed" || event.error
+              ? "failed"
+              : (this.childTurnOutcomes.get(childId) ?? "completed"),
         },
       });
     }
@@ -1802,6 +1907,7 @@ class PluginAgentSession implements AgentSession {
     this.history.clear();
     this.timelineSnapshots.clear();
     this.childSnapshots.clear();
+    this.childTurnOutcomes.clear();
     this.revertTokens.clear();
     this.pendingPermissions.clear();
     this.permissionResponses.clear();
@@ -1938,7 +2044,11 @@ function mapSessionConfig(
   return {
     cwd: config.cwd,
     env: createProviderEnv({ baseEnv: {}, overlays: [launchContext?.env] }),
-    systemPrompt: combineSystemPrompts(config.systemPrompt, config.daemonAppendSystemPrompt),
+    systemPrompt: combineSystemPrompts(
+      config.systemPrompt,
+      config.daemonAppendSystemPrompt,
+      ...(config.pluginAppendSystemPrompt ?? []),
+    ),
     mcpServers: { ...config.mcpServers },
     toolPolicy: config.toolPolicy
       ? { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) }
@@ -1957,8 +2067,9 @@ function mapSessionConfig(
 function combineSystemPrompts(
   systemPrompt: string | undefined,
   daemonPrompt: string | undefined,
+  ...pluginPrompts: string[]
 ): string | undefined {
-  const parts = [systemPrompt, daemonPrompt].filter(
+  const parts = [systemPrompt, daemonPrompt, ...pluginPrompts].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   return parts.length > 0 ? parts.join("\n\n") : undefined;
@@ -2064,6 +2175,10 @@ function decodePersistence(handle: AgentPersistenceHandle): ProviderPersistence 
   const fromMetadata = handle.metadata?.pluginProviderPersistence;
   if (fromMetadata !== undefined) {
     return ProviderPersistenceSchema.parse(fromMetadata);
+  }
+  // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once legacy handles have migrated.
+  if (handle.provider === "goose" && !handle.sessionId.startsWith("plugin:")) {
+    return { version: 1, data: { sessionId: handle.sessionId } };
   }
   return decodePersistenceId(handle.sessionId);
 }

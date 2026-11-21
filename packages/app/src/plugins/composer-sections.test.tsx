@@ -56,6 +56,7 @@ function installation(serverId: string): InstalledPlugin {
     composerSections: [{ id: "suggestions", Component: Section }],
     newWorkspaceItems: [],
     workspacePanels: [],
+    workspaceRowBadgeItems: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
@@ -67,15 +68,26 @@ function installation(serverId: string): InstalledPlugin {
 
 const toast = { show: () => () => {}, copied() {}, error() {} };
 
-function render(agentId: string) {
+function render(agentId: string, enabled = true) {
   return renderToStaticMarkup(
     <ToastApiProvider api={toast}>
-      <PluginComposerSections serverId="host-a" workspaceId="workspace" agentId={agentId} />
+      <PluginComposerSections
+        serverId="host-a"
+        workspaceId="workspace"
+        agentId={agentId}
+        enabled={enabled}
+      />
     </ToastApiProvider>,
   );
 }
 
 describe("composer sections", () => {
+  it("does not mount section content when its host has no visible composer", () => {
+    catalog.plugins = [installation("host-a")];
+    expect(render("first", false)).toBe("");
+    expect(render("first", true)).toBe("<span>host-a/workspace/first</span>");
+  });
+
   it("scopes sections to the composer host and supplies the current agent with installation hooks", async () => {
     const first = installation("host-a");
     const other = installation("host-b");

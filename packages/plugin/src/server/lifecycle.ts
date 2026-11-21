@@ -2,7 +2,6 @@ import type { AgentToolDefinition } from "./agent-tools.js";
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
-  AgentTimelineItem,
   AgentSessionConfig,
   JsonValue,
 } from "@getpaseo/protocol/agent-types";
@@ -38,7 +37,12 @@ export type PluginWorktreeCreateRequest = {
   slug: string;
   path: string;
 } & (
-  | { kind: "branch-off"; baseRef: string }
+  | {
+      kind: "branch-off";
+      baseRef: string;
+      /** Where the new branch starts when that is not `baseRef`, such as a fork's head. */
+      readonly startPoint?: string;
+    }
   | { kind: "checkout-branch" }
   | {
       kind: "checkout-change-request";
@@ -89,6 +93,8 @@ export interface PluginSessionOpenRequest {
   readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+  /** Instructions appended for this open; not saved on the agent. */
+  appendSystemPrompt?: string[];
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
@@ -104,12 +110,13 @@ export interface PluginHookEvents {
   "agent.turn.after": {
     agent: PluginHookAgent;
     turnId: string | null;
-    outcome: PluginTurnOutcome;
     /**
-     * @deprecated Always empty. Fetch history on demand with
-     * context.paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 20 }).
+     * The payload carries no history. Read the turn with
+     * `paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true })`
+     * and keep the entries whose `turnId` equals this `turnId`. The result is empty when a newer turn
+     * started before the read, or when `turnId` is `null`.
      */
-    timeline: readonly AgentTimelineItem[];
+    outcome: PluginTurnOutcome;
   };
   "agent.permission.before": { agent: PluginHookAgent; request: AgentPermissionRequest };
   "agent.permission.after": {

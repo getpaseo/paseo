@@ -7,6 +7,7 @@ import { useInstalledPlugins } from "./registry";
 import type { InstalledPlugin } from "./types";
 
 interface ComposerSectionTarget {
+  enabled?: boolean;
   serverId: string;
   workspaceId: string;
   agentId: string;
@@ -18,9 +19,12 @@ export function PluginComposerSections(target: ComposerSectionTarget) {
   const plugins = useMemo(
     () =>
       installed.filter(
-        (plugin) => plugin.serverId === target.serverId && plugin.composerSections.length > 0,
+        (plugin) =>
+          target.enabled !== false &&
+          plugin.serverId === target.serverId &&
+          plugin.composerSections.length > 0,
       ),
-    [installed, target.serverId],
+    [installed, target.serverId, target.enabled],
   );
   return plugins.map((plugin) => (
     <ThemedComposerSections

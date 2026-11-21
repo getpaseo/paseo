@@ -9,12 +9,20 @@ interface Interpretation {
 
 // Reuse depends on Git's interpretation, not just filesystem metadata. Ask Git
 // for effective attributes/config and filtered blob identities without writing objects.
-export async function readGitInputs(
-  paths: string[],
-  worktreeFiles: Set<string>,
-  options: GitCommandOptions,
-) {
-  const regular = paths.filter((path) => worktreeFiles.has(path));
+interface ReadGitInputsOptions {
+  paths: string[];
+  hashedPaths: ReadonlySet<string>;
+  options: GitCommandOptions;
+  literalContent?: ReadonlyMap<string, string>;
+}
+
+export async function readGitInputs({
+  paths,
+  hashedPaths,
+  options,
+  literalContent = new Map(),
+}: ReadGitInputsOptions) {
+  const regular = paths.filter((path) => hashedPaths.has(path));
   const [interpretation, blobs] = await Promise.all([
     readInterpretation(paths, options),
     regular.length
@@ -34,7 +42,7 @@ export async function readGitInputs(
       fingerprint([
         interpretation.config,
         interpretation.attributes.get(path) ?? [],
-        blobByPath.get(path) ?? null,
+        blobByPath.get(path) ?? literalContent.get(path) ?? null,
       ]),
     ]),
   );
