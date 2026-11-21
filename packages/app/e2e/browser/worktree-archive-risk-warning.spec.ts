@@ -99,6 +99,18 @@ async function clickRowArchiveButton(page: Page, workspaceId: string): Promise<v
   await rowArchiveButton(page, workspaceId).click();
 }
 
+async function cycleThemeAndWaitForSidebar(page: Page, workspaceId: string): Promise<void> {
+  const rowBeforeThemeChange = await workspaceRow(page, workspaceId).elementHandle();
+  if (!rowBeforeThemeChange)
+    throw new Error("The workspace row must be mounted before cycling the theme");
+  await page.keyboard.press("ControlOrMeta+Alt+t");
+  await expect
+    .poll(() => rowBeforeThemeChange.evaluate((element) => element.isConnected), {
+      message: "the sidebar remounts after the theme changes",
+    })
+    .toBe(false);
+}
+
 interface SessionEnvelope {
   type?: unknown;
   message?: {
@@ -509,7 +521,7 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     const otherWorkspaceId = worktree.project.workspaceId;
     const otherRoute = buildHostWorkspaceRoute(getServerId(), otherWorkspaceId);
     try {
-      await page.keyboard.press("Control+Alt+t");
+      await cycleThemeAndWaitForSidebar(page, otherWorkspaceId);
       await workspaceRow(page, otherWorkspaceId).click();
       await expectAppRoute(page, otherRoute);
     } finally {
