@@ -1,5 +1,11 @@
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
+import {
+  captureModelSwitchAnchor,
+  modelSwitchItem,
+  restoreModelSwitches,
+  type ModelSwitchRecord,
+} from "./model-switch-history.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
@@ -2486,8 +2492,13 @@ export class AgentManager {
       const normalizedModelId =
         typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
+      const previousModelId =
+        normalizedModelId === null
+          ? (agent.config.model ?? null)
+          : (agent.runtimeInfo?.model ?? agent.config.model ?? null);
       const selection = await agent.session.setModel?.(normalizedModelId);
       await this.drainSessionEvents(agentId);
+      this.agentStreamCoalescer.flushFor(agentId);
 
       // A reset clears the preference even when the provider retains its active model.
       let effectiveModelId = normalizedModelId;
@@ -2499,7 +2510,25 @@ export class AgentManager {
       }
       this.refreshSessionPersistence(agent);
       this.touchUpdatedAt(agent);
-      this.emitState(agent);
+      if (agent.session.setModel && previousModelId !== effectiveModelId) {
+        const anchor = captureModelSwitchAnchor(this.timelineStore.getItems(agentId));
+        const modelSwitch: ModelSwitchRecord = {
+          model: effectiveModelId,
+          timestamp: new Date().toISOString(),
+          anchor: anchor.kind === "start" && !agent.historyPrimed ? { kind: "unresolved" } : anchor,
+        };
+        this.emitState(agent);
+        this.recordAndDispatchTimelineItem(
+          agentId,
+          modelSwitchItem(effectiveModelId),
+          agent.provider,
+          undefined,
+          { timestamp: modelSwitch.timestamp },
+        );
+        await this.persistSnapshot(agent, { modelSwitch });
+      } else {
+        this.emitState(agent);
+      }
     });
   }
 
@@ -4888,7 +4917,7 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: { title?: string | null; internal?: boolean; modelSwitch?: ModelSwitchRecord },
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -5016,6 +5045,7 @@ export class AgentManager {
       }
     }
 
+    const restoredHistory = await this.restoreModelSwitchHistory(agent, historyEvents);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
@@ -5033,7 +5063,7 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
+    for (const event of restoredHistory) {
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -5049,6 +5079,22 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  private async restoreModelSwitchHistory(
+    agent: ActiveManagedAgent,
+    history: Extract<AgentStreamEvent, { type: "timeline" }>[],
+  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[]> {
+    const storedSwitches = (await this.registry?.get(agent.id))?.modelSwitches ?? [];
+    const restored = restoreModelSwitches(history, storedSwitches, agent.provider);
+    const unresolved = storedSwitches.length - (restored.length - history.length);
+    if (unresolved > 0) {
+      this.logger.warn(
+        { agentId: agent.id, provider: agent.provider, unresolved },
+        "Cannot locate model switches in provider history",
+      );
+    }
+    return restored;
   }
 
   private async primeTimelineFromLegacyProviderHistory(
@@ -5084,6 +5130,8 @@ export class AgentManager {
       throw error;
     }
 
+    const restoredHistory = await this.restoreModelSwitchHistory(agent, historyEvents);
+
     // The replay is the timeline, so drop the rows a previous hydration committed.
     // Keeping them would leave getTimelineRows reading one copy per hydration.
     await this.deleteCommittedTimeline(agent.id);
@@ -5102,7 +5150,7 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const event of historyEvents) {
+    for (const event of restoredHistory) {
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -5661,7 +5709,7 @@ export class AgentManager {
     item: AgentTimelineItem,
     provider: AgentProvider,
     turnId?: string,
-    options?: { providerMessageId?: string },
+    options?: { providerMessageId?: string; timestamp?: string },
   ): AgentStreamEvent {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
