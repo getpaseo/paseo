@@ -16,11 +16,16 @@ interface TextRecorder {
   onChangeText: (text: string) => void;
 }
 
+type SelectionChangeHandler = NonNullable<
+  React.ComponentProps<typeof ComposerTextInput>["onSelectionChange"]
+>;
+
 const mountedInputs: MountedInput[] = [];
 
 function mountInput(
   onChangeText: (text: string) => void,
   inputRef: React.MutableRefObject<ComposerTextInputHandle | null> = React.createRef(),
+  onSelectionChange?: SelectionChangeHandler,
 ): MountedInput {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -33,6 +38,7 @@ function mountInput(
         initialValue=""
         multiline={true}
         onChangeText={onChangeText}
+        onSelectionChange={onSelectionChange}
         testID="composer-input"
       />,
     );
@@ -123,6 +129,25 @@ describe("ComposerTextInput web IME composition", () => {
     act(() => dispatchComposition(mounted.textarea, "compositionend"));
     expect(recorder.changes).toEqual(["你好"]);
     expect(handle?.getText()).toBe("你好");
+  });
+
+  it("reports the committed caret after composition", () => {
+    const selections: Array<{ start: number; end: number }> = [];
+    const mounted = mountInput(ignoreTextChange, undefined, (event) => {
+      selections.push({ ...event.nativeEvent.selection });
+    });
+
+    act(() => {
+      dispatchComposition(mounted.textarea, "compositionstart");
+      typeFromIme(mounted.textarea, "/goal");
+      mounted.textarea.setSelectionRange(5, 5);
+    });
+
+    selections.length = 0;
+
+    act(() => dispatchComposition(mounted.textarea, "compositionend"));
+
+    expect(selections).toContainEqual({ start: 5, end: 5 });
   });
 
   it("keeps locally typed text when its parent rerenders with a stale value", () => {
