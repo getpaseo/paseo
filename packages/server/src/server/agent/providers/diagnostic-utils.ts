@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import path from "node:path";
+import stripAnsi from "strip-ansi";
 
 import {
   createProviderEnvSpec,
@@ -397,7 +398,8 @@ export async function readCommandVersionOutput(
     timeout: 5_000,
     signal: invocation.signal,
   });
-  return stdout.trim() || stderr.trim();
+  // Some CLIs style `--version` for a terminal even when piped; callers show the text as is.
+  return stripAnsi(stdout).trim() || stripAnsi(stderr).trim();
 }
 
 async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {

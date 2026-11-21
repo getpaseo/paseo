@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   buildCommandResolutionDiagnosticRows,
+  readCommandVersionOutput,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
@@ -124,6 +125,17 @@ describe("buildCommandResolutionDiagnosticRows", () => {
     );
 
     expect(rows).toContainEqual({ label: "PATH matches", value: "not checked" });
+  });
+});
+
+describe("readCommandVersionOutput", () => {
+  test("returns the version as plain text when the CLI styles it for a terminal", async () => {
+    const output = await readCommandVersionOutput({
+      command: process.execPath,
+      args: ["-e", String.raw`process.stdout.write("\x1b[1m\x1b[32mtool 1.2.3\x1b[0m\n")`],
+    });
+
+    expect(output).toBe("tool 1.2.3");
   });
 });
 
