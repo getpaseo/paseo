@@ -189,9 +189,31 @@ const MutableStructuredGenerationProviderSchema = z
   })
   .passthrough();
 
+export const METADATA_TITLE_LANGUAGES = [
+  "ar",
+  "en",
+  "es",
+  "fr",
+  "ja",
+  "ko",
+  "pt-BR",
+  "ru",
+  "zh-CN",
+] as const;
+export const MetadataTitleLanguageSchema = z.enum(METADATA_TITLE_LANGUAGES);
+export type MetadataTitleLanguage = z.infer<typeof MetadataTitleLanguageSchema>;
+
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    titleLanguage: MetadataTitleLanguageSchema.optional(),
+  })
+  .passthrough();
+
+const MutableMetadataGenerationConfigPatchSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+    titleLanguage: MetadataTitleLanguageSchema.optional(),
   })
   .passthrough();
 
@@ -270,7 +292,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    metadataGeneration: MutableMetadataGenerationConfigPatchSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),

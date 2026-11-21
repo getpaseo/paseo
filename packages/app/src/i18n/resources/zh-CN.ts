@@ -2383,6 +2383,8 @@ export const zhCN: TranslationResources = {
       preferredHint: "选择 Paseo 使用的模型",
       model: "模型",
       modelHint: "只使用此模型。如果失败，Paseo 不会尝试其他模型",
+      titleLanguage: "标题语言",
+      titleLanguageHint: "生成工作区标题时使用的语言。分支名保持英文",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
     },

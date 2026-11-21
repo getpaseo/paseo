@@ -2418,6 +2418,8 @@ export const ko: TranslationResources = {
       preferredHint: "Paseo에서 사용할 모델을 선택하세요",
       model: "모델",
       modelHint: "이 모델만 사용합니다. 실패해도 Paseo는 다른 모델을 시도하지 않습니다",
+      titleLanguage: "제목 언어",
+      titleLanguageHint: "생성된 워크스페이스 제목의 언어입니다. 브랜치 이름은 영어로 유지됩니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },

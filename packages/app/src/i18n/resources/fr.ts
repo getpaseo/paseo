@@ -2457,6 +2457,8 @@ export const fr: TranslationResources = {
       preferredHint: "Choisissez le modèle utilisé par Paseo",
       model: "Modèle",
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
+      titleLanguage: "Langue des titres",
+      titleLanguageHint: "Langue des titres d’espaces de travail. Les branches restent en anglais",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
     },

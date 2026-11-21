@@ -125,6 +125,72 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(firstCall.prompt).not.toContain("User context:");
   });
 
+  test("uses Simplified Chinese title guidance without changing the branch contract", async () => {
+    const structured = createStructuredGenerator({
+      title: "修复登录流程",
+      branch: "fix-login-flow",
+    });
+
+    await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      daemonConfig: { metadataGeneration: { titleLanguage: "zh-CN" } },
+      firstAgentContext: { prompt: "Fix the login flow" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    const firstCall = structured.calls[0];
+    if (!firstCall) {
+      throw new Error("expected structured generation call");
+    }
+    expect(firstCall.prompt).toContain("使用简体中文生成简洁、可执行的任务标题");
+    expect(firstCall.prompt).toContain("重构 PR #2638 的 Playwright 测试");
+    expect(firstCall.prompt).not.toContain("sentence case");
+    expect(firstCall.prompt).toContain(
+      "The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only",
+    );
+    expect(firstCall.prompt).toContain(
+      "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
+    );
+  });
+
+  test.each([
+    ["ar", "Arabic"],
+    ["es", "Spanish"],
+    ["fr", "French"],
+    ["ja", "Japanese"],
+    ["ko", "Korean"],
+    ["pt-BR", "Brazilian Portuguese"],
+    ["ru", "Russian"],
+  ] as const)(
+    "asks for titles in %s without localizing the branch contract",
+    async (language, name) => {
+      const structured = createStructuredGenerator({
+        title: "Focused task",
+        branch: "focused-task",
+      });
+
+      await generateBranchNameFromFirstAgentContext({
+        agentManager: {} as AgentManager,
+        cwd: "/tmp/repo",
+        titleLanguage: language,
+        firstAgentContext: { prompt: "Fix the login flow" },
+        logger: createLogger(),
+        deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+      });
+
+      const firstCall = structured.calls[0];
+      if (!firstCall) {
+        throw new Error("expected structured generation call");
+      }
+      expect(firstCall.prompt).toContain(`Write the title in ${name}.`);
+      expect(firstCall.prompt).toContain(
+        "The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only",
+      );
+    },
+  );
+
   test("wraps a slash-only first-agent prompt as naming input", async () => {
     const structured = createStructuredGenerator({
       title: "Refactor one thing",

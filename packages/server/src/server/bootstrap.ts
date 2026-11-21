@@ -481,6 +481,7 @@ export interface PaseoDaemonConfig {
       model?: string;
       thinkingOptionId?: string;
     }>;
+    titleLanguage?: import("@getpaseo/protocol/messages").MetadataTitleLanguage;
   };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
@@ -579,6 +580,17 @@ function resolveReloadEnv(config: PaseoDaemonConfig): NodeJS.ProcessEnv {
   return config.configReload?.env ?? process.env;
 }
 
+function createInitialMetadataGeneration(
+  config: ResolvedDaemonSettings,
+): MutableDaemonConfig["metadataGeneration"] {
+  return {
+    providers: config.metadataGeneration?.providers ?? [],
+    ...(config.metadataGeneration?.titleLanguage
+      ? { titleLanguage: config.metadataGeneration.titleLanguage }
+      : {}),
+  };
+}
+
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -599,9 +611,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
-    metadataGeneration: {
-      providers: config.metadataGeneration?.providers ?? [],
-    },
+    metadataGeneration: createInitialMetadataGeneration(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
