@@ -1,14 +1,16 @@
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  createProviderEnv,
   createProviderEnvSpec,
   type ProviderLaunchAvailability,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
 } from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
+import { findExecutableWithoutProbing } from "../../../executable-resolution/executable-resolution.js";
 
 export interface DiagnosticEntry {
   label: string;
@@ -408,6 +410,49 @@ async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand)
   }
 }
 
+async function resolveSimpleWrapperTarget(
+  executable: string,
+  runtimeEnv?: Record<string, string>,
+): Promise<string | null> {
+  if (process.platform === "win32") return null;
+  const env = createProviderEnv({ runtimeSettings: { env: runtimeEnv } });
+  if (
+    env.ENV ||
+    env.BASH_ENV ||
+    env.SHELLOPTS ||
+    env.BASHOPTS ||
+    Object.keys(env).some((key) => key.startsWith("BASH_FUNC_"))
+  )
+    return null;
+  const directories = (env.PATH ?? "").split(path.delimiter);
+  if (directories.some((directory) => !path.isAbsolute(directory))) return null;
+  try {
+    if ((await stat(executable)).size > 64 * 1024) return null;
+    const lines = (await readFile(executable, "utf8")).split(/\r?\n/);
+    if (lines.shift()?.trim() !== "#!/bin/sh") return null;
+    const statements = lines
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    const command = /^exec ([A-Za-z0-9_.-]+)(?: (?:--?[A-Za-z0-9_.-]+|"\$@"))*$/.exec(
+      statements.pop() ?? "",
+    );
+    // A hyphen excludes POSIX shell builtins, which would not use PATH lookup.
+    if (!command || !command[1]!.includes("-")) return null;
+    if (
+      statements.some(
+        (line) =>
+          !/^(?:set -[eu]+|[A-Za-z_][A-Za-z0-9_]*_COMMAND=\$\(command -v [A-Za-z0-9_.-]+\)|export [A-Za-z_][A-Za-z0-9_]*)$/.test(
+            line,
+          ) || /^(?:BASH_COMMAND|PROMPT_COMMAND)=/.test(line),
+      )
+    )
+      return null;
+    return await findExecutableWithoutProbing(command[1]!, { path: env.PATH, cwd: process.cwd() });
+  } catch {
+    return null;
+  }
+}
+
 export async function buildBinaryDiagnosticRows(
   launch: ResolvedProviderLaunch,
   availability: ProviderLaunchAvailability,
@@ -424,6 +469,10 @@ export async function buildBinaryDiagnosticRows(
       args: [...launch.args, "--version"],
     });
   }
+  const target =
+    availability.resolvedPath && path.isAbsolute(launch.command) && options.versionCommand
+      ? await resolveSimpleWrapperTarget(availability.resolvedPath, options.versionCommand.env)
+      : null;
   return [
     {
       label: binaryLabel,
@@ -433,6 +482,7 @@ export async function buildBinaryDiagnosticRows(
       label: "Resolved path",
       value: availability.resolvedPath ?? "not found",
     },
+    ...(target ? [{ label: "Wrapper target", value: target }] : []),
     {
       label: "Version",
       value: version,

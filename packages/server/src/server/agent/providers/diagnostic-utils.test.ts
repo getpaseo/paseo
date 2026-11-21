@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
@@ -24,6 +25,78 @@ function makeTempDir(): string {
   tempDirs.push(dir);
   return dir;
 }
+
+describe("wrapper target diagnostics", () => {
+  test("resolves a simple sh wrapper using the provider environment", async () => {
+    const bin = makeTempDir();
+    const target = writeExecutable(bin, "agent-bridge");
+    const wrapper = path.join(bin, "wrapper");
+    writeFileSync(
+      wrapper,
+      '#!/bin/sh\nset -eu\nAGENT_COMMAND=$(command -v agent-bridge)\nexport AGENT_COMMAND\nexec agent-bridge --some-option "$@"\n',
+    );
+    chmodSync(wrapper, 0o755);
+    const rows = await buildBinaryDiagnosticRows(
+      { command: wrapper, args: [], source: "override" },
+      { available: true, resolvedPath: wrapper },
+      { versionCommand: { command: wrapper, args: ["--version"], env: { PATH: bin } } },
+    );
+    expect(rows).toContainEqual({ label: "Wrapper target", value: target });
+  });
+
+  test.each([
+    '#!/bin/zsh\nexec agent-bridge "$@"\n',
+    '#!/bin/sh\nPATH=/other\nexec agent-bridge "$@"\n',
+    '#!/bin/sh\nPATH=$(command -v agent-bridge)\nexec agent-bridge "$@"\n',
+    '#!/bin/sh\n. /other/config\nexec agent-bridge "$@"\n',
+  ])("does not claim a target for an ambiguous wrapper", async (script) => {
+    const bin = makeTempDir();
+    writeExecutable(bin, "agent-bridge");
+    const wrapper = path.join(bin, "wrapper");
+    writeFileSync(wrapper, script);
+    chmodSync(wrapper, 0o755);
+    const rows = await buildBinaryDiagnosticRows(
+      { command: wrapper, args: [], source: "override" },
+      { available: true, resolvedPath: wrapper },
+      { versionCommand: { command: wrapper, args: ["--version"], env: { PATH: bin } } },
+    );
+    expect(rows.some((row) => row.label === "Wrapper target")).toBe(false);
+  });
+
+  test("does not resolve through a shell startup override", async () => {
+    const bin = makeTempDir();
+    writeExecutable(bin, "agent-bridge");
+    const wrapper = path.join(bin, "wrapper");
+    writeFileSync(wrapper, '#!/bin/sh\nexec agent-bridge "$@"\n');
+    chmodSync(wrapper, 0o755);
+    const rows = await buildBinaryDiagnosticRows(
+      { command: wrapper, args: [], source: "override" },
+      { available: true, resolvedPath: wrapper },
+      {
+        versionCommand: {
+          command: wrapper,
+          args: ["--version"],
+          env: { PATH: bin, BASH_ENV: "/unknown" },
+        },
+      },
+    );
+    expect(rows.some((row) => row.label === "Wrapper target")).toBe(false);
+  });
+
+  test("does not infer a wrapper target from a relative launcher", async () => {
+    const bin = makeTempDir();
+    writeExecutable(bin, "agent-bridge");
+    const wrapper = path.join(bin, "wrapper");
+    writeFileSync(wrapper, '#!/bin/sh\nexec agent-bridge "$@"\n');
+    chmodSync(wrapper, 0o755);
+    const rows = await buildBinaryDiagnosticRows(
+      { command: "wrapper", args: [], source: "override" },
+      { available: true, resolvedPath: wrapper },
+      { versionCommand: { command: wrapper, args: ["--version"], env: { PATH: bin } } },
+    );
+    expect(rows.some((row) => row.label === "Wrapper target")).toBe(false);
+  });
+});
 
 function writeExecutable(dir: string, name: string): string {
   const filePath = path.join(dir, name);
