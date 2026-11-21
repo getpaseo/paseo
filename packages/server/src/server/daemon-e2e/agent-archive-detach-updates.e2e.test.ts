@@ -80,6 +80,31 @@ test.each([false, true])(
   },
 );
 
+test.each(["self", "tree"] as const)("scoped archive reaches the daemon for %s", async (scope) => {
+  const fixture = seedFixture();
+  let daemon: TestPaseoDaemon | null = null;
+  let actor: DaemonClient | null = null;
+  try {
+    daemon = await createTestPaseoDaemon({
+      paseoHomeRoot: fixture.paseoHomeRoot,
+      staticDir: fixture.staticDir,
+      cleanup: false,
+    });
+    actor = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    await actor.connect();
+    await actor.archiveAgent("parent", scope);
+    const parent = await actor.fetchAgent({ agentId: "parent" });
+    const child = await actor.fetchAgent({ agentId: "child-survivor" });
+    expect(parent?.agent.archivedAt).toEqual(expect.any(String));
+    if (scope === "tree") expect(child?.agent.archivedAt).toEqual(expect.any(String));
+    else expect(child?.agent.archivedAt).toBeNull();
+  } finally {
+    await actor?.close();
+    await daemon?.close();
+    for (const target of fixture.cleanupPaths) rmSync(target, { recursive: true, force: true });
+  }
+});
+
 function seedFixture() {
   const artifacts = path.join(process.cwd(), ".artifacts");
   mkdirSync(artifacts, { recursive: true });

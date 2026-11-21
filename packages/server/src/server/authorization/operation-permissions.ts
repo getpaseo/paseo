@@ -38,6 +38,7 @@ const INBOUND_PERMISSION = {
   "agent.timeline.set_subscription.request": ["workspace.read", "hub.execute"],
   agent_permission_response: "workspace.write",
   archive_agent_request: ["workspace.write", "hub.execute"],
+  archive_agent_scoped_request: ["workspace.write", "hub.execute"],
   archive_workspace_request: ["workspace.manage", "hub.execute"],
   audio_played: "workspace.write",
   branch_suggestions_request: "workspace.read",

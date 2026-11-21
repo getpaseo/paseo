@@ -15,8 +15,16 @@ export interface LifecycleAgentManager {
   hasInFlightRun(agentId: string): boolean;
   cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult>;
   clearAgentAttention(agentId: string): Promise<void>;
-  archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
-  archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
+  archiveAgent(
+    agentId: string,
+    archivedAt?: string,
+    scope?: "self" | "tree",
+  ): Promise<{ archivedAt: string }>;
+  archiveSnapshot(
+    agentId: string,
+    archivedAt: string,
+    scope?: "self" | "tree",
+  ): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
   detachAgent(agentId: string): Promise<{
@@ -119,19 +127,20 @@ export interface ArchiveAgentResult {
 export async function archiveAgentCommand(
   dependencies: AgentLifecycleCommandDependencies,
   agentId: string,
+  scope?: "self" | "tree",
 ): Promise<ArchiveAgentResult> {
   const liveAgent = dependencies.agentManager.getAgent(agentId);
   let record: StoredAgentRecord | null;
   if (liveAgent) {
     await requestAgentRunCancellation(dependencies, agentId);
     await dependencies.agentManager.clearAgentAttention(agentId).catch(() => undefined);
-    const archived = await dependencies.agentManager.archiveAgent(agentId);
+    const archived = await dependencies.agentManager.archiveAgent(agentId, undefined, scope);
     if (liveAgent.internal) {
       return { agentId, archivedAt: archived.archivedAt, record: null };
     }
     record = await dependencies.agentStorage.get(agentId);
   } else {
-    record = await archiveStoredAgent(dependencies, agentId);
+    record = await archiveStoredAgent(dependencies, agentId, scope);
   }
 
   if (!record) {
@@ -221,6 +230,7 @@ export async function setAgentModeCommand(
 async function archiveStoredAgent(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   agentId: string,
+  scope?: "self" | "tree",
 ): Promise<StoredAgentRecord> {
   const existing = await dependencies.agentStorage.get(agentId);
   if (!existing) {
@@ -232,5 +242,5 @@ async function archiveStoredAgent(
   }
 
   const archivedAt = new Date().toISOString();
-  return dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
+  return dependencies.agentManager.archiveSnapshot(agentId, archivedAt, scope);
 }

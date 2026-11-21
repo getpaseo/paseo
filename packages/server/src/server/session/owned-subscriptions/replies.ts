@@ -27,7 +27,7 @@ type ExceptionalReply = Exclude<
 // must declare its originating request; additions to the wire union fail typecheck here.
 const exceptions = {
   pong: ["ping"],
-  agent_archived: ["archive_agent_request"],
+  agent_archived: ["archive_agent_request", "archive_agent_scoped_request"],
   agent_deleted: ["delete_agent_request"],
   agent_permission_resolved: ["agent_permission_response"],
   terminals_changed: ["subscribe_terminals_request"],
