@@ -866,6 +866,11 @@ export const fr: TranslationResources = {
           pending: "Pull et push en cours…",
           success: "Pull et push effectués",
         },
+        commitAndPush: {
+          label: "Commettre et pousser",
+          pending: "Commettre et pousser...",
+          success: "Commis et poussé",
+        },
         viewPr: "Voir la PR",
         createPr: {
           label: "Créer une PR",
@@ -971,6 +976,7 @@ export const fr: TranslationResources = {
           failedPull: "Échec du pull",
           failedPush: "Échec du push",
           failedPullAndPush: "Échec du pull et du push",
+          failedCommitAndPush: "Impossible de commiter et de push",
           failedCreatePr: "Impossible de créer la PR",
           failedMergePr: "Impossible de fusionner la PR",
           failedEnableAutoMerge: "Impossible d’activer la fusion automatique",

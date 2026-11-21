@@ -143,6 +143,83 @@ describe("checkout-git-actions-store", () => {
     ).toBe("idle");
   });
 
+  it("runs commit then push sequentially for commit-and-push", async () => {
+    const order: string[] = [];
+    const client = {
+      checkoutCommit: vi.fn(async () => {
+        order.push("commit");
+        return {};
+      }),
+      checkoutPush: vi.fn(async () => {
+        order.push("push");
+        return {};
+      }),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await useCheckoutGitActionsStore.getState().commitAndPush({ serverId, cwd });
+
+    expect(order).toEqual(["commit", "push"]);
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, cwd, actionId: "commit-and-push" }),
+    ).toBe("success");
+  });
+
+  it("does not push when commit fails for commit-and-push", async () => {
+    const client = {
+      checkoutCommit: vi.fn(async () => ({ error: { message: "commit failed" } })),
+      checkoutPush: vi.fn(async () => ({})),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(
+      useCheckoutGitActionsStore.getState().commitAndPush({ serverId, cwd }),
+    ).rejects.toThrow("commit failed");
+    expect(client.checkoutPush).not.toHaveBeenCalled();
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, cwd, actionId: "commit-and-push" }),
+    ).toBe("idle");
+  });
+
+  it("surfaces push errors from commit-and-push after a successful commit", async () => {
+    const client = {
+      checkoutCommit: vi.fn(async () => ({})),
+      checkoutPush: vi.fn(async () => ({ error: { message: "push rejected" } })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(
+      useCheckoutGitActionsStore.getState().commitAndPush({ serverId, cwd }),
+    ).rejects.toThrow("push rejected");
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, cwd, actionId: "commit-and-push" }),
+    ).toBe("idle");
+  });
+
   it("refreshes git and GitHub state and reports success", async () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ success: true, error: null })),
