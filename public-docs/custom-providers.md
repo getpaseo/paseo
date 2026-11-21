@@ -154,6 +154,32 @@ Create as many entries as you want against the same first-class provider. Each o
 }
 ```
 
+## Codex model metadata
+
+Codex reads each model's context window from its own catalog, and the built-in catalog covers OpenAI models only. A custom model ID therefore falls back to Codex's default window, which is far below what a 1M-token endpoint accepts: auto-compaction starts early, and a prompt already over the fallback window compacts again on the next turn — a loop that repeats the same work and bills every attempt.
+
+Give Codex a catalog that contains your model, scoped to the provider that needs it:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-codex": {
+        "extends": "codex",
+        "label": "My Codex",
+        "command": ["codex", "-c", "model_catalog_json=/Users/me/.codex/custom_models.json"],
+        "env": {
+          "OPENAI_API_KEY": "sk-...",
+          "OPENAI_BASE_URL": "https://custom-relay.example.com"
+        }
+      }
+    }
+  }
+}
+```
+
+Verify with `codex -c model_catalog_json=/Users/me/.codex/custom_models.json debug models`; the effective window is `context_window` scaled by `effective_context_window_percent`. See [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) for how to build a catalog Codex accepts.
+
 ## ACP providers
 
 Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be added with `extends: "acp"` and a `command`. Paseo spawns the process, sends an `initialize` JSON-RPC request, and the agent reports its capabilities, modes, and models at runtime.
