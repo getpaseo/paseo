@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import os from "node:os";
 import type { ModelInfo, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Logger } from "pino";
 import { raceProviderRefreshAbort } from "../../provider-refresh-deadline.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
@@ -11,6 +12,7 @@ const DISCOVERY_WAIT_MS = 5_000;
 const DISCOVERY_EXIT_GRACE_MS = 60_000;
 
 interface ClaudeModelDiscoveryOptions {
+  logger: Logger;
   resolveBinary: () => Promise<string>;
   runtimeSettings?: ProviderRuntimeSettings;
   env: NodeJS.ProcessEnv;
@@ -78,6 +80,7 @@ export async function discoverClaudeModels(
         },
       },
       {
+        logger: options.logger,
         runtimeSettings: options.runtimeSettings,
         onChildProcess: (process) => {
           child = process;

@@ -1102,7 +1102,11 @@ describe("Claude model discovery process", () => {
       },
     ];
     const models = await discoverClaudeModels(
-      { resolveBinary: async () => "/claude", env: { CLAUDE_CONFIG_DIR: "/provider-config" } },
+      {
+        logger: createTestLogger(),
+        resolveBinary: async () => "/claude",
+        env: { CLAUDE_CONFIG_DIR: "/provider-config" },
+      },
       (input) => {
         expect(input.options).toMatchObject({
           pathToClaudeCodeExecutable: "/claude",
@@ -1132,12 +1136,15 @@ describe("Claude model discovery process", () => {
   it("times out and closes an unresponsive discovery process", async () => {
     let closed = false;
     await expect(
-      discoverClaudeModels({ resolveBinary: async () => "/claude", env: {} }, () => ({
-        supportedModels: () => new Promise(() => {}),
-        close: () => {
-          closed = true;
-        },
-      })),
+      discoverClaudeModels(
+        { logger: createTestLogger(), resolveBinary: async () => "/claude", env: {} },
+        () => ({
+          supportedModels: () => new Promise(() => {}),
+          close: () => {
+            closed = true;
+          },
+        }),
+      ),
     ).rejects.toThrow("Claude model discovery timed out");
     expect(closed).toBe(true);
   }, 10_000);
@@ -1147,7 +1154,12 @@ describe("Claude model discovery process", () => {
     const failure = new Error("refresh canceled");
     let closed = false;
     const result = discoverClaudeModels(
-      { resolveBinary: async () => "/claude", env: {}, signal: controller.signal },
+      {
+        logger: createTestLogger(),
+        resolveBinary: async () => "/claude",
+        env: {},
+        signal: controller.signal,
+      },
       () => ({
         supportedModels: () => {
           controller.abort(failure);
@@ -1196,7 +1208,7 @@ describe("Claude model discovery process", () => {
       const child = new StartingClaudeProcess();
       const state: StalledDiscoveryState = { closed: false, inputEnded: false };
       const result = discoverClaudeModels(
-        { resolveBinary: async () => "/claude", env: {} },
+        { logger: createTestLogger(), resolveBinary: async () => "/claude", env: {} },
         (input, context) => {
           if (typeof input.prompt === "string") throw new Error("unexpected inference prompt");
           void recordInputEnd(input.prompt, state);

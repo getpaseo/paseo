@@ -254,7 +254,7 @@ describe("ClaudeAgentSession integration", () => {
           pathToClaudeCodeExecutable: claudeBinary,
         },
       },
-      { runtimeSettings: getRealProviderRuntimeSettings("claude") },
+      { logger, runtimeSettings: getRealProviderRuntimeSettings("claude") },
     );
 
     try {

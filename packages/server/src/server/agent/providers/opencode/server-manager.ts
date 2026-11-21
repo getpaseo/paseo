@@ -7,7 +7,11 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
-import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
+import type { SpawnProcessOptions } from "../../../../utils/spawn.js";
+import {
+  spawnProviderProcess,
+  type SpawnProviderProcessOptions,
+} from "../../provider-process/spawn.js";
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
 import {
@@ -62,7 +66,7 @@ export type OpenCodeCommandPrefixResolver = () => Promise<{ command: string; arg
 export type OpenCodeServerProcessSpawner = (
   command: string,
   args: string[],
-  options: SpawnProcessOptions,
+  options: SpawnProviderProcessOptions,
 ) => ChildProcess;
 
 export interface OpenCodeServerManagerOptions {
@@ -111,7 +115,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
-    this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
+    this.spawnServerProcess = options.spawnServerProcess ?? spawnProviderProcess;
     this.createEventSource =
       options.createEventSource ?? ((input) => new OpenCodeEventConsumer(input));
     this.decorateServerEnv = options.decorateServerEnv;
@@ -345,6 +349,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       baseEnv: environment,
+      logger: this.logger,
     });
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,

@@ -1,7 +1,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import { spawnProcess } from "../../../utils/spawn.js";
+import { spawnProviderProcess } from "../provider-process/spawn.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { JsonlFrameDecoder, ProviderStreamLimitError } from "./jsonl-frame-decoder.js";
 export { supportsJsonlRpcProtocolV2 } from "./jsonl-frame-decoder.js";
@@ -62,11 +62,15 @@ function assertChildWithPipes(
   }
 }
 
-function spawnJsonlRpcProcess(launch: JsonlRpcLaunch): ChildProcessWithoutNullStreams {
-  const child = spawnProcess(launch.command, launch.args, {
+function spawnJsonlRpcProcess(
+  launch: JsonlRpcLaunch,
+  logger: Logger,
+): ChildProcessWithoutNullStreams {
+  const child = spawnProviderProcess(launch.command, launch.args, {
     cwd: launch.cwd,
     envOverlay: launch.env,
     stdio: ["pipe", "pipe", "pipe"],
+    logger,
   });
   assertChildWithPipes(child);
   return child;
@@ -105,7 +109,9 @@ export class JsonlRpcProcess {
         );
       },
     });
-    this.child = (options.spawn ?? spawnJsonlRpcProcess)(options.launch);
+    this.child = options.spawn
+      ? options.spawn(options.launch)
+      : spawnJsonlRpcProcess(options.launch, options.logger);
     this.child.stdout.on("data", (chunk) => {
       this.handleStdoutChunk(chunk);
     });
