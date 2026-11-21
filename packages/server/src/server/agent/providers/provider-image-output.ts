@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import os from "node:os";
 import path from "node:path";
+import { PROVIDER_IMAGE_ATTACHMENT_DIR } from "@getpaseo/protocol/provider-image";
 
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
 
@@ -18,7 +19,6 @@ export interface MaterializedProviderImage {
   path: string;
 }
 
-const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
@@ -152,18 +152,6 @@ async function* decodeImage(data: string): AsyncGenerator<Buffer> {
     await setImmediate();
     if (finalChunk) break;
   }
-}
-
-// Recognizes markdown rendered for a materialized provider image: its source is a content-hashed
-// file in the attachments dir. Matching the full <hash>.<ext> shape (not just a leading "![")
-// keeps user-authored text from being mistaken for a provider image during history replay. The
-// separator still accepts old doubled-backslash Windows history; new Windows output uses file URIs.
-const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}(?:-[^/\\\\)]+)?[/\\\\]+(?:[^/\\\\)]+[/\\\\]+)?[0-9a-f]{64}\\.[a-z0-9]+\\)`,
-);
-
-export function isProviderImageMarkdown(text: string): boolean {
-  return PROVIDER_IMAGE_MARKDOWN.test(text.trimStart());
 }
 
 interface RenderProviderImageOutputOptions {

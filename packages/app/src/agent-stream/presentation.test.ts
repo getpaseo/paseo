@@ -12,7 +12,9 @@ import {
 } from "@/types/stream";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as markdownSource from "@/components/markdown/source";
+import * as grouping from "@/tool-calls/detail-level/grouping";
 import { buildAgentStreamRenderModel } from "./model";
 import { createStreamPresentation } from "./presentation";
 import { createReadingAnchor } from "./reading-anchor";
@@ -825,6 +827,239 @@ it("keeps the previous turn folded while a sent prompt waits for its turn to ope
   expect(result.tail.map((item) => item.id)).toEqual(["prompt", "turn-summary:prompt", "reply"]);
 });
 
+it.each(["full", "collapseToolCalls", "collapseTurns"] as const)(
+  "defers image Markdown parsing until rendering in %s display",
+  (display) => {
+    const parse = vi.spyOn(markdownSource, "prepareMarkdownSource");
+    const group = vi.spyOn(grouping, "prepareGroupedHistory");
+    try {
+      const timestamp = new Date(0);
+      const image: StreamItem = {
+        kind: "assistant_message",
+        id: "image",
+        timestamp,
+        text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+      };
+      const result = createStreamPresentation()({
+        ...presentationOptions,
+        display,
+        transform: undefined,
+        isTurnActive: false,
+        head: [],
+        tail: [
+          { kind: "user_message", id: "prompt", text: "Read", timestamp },
+          toolCall("read", "Read"),
+          image,
+          { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+        ],
+      });
+      expect(result.toolImagesByItemId.get(image.id)).toHaveLength(1);
+      expect(parse).not.toHaveBeenCalled();
+      if (display === "full") expect(group).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+      group.mockRestore();
+    }
+  },
+);
+
+describe.each(["full", "collapseToolCalls", "collapseTurns"] as const)(
+  "%s tool image presentation",
+  (display) => {
+    it.each([false, true])(
+      "keeps thumbnail metadata across display changes (Expand thinking %s)",
+      (autoExpandReasoning) => {
+        const timestamp = new Date(0);
+        const image: StreamItem = {
+          kind: "assistant_message",
+          id: "image",
+          timestamp,
+          text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+        };
+        const tail: StreamItem[] = [
+          { kind: "user_message", id: "prompt", text: "Read the image", timestamp },
+          { kind: "thought", id: "thought", text: "Checking", status: "ready", timestamp },
+          toolCall("read", "Read"),
+          image,
+          { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+        ];
+        const present = createStreamPresentation();
+        const input = {
+          ...presentationOptions,
+          tail,
+          head: [],
+          transform: undefined,
+          isTurnActive: false,
+          autoExpandReasoning,
+        };
+        present({ ...input, display: "collapseToolCalls" });
+        const result = present({ ...input, display });
+        expect(result.toolImagesByItemId.get(image.id)).toMatchObject([
+          { itemId: image.id, toolName: "Read", message: image, index: 0 },
+        ]);
+        const opened = present({ ...input, display, expandedTurnHostIds: new Set(["prompt"]) });
+        expect(opened.toolImagesByItemId.get(image.id)).toEqual(
+          result.toolImagesByItemId.get(image.id),
+        );
+      },
+    );
+  },
+);
+
+it.each([false, true])(
+  "keeps Full image numbering aligned with overview at every history seam (Expand thinking %s)",
+  (autoExpandReasoning) => {
+    const timestamp = new Date(0);
+    const image = (id: string): StreamItem => ({
+      kind: "assistant_message",
+      id,
+      timestamp,
+      text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+    });
+    const items: StreamItem[] = [
+      image("standalone"),
+      toolCall("read", "Read"),
+      image("first"),
+      { kind: "thought", id: "thought", timestamp, text: "Checking", status: "ready" },
+      image("after-thought"),
+      image("another"),
+      { kind: "assistant_message", id: "prose", timestamp, text: "Explanation" },
+      toolCall("capture", "Bash"),
+      image("captured"),
+      { ...toolCall("next-turn", "Read"), turnId: "next-turn" },
+      { ...image("next-turn-image"), turnId: "next-turn" },
+    ];
+    for (let seam = 0; seam <= items.length; seam++) {
+      const input = {
+        ...presentationOptions,
+        transform: undefined,
+        autoExpandReasoning,
+        tail: items.slice(0, seam),
+        head: items.slice(seam),
+      };
+      const present = createStreamPresentation();
+      const overview = present({ ...input, display: "collapseToolCalls" });
+      const full = present({ ...input, display: "full" });
+      expect(full.groupsByHostId.size).toBe(0);
+      for (const item of items) {
+        expect(full.toolImagesByItemId.get(item.id), `${item.id} at seam ${seam}`).toEqual(
+          overview.toolImagesByItemId.get(item.id),
+        );
+      }
+    }
+  },
+);
+
+it("updates retained image counters when live images arrive in Full display", () => {
+  const timestamp = new Date(0);
+  const image: StreamItem = {
+    kind: "assistant_message",
+    id: "image",
+    timestamp,
+    text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+  };
+  const tail = [toolCall("read", "Read"), image];
+  const present = createStreamPresentation();
+  const input = {
+    ...presentationOptions,
+    tail,
+    head: [],
+    transform: undefined,
+    display: "full" as const,
+    isTurnActive: true,
+  };
+  const first = present(input);
+  expect(first.toolImagesByItemId.get(image.id)).toHaveLength(1);
+  const nextImage = { ...image, id: "next-image" };
+  const next = present({ ...input, head: [toolCall("next", "Read"), nextImage] });
+  expect(next.tail.map((item) => item.id)).toEqual(tail.map((item) => item.id));
+  expect(next.groupsByHostId.size).toBe(0);
+  expect(next.toolImagesByItemId.get(image.id)).toHaveLength(2);
+  expect(next.toolImagesByItemId.get(nextImage.id)).toBe(next.toolImagesByItemId.get(image.id));
+  expect(next.historyImageUpdates.has(image.id)).toBe(true);
+  expect(next.readingRowReplacements.get(image.id)).toBeUndefined();
+});
+
+it("exposes image previews on a collapsed turn and preserves them when it opens", () => {
+  const timestamp = new Date(0);
+  const image: StreamItem = {
+    kind: "assistant_message",
+    id: "image",
+    timestamp,
+    text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+  };
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Read", timestamp },
+    toolCall("read", "Read"),
+    image,
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  const present = createStreamPresentation();
+  const input = {
+    ...presentationOptions,
+    tail,
+    head: [],
+    transform: undefined,
+    display: "collapseTurns" as const,
+    isTurnActive: false,
+  };
+  const closed = present(input);
+  expect(closed.tail.find((item) => item.kind === "turn_summary")).toMatchObject({
+    images: [{ itemId: image.id, toolName: "Read" }],
+  });
+  const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
+  expect(opened.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "turn-summary:prompt",
+    "tool-read",
+    "image",
+    "reply",
+  ]);
+  expect(opened.toolImagesByItemId.get(image.id)).toEqual(closed.toolImagesByItemId.get(image.id));
+});
+
+it("unfolds a streaming image when following prose merges into its message", () => {
+  const stream = streamHarness();
+  stream.send({
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "tool_call",
+      callId: "read-image",
+      name: "Read",
+      status: "completed",
+      error: null,
+      detail: { type: "read", filePath: "/tmp/image.png" },
+    },
+  });
+  const imageText = `\n\n![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)\n\n`;
+  const imageEvent: AgentStreamEventPayload = {
+    type: "timeline",
+    provider: "claude",
+    item: { type: "assistant_message", text: imageText },
+  };
+  const folded = stream.send(imageEvent);
+  const source = rows(stream.source());
+  expect(source.map((item) => item.kind)).toEqual(["tool_call", "assistant_message"]);
+  const [call, image] = source;
+  if (!call || !image) throw new Error("Expected a tool and its image output");
+  expect(rows(folded).map((item) => item.id)).toEqual([call.id]);
+  expect(folded.groupsByHostId.get(call.id)?.run.calls).toEqual(source);
+  expect(folded.readingRowReplacements.get(image.id)).toBe(call.id);
+  expect(folded.toolImagesByItemId.get(image.id)).toHaveLength(1);
+
+  const withProse = stream.send({
+    ...imageEvent,
+    item: { type: "assistant_message", text: "The image shows a blue square." },
+  });
+  expect(rows(withProse).map((item) => item.kind)).toEqual(["tool_call", "assistant_message"]);
+  expect(rows(withProse).at(-1)).toMatchObject({
+    text: `${imageText}The image shows a blue square.`,
+  });
+  expect(withProse.groupsByHostId.size).toBe(0);
+  expect(withProse.toolImagesByItemId.get(image.id)).toBeUndefined();
+});
+
 it("groups reasoning with tools unless Expand thinking is enabled, including setting changes", () => {
   const present = createStreamPresentation();
   const timestamp = new Date();
@@ -857,13 +1092,19 @@ it("groups reasoning with tools unless Expand thinking is enabled, including set
 });
 
 it.each([false, true])(
-  "reveals raw reasoning when opening a turn (Expand thinking %s)",
+  "reveals raw reasoning and provider images when opening a turn (Expand thinking %s)",
   (autoExpandReasoning) => {
     const timestamp = new Date();
     const tail: StreamItem[] = [
       { kind: "user_message", id: "prompt", text: "Work", timestamp },
       { kind: "thought", id: "thought", text: "Consider this", status: "ready", timestamp },
       toolCall("one", "Bash"),
+      {
+        kind: "assistant_message",
+        id: "image",
+        text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+        timestamp,
+      },
       { kind: "assistant_message", id: "reply", text: "Done", timestamp },
     ];
     const input = {
@@ -884,9 +1125,11 @@ it.each([false, true])(
       "turn-summary:prompt",
       "thought",
       "tool-one",
+      "image",
       "reply",
     ]);
     expect(opened.turns.nestedItemIds.has("thought")).toBe(true);
+    expect(opened.turns.nestedItemIds.has("image")).toBe(true);
     expect(opened.groupsByHostId.size).toBe(0);
   },
 );

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useRef, type ReactNode } from "react";
+import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -9,9 +9,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useOverviewSummaryLabel } from "./label";
 import type { OverviewToolCallGroup } from "./model";
 import { OverviewToolCallGroupSheet } from "./sheet";
+import { ToolCallImageSummary } from "./image-preview";
+import type { MarkdownImageContext } from "@/components/markdown/images";
 
 interface OverviewGroupProps {
   group: OverviewToolCallGroup;
+  imageContext: MarkdownImageContext;
   expanded: boolean;
   isLastInSequence: boolean;
   onExpandedChange: (groupId: string, expanded: boolean) => void;
@@ -22,6 +25,7 @@ const TOOL_CALL_GROUP_MAX_HEIGHT = 400;
 
 export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView({
   group,
+  imageContext,
   expanded,
   isLastInSequence,
   onExpandedChange,
@@ -44,12 +48,21 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     [children, group.run.latest.id],
   );
 
+  const imageSummary = useMemo(
+    () =>
+      expanded ? null : (
+        <ToolCallImageSummary images={group.images} context={imageContext} onShowMore={toggle} />
+      ),
+    [expanded, group.images, imageContext, toggle],
+  );
+
   if (isCompact) {
     return (
       <>
         <ExpandableBadge
           testID="tool-call-group"
           label={aggregateSummary}
+          trailing={imageSummary}
           icon={Wrench}
           isLoading={group.isLoading}
           isExpanded={false}
@@ -67,6 +80,7 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     <ExpandableBadge
       testID="tool-call-group"
       label={aggregateSummary}
+      trailing={imageSummary}
       icon={Wrench}
       isLoading={group.isLoading}
       isExpanded={expanded}

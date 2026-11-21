@@ -1,6 +1,7 @@
 import { isTurnTrigger, isTurnBoundary } from "@/agent-stream/turn-membership";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { StreamItem, ToolCallItem, ThoughtItem } from "@/types/stream";
+import { isProviderImageOnlyMarkdown } from "@getpaseo/protocol/provider-image";
+import type { AssistantMessageItem, StreamItem, ToolCallItem, ThoughtItem } from "@/types/stream";
 
 export interface ToolCallDescriptor {
   detail: ToolCallDetail;
@@ -10,12 +11,12 @@ export interface ToolCallDescriptor {
   metadata?: Record<string, unknown>;
 }
 
-export type GroupableItem = ToolCallItem | ThoughtItem;
+export type GroupableItem = ToolCallItem | ThoughtItem | AssistantMessageItem;
 
 export interface ToolCallRun {
   id: string;
   calls: readonly GroupableItem[];
-  latest: GroupableItem;
+  latest: ToolCallItem | ThoughtItem;
   isSealed: boolean;
 }
 
@@ -68,7 +69,7 @@ export function describeToolCall(item: ToolCallItem): ToolCallDescriptor {
 export function isGroupableToolCall(
   item: StreamItem,
   autoExpandReasoning = false,
-): item is GroupableItem {
+): item is ToolCallItem | ThoughtItem {
   if (item.kind === "thought") return !autoExpandReasoning;
   if (item.kind !== "tool_call" || isTurnTrigger(item)) {
     return false;
@@ -77,16 +78,28 @@ export function isGroupableToolCall(
   return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
 }
 
+function isGroupableImage(
+  item: StreamItem,
+  previous: GroupableItem | undefined,
+): item is AssistantMessageItem {
+  return (
+    previous !== undefined &&
+    item.kind === "assistant_message" &&
+    isProviderImageOnlyMarkdown(item.text)
+  );
+}
+
 function createRun(calls: readonly GroupableItem[], isSealed: boolean): ToolCallRun {
   const first = calls[0];
-  const latest = calls.at(-1);
+  // Images belong to the run, but its host and active label still describe a tool or thought.
+  const latest = calls.findLast((call) => call.kind !== "assistant_message");
   if (!first || !latest) {
     throw new Error("Cannot group an empty tool call run");
   }
   return { id: first.id, calls, latest, isSealed };
 }
 
-function createHost(run: ToolCallRun): GroupableItem {
+function createHost(run: ToolCallRun): ToolCallRun["latest"] {
   if (run.calls.length === 1) {
     return run.latest;
   }
@@ -94,6 +107,7 @@ function createHost(run: ToolCallRun): GroupableItem {
 }
 
 function isRunning(call: GroupableItem): boolean {
+  if (call.kind === "assistant_message") return false;
   if (call.kind === "thought") return call.status !== "ready";
   const status = describeToolCall(call).status;
   return status === "running" || status === "executing";
@@ -126,7 +140,8 @@ export function prepareGroupedHistory<TGroup>(input: {
 
   for (const item of input.tail) {
     if (
-      isGroupableToolCall(item, input.autoExpandReasoning) &&
+      (isGroupableToolCall(item, input.autoExpandReasoning) ||
+        isGroupableImage(item, pending.at(-1))) &&
       !isTurnBoundary(pending.at(-1) ?? null, item)
     ) {
       pending.push(item);
@@ -191,7 +206,10 @@ export function groupLiveToolCalls<TGroup>(input: {
 
   for (const item of input.head) {
     if (isTurnBoundary(pending.at(-1) ?? null, item)) flush(true);
-    if (isGroupableToolCall(item, input.autoExpandReasoning)) {
+    if (
+      isGroupableToolCall(item, input.autoExpandReasoning) ||
+      isGroupableImage(item, pending.at(-1))
+    ) {
       if (pending.length === 0) {
         hostPlacement = "head";
       }

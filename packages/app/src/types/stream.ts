@@ -8,7 +8,7 @@ import type {
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
-import type { OverviewSummary } from "@/tool-calls/detail-level/overview/model";
+import type { OverviewSummary, ToolCallImage } from "@/tool-calls/detail-level/overview/model";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
 
 /**
@@ -843,6 +843,7 @@ export interface TurnSummaryItem {
   hostId: string;
   expanded: boolean;
   tools: OverviewSummary;
+  images: readonly ToolCallImage[];
 }
 
 export interface TodoEntry {

@@ -2,12 +2,16 @@ import { isTurnBoundary, isTurnTrigger } from "../turn-membership";
 import {
   getStreamItemMessageId,
   type StreamItem,
-  type ThoughtItem,
   type TimelinePosition,
-  type ToolCallItem,
   type TurnSummaryItem,
 } from "@/types/stream";
-import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
+import {
+  collectToolCallImages,
+  summarizeToolCalls,
+  type OverviewSummary,
+  type ToolCallImage,
+} from "@/tool-calls/detail-level/overview/model";
+import type { GroupableItem } from "@/tool-calls/detail-level/grouping";
 
 export interface TurnCollapse {
   tail: StreamItem[];
@@ -30,7 +34,7 @@ export interface CollapseTurnsInput {
   isLatestTurnOpen: boolean;
   expandedHostIds: ReadonlySet<string>;
   /** The calls a tool-call group row stands for; undefined for a single call. */
-  getGroupedCalls: (itemId: string) => readonly (ToolCallItem | ThoughtItem)[] | undefined;
+  getGroupedCalls: (itemId: string) => readonly GroupableItem[] | undefined;
   /** The previous fold of the same history, whose unchanged summary rows are reused. */
   previousSummaryRowsByHostId: ReadonlyMap<string, TurnSummaryItem>;
 }
@@ -39,16 +43,22 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_ROWS: ReadonlyMap<string, TurnSummaryItem> = new Map();
 const EMPTY_HOSTS: ReadonlyMap<string, string> = new Map();
 
+interface TurnWork {
+  tools: OverviewSummary;
+  images: readonly ToolCallImage[];
+}
+
 function summarizeTurn(
   items: readonly StreamItem[],
   getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
-): OverviewSummary {
-  const calls: (ToolCallItem | ThoughtItem)[] = [];
+): TurnWork {
+  const calls: GroupableItem[] = [];
   for (const item of items) {
     if ((item.kind === "tool_call" || item.kind === "thought") && !isTurnTrigger(item))
       calls.push(...(getGroupedCalls(item.id) ?? [item]));
+    else if (item.kind === "assistant_message") calls.push(item);
   }
-  return summarizeToolCalls(calls);
+  return { tools: summarizeToolCalls(calls), images: collectToolCallImages(calls) };
 }
 
 function hasWork(tools: OverviewSummary): boolean {
@@ -71,16 +81,31 @@ function hasSameCounts(a: Record<string, number>, b: Record<string, number>): bo
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
+function hasSameImages(a: readonly ToolCallImage[], b: readonly ToolCallImage[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((image, index) => {
+      const other = b[index]!;
+      return (
+        image.message === other.message &&
+        image.index === other.index &&
+        image.toolName === other.toolName
+      );
+    })
+  );
+}
+
 function summaryRow(
   host: StreamItem,
   expanded: boolean,
-  tools: OverviewSummary,
+  work: TurnWork,
   previous: TurnSummaryItem | undefined,
 ): TurnSummaryItem {
   if (
     previous &&
     previous.expanded === expanded &&
-    hasSameWork(previous.tools, tools) &&
+    hasSameWork(previous.tools, work.tools) &&
+    hasSameImages(previous.images, work.images) &&
     hasSamePosition(previous.timelineCursor, host.timelineCursor)
   ) {
     return previous;
@@ -95,7 +120,8 @@ function summaryRow(
     timestamp: host.timestamp,
     hostId: host.id,
     expanded,
-    tools,
+    tools: work.tools,
+    images: work.images,
   };
 }
 
@@ -155,8 +181,8 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       return;
     }
     const folded = tail.slice(runStart, replyIndex);
-    const tools = summarizeTurn(folded, input.getGroupedCalls);
-    if (!hasWork(tools) && !folded.some(isAssistantReply)) {
+    const work = summarizeTurn(folded, input.getGroupedCalls);
+    if (!hasWork(work.tools) && !folded.some(isAssistantReply)) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
@@ -164,7 +190,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     const summary = summaryRow(
       host,
       expanded,
-      tools,
+      work,
       input.previousSummaryRowsByHostId.get(host.id),
     );
     summaryRowsByHostId.set(host.id, summary);
