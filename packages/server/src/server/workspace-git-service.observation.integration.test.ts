@@ -8,6 +8,7 @@ import {
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -1034,8 +1035,9 @@ function createCheckoutWithOrigin(origin: string): string {
   git("add", ".");
   git("commit", "-m", "base");
   git("remote", "add", "origin", origin);
-  cleanup.push(async () =>
-    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
+  cleanup.push(() =>
+    // Let pending close callbacks run between Windows filesystem-lock retries.
+    rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
   );
   return repo;
 }

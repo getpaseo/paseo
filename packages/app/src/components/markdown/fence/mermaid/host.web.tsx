@@ -5,6 +5,10 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
+import {
+  MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE,
+  MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
+} from "@/assistant-selection-copy/markup";
 import type { Theme } from "@/styles/theme";
 import type { MarkdownFenceRendererProps } from "./types";
 import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
@@ -82,50 +86,56 @@ function MermaidFenceHostImpl({
   );
   const sourceVisible = !diagramVisible;
   const viewportStyle = diagramVisible ? diagramStyle : measuringStyle;
+  const fenceSourceAttributes = {
+    [MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE]: code,
+    [MARKDOWN_COPY_LANGUAGE_ATTRIBUTE]: "mermaid",
+  };
 
   return (
     <>
-      {sourceVisible ? (
-        <View style={sourceContainerStyle}>
-          <HighlightedCodeBlock
-            code={code}
-            language="mermaid"
-            inheritedStyles={inheritedStyles}
-            textStyle={textStyle}
-          />
-          {showSource && canShowDiagram ? (
-            <Pressable
-              accessibilityLabel={t("message.diagram.viewDiagram")}
-              accessibilityRole="button"
-              hitSlop={4}
-              onPress={showDiagramPress}
-              style={controlStyles.sourceButton}
-            >
-              {({ hovered }) => (
-                <Workflow
-                  size={14}
-                  color={hovered ? controlStyles.iconHovered.color : controlStyles.icon.color}
-                />
-              )}
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-      <div inert={!diagramVisible} style={boundaryStyle}>
-        <ZoomableViewport
-          accessibilityLabel={t("message.diagram.diagram")}
-          actions={actions}
-          contentSize={diagramSize}
-          style={viewportStyle}
-          testID="mermaid-viewport"
-          wheelActivation="modifier"
-        >
-          <MermaidIframeRuntime
-            request={request}
-            onRendered={handleRendered}
-            onRenderFailed={renderFailed}
-          />
-        </ZoomableViewport>
+      <div style={boundaryStyle} {...fenceSourceAttributes}>
+        {sourceVisible ? (
+          <View style={sourceContainerStyle}>
+            <HighlightedCodeBlock
+              code={code}
+              language="mermaid"
+              inheritedStyles={inheritedStyles}
+              textStyle={textStyle}
+            />
+            {showSource && canShowDiagram ? (
+              <Pressable
+                accessibilityLabel={t("message.diagram.viewDiagram")}
+                accessibilityRole="button"
+                hitSlop={4}
+                onPress={showDiagramPress}
+                style={controlStyles.sourceButton}
+              >
+                {({ hovered }) => (
+                  <Workflow
+                    size={14}
+                    color={hovered ? controlStyles.iconHovered.color : controlStyles.icon.color}
+                  />
+                )}
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+        <div inert={!diagramVisible} style={boundaryStyle}>
+          <ZoomableViewport
+            accessibilityLabel={t("message.diagram.diagram")}
+            actions={actions}
+            contentSize={diagramSize}
+            style={viewportStyle}
+            testID="mermaid-viewport"
+            wheelActivation="modifier"
+          >
+            <MermaidIframeRuntime
+              request={request}
+              onRendered={handleRendered}
+              onRenderFailed={renderFailed}
+            />
+          </ZoomableViewport>
+        </div>
       </div>
       {isFullscreen && visible ? (
         <MermaidFullscreenViewer
