@@ -449,7 +449,7 @@ paseo hub logout               # Remove the active stored CLI login
 
 Run `paseo hub deploy` from the repository root. By default, it reads every direct `.paseo/triggers/*.yml` file in deterministic path order and validates all triggers before installing them one at a time.
 
-If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` validates without creating or activating revisions. Pass `-p, --project <slug>` for an existing legacy project bundle, as described in [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
+If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` validates without creating or activating revisions. Pass `-p, --project <slug>` for an existing legacy project bundle.
 
 `paseo hub login` opens the Hub approval page and stores an organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal, it offers to connect this daemon (default yes) and separately asks whether to grant `hub.execute` (default no).
 

@@ -428,7 +428,7 @@ paseo hub logout               # Remove the active stored CLI login
 
 请在仓库根目录运行 `paseo hub deploy`。它默认按确定的路径顺序读取所有直接位于 `.paseo/triggers/*.yml` 下的文件，并在逐个安装前先校验全部触发器。
 
-如果在前面的安装成功之后某个安装失败，错误信息会列出已安装的文件。`--dry-run` 只做校验，不会创建或激活版本。对于已有的旧版项目文件包，请传入 `-p, --project <slug>`，参见[从 CLI 部署](/docs/hub/configuration#deploy-from-the-cli)。
+如果在前面的安装成功之后某个安装失败，错误信息会列出已安装的文件。`--dry-run` 只做校验，不会创建或激活版本。对于已有的旧版项目文件包，请传入 `-p, --project <slug>`。
 
 `paseo hub login` 会打开 Hub 批准页面，并在 `PASEO_HOME` 下保存组织级 CLI 凭据。在交互式终端中，它会询问是否连接此 daemon（默认为是），并单独询问是否授予 `hub.execute`（默认为否）。
 

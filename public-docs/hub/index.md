@@ -25,7 +25,7 @@ Hub gives your team four things:
 - Event-driven agents that start from GitHub, Linear, Slack, Discord, recurring schedules, and inbound webhooks.
 - Triggers you can edit in the browser or store in `.paseo/triggers/*.yml` and deploy from the CLI.
 - Scoped integration tools that let any trigger read or post to Slack and Discord or act on GitHub.
-- One shared activity log of deliveries, routing decisions, runs, and replies.
+- [Activity](/docs/hub/activity) for recent runs and **Integrations → Known unrouted events** for deliveries that did not start a run.
 
 Your daemons still run agents on your machines with your existing subscriptions, models, and skills. Hub decides when to invoke them.
 

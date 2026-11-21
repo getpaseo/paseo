@@ -23,7 +23,7 @@ Hub 为你的团队提供四项能力：
 - 由 GitHub、Linear、Slack、Discord、周期性定时任务和入站 webhook 自动启动的事件驱动 Agent。
 - 可以在浏览器中编辑，或保存在 `.paseo/triggers/*.yml` 中并通过 CLI 部署的触发器。
 - 受控的集成工具，让任意触发器都能读取或发送到 Slack 和 Discord，或在 GitHub 上执行操作。
-- 一个共享的活动记录，汇总事件投递、路由结果、运行记录和回复。
+- 在 [Activity](/docs/hub/activity) 查看最近的运行记录，在 **Integrations → Known unrouted events** 查看未启动运行的投递。
 
 你的 daemon 仍然在你自己的机器上运行 Agent，使用你现有的订阅、模型和技能。Hub 只负责决定何时调用它们。
 
