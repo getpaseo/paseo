@@ -92,13 +92,14 @@ test("visible catch-up settles before hidden open chats start fetching", async (
   world.sync.dispose();
 });
 
-test("a failed visible catch-up releases hidden chats without bypassing its error", async () => {
+test("a failed visible catch-up with a parked gap releases hidden chats without retrying", async () => {
   const world = new TimelineWorld();
   world.openedEarlier(["a-hidden"]);
   world.sync.replaceVisibleAgentIds("pane", ["z-visible"]);
   world.sync.setConnected(true);
   (await world.nextMembership()).succeed();
   const visible = await world.nextFetch("z-visible");
+  world.sync.recoverGap("z-visible", { epoch: "epoch-z-visible", endSeq: 1 });
   world.expectNoPendingFetch();
   visible.fail("temporarily unavailable");
   const hidden = await world.nextFetch("a-hidden");
@@ -1060,6 +1061,37 @@ test("a manual retry that fails returns to the error state", async () => {
   const retry = await world.nextFetch("agent-a");
   retry.fail("timeline still unavailable");
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error"));
+});
+
+test("refocusing during a membership update retries a reconnect without replaying the backlog", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setConnected(false);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "behind" });
+  const failed = await world.nextFetch("agent-a");
+  expect(failed.request.direction).toBe("after");
+  failed.fail("timeline request timed out");
+  await world.nextError();
+
+  world.show("pane", ["agent-b"]);
+  const membership = await world.nextMembership();
+  world.show("pane", ["agent-a"]);
+  expect(world.pendingFetchCount).toBe(1);
+  const retry = await world.nextFetch("agent-a");
+  expect(retry.request).toEqual(failed.request);
+  membership.succeed();
+  retry.respond({ hasNewer: true, seq: 82 });
+  const tail = await world.nextFetch("agent-a");
+  expect(tail.request.direction).toBe("tail");
+  tail.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
 });
 
 test("gap recovery supersedes completed catch-up and pages through the current tail", async () => {
