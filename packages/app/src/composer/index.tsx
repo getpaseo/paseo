@@ -1883,7 +1883,8 @@ function ComposerContentImpl({
     });
     if (newImages.length === 0) return;
     addImages(newImages);
-  }, [addImages, pickImages]);
+    requestAnimationFrame(() => requestAnimationFrame(focusInput));
+  }, [addImages, focusInput, pickImages]);
 
   const handlePasteImage = useCallback(async () => {
     try {
@@ -1899,11 +1900,12 @@ function ComposerContentImpl({
         return;
       }
       addImages(newImages);
+      requestAnimationFrame(() => requestAnimationFrame(focusInput));
     } catch (error) {
       console.error("[Composer] Failed to paste clipboard image:", error);
       toastErrorRef.current(t("composer.errors.pasteImageFailed"));
     }
-  }, [addImages, t]);
+  }, [addImages, focusInput, t]);
 
   const handleNativePasteImages = useCallback(
     (files: readonly NativePastedFile[]) => {
@@ -1915,6 +1917,7 @@ function ComposerContentImpl({
         .then((newImages) => {
           if (newImages.length > 0) {
             addImages(newImages);
+            requestAnimationFrame(() => requestAnimationFrame(focusInput));
           }
           return undefined;
         })
@@ -1926,7 +1929,7 @@ function ComposerContentImpl({
           setPendingNativeImagePastes((pending) => Math.max(0, pending - 1));
         });
     },
-    [addImages, t],
+    [addImages, focusInput, t],
   );
 
   const uploadSelectedFiles = useCallback(

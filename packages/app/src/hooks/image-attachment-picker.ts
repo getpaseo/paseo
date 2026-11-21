@@ -22,6 +22,30 @@ export interface ExpoImagePickerAssetLike {
   file?: File | null;
 }
 
+const LAST_IMAGE_FOLDER_STORAGE_KEY = "paseo.lastImageFolder";
+
+function readLastImageFolder(): string | undefined {
+  if (typeof localStorage === "undefined") return undefined;
+  try {
+    const value = localStorage.getItem(LAST_IMAGE_FOLDER_STORAGE_KEY)?.trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLastImageFolder(path: string): void {
+  if (typeof localStorage === "undefined") return;
+  const normalized = path.replace(/\\/g, "/");
+  const separator = normalized.lastIndexOf("/");
+  if (separator <= 0) return;
+  try {
+    localStorage.setItem(LAST_IMAGE_FOLDER_STORAGE_KEY, normalized.slice(0, separator));
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
 function shouldTreatAsFileUri(uri: string): boolean {
   return uri.startsWith("file://") || isAbsolutePath(uri);
 }
@@ -106,6 +130,7 @@ export async function pickImagesWithDesktopDialog(
       },
     ],
     title: i18n.t("imageAttachmentPicker.dialogTitle"),
+    defaultPath: readLastImageFolder(),
   };
 
   const dialogOpen = dialog?.open;
@@ -113,7 +138,9 @@ export async function pickImagesWithDesktopDialog(
     throw new Error("Desktop dialog API is not available.");
   }
 
-  return normalizeDesktopDialogSelection(await dialogOpen(options)).map((path) => {
+  const paths = normalizeDesktopDialogSelection(await dialogOpen(options));
+  if (paths.length > 0) writeLastImageFolder(paths[0]);
+  return paths.map((path) => {
     const mimeType = resolveRasterImageMimeType({ path });
     if (!mimeType) {
       throw new Error(`Unsupported image type for '${path}'.`);

@@ -6,6 +6,7 @@ export type AttachmentFileInfo =
   | { exists: false };
 
 export interface AttachmentFileSystem {
+  readonly documentDirectory: string | null;
   readonly cacheDirectory: string | null;
   getInfo(uri: string): Promise<AttachmentFileInfo>;
   makeDirectory(uri: string, options: { intermediates: boolean }): Promise<void>;
@@ -18,6 +19,7 @@ export interface AttachmentFileSystem {
 
 export function createExpoAttachmentFileSystem(): AttachmentFileSystem {
   return {
+    documentDirectory: FileSystem.documentDirectory,
     cacheDirectory: FileSystem.cacheDirectory,
     async getInfo(uri) {
       const info = await FileSystem.getInfoAsync(uri);
