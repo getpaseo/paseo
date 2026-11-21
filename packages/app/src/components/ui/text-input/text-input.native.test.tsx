@@ -226,4 +226,35 @@ describe("EditingTextInputNative", () => {
 
     expect(handleRef.current?.getText()).toBe("world");
   });
+
+  it("does not update defaultValue on native edits when remeasureOnEdit is false", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+    const onChangeText = vi.fn();
+
+    act(() => {
+      root?.render(
+        <EditingTextInput
+          ref={handleRef}
+          initialValue=""
+          onChangeText={onChangeText}
+          remeasureOnEdit={false}
+        />,
+      );
+    });
+
+    const input = container?.querySelector("input");
+    if (!input) throw new Error("Expected native input");
+    expect(input.defaultValue).toBe("");
+
+    act(() => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (!setValue) throw new Error("Expected input value setter");
+      setValue.call(input, "/model");
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: "/model" }));
+    });
+
+    expect(onChangeText).toHaveBeenCalledWith("/model");
+    expect(handleRef.current?.getText()).toBe("/model");
+    expect(input.defaultValue).toBe("");
+  });
 });

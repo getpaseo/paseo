@@ -22,5 +22,7 @@ export interface EditingTextInputProps extends Omit<
   onChangeText?: (text: string) => void;
   onPasteImages?: (files: readonly NativePastedFile[]) => void;
   onPasteError?: (message: string) => void;
+  /** Re-render the native input leaf on each edit so multiline inputs re-measure height. Defaults to true. */
+  remeasureOnEdit?: boolean;
   variant?: "default" | "bottom-sheet";
 }

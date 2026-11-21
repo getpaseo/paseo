@@ -381,4 +381,112 @@ describe("native terminal typed input", () => {
       shouldClear: false,
     });
   });
+
+  it("does not duplicate characters or desync when Android IME dispatches onChangeText before onKeyPress for /model", () => {
+    let now = 1000;
+    const input = createTerminalTextInputState({ now: () => now });
+    const emitted: string[] = [];
+
+    const word = "/model";
+    for (let index = 0; index < word.length; index += 1) {
+      now += 60;
+      const prefix = word.slice(0, index + 1);
+      const char = word[index]!;
+      emitted.push(input.receiveTextChange(prefix).data);
+      now += 2;
+      emitted.push(input.receiveKeyPress(char).data);
+    }
+
+    expect(emitted).toEqual(["/", "", "m", "", "o", "", "d", "", "e", "", "l", ""]);
+  });
+
+  it("emits backspace when Android deleteSurroundingTextInCodePoints shrinks text without onKeyPress", () => {
+    let now = 1000;
+    const input = createTerminalTextInputState({ now: () => now });
+
+    expect(input.receiveTextChange("/")).toEqual({ data: "/", shouldClear: false });
+    expect(input.receiveKeyPress("/")).toEqual({ data: "", shouldClear: false });
+    now += 60;
+    expect(input.receiveTextChange("/m")).toEqual({ data: "m", shouldClear: false });
+    expect(input.receiveKeyPress("m")).toEqual({ data: "", shouldClear: false });
+    now += 60;
+    expect(input.receiveTextChange("/mo")).toEqual({ data: "o", shouldClear: false });
+    expect(input.receiveKeyPress("o")).toEqual({ data: "", shouldClear: false });
+
+    now += 60;
+    expect(input.receiveTextChange("/m")).toEqual({ data: "\x7f", shouldClear: false });
+    now += 60;
+    expect(input.receiveTextChange("/")).toEqual({ data: "\x7f", shouldClear: false });
+    now += 60;
+    expect(input.receiveTextChange("")).toEqual({ data: "\x7f", shouldClear: false });
+
+    now += 30;
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
+  });
+
+  it("dedupes batch Backspace keyPress emitted right after Android composing shrink", () => {
+    let now = 1000;
+    const input = createTerminalTextInputState({ now: () => now });
+
+    expect(input.receiveTextChange("m")).toEqual({ data: "m", shouldClear: false });
+    expect(input.receiveKeyPress("m")).toEqual({ data: "", shouldClear: false });
+    now += 60;
+    expect(input.receiveTextChange("mo")).toEqual({ data: "o", shouldClear: false });
+    expect(input.receiveKeyPress("o")).toEqual({ data: "", shouldClear: false });
+
+    now += 60;
+    expect(input.receiveTextChange("m")).toEqual({ data: "\x7f", shouldClear: false });
+    now += 2;
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "", shouldClear: false });
+
+    now += 60;
+    expect(input.receiveTextChange("md")).toEqual({ data: "d", shouldClear: false });
+    now += 2;
+    expect(input.receiveKeyPress("d")).toEqual({ data: "", shouldClear: false });
+  });
+
+  it("handles pinyin syllable separators and English candidate commits without desync", () => {
+    let now = 1000;
+    const input = createTerminalTextInputState({ now: () => now });
+    const applyToTerminal = (buffer: string, chunk: string): string => {
+      let out = buffer;
+      for (const ch of chunk) {
+        if (ch === "\x7f") {
+          out = Array.from(out).slice(0, -1).join("");
+        } else {
+          out += ch;
+        }
+      }
+      return out;
+    };
+
+    let terminal = "";
+    const steps: Array<{ text: string; key?: string }> = [
+      { text: "/", key: "/" },
+      { text: "/m", key: "m" },
+      { text: "/mo", key: "o" },
+      { text: "/mo'd", key: "d" },
+      { text: "/mo'de'l", key: "l" },
+      { text: "/model", key: "l" },
+    ];
+    for (const step of steps) {
+      now += 60;
+      terminal = applyToTerminal(terminal, input.receiveTextChange(step.text).data);
+      if (step.key) {
+        now += 2;
+        terminal = applyToTerminal(terminal, input.receiveKeyPress(step.key).data);
+      }
+    }
+    expect(terminal).toBe("/model");
+
+    input.reset();
+    expect(input.receiveTextChange("")).toEqual({ data: "", shouldClear: false });
+
+    let mixedTerminal = "";
+    for (const text of ["nihao", "你好", "你好Hel", "你好hello"]) {
+      now += 60;
+      mixedTerminal = applyToTerminal(mixedTerminal, input.receiveTextChange(text).data);
+    }
+    expect(mixedTerminal).toBe("你好hello");
+  });
 });
