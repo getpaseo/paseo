@@ -86,6 +86,15 @@ export function createMarkdownStyles(
         borderRadius: 8,
         padding: 12,
       },
+      // The engine defaults both to light-palette values; restate the theme so
+      // display math boxes and inline equations track dark mode.
+      math: {
+        color: muted ? theme.colors.foregroundMuted : theme.colors.foreground,
+        backgroundColor: theme.colors.surface1,
+      },
+      inlineMath: {
+        color: muted ? theme.colors.foregroundMuted : theme.colors.foreground,
+      },
       table: {
         ...paragraph,
         borderColor: theme.colors.border,
