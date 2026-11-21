@@ -44,6 +44,7 @@ import {
   listingText,
   listingSource,
   listingVersion,
+  pluginIcon,
 } from "./listing";
 import { PluginActionsMenu } from "./menus";
 import { updatePlugins, usePluginOperation, type PluginOperation } from "./operations";
@@ -457,7 +458,7 @@ export function PluginPage({
     <View>
       {back}
       <View style={styles.header}>
-        <PluginTile name={model.name} icon={listing?.icon} size="lg" />
+        <PluginTile name={model.name} icon={pluginIcon(plugin, listing)} size="lg" />
         <View style={styles.identity}>
           <View style={styles.nameRow}>
             <Text style={styles.name} numberOfLines={1} testID="plugin-page-name">
