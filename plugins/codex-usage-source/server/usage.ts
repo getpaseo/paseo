@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   balanceToneFromRemaining,
+  usedPctOf,
+  type UsageBalance,
   hashAccountKey,
   unavailable,
   type UsageAccount,
@@ -34,6 +36,17 @@ const rateLimitSchema = z.object({
   primary_window: windowSchema.nullish(),
   secondary_window: windowSchema.nullish(),
 });
+const nullableNumber = z.union([z.null(), number]);
+// ChatGPT Business/Enterprise spend-control budget: a monthly credit cap with
+// used/remaining quoted as strings.
+const spendLimitSchema = z.object({
+  limit: nullableNumber.optional(),
+  used: nullableNumber.optional(),
+  remaining: nullableNumber.optional(),
+  used_percent: nullableNumber.optional(),
+  reset_at: nullableNumber.optional(),
+});
+const spendControlSchema = z.object({ individual_limit: spendLimitSchema.nullish() }).nullish();
 const responseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
@@ -48,7 +61,9 @@ const responseSchema = z.object({
     )
     .nullish(),
   code_review_rate_limit: rateLimitSchema.nullish(),
-  credits: z.object({ balance: number.optional() }).nullish(),
+  spend_control: z.unknown().optional(),
+  // A null balance means "not reported", not zero credits.
+  credits: z.object({ balance: nullableNumber.optional() }).nullish(),
 });
 
 interface Auth {
@@ -184,6 +199,38 @@ function usageWindows({
   });
 }
 
+function balancesFromUsage(usage: z.infer<typeof responseSchema>): UsageBalance[] {
+  const balance = usage.credits?.balance;
+  const balances: UsageBalance[] = [];
+  const parsedSpend = spendControlSchema.safeParse(usage.spend_control);
+  if (!parsedSpend.success) console.warn("Skipping unparseable Codex spend-control budget");
+  const spendLimit = parsedSpend.success ? parsedSpend.data?.individual_limit : null;
+  if (spendLimit?.limit != null) {
+    const usedPct = spendLimit.used_percent ?? usedPctOf(spendLimit.used, spendLimit.limit) ?? 0;
+    const resetMs = spendLimit.reset_at != null ? spendLimit.reset_at * 1000 : null;
+    const resetDate = resetMs != null ? new Date(resetMs) : null;
+    balances.push({
+      id: "spend",
+      label: "Spend",
+      used: spendLimit.used ?? undefined,
+      remaining: spendLimit.remaining ?? undefined,
+      limit: spendLimit.limit,
+      unit: "credits",
+      resetsAt: resetDate && !Number.isNaN(resetDate.getTime()) ? resetDate.toISOString() : null,
+      tone: toneFromUsedPct(usedPct),
+    });
+  } else if (balance != null) {
+    balances.push({
+      id: "credits",
+      label: "Credits",
+      remaining: balance,
+      unit: "credits",
+      tone: balanceToneFromRemaining(balance),
+    });
+  }
+  return balances;
+}
+
 export async function fetchUsage(
   input: CodexUsageInput,
   fetchApi: typeof fetch = fetch,
@@ -232,23 +279,12 @@ export async function fetchUsage(
       scope: { id: "code_review", label: "Code review" },
     }),
   ];
-  const balance = usage.credits?.balance;
+  const balances = balancesFromUsage(usage);
   return {
     status: "available",
     planLabel: usage.plan_type,
     windows,
-    balances:
-      balance === undefined
-        ? []
-        : [
-            {
-              id: "credits",
-              label: "Credits",
-              remaining: balance,
-              unit: "credits",
-              tone: balanceToneFromRemaining(balance),
-            },
-          ],
+    balances,
     details: [],
   };
 }
