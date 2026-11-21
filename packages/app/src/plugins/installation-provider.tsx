@@ -34,7 +34,11 @@ export function PluginInstallationProvider({
   return (
     <QueryClientProvider client={plugin.queryClient}>
       <PaseoApiProvider paseo={getPluginClientApi(plugin).paseo}>
-        <PluginRpcProvider invoke={plugin.invoke} subscribe={plugin.subscribe}>
+        <PluginRpcProvider
+          invoke={plugin.invoke}
+          subscribe={plugin.subscribe}
+          fileTransfer={plugin.fileTransfer}
+        >
           <PluginTranslationProvider runtime={plugin.i18n}>
             <PluginComposersProvider source={pluginComposersSource(plugin)}>
               <PluginClientStateProvider source={state}>{children}</PluginClientStateProvider>

@@ -100,6 +100,11 @@ export type {
   PluginNewWorkspaceItemProps,
 } from "./new-workspace.js";
 export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
+export {
+  usePluginFileTransfer,
+  type PluginFileTransfer,
+  type PluginPickedFile,
+} from "./file-transfer.js";
 export type {
   PluginSubscribeOptions,
   PluginSubscriptionClosed,
