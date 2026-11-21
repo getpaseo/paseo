@@ -134,6 +134,8 @@ export interface ProviderSnapshotEntry {
   description?: string;
   iconSvg?: string;
   defaultModeId?: string | null;
+  /** True only when the provider enforces tool-free agents (`toolPolicy.toolFree`). */
+  supportsToolFree?: boolean;
 }
 
 export interface AgentFeatureToggle {
@@ -531,6 +533,12 @@ export interface McpToolRef {
 
 export interface ToolPolicy {
   preapproved: McpToolRef[];
+  /**
+   * Run the agent with no tools at all: no built-in, MCP, Paseo, plugin, or provider tools.
+   * The daemon refuses the agent unless its provider enforces this before any tool can run.
+   * Requires `server_info.features.toolFreeAgents`; `preapproved` must be empty.
+   */
+  toolFree?: true;
 }
 
 export interface AgentSessionConfig {

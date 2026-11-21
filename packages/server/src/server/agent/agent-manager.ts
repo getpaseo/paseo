@@ -110,6 +110,13 @@ import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
 import {
+  ToolFreeAgentError,
+  assertToolFreeLaunch,
+  assertToolFreeRequest,
+  assertToolFreeRetained,
+  isToolFreeConfig,
+} from "./tool-free.js";
+import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
@@ -1589,6 +1596,13 @@ export class AgentManager {
         }),
         internal: config.internal,
       };
+      if (isToolFreeConfig(sent) && !isToolFreeConfig(config)) {
+        throw new ToolFreeAgentError(
+          "mode_changed",
+          "A plugin removed tool-free mode from an agent being created",
+          sent.provider,
+        );
+      }
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -1719,6 +1733,7 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    assertToolFreeRetained({ previous: record ? (record.config ?? {}) : null, next: mergedConfig });
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
     const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
@@ -1915,6 +1930,7 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
+    assertToolFreeRetained({ previous: existing.config, next: refreshConfig });
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       refreshConfig,
       agentId,
@@ -2556,6 +2572,16 @@ export class AgentManager {
         let ended: ProviderOptionsPatch = {};
         let sent: ProviderOptionsPatch = {};
         if (Object.keys(patch).length > 0) {
+          if (isToolFreeConfig(agent.config)) {
+            // The provider's tool-free contract judges the options the agent would run with.
+            this.applyProviderConfiguration({
+              ...agent.config,
+              providerOptions: applyProviderOptionsPatch({
+                options: agent.config.providerOptions,
+                patch,
+              }),
+            });
+          }
           // A provider that cannot apply options to a running agent must not store them either.
           if (!agent.session.applyOptions) {
             throw new ProviderOptionsValidationError(
@@ -6200,8 +6226,27 @@ export class AgentManager {
     return this.applyProviderConfiguration(normalized);
   }
 
+  /**
+   * Refuses a tool-free config its provider cannot run. Callers that create resources for an
+   * agent, such as a worktree, call this first so a refused agent leaves nothing behind.
+   */
+  assertToolFreeSupported(config: AgentSessionConfig): void {
+    if (!isToolFreeConfig(config)) return;
+    this.applyProviderConfiguration(this.withConvertedOptions(config));
+  }
+
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
     const definition = this.providerDefinitions.get(config.provider);
+    if (isToolFreeConfig(config)) {
+      assertToolFreeRequest(config);
+      if (!definition?.applyToolPolicy) {
+        throw new ToolFreeAgentError(
+          "provider_unsupported",
+          `Provider '${config.provider}' cannot run tool-free agents`,
+          config.provider,
+        );
+      }
+    }
     this.validateToolPolicyServers(config);
     if (config.toolPolicy && !definition?.applyToolPolicy) {
       throw new Error(
@@ -6285,9 +6330,11 @@ export class AgentManager {
       purpose: options.purpose,
       resolveDefaultModel: options.resolveDefaultModel,
     });
-    const paseoToolPolicy = this.paseoToolsEnabled
-      ? this.resolvePaseoToolPolicy(storedConfig.provider)
-      : { enabled: false };
+    // A tool-free agent gets neither the Paseo MCP server nor native Paseo tools.
+    const paseoToolPolicy =
+      this.paseoToolsEnabled && !isToolFreeConfig(storedConfig)
+        ? this.resolvePaseoToolPolicy(storedConfig.provider)
+        : { enabled: false };
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
@@ -6398,6 +6445,22 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
+    // Every launch path passes here after all plugin hooks ran and before the provider session
+    // exists, so nothing a hook contributed can reach a tool-free session.
+    const launchAgentId = launchContext.agentId;
+    try {
+      assertToolFreeLaunch({
+        config: launchConfig,
+        launchContext,
+        // Every tool a hook attached counts, available or not.
+        pluginToolCount: launchAgentId
+          ? (this.attachedPluginTools.get(launchAgentId)?.length ?? 0)
+          : 0,
+      });
+    } catch (error) {
+      if (launchAgentId) this.detachPluginTools(launchAgentId);
+      throw error;
+    }
     const savedServerNames = new Set(
       Object.keys(stripInternalPaseoMcpServer(launchConfig).mcpServers ?? {}),
     );
