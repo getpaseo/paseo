@@ -72,6 +72,9 @@ const variants = {
   production: {
     name: "Paseo",
     packageId: "sh.paseo",
+    // Universal links: https://app.paseo.sh/h/<server>/agent/<agent> opens the app directly.
+    // Must match public/.well-known/apple-app-site-association.
+    associatedDomains: ["applinks:app.paseo.sh"],
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -115,6 +118,7 @@ export default {
         ITSAppUsesNonExemptEncryption: false,
       },
       bundleIdentifier: variant.packageId,
+      ...(variant.associatedDomains ? { associatedDomains: variant.associatedDomains } : {}),
       ...(variant.googleServiceInfoPlist
         ? { googleServicesFile: variant.googleServiceInfoPlist }
         : {}),
