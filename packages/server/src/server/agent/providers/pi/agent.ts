@@ -79,6 +79,7 @@ import {
   type ProviderImageOutput,
 } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
+import { cachedPiMcpSupport, type PiMcpProbeResult } from "./mcp-probe-cache.js";
 import {
   createPiExtensionHost,
   piExtensionRuntimeBridge,
@@ -2921,22 +2922,37 @@ export class PiRpcAgentClient implements AgentClient {
     env: Record<string, string> | undefined,
     runtime: PiRuntime,
   ): Promise<PiMcpInjection["kind"] | null> {
+    // An injected runtime (tests) is probed every time; a real Pi launch is probed once per identity.
+    if (this.runtime) {
+      return (await this.probeMcpSupport(cwd, env, runtime)).support;
+    }
+    return cachedPiMcpSupport(
+      { cwd, env, command: this.runtimeSettings?.command, defaultCommand: PI_BINARY_COMMAND },
+      () => this.probeMcpSupport(cwd, env, runtime),
+    );
+  }
+
+  private async probeMcpSupport(
+    cwd: string,
+    env: Record<string, string> | undefined,
+    runtime: PiRuntime,
+  ): Promise<PiMcpProbeResult> {
     const runtimeSession = await runtime.startSession({ cwd, env }).catch((error) => {
       this.logger.debug({ err: error, cwd }, "Pi MCP probe failed to start");
       return null;
     });
     if (!runtimeSession) {
-      return null;
+      return { support: null, ok: false };
     }
     try {
       const commands = await runtimeSession.getCommands();
       if (commands.some(isPiMcpAdapterCommand)) {
-        return "adapter";
+        return { support: "adapter", ok: true };
       }
-      return commands.some(isPiBuiltinMcpCommand) ? "builtin" : null;
+      return { support: commands.some(isPiBuiltinMcpCommand) ? "builtin" : null, ok: true };
     } catch (error) {
       this.logger.debug({ err: error, cwd }, "Pi MCP probe failed");
-      return null;
+      return { support: null, ok: false };
     } finally {
       await runtimeSession.close().catch(() => undefined);
     }
