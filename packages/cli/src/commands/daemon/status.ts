@@ -104,6 +104,7 @@ async function probeDaemonStatus(
         providers: status.providers,
         relay: status.relay,
         ...(status.terminalsUnavailable ? { terminals: status.terminalsUnavailable } : {}),
+        terminalCleanupUnconfirmed: status.terminalCleanupUnconfirmed,
       };
     }
   } finally {
