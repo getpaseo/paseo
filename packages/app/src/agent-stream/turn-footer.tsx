@@ -184,6 +184,13 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
+  const source = items[startIndex];
+  const hasCopyContent = useMemo(
+    () =>
+      source?.kind === "assistant_message" ||
+      (source?.kind === "notification" && source.sourceType === "error" && getContent().length > 0),
+    [getContent, source],
+  );
   const boundary = resolveAssistantTurnForkBoundary({
     items,
     startIndex,
@@ -201,7 +208,7 @@ function CompletedTurnFooter({
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
-        getContent={items[startIndex]?.kind === "assistant_message" ? getContent : undefined}
+        getContent={hasCopyContent ? getContent : undefined}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
