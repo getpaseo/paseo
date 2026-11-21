@@ -78,6 +78,27 @@ async function database(path: string) {
   db.close();
 }
 
+async function opencodeDatabase(path: string) {
+  await mkdir((await import("node:path")).dirname(path), { recursive: true });
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path);
+  db.exec(
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER, time_updated INTEGER)",
+  );
+  return db;
+}
+
+function opencodeOauth(access: string, expires: number, accountId?: string) {
+  return JSON.stringify({
+    type: "oauth",
+    methodID: "chatgpt-headless",
+    access,
+    refresh: "fixture-refresh",
+    expires,
+    ...(accountId ? { metadata: { accountID: accountId } } : {}),
+  });
+}
+
 test("Pi uses its own OAuth identity and re-reads rotated tokens without writing", async () => {
   const path = join(home, ".pi", "agent", "auth.json");
   await json(path, {
@@ -259,4 +280,212 @@ test("OMP fetch re-reads its row after rotation and skips a newly disabled login
       lookup(),
     ),
   ).rejects.toThrow("login store no longer exists");
+});
+
+function opencodeUsageResponse() {
+  return Response.json({
+    plan_type: "plus",
+    rate_limit: {
+      primary_window: { used_percent: 30, limit_window_seconds: 18000 },
+      secondary_window: { used_percent: 81, limit_window_seconds: 604800 },
+    },
+  });
+}
+
+test("OpenCode v2 database login replaces a stale v1 file login", async () => {
+  const data = join(home, "data");
+  const env = { XDG_DATA_HOME: data };
+  const databasePath = join(data, "opencode", "opencode.db");
+  await json(join(data, "opencode", "auth.json"), {
+    openai: { type: "oauth", access: "fixture-expired", expires: 500 },
+  });
+  const db = await opencodeDatabase(databasePath);
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "cred_1",
+    "openai",
+    "OpenAI",
+    opencodeOauth("fixture-db", 2000, "db-account"),
+    null,
+    "chatgpt-headless",
+    1,
+    1,
+    1,
+  );
+  db.close();
+
+  const inputs = await logins(lookup(env));
+  expect(inputs).toEqual([
+    { route: { store: "opencode-db", path: databasePath, credentialId: "cred_1" } },
+  ]);
+  expect(await accountIdentity(inputs[0]!, env)).toEqual({ key: "db-account" });
+  const report = await fetchUsage(
+    inputs[0]!,
+    async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer fixture-db");
+      expect(headers.get("ChatGPT-Account-Id")).toBe("db-account");
+      return opencodeUsageResponse();
+    },
+    lookup(env),
+  );
+  expect(report).toMatchObject({
+    status: "available",
+    planLabel: "plus",
+    windows: [
+      { id: "five_hour", usedPct: 30 },
+      { id: "weekly", usedPct: 81 },
+    ],
+  });
+});
+
+test("OpenCode v2 database login with an expired token is unavailable without a request", async () => {
+  const data = join(home, "data");
+  const env = { XDG_DATA_HOME: data };
+  const databasePath = join(data, "opencode", "opencode.db");
+  const db = await opencodeDatabase(databasePath);
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "cred_1",
+    "openai",
+    "OpenAI",
+    opencodeOauth("fixture-expired", 500, "db-account"),
+    null,
+    "chatgpt-headless",
+    1,
+    1,
+    1,
+  );
+  db.close();
+
+  const [input] = await logins(lookup(env));
+  expect(
+    await fetchUsage(
+      input!,
+      async () => {
+        throw new Error("must not fetch an expired token");
+      },
+      lookup(env),
+    ),
+  ).toEqual({
+    status: "unavailable",
+    problem: { kind: "expired", expiresAt: new Date(500).toISOString(), refreshedBy: "opencode" },
+  });
+});
+
+test("OpenCode v2 database is unchanged after its login is read", async () => {
+  const data = join(home, "data");
+  const env = { XDG_DATA_HOME: data };
+  const databasePath = join(data, "opencode", "opencode.db");
+  const db = await opencodeDatabase(databasePath);
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "cred_1",
+    "openai",
+    "OpenAI",
+    opencodeOauth("fixture-db", 2000, "db-account"),
+    null,
+    "chatgpt-headless",
+    1,
+    1,
+    1,
+  );
+  db.close();
+  const before = await readFile(databasePath);
+
+  const [input] = await logins(lookup(env));
+  await fetchUsage(input!, async () => opencodeUsageResponse(), lookup(env));
+  expect(await readFile(databasePath)).toEqual(before);
+});
+
+test("OpenCode v2 database login is re-read after the stored token rotates", async () => {
+  const data = join(home, "data");
+  const env = { XDG_DATA_HOME: data };
+  const databasePath = join(data, "opencode", "opencode.db");
+  const db = await opencodeDatabase(databasePath);
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "cred_1",
+    "openai",
+    "OpenAI",
+    opencodeOauth("fixture-first", 2000, "db-account"),
+    null,
+    "chatgpt-headless",
+    1,
+    1,
+    1,
+  );
+  db.close();
+
+  const [input] = await logins(lookup(env));
+  const { DatabaseSync } = await import("node:sqlite");
+  const writer = new DatabaseSync(databasePath);
+  writer
+    .prepare("UPDATE credential SET value = ? WHERE id = 'cred_1'")
+    .run(opencodeOauth("fixture-rotated", 2000, "db-account"));
+  writer.close();
+
+  const report = await fetchUsage(
+    input!,
+    async (_url, init) => {
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fixture-rotated");
+      return opencodeUsageResponse();
+    },
+    lookup(env),
+  );
+  expect(report.status).toBe("available");
+});
+
+test.each([
+  ["there is no v2 database", null],
+  [
+    "the v2 database holds no OpenAI login",
+    { integration: "zenai", value: JSON.stringify({ type: "key", key: "fixture-key" }) },
+  ],
+  [
+    "the v2 OpenAI login is not active",
+    {
+      integration: "openai",
+      value: opencodeOauth("fixture-inactive", 2000, "db-account"),
+      active: 0,
+    },
+  ],
+])("OpenCode v1 file login stays when %s", async (_name, row) => {
+  const data = join(home, "data");
+  const env = { XDG_DATA_HOME: data };
+  const file = join(data, "opencode", "auth.json");
+  await json(file, { openai: { type: "oauth", access: "fixture-file", expires: 2000 } });
+  if (row) {
+    const databasePath = join(data, "opencode", "opencode.db");
+    const db = await opencodeDatabase(databasePath);
+    db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "cred_1",
+      row.integration,
+      "OpenAI",
+      row.value,
+      null,
+      "chatgpt-headless",
+      "active" in row ? row.active : 1,
+      1,
+      1,
+    );
+    db.close();
+  }
+  expect(await logins(lookup(env))).toEqual([{ route: { store: "opencode", path: file } }]);
+});
+
+test("OpenCode v2 database path honours OPENCODE_DB", async () => {
+  const databasePath = join(home, "custom-opencode.db");
+  const db = await opencodeDatabase(databasePath);
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "cred_1",
+    "openai",
+    "OpenAI",
+    opencodeOauth("fixture-db", 2000, "db-account"),
+    null,
+    "chatgpt-headless",
+    1,
+    1,
+    1,
+  );
+  db.close();
+  expect(await logins(lookup({ OPENCODE_DB: databasePath }))).toEqual([
+    { route: { store: "opencode-db", path: databasePath, credentialId: "cred_1" } },
+  ]);
 });

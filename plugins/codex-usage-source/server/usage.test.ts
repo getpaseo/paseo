@@ -230,6 +230,72 @@ test("discovers a Pi OAuth login independently of the CLI login", async () => {
   }
 });
 
+test("OpenCode v2 database login reports usage while the v1 file login expired", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "usage-opencode-v2-"));
+  try {
+    const data = join(directory, "data");
+    await mkdir(join(data, "opencode"), { recursive: true });
+    await writeFile(
+      join(data, "opencode", "auth.json"),
+      JSON.stringify({ openai: { type: "oauth", access: "fixture-expired", expires: 500 } }),
+    );
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(join(data, "opencode", "opencode.db"));
+    db.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER, time_updated INTEGER)",
+    );
+    db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "cred_1",
+      "openai",
+      "OpenAI",
+      JSON.stringify({
+        type: "oauth",
+        methodID: "chatgpt-headless",
+        access: "fixture-db",
+        expires: 2000,
+        metadata: { accountID: "db-account" },
+      }),
+      null,
+      "chatgpt-headless",
+      1,
+      1,
+      1,
+    );
+    db.close();
+    const lookup = {
+      home: directory,
+      env: { XDG_DATA_HOME: data },
+      platform: "linux" as const,
+      now: () => 1000,
+    };
+
+    const accounts = await discover({ kind: "global" }, lookup);
+    expect(accounts.map((account) => account.input)).toEqual([
+      {
+        route: {
+          store: "opencode-db",
+          path: join(data, "opencode", "opencode.db"),
+          credentialId: "cred_1",
+        },
+      },
+    ]);
+    const report = await fetchUsage(
+      inputSchema.parse(accounts[0]!.input),
+      async (_url, init) => {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fixture-db");
+        return Response.json({
+          plan_type: "plus",
+          rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000 } },
+        });
+      },
+      lookup,
+    );
+    expect(report).toMatchObject({ status: "available", planLabel: "plus" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function accountFor(input: CodexUsageInput) {
   const accounts = await discover(
     { kind: "global" },

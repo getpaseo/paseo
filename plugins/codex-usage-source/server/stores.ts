@@ -27,6 +27,22 @@ export const oauthSchema = z.object({
 const rowSchema = z.object({ id: z.number().int().positive(), data: z.string() });
 export type Route = z.infer<typeof routeSchema>;
 
+export interface OpencodeOauthLogin {
+  id: string;
+  access: string;
+  accountId?: string;
+  expires?: number;
+}
+
+const opencodeRowSchema = z.object({ id: z.string(), value: z.string() });
+const opencodeColumnSchema = z.object({ name: z.string() });
+const opencodeCredentialSchema = z.object({
+  type: z.literal("oauth"),
+  access: z.string().min(1),
+  expires: z.number().optional(),
+  metadata: z.object({ accountID: z.string().min(1).optional() }).optional(),
+});
+
 export async function readJson(path: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(path, "utf8"));
@@ -45,6 +61,20 @@ export function piAuthPath(lookup: StoreLookup): string {
     ? join(home, configured.slice(2))
     : resolve(configured);
   return join(directory, "auth.json");
+}
+
+export interface OpencodeStorePaths {
+  file: string;
+  database: string;
+}
+
+export function opencodeStorePaths(env: NodeJS.ProcessEnv, home: string): OpencodeStorePaths {
+  const dataHome = env.XDG_DATA_HOME || join(home, ".local", "share");
+  const directory = join(dataHome, "opencode");
+  return {
+    file: join(directory, "auth.json"),
+    database: env.OPENCODE_DB ? resolve(env.OPENCODE_DB) : join(directory, "opencode.db"),
+  };
 }
 
 function ompDatabasePath(lookup: StoreLookup): string {
@@ -116,6 +146,59 @@ export function discoverOmp(lookup: StoreLookup): Route[] {
 
 export function readOmp(route: Extract<Route, { store: "omp" }>, lookup: StoreLookup) {
   return ompRows(route.path, lookup).find((row) => row.id === route.credentialId)?.oauth ?? null;
+}
+
+function parseCredential(value: string): unknown | null {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+/**
+ * OpenCode v2 keeps its logins in its own database and no longer writes the v1
+ * credential file, so the file alone cannot describe the active ChatGPT login.
+ */
+export function readOpencodeOauth(path: string, lookup: StoreLookup = {}): OpencodeOauthLogin[] {
+  const sqlite = (lookup.sqlite ?? builtinSqlite)();
+  if (!sqlite || !existsSync(path)) return [];
+  let db: Database | undefined;
+  try {
+    db = new sqlite.DatabaseSync(path, { readOnly: true });
+    const columns = db
+      .prepare("PRAGMA table_info(credential)")
+      .all()
+      .map((value) => opencodeColumnSchema.safeParse(value));
+    if (!columns.some((column) => column.success && column.data.name === "integration_id")) {
+      return [];
+    }
+    const rows = db
+      .prepare(
+        "SELECT id, value FROM credential WHERE integration_id = ? AND active = 1 ORDER BY time_updated DESC, id DESC",
+      )
+      .all("openai");
+    return rows.flatMap((value) => {
+      const row = opencodeRowSchema.safeParse(value);
+      if (!row.success) return [];
+      const credential = opencodeCredentialSchema.safeParse(parseCredential(row.data.value));
+      if (!credential.success) return [];
+      const accountId = credential.data.metadata?.accountID;
+      return [
+        {
+          id: row.data.id,
+          access: credential.data.access,
+          ...(accountId ? { accountId } : {}),
+          ...(credential.data.expires !== undefined ? { expires: credential.data.expires } : {}),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  } finally {
+    db?.close();
+  }
 }
 
 export async function readHarness(

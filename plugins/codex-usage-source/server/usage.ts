@@ -1,4 +1,12 @@
-import { discoverOmp, piAuthPath, readHarness, readJson, type StoreLookup } from "./stores.js";
+import {
+  discoverOmp,
+  opencodeStorePaths,
+  piAuthPath,
+  readHarness,
+  readJson,
+  readOpencodeOauth,
+  type StoreLookup,
+} from "./stores.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -88,17 +96,31 @@ function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
   const candidates: CodexUsageInput[] = [...new Set(paths)].map((path) => ({
     route: { store: "codex", path },
   }));
+  candidates.push(...opencodeRoutes(env, home, lookup));
   candidates.push(
-    {
-      route: {
-        store: "opencode",
-        path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
-      },
-    },
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
   );
   return candidates;
+}
+
+/**
+ * OpenCode v2 stores its logins in a database and leaves the v1 credential file
+ * untouched, so a file login can be stale while the database login is current.
+ * The database wins whenever it holds an OpenAI login; the file stays the
+ * source for v1 installations that have no such database.
+ */
+function opencodeRoutes(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  lookup: StoreLookup,
+): CodexUsageInput[] {
+  const { file, database } = opencodeStorePaths(env, home);
+  const logins = readOpencodeOauth(database, lookup);
+  if (!logins.length) return [{ route: { store: "opencode", path: file } }];
+  return logins.map((login) => ({
+    route: { store: "opencode-db", path: database, credentialId: login.id },
+  }));
 }
 
 function sessionRoutes(
@@ -119,14 +141,7 @@ function sessionRoutes(
   if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
   if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
   if (scope.provider === "opencode")
-    return [
-      {
-        route: {
-          store: "opencode",
-          path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
-        },
-      },
-    ];
+    return opencodeRoutes(scope.env, lookup.home ?? homedir(), lookup);
   return [];
 }
 
@@ -135,6 +150,14 @@ export async function readAuth(
   lookup: StoreLookup = {},
 ): Promise<Auth | null> {
   const route = input.route;
+  if (route.store === "opencode-db") {
+    const login = readOpencodeOauth(route.path, lookup).find(
+      (candidate) => candidate.id === route.credentialId,
+    );
+    return login
+      ? { token: login.access, accountId: login.accountId, expires: login.expires }
+      : null;
+  }
   if (route.store !== "codex") {
     const oauth = await readHarness(route, lookup);
     return oauth
@@ -191,7 +214,7 @@ export async function fetchUsage(
 ): Promise<UsageReport> {
   const auth = await readAuth(input, lookup);
   if (!auth) throw new Error("Codex login store no longer exists");
-  const refreshedBy = input.route.store;
+  const refreshedBy = refreshCommand(input.route.store);
   if (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)())
     return unavailable({
       kind: "expired",
@@ -297,6 +320,17 @@ function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; lab
 }
 
 function harnessLabel(input: CodexUsageInput): string {
-  const labels = { codex: "Codex", opencode: "OpenCode", pi: "Pi", omp: "OMP" };
+  const labels = {
+    codex: "Codex",
+    opencode: "OpenCode",
+    "opencode-db": "OpenCode",
+    pi: "Pi",
+    omp: "OMP",
+  };
   return labels[input.route.store];
+}
+
+/** The CLI that refreshes the login behind each store. */
+function refreshCommand(store: CodexUsageInput["route"]["store"]): string {
+  return store === "opencode-db" ? "opencode" : store;
 }
