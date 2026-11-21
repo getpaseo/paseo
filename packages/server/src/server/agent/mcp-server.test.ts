@@ -5195,6 +5195,147 @@ describe("update_agent MCP tool", () => {
   });
 });
 
+describe("mark_agent_read MCP tool", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function withChild(
+    run: (ctx: {
+      manager: AgentManager;
+      storage: AgentStorage;
+      mcp: Client;
+      childId: string;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-mark-agent-read-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new HeldTurnAgentClient("codex", false) },
+      registry: storage,
+      logger,
+    });
+    let mcp: Client | undefined;
+    try {
+      const parent = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+      await run({ manager, storage, mcp, childId: child.id });
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  }
+
+  it("clears a finished child's unread state in memory and on disk", async () => {
+    await withChild(async ({ manager, storage, mcp, childId }) => {
+      await manager.markAgentUnread(childId);
+      expect(manager.getAgent(childId)?.attention).toMatchObject({
+        requiresAttention: true,
+        attentionReason: "finished",
+      });
+
+      const result = await mcp.callTool({
+        name: "mark_agent_read",
+        arguments: { agentId: childId },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toEqual({ success: true, cleared: true });
+      expect(manager.getAgent(childId)?.attention).toEqual({ requiresAttention: false });
+      await storage.flush();
+      expect((await storage.get(childId))?.requiresAttention).toBe(false);
+    });
+  });
+
+  it("reports nothing cleared for an agent that is already read", async () => {
+    await withChild(async ({ manager, mcp, childId }) => {
+      const result = await mcp.callTool({
+        name: "mark_agent_read",
+        arguments: { agentId: childId },
+      });
+
+      expect(result.structuredContent).toEqual({ success: true, cleared: false });
+      expect(manager.getAgent(childId)?.attention).toEqual({ requiresAttention: false });
+    });
+  });
+
+  it("rejects an unknown agent", async () => {
+    await withChild(async ({ mcp }) => {
+      const result = await mcp.callTool({
+        name: "mark_agent_read",
+        arguments: { agentId: "missing-agent" },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("Agent missing-agent not found");
+    });
+  });
+
+  it("leaves a pending permission request unread", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "agent-1",
+      attention: {
+        requiresAttention: true,
+        attentionReason: "permission",
+        attentionTimestamp: new Date(),
+      },
+    });
+    const clearAgentAttention = vi.fn().mockResolvedValue(undefined);
+    Object.assign(agentManager, { clearAgentAttention });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+
+    const response = await registeredTool(server, "mark_agent_read").handler({
+      agentId: "agent-1",
+    });
+
+    expect(response.structuredContent).toEqual({ success: true, cleared: false });
+    expect(clearAgentAttention).not.toHaveBeenCalled();
+  });
+
+  it("clears a stored agent that is not loaded", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue({
+      id: "agent-closed",
+      requiresAttention: true,
+      attentionReason: "error",
+      archivedAt: null,
+    });
+    const clearAgentAttention = vi.fn().mockResolvedValue(undefined);
+    Object.assign(agentManager, { clearAgentAttention });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+
+    const response = await registeredTool(server, "mark_agent_read").handler({
+      agentId: "agent-closed",
+    });
+
+    expect(response.structuredContent).toEqual({ success: true, cleared: true });
+    expect(clearAgentAttention).toHaveBeenCalledWith("agent-closed");
+  });
+});
+
 describe("rename_workspace MCP tool", () => {
   const logger = createTestLogger();
 
