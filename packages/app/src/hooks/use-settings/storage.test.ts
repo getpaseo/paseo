@@ -227,6 +227,26 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("shows the task pill by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.taskPillEnabled).toBe(true);
+  });
+
+  it("loads a hidden task pill preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ taskPillEnabled: false }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.taskPillEnabled).toBe(false);
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 
