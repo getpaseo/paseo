@@ -58,7 +58,12 @@ async function probeDaemonStatus(
   let live: Record<string, unknown> = {};
   let client: Awaited<ReturnType<typeof connectToDaemon>> | undefined;
   try {
-    client = await connectToDaemon({ target, instance: instance ?? undefined, timeout: 1_500 });
+    // An explicit host may sit behind SSH or a relay, so it gets the usual connect budget.
+    client = await connectToDaemon({
+      target,
+      instance: instance ?? undefined,
+      timeout: target.kind === "endpoint" ? undefined : 1_500,
+    });
   } catch (error) {
     const failure = buildDaemonConnectionCommandError({ target, error });
     if (target.kind === "endpoint") throw failure;
