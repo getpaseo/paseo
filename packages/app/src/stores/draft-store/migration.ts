@@ -102,7 +102,7 @@ export const PersistedDraftStoreSchema = z.strictObject({
   drafts: z.record(z.string(), PersistedDraftRecordSchema).optional(),
   createModalDraft: PersistedDraftRecordSchema.nullable().optional(),
   metadataByDraftKey: z.record(z.string(), z.record(z.string(), z.json())).optional(),
-  creationIdByDraftKey: z.record(z.string(), z.string()).optional(),
+  creationIdByDraftKey: z.record(z.string(), z.string().nullable()).optional(),
 });
 type PersistedDraftRecord = z.infer<typeof PersistedDraftRecordSchema>;
 

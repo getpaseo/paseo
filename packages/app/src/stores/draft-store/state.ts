@@ -52,7 +52,7 @@ export interface DraftStoreState {
   drafts: Record<string, DraftRecord>;
   createModalDraft: DraftRecord | null;
   metadataByDraftKey?: Record<string, Record<string, JsonValue>>;
-  creationIdByDraftKey?: Record<string, string>;
+  creationIdByDraftKey?: Record<string, string | null>;
 }
 
 export const AttachmentMetadataSchema = z.strictObject({

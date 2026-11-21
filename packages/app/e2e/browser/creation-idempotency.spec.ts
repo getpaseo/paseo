@@ -1,3 +1,9 @@
+import {
+  attachComposerTestImage,
+  expectAttachmentPill,
+  fillComposerDraft,
+} from "../support/helpers/composer";
+import { getServerId } from "../support/helpers/server-id";
 import { useCreationProtocol, type createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
@@ -7,7 +13,12 @@ import {
   connectNewWorkspaceDaemonClient,
   loadSessionMessageReaders,
 } from "../support/helpers/new-workspace";
-import { selectLaunchOption, submitTerminalLaunch } from "../support/helpers/new-workspace-launch";
+import {
+  selectLaunchOption,
+  submitTerminalLaunch,
+  holdTerminalCreationResponse,
+  pauseNextImageEncoding,
+} from "../support/helpers/new-workspace-launch";
 
 test("an uncertain background agent cannot lose its identity through a terminal launch after reload", async ({
   creation,
@@ -424,3 +435,75 @@ for (const outcome of ["completed", "failed"] as const) {
     }
   });
 }
+
+test("chat admission keeps its prepared ID when a late terminal retires it during image encoding", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const terminal = await holdTerminalCreationResponse(page);
+  const client = await connectNewWorkspaceDaemonClient();
+  let encoding: Awaited<ReturnType<typeof pauseNextImageEncoding>> | undefined;
+  try {
+    await creation.openWorkspaceForm("local");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await fillComposerDraft(page, "Prepared chat with image");
+    await attachComposerTestImage(page);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await selectLaunchOption(page, "blank");
+    await submitTerminalLaunch(page);
+    await terminal.wait();
+    const scopeKey = JSON.stringify([getServerId(), "new-workspace"]);
+    const preparedId = await page.evaluate(
+      (key) =>
+        JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] as string,
+      scopeKey,
+    );
+    await creation.leaveWorkspaceForm();
+    await creation.returnToWorkspaceForm();
+    await selectLaunchOption(page, "chat");
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    encoding = await pauseNextImageEncoding(page);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await encoding.wait();
+    terminal.release();
+    await page.waitForFunction(
+      (key) =>
+        JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] === null,
+      scopeKey,
+    );
+    await encoding.release();
+    await creation.expectAgentStillStarting();
+    const operation = await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(`draft-creation:${key}`)!),
+      JSON.stringify([getServerId(), preparedId]),
+    );
+    expect(operation.attempt.kind).toBe("agent");
+    const created = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => !before.has(entry.id),
+    );
+    expect(created).toHaveLength(1);
+    await page.reload();
+    await attachComposerTestImage(page);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await startup.release();
+    await creation.submitPrompt("Prepared chat with image");
+    await creation.expectPromptVisible("Prepared chat with image");
+    expect(
+      (await client.fetchWorkspaces()).entries
+        .filter((entry) => !before.has(entry.id))
+        .map((entry) => entry.id),
+    ).toEqual([created[0]!.id]);
+    expect(
+      (await client.fetchAgents()).entries.filter(
+        (entry) => entry.agent.workspaceId === created[0]!.id,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    terminal.release();
+    await encoding?.release();
+    await startup.release();
+    await client.close();
+  }
+});

@@ -172,6 +172,7 @@ async function submitDraftCreateRequest(input: {
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
   const imagesData = await encodeImages(images);
   const creationDraftId = await prepareDraftCreation({
+    serverId: input.serverId,
     draftKey: input.draftStoreKey,
     proposedId: input.draftId,
   });
@@ -222,7 +223,11 @@ async function submitAgentWithWorkspaceReceipt(input: {
       draftId: input.draftId,
       kind: "agent",
       onAdmitted: () =>
-        claimDraftCreation({ draftKey: input.draftStoreKey, expectedId: input.draftId }),
+        claimDraftCreation({
+          serverId: input.serverId,
+          draftKey: input.draftStoreKey,
+          expectedId: input.draftId,
+        }),
       request: input.request,
       send: (options) => input.client.createAgent({ ...input.request, ...options }),
     }))

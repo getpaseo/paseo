@@ -219,3 +219,52 @@ export async function rejectTerminalCreation(page: Page): Promise<void> {
     server.onMessage((frame) => browser.send(frame));
   });
 }
+
+export async function holdTerminalCreationResponse(page: Page) {
+  const frames = await loadSessionMessageReaders();
+  let resolveResponse!: () => void;
+  const response = new Promise<void>((resolve) => {
+    resolveResponse = resolve;
+  });
+  let forward: (() => void) | undefined;
+  let released = false;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => server.send(frame));
+    server.onMessage((frame) => {
+      if (!released && frames.server(frame)?.type === "create_terminal_response") {
+        forward = () => browser.send(frame);
+        resolveResponse();
+      } else browser.send(frame);
+    });
+  });
+  return {
+    wait: () => response,
+    release: () => {
+      released = true;
+      forward?.();
+      forward = undefined;
+    },
+  };
+}
+
+type EncodingGateWindow = typeof globalThis & {
+  encodingPaused?: boolean;
+  resumeEncoding?: () => void;
+};
+export async function pauseNextImageEncoding(page: Page) {
+  await page.evaluate(() => {
+    const runtime = globalThis as EncodingGateWindow;
+    const original = FileReader.prototype.readAsDataURL;
+    FileReader.prototype.readAsDataURL = function (blob: Blob) {
+      FileReader.prototype.readAsDataURL = original;
+      runtime.encodingPaused = true;
+      runtime.resumeEncoding = () => original.call(this, blob);
+    };
+  });
+  return {
+    wait: () =>
+      page.waitForFunction(() => (globalThis as EncodingGateWindow).encodingPaused === true),
+    release: () => page.evaluate(() => (globalThis as EncodingGateWindow).resumeEncoding?.()),
+  };
+}

@@ -65,8 +65,13 @@ interface DraftStoreActions {
   /** Plugin metadata the draft will create its agent with; see `composer/draft/metadata`. */
   patchDraftMetadata: (input: { draftKey: string; patch: Record<string, JsonValue> }) => void;
   clearDraftMetadata: (input: { draftKey: string }) => void;
-  ensureDraftCreationId: (input: { draftKey: string; proposedId: string }) => string;
-  clearDraftCreationId: (input: { draftKey: string }) => void;
+  getDraftCreationId: (input: { serverId: string; draftKey: string }) => string | undefined;
+  ensureDraftCreationId: (input: {
+    serverId: string;
+    draftKey: string;
+    proposedId: string;
+  }) => string;
+  clearDraftCreationId: (input: { serverId: string; draftKey: string }) => void;
   attachWorkspaceFile: (input: {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
@@ -85,7 +90,7 @@ interface DraftStoreRuntimeState {
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
    */
   metadataByDraftKey: Record<string, Record<string, JsonValue>>;
-  creationIdByDraftKey: Record<string, string>;
+  creationIdByDraftKey: Record<string, string | null>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -102,6 +107,7 @@ const initialHydration = new Promise<void>((resolve) => {
 });
 
 export async function prepareDraftCreation(input: {
+  serverId: string;
   draftKey: string;
   proposedId: string;
 }): Promise<string> {
@@ -120,10 +126,12 @@ export async function prepareDraftCreation(input: {
 
 /** Called under the creation admission lock, so a late terminal cannot detach this start. */
 export async function claimDraftCreation(input: {
+  serverId: string;
   draftKey: string;
   expectedId: string;
 }): Promise<void> {
   const actual = await prepareDraftCreation({
+    serverId: input.serverId,
     draftKey: input.draftKey,
     proposedId: input.expectedId,
   });
@@ -333,20 +341,29 @@ export const useDraftStore = create<DraftStore>()(
       metadataByDraftKey: {},
       creationIdByDraftKey: {},
 
-      ensureDraftCreationId: ({ draftKey, proposedId }) => {
-        const existing = get().creationIdByDraftKey[draftKey];
-        if (existing) return existing;
-        set((state) => ({
-          creationIdByDraftKey: { ...state.creationIdByDraftKey, [draftKey]: proposedId },
-        }));
-        return proposedId;
+      getDraftCreationId: (input) => {
+        const ids = get().creationIdByDraftKey;
+        const scoped = ids[JSON.stringify([input.serverId, input.draftKey])];
+        // Missing host entries inherit older shared IDs; null retires one host's claim only.
+        return scoped === null ? undefined : (scoped ?? ids[input.draftKey] ?? undefined);
       },
-      clearDraftCreationId: ({ draftKey }) =>
-        set((state) => {
-          const creationIdByDraftKey = { ...state.creationIdByDraftKey };
-          delete creationIdByDraftKey[draftKey];
-          return { creationIdByDraftKey };
-        }),
+      ensureDraftCreationId: (input) => {
+        const scopeKey = JSON.stringify([input.serverId, input.draftKey]);
+        const id = get().getDraftCreationId(input) ?? input.proposedId;
+        if (get().creationIdByDraftKey[scopeKey] !== id) {
+          set((state) => ({
+            creationIdByDraftKey: { ...state.creationIdByDraftKey, [scopeKey]: id },
+          }));
+        }
+        return id;
+      },
+      clearDraftCreationId: (input) =>
+        set((state) => ({
+          creationIdByDraftKey: {
+            ...state.creationIdByDraftKey,
+            [JSON.stringify([input.serverId, input.draftKey])]: null,
+          },
+        })),
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];

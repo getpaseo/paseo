@@ -4,17 +4,88 @@ import { migratePersistedState, PersistedDraftStoreSchema } from "./migration";
 import { draftCreationKey } from "@/composer/draft/creation-key";
 
 const draftKey = "draft:metadata";
+const serverId = "host-A";
 
 describe("a draft's plugin metadata", () => {
   beforeEach(() => {
     useDraftStore.setState({ drafts: {}, metadataByDraftKey: {}, creationIdByDraftKey: {} });
   });
 
+  it("retiring host B preserves host A's identity through persistence and reload", async () => {
+    const state = useDraftStore.getState();
+    expect(state.ensureDraftCreationId({ serverId, draftKey, proposedId: "pending-on-A" })).toBe(
+      "pending-on-A",
+    );
+    expect(
+      state.ensureDraftCreationId({ serverId: "host-B", draftKey, proposedId: "terminal-on-B" }),
+    ).toBe("terminal-on-B");
+    state.clearDraftCreationId({ serverId: "host-B", draftKey });
+    const saved = PersistedDraftStoreSchema.parse(
+      JSON.parse(
+        JSON.stringify(useDraftStore.persist.getOptions().partialize!(useDraftStore.getState())),
+      ),
+    );
+    const restored = await migratePersistedState(saved, {
+      migrateLegacyImages: async () => [],
+      nowMs: 1,
+    });
+    useDraftStore.setState({
+      ...restored,
+      creationIdByDraftKey: restored.creationIdByDraftKey ?? {},
+    });
+    expect(
+      useDraftStore
+        .getState()
+        .ensureDraftCreationId({ serverId, draftKey, proposedId: "must-not-replace-A" }),
+    ).toBe("pending-on-A");
+    expect(
+      useDraftStore
+        .getState()
+        .ensureDraftCreationId({ serverId: "host-B", draftKey, proposedId: "next-on-B" }),
+    ).toBe("next-on-B");
+  });
+
+  it("retains a legacy shared ID for unvisited hosts while a retired host gets a fresh ID", async () => {
+    useDraftStore.setState({ creationIdByDraftKey: { [draftKey]: "legacy-pending" } });
+    const state = useDraftStore.getState();
+    expect(
+      state.ensureDraftCreationId({ serverId: "host-B", draftKey, proposedId: "ignored" }),
+    ).toBe("legacy-pending");
+    state.clearDraftCreationId({ serverId: "host-B", draftKey });
+    const saved = PersistedDraftStoreSchema.parse(
+      JSON.parse(
+        JSON.stringify(useDraftStore.persist.getOptions().partialize!(useDraftStore.getState())),
+      ),
+    );
+    const restored = await migratePersistedState(saved, {
+      migrateLegacyImages: async () => [],
+      nowMs: 1,
+    });
+    useDraftStore.setState({
+      ...restored,
+      creationIdByDraftKey: restored.creationIdByDraftKey ?? {},
+    });
+    expect(
+      useDraftStore
+        .getState()
+        .ensureDraftCreationId({ serverId, draftKey, proposedId: "ignored-on-A" }),
+    ).toBe("legacy-pending");
+    expect(
+      useDraftStore
+        .getState()
+        .ensureDraftCreationId({ serverId: "host-B", draftKey, proposedId: "fresh-on-B" }),
+    ).toBe("fresh-on-B");
+  });
+
   it("restores the same creation identity and request metadata after a persisted reload", async () => {
     const state = useDraftStore.getState();
     state.editDraftText({ draftKey, text: "review this" });
     state.patchDraftMetadata({ draftKey, patch: { "plugin.review": true } });
-    const id = state.ensureDraftCreationId({ draftKey, proposedId: "first-generated-id" });
+    const id = state.ensureDraftCreationId({
+      serverId,
+      draftKey,
+      proposedId: "first-generated-id",
+    });
     const request = { initialPrompt: "review this", metadata: { "plugin.review": true } };
     const originalKey = draftCreationKey(id, request);
     const partialize = useDraftStore.persist.getOptions().partialize!;
@@ -32,6 +103,7 @@ describe("a draft's plugin metadata", () => {
     });
     const remounted = useDraftStore.getState();
     const retained = remounted.ensureDraftCreationId({
+      serverId,
       draftKey,
       proposedId: "regenerated-on-remount",
     });
@@ -42,9 +114,11 @@ describe("a draft's plugin metadata", () => {
         metadata: remounted.metadataByDraftKey[draftKey],
       }),
     ).toBe(originalKey);
-    remounted.clearDraftCreationId({ draftKey });
+    remounted.clearDraftCreationId({ serverId, draftKey });
     expect(
-      useDraftStore.getState().ensureDraftCreationId({ draftKey, proposedId: "next-draft" }),
+      useDraftStore
+        .getState()
+        .ensureDraftCreationId({ serverId, draftKey, proposedId: "next-draft" }),
     ).toBe("next-draft");
   });
 

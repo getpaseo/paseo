@@ -1277,14 +1277,17 @@ export function NewWorkspaceScreen({
   }, []);
 
   const ensureWorkspace = useCallback(
-    async (input: {
-      cwd: string;
-      prompt: string;
-      attachments: AgentAttachment[];
-      withInitialAgent: boolean;
-      agent?: CreateWorkspaceRequestOptions["agent"];
-      onEvent?: (snapshot: CreationSnapshot) => void;
-    }) => {
+    async (
+      input: {
+        cwd: string;
+        prompt: string;
+        attachments: AgentAttachment[];
+        withInitialAgent: boolean;
+        agent?: CreateWorkspaceRequestOptions["agent"];
+        onEvent?: (snapshot: CreationSnapshot) => void;
+      },
+      preparedId?: string,
+    ) => {
       if (creationResult.workspace) {
         return creationResult;
       }
@@ -1295,10 +1298,13 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const creationDraftId = await prepareDraftCreation({
-        draftKey,
-        proposedId: draftId ?? generateDraftId(),
-      });
+      const creationDraftId =
+        preparedId ??
+        (await prepareDraftCreation({
+          serverId: selectedServerId,
+          draftKey,
+          proposedId: draftId ?? generateDraftId(),
+        }));
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
@@ -1315,7 +1321,8 @@ export function NewWorkspaceScreen({
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationDraftId,
-        claimIdentity: () => claimDraftCreation({ draftKey, expectedId: creationDraftId }),
+        claimIdentity: () =>
+          claimDraftCreation({ serverId: selectedServerId, draftKey, expectedId: creationDraftId }),
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1397,6 +1404,7 @@ export function NewWorkspaceScreen({
 
         setPendingAction("chat");
         const creationDraftId = await prepareDraftCreation({
+          serverId: selectedServerId,
           draftKey,
           proposedId: draftId ?? generateDraftId(),
         });
@@ -1409,7 +1417,7 @@ export function NewWorkspaceScreen({
               }
             : composerState,
           forkDraftSetup,
-          ensureWorkspace,
+          ensureWorkspace: (request) => ensureWorkspace(request, creationDraftId),
           serverId: selectedServerId,
           clearDraft: chatDraft.clear,
           draftKey,
@@ -1467,7 +1475,9 @@ export function NewWorkspaceScreen({
         profileName: selectedTerminalProfile?.name,
         ensureWorkspace: async (request) => {
           const { workspace: readyWorkspace } = await ensureWorkspace(request);
-          const id = useDraftStore.getState().creationIdByDraftKey[draftKey];
+          const id = useDraftStore
+            .getState()
+            .getDraftCreationId({ serverId: selectedServerId, draftKey });
           if (id) terminalIdentity = { draftId: id, workspaceId: readyWorkspace.id };
           return readyWorkspace;
         },
@@ -1517,8 +1527,10 @@ export function NewWorkspaceScreen({
           serverId: selectedServerId,
           retire: () => {
             const store = useDraftStore.getState();
-            if (store.creationIdByDraftKey[draftKey] === owner.draftId)
-              store.clearDraftCreationId({ draftKey });
+            if (
+              store.getDraftCreationId({ serverId: selectedServerId, draftKey }) === owner.draftId
+            )
+              store.clearDraftCreationId({ serverId: selectedServerId, draftKey });
           },
         });
       await flushDraftPersistStorage();

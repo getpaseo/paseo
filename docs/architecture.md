@@ -358,7 +358,10 @@ join active work or reuse committed stages. A persisted resource alone cannot pr
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
 receipt return an unknown outcome instead of being repeated.
 
-The app durably saves the draft's ID, metadata, and last creation identity before sending it.
+The app durably saves the draft's metadata and host-scoped creation identity before sending it.
+Shared form text does not share admission ownership across hosts. Chat carries its prepared
+identity through attachment encoding into workspace admission, even if another launch completes
+while encoding is in progress.
 Once a request may have started an agent, only a confirmed failure without an unknown outcome
 permits a changed agent request. A confirmed workspace-only request can admit its first agent;
 it cannot duplicate an agent it never requested. A timeout or app restart cannot authorize a
