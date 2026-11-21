@@ -52,6 +52,7 @@ export interface CreateWorktreeWorkspaceInput {
   worktreeRoot: string;
   branch: string | null;
   baseBranch: string | null;
+  worktreeManagerPluginId?: string | null;
   title: string | null;
   metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
@@ -273,14 +274,23 @@ export function createWorkspaceProvisioningService(deps: {
         checkout.isGit && checkout.isPaseoOwnedWorktree
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
+      const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
+      const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+      const inheritedUntrustedSource = (await workspaceRegistry.listAll()).find(
+        (candidate) =>
+          Boolean(candidate.untrustedSource) &&
+          matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+      )?.untrustedSource;
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
         projectId: project.projectId,
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
+        worktreeManagerPluginId: baseMetadata?.worktreeManagerPluginId ?? null,
         title: title?.trim() || null,
         metadata: context?.metadata,
+        ...(inheritedUntrustedSource ? { untrustedSource: inheritedUntrustedSource } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),
@@ -320,6 +330,7 @@ export function createWorkspaceProvisioningService(deps: {
         baseBranch: input.baseBranch,
         mainRepoRoot: repoRoot,
       }),
+      worktreeManagerPluginId: input.worktreeManagerPluginId ?? null,
       title: input.title,
       metadata: input.metadata,
       createdAt: timestamp,

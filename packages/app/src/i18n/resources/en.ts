@@ -2333,8 +2333,9 @@ export const en = {
       resetsIn: "resets in {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "runs out now",
-      runsOutIn: "runs out in {{duration}}",
+      limitReached: "Limit reached",
+      mayHaveRunOut: "May have run out",
+      runsOutAt: "runs out {{time}}",
       justNow: "just now",
       daysAgo: "{{value}}d ago",
       hoursAgo: "{{value}}h ago",
@@ -2995,7 +2996,7 @@ export const en = {
         updateTitle: "Update Paseo skills?",
         uninstallTitle: "Uninstall Paseo skills?",
         uninstallMessage:
-          "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex on this host.",
+          "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex, and ~/.gemini/config on this host.",
         choose: "Choose skills",
         chooseAll: "All skills",
         chooseAllHint: "Keep every bundled skill installed, including ones added later.",
@@ -3003,7 +3004,7 @@ export const en = {
         chooseEmpty: "This host bundles no skills.",
         removeTitle: "Remove deselected skills?",
         removeMessage:
-          "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex on this host. Anything you added inside those skill folders is deleted too.",
+          "{{skills}} will be deleted from ~/.agents, ~/.claude, ~/.codex, and ~/.gemini/config on this host. Anything you added inside those skill folders is deleted too.",
         saveFailed: "Could not save your skill selection.",
         actions: {
           update: "Update",

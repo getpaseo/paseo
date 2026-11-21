@@ -488,6 +488,7 @@ export interface ProviderCommand {
   name: string;
   description: string;
   argumentHint?: string;
+  kind?: "command" | "skill";
 }
 
 export interface ProviderError {
@@ -1214,7 +1215,12 @@ const noticeSchema = z
   })
   .strip();
 const commandSchema = z
-  .object({ name: idSchema, description: z.string(), argumentHint: z.string().optional() })
+  .object({
+    name: idSchema,
+    description: z.string(),
+    argumentHint: z.string().optional(),
+    kind: z.enum(["command", "skill"]).optional(),
+  })
   .strip();
 const usageSchema = z
   .object({

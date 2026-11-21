@@ -150,11 +150,23 @@ export function prepareAgentMessage(
       return { prompt, messageId: id };
     }
   }
+  return envelopeMessage(prompt, source ?? null, id);
+}
+
+/**
+ * Wrap a prompt in its envelope unconditionally. A person's prompt (`source` null) needs one
+ * only when it is quoted or shares a provider prompt with agent messages.
+ */
+export function envelopeMessage(
+  prompt: AgentPromptInput,
+  source: AgentPromptSource | null,
+  id?: string,
+): { prompt: AgentPromptInput; messageId: string } {
   const messageId = id ?? randomUUID();
   const text = typeof prompt === "string" ? prompt : prompt.flatMap(renderMessageText).join("\n\n");
   // Render textual attachments before wrapping, so provider replay still contains one
   // complete envelope instead of an envelope followed by provider-rendered context.
-  const envelope = formatAgentMessage({ id: messageId, source: source ?? null, text });
+  const envelope = formatAgentMessage({ id: messageId, source, text });
   return {
     messageId,
     prompt:

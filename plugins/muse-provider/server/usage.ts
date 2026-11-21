@@ -86,8 +86,10 @@ export class Usage {
         try {
           const { usage } = await this.read(account, launch);
           if (!usage) return unavailable({ kind: "no_quota", detail: "No usage quota reported" });
+          const observedAt = new Date(usage.observedAtMs).toISOString();
           return {
             status: "available",
+            observedAt,
             planLabel: usage.tier,
             windows: [
               windowFromReportedDuration({
@@ -112,7 +114,7 @@ export class Usage {
               {
                 id: "observed",
                 label: "Observed",
-                value: new Date(usage.observedAtMs).toISOString(),
+                value: observedAt,
               },
             ],
           };

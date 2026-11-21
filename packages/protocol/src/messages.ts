@@ -6992,6 +6992,7 @@ export const ProviderUsageWindowSchema = z.object({
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),
+  durationSeconds: z.number().optional(),
   runsOutAt: z.string().nullable().optional(),
   shortfallPct: z.number().nullable().optional(),
   tone: ProviderUsageToneSchema.optional(),
@@ -7054,6 +7055,7 @@ export const UsageProblemSchema = z.discriminatedUnion("kind", [
 const AvailableUsageReportSchema = z.object({
   status: z.literal("available"),
   planLabel: z.string().optional(),
+  observedAt: z.string().optional(),
   windows: z.array(ProviderUsageWindowSchema),
   balances: z.array(ProviderUsageBalanceSchema).optional(),
   details: z.array(ProviderUsageDetailSchema).optional(),

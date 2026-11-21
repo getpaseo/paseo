@@ -99,6 +99,74 @@ describe("ClaudeAgentSession persisted history load", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test("resumes many records within a chunk-sized event-loop turn budget", async () => {
+    const count = 3_072;
+    const text = "🙂".repeat(128);
+    const entries = Array.from({ length: count }, (_, index) =>
+      JSON.stringify({ type: "assistant", message: { content: `${index}:${text}` } }),
+    );
+    entries.splice(count / 2, 0, JSON.stringify({ type: "system", subtype: "compact_boundary" }));
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.join("\n"));
+
+    let turns = 0;
+    let ticker: NodeJS.Immediate;
+    function tick() {
+      turns++;
+      const deadline = performance.now() + 2;
+      while (performance.now() < deadline) {}
+      ticker = setImmediate(tick);
+    }
+    ticker = setImmediate(tick);
+
+    const session = await resume().finally(() => clearImmediate(ticker));
+
+    try {
+      const messages = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "assistant_message") {
+          messages.push(event.item.text);
+        }
+      }
+      expect(messages).toEqual(Array.from({ length: count }, (_, index) => `${index}:${text}`));
+      expect(turns).toBeLessThan(count);
+    } finally {
+      await session.close();
+    }
+  }, 30_000);
+
+  test("yields during replay of a dense window with an expensive consumer", async () => {
+    const file = transcriptPath();
+    const count = 500;
+    const record = JSON.stringify({ type: "assistant", message: { content: "saved reply" } });
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, (record + "\n").repeat(count));
+
+    await withClaudeReplayHistory(file, async (history) => {
+      let turns = 0;
+      let ticker: NodeJS.Immediate | undefined;
+      function tick() {
+        turns++;
+        ticker = setImmediate(tick);
+      }
+
+      let entries = 0;
+      try {
+        for await (const _entry of history.parentEntries) {
+          // Start counting after the read so only yields within the window count.
+          ticker ??= setImmediate(tick);
+          const deadline = performance.now() + 1;
+          while (performance.now() < deadline) {}
+          entries++;
+        }
+      } finally {
+        if (ticker) clearImmediate(ticker);
+      }
+      expect(entries).toBe(count);
+      expect(turns).toBeGreaterThanOrEqual(20);
+    });
+  });
+
   test("serves unrelated health requests while resuming 32 MiB of ordered history", async () => {
     const startedAt = performance.now();
     mkdirSync(path.dirname(transcriptPath()), { recursive: true });
@@ -697,6 +765,75 @@ describe("ClaudeAgentSession persisted history load", () => {
           ]);
         }
       });
+    },
+  );
+
+  test.each(["return", "throw"])(
+    "replays oversized records and closes every source after callback %s",
+    async (exit) => {
+      const parent = transcriptPath();
+      const directory = path.join(parent.slice(0, -".jsonl".length), "subagents");
+      const child = path.join(directory, "agent-child.jsonl");
+      const workflow = path.join(directory, "workflows", "wf_test", "agent-child.jsonl");
+      const notification = {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-id",
+        status: "completed",
+      };
+      const result = {
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "tool-id", content: "é".repeat(600 * 1024) },
+          ],
+        },
+      };
+      const parentRecords = [notification, result, notification];
+      const childRecords = parentRecords.map((entry) => ({
+        ...entry,
+        isSidechain: true,
+        agentId: "child",
+      }));
+      mkdirSync(path.dirname(workflow), { recursive: true });
+      writeFileSync(parent, parentRecords.map((entry) => JSON.stringify(entry)).join("\n"));
+      writeFileSync(child, childRecords.map((entry) => JSON.stringify(entry)).join("\n"));
+      writeFileSync(workflow, childRecords.map((entry) => JSON.stringify(entry)).join("\n"));
+
+      const sources: AsyncIterable<unknown>[] = [];
+      const failure = new Error("consumer failed");
+      const replay = withClaudeReplayHistory(parent, async (history) => {
+        const parentEntries = await Array.fromAsync(history.parentEntries);
+        const firstId = expect.stringMatching(/^task_notification_.*_1$/);
+        const secondId = expect.stringMatching(/^task_notification_.*_2$/);
+        expect(parentEntries).toEqual([
+          { ...notification, notificationId: firstId },
+          result,
+          { ...notification, notificationId: secondId },
+        ]);
+        const [first, , last] = parentEntries;
+        const childEntries = history.subagents[0]!.entries;
+        const workflowEntries = history.workflowEntriesByRunId.get("wf_test")!;
+        sources.push(history.parentEntries, childEntries, workflowEntries);
+        const expectedChildEntries = [
+          { ...childRecords[0], notificationId: first!.notificationId },
+          childRecords[1],
+          { ...childRecords[2], notificationId: last!.notificationId },
+        ];
+        expect(await Array.fromAsync(childEntries)).toEqual(expectedChildEntries);
+        expect(await Array.fromAsync(workflowEntries)).toEqual(expectedChildEntries);
+        expect(await Array.fromAsync(history.parentEntries)).toEqual(parentEntries);
+        if (exit === "throw") throw failure;
+      });
+      if (exit === "throw") await expect(replay).rejects.toBe(failure);
+      else await replay;
+
+      // Reading again probes whether replay released each descriptor when the callback ended.
+      for (const source of sources) {
+        await expect(source[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+          code: "EBADF",
+        });
+      }
     },
   );
 

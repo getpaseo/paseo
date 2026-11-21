@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { MOBILE_PAGE_BLEED_CLASS } from "~/components/page-frame";
 import { SiteShell } from "~/components/site-shell";
 import { getTranslator, localizePath, routeLocale, useLocalizePath } from "~/i18n";
 import { pageMeta } from "~/meta";
@@ -66,8 +67,7 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
 };
 
 // Card sections: a swipeable row on phones, a grid from `sm` up.
-const CARD_ROW_CLASS =
-  "-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 *:w-[70%] *:flex-shrink-0 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 sm:*:w-auto lg:grid-cols-4";
+const CARD_ROW_CLASS = `${MOBILE_PAGE_BLEED_CLASS} flex gap-4 overflow-x-auto pb-1 *:w-[70%] *:flex-shrink-0 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 sm:*:w-auto lg:grid-cols-4`;
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
