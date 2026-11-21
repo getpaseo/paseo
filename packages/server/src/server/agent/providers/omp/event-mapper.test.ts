@@ -21,6 +21,28 @@ describe("OMP runtime event mapper", () => {
     });
   });
 
+  test("maps the xd:// MCP mount notice to a collapsed status line", () => {
+    const mapped = mapOmpRuntimeEventToTimelineItem({
+      type: "notice",
+      level: "info",
+      message: "xd://: mounted mcp__chrome_devtools_click, mcp__chrome_devtools_take_snapshot",
+    });
+
+    expect(mapped).toMatchObject({
+      handled: true,
+      item: {
+        type: "tool_call",
+        name: "omp_xd_mount",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          label: "Mounted 2 tools",
+          text: "mcp__chrome_devtools_click\nmcp__chrome_devtools_take_snapshot",
+        },
+      },
+    });
+  });
+
   test("maps goal_updated events to provider notices and timeline status lines", () => {
     expect(
       mapOmpRuntimeEventToTimelineItem({
