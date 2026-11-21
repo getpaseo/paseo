@@ -8,6 +8,16 @@ export interface TerminalInputModeState {
   win32InputMode: boolean;
   applicationCursorKeys?: boolean;
   bracketedPaste?: boolean;
+  // Independent DEC private mode bits, same as the rest of this state — a
+  // real terminal tracks each of these as its own toggle, even though a
+  // program typically only has one of the three tracking-level modes on at
+  // once. mouseSgr/mouseUrxvt are coordinate-encoding extensions layered on
+  // top of whichever tracking level is active, not tracking levels themselves.
+  mouseX10?: boolean;
+  mouseButtonEvent?: boolean;
+  mouseAnyEvent?: boolean;
+  mouseSgr?: boolean;
+  mouseUrxvt?: boolean;
 }
 
 export const DEFAULT_TERMINAL_INPUT_MODE_STATE: TerminalInputModeState = {
@@ -15,12 +25,22 @@ export const DEFAULT_TERMINAL_INPUT_MODE_STATE: TerminalInputModeState = {
   win32InputMode: false,
   applicationCursorKeys: false,
   bracketedPaste: false,
+  mouseX10: false,
+  mouseButtonEvent: false,
+  mouseAnyEvent: false,
+  mouseSgr: false,
+  mouseUrxvt: false,
 };
 
 const ESC = String.fromCharCode(0x1b);
 const APPLICATION_CURSOR_KEYS_MODE = 1;
 const WIN32_INPUT_MODE = 9001;
 const BRACKETED_PASTE_MODE = 2004;
+const MOUSE_X10_MODE = 1000;
+const MOUSE_BUTTON_EVENT_MODE = 1002;
+const MOUSE_ANY_EVENT_MODE = 1003;
+const MOUSE_SGR_MODE = 1006;
+const MOUSE_URXVT_MODE = 1015;
 const CSI_INPUT_MODE_SEQUENCE = new RegExp(
   `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl]))`,
   "g",
@@ -65,7 +85,12 @@ export function terminalInputModeStatesEqual(
     left.kittyKeyboardFlags === right.kittyKeyboardFlags &&
     left.win32InputMode === right.win32InputMode &&
     Boolean(left.applicationCursorKeys) === Boolean(right.applicationCursorKeys) &&
-    Boolean(left.bracketedPaste) === Boolean(right.bracketedPaste)
+    Boolean(left.bracketedPaste) === Boolean(right.bracketedPaste) &&
+    Boolean(left.mouseX10) === Boolean(right.mouseX10) &&
+    Boolean(left.mouseButtonEvent) === Boolean(right.mouseButtonEvent) &&
+    Boolean(left.mouseAnyEvent) === Boolean(right.mouseAnyEvent) &&
+    Boolean(left.mouseSgr) === Boolean(right.mouseSgr) &&
+    Boolean(left.mouseUrxvt) === Boolean(right.mouseUrxvt)
   );
 }
 
@@ -74,6 +99,11 @@ export class TerminalInputModeTracker {
   private win32InputMode = false;
   private applicationCursorKeys = false;
   private bracketedPaste = false;
+  private mouseX10 = false;
+  private mouseButtonEvent = false;
+  private mouseAnyEvent = false;
+  private mouseSgr = false;
+  private mouseUrxvt = false;
   private readonly kittyKeyboardStack: number[] = [];
   private pending = "";
 
@@ -124,6 +154,11 @@ export class TerminalInputModeTracker {
     this.win32InputMode = false;
     this.applicationCursorKeys = false;
     this.bracketedPaste = false;
+    this.mouseX10 = false;
+    this.mouseButtonEvent = false;
+    this.mouseAnyEvent = false;
+    this.mouseSgr = false;
+    this.mouseUrxvt = false;
     this.kittyKeyboardStack.length = 0;
     this.pending = "";
   }
@@ -134,6 +169,11 @@ export class TerminalInputModeTracker {
       win32InputMode: this.win32InputMode,
       applicationCursorKeys: this.applicationCursorKeys,
       bracketedPaste: this.bracketedPaste,
+      mouseX10: this.mouseX10,
+      mouseButtonEvent: this.mouseButtonEvent,
+      mouseAnyEvent: this.mouseAnyEvent,
+      mouseSgr: this.mouseSgr,
+      mouseUrxvt: this.mouseUrxvt,
     };
   }
 
@@ -158,6 +198,21 @@ export class TerminalInputModeTracker {
     }
     if (this.bracketedPaste) {
       parts.push("\x1b[?2004h");
+    }
+    if (this.mouseX10) {
+      parts.push("\x1b[?1000h");
+    }
+    if (this.mouseButtonEvent) {
+      parts.push("\x1b[?1002h");
+    }
+    if (this.mouseAnyEvent) {
+      parts.push("\x1b[?1003h");
+    }
+    if (this.mouseSgr) {
+      parts.push("\x1b[?1006h");
+    }
+    if (this.mouseUrxvt) {
+      parts.push("\x1b[?1015h");
     }
     return parts.join("");
   }
@@ -221,6 +276,36 @@ export class TerminalInputModeTracker {
       const previous = this.bracketedPaste;
       this.bracketedPaste = final === "h";
       changed = this.bracketedPaste !== previous || changed;
+    }
+
+    if (modes.has(MOUSE_X10_MODE)) {
+      const previous = this.mouseX10;
+      this.mouseX10 = final === "h";
+      changed = this.mouseX10 !== previous || changed;
+    }
+
+    if (modes.has(MOUSE_BUTTON_EVENT_MODE)) {
+      const previous = this.mouseButtonEvent;
+      this.mouseButtonEvent = final === "h";
+      changed = this.mouseButtonEvent !== previous || changed;
+    }
+
+    if (modes.has(MOUSE_ANY_EVENT_MODE)) {
+      const previous = this.mouseAnyEvent;
+      this.mouseAnyEvent = final === "h";
+      changed = this.mouseAnyEvent !== previous || changed;
+    }
+
+    if (modes.has(MOUSE_SGR_MODE)) {
+      const previous = this.mouseSgr;
+      this.mouseSgr = final === "h";
+      changed = this.mouseSgr !== previous || changed;
+    }
+
+    if (modes.has(MOUSE_URXVT_MODE)) {
+      const previous = this.mouseUrxvt;
+      this.mouseUrxvt = final === "h";
+      changed = this.mouseUrxvt !== previous || changed;
     }
 
     return changed;
