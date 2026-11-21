@@ -16,6 +16,8 @@ import {
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
 import { useAppSettings } from "@/hooks/use-settings";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { densityIconBox } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -366,6 +368,17 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
 export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absent";
 
 /**
+ * Whether a sidebar row keeps its actions shown instead of revealing them on hover. True on the
+ * compact layout and wherever the primary pointer can't hover: native apps, and a touch screen in
+ * a wide browser (an iPad in Safari), where the menu button is the only way to the row menu.
+ */
+export function useRowActionsAlwaysVisible(): boolean {
+  const isCompact = useIsCompactFormFactor();
+  const { finePointer } = usePointerCapabilities();
+  return isCompact || !finePointer;
+}
+
+/**
  * What the trailing slot shows for a row. Derived in one place because three row renderers
  * share it: the two project-mode rows and the status-mode row. The rule used to be copied
  * into each of them and immediately drifted — one call site kept hiding the diff after the
@@ -380,14 +393,14 @@ export function resolveTrailingActionVisibility({
   trailing,
   hasArchiveAction,
   isHovered,
-  isTouchPlatform,
+  actionsAlwaysVisible,
   showShortcut,
 }: {
   workspace: SidebarWorkspaceEntry;
   trailing: SidebarWorkspaceTrailing;
   hasArchiveAction: boolean;
   isHovered: boolean;
-  isTouchPlatform: boolean;
+  actionsAlwaysVisible: boolean;
   showShortcut: boolean;
 }): {
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
@@ -398,10 +411,11 @@ export function resolveTrailingActionVisibility({
   reserveSlotWidth: boolean;
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
-  const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
+  const showKebab =
+    Boolean(hasArchiveAction && (isHovered || actionsAlwaysVisible)) && !showShortcut;
   // Touch permanently replaces the stats with the menu. Only temporary shortcut hints
   // conceal content while retaining its width, so desktop rows do not shift.
-  const hasContent = hasTrailing && !(hasArchiveAction && isTouchPlatform);
+  const hasContent = hasTrailing && !(hasArchiveAction && actionsAlwaysVisible);
   let trailingPresentation: SidebarWorkspaceTrailingPresentation = "absent";
   if (hasContent) trailingPresentation = showShortcut ? "hidden" : "visible";
   return {
@@ -409,7 +423,7 @@ export function resolveTrailingActionVisibility({
     showKebab,
     // One-click archive is a pointer affordance: on touch it would sit a few pixels from the
     // kebab and turn a miss into an archive.
-    showArchiveButton: showKebab && isHovered && !isTouchPlatform,
+    showArchiveButton: showKebab && isHovered && !actionsAlwaysVisible,
     // The scrim paints the row's own hover background, so it can only be drawn on a hovered
     // row — over an unhovered one the gradient fades to the wrong color. That is also why
     // touch, which shows the kebab without ever hovering, never gets one.
@@ -419,7 +433,7 @@ export function resolveTrailingActionVisibility({
     // does; the kebab only does on touch, where there is no hover for it to appear on and so
     // no scrim to let it overlay the title. Everywhere else the width goes back to the title
     // and the kebab fades in over its tail.
-    reserveSlotWidth: hasContent || (hasArchiveAction && isTouchPlatform),
+    reserveSlotWidth: hasContent || (hasArchiveAction && actionsAlwaysVisible),
   };
 }
 

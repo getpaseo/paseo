@@ -47,6 +47,7 @@ import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
   resolveTrailingActionVisibility,
+  useRowActionsAlwaysVisible,
   type SidebarWorkspaceTrailingPresentation,
   SidebarWorkspaceTrailingActionBase,
   SidebarWorkspaceTrailingActionOverlay,
@@ -819,6 +820,7 @@ function StatusWorkspaceRowInnerContent({
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
+  const actionsAlwaysVisible = useRowActionsAlwaysVisible();
   const [isHighlighted, setIsHighlighted] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const {
@@ -863,7 +865,7 @@ function StatusWorkspaceRowInnerContent({
           trailing,
           hasArchiveAction: Boolean(onArchive),
           isHovered,
-          isTouchPlatform,
+          actionsAlwaysVisible,
           showShortcut,
         });
         const workspaceRowStyle = getStatusWorkspaceRowStyle({
