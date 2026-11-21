@@ -170,8 +170,9 @@ describe("Claude terminal agent hooks", () => {
       "utf8",
     ).toLowerCase();
 
+    // Whole words: short ids like "omp" occur inside ordinary words ("prompt").
     for (const providerId of Object.keys(AGENT_HOOK_PROVIDERS)) {
-      expect(source).not.toContain(providerId);
+      expect(source).not.toMatch(new RegExp(`\\b${providerId}\\b`));
     }
   });
 
