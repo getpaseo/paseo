@@ -153,10 +153,10 @@ function LinearBotCommentCard() {
 
 function LinearChrome() {
   return (
-    <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#22252E] bg-[#15171E] px-3.5">
+    <div className="flex min-h-9 shrink-0 items-center justify-between border-b border-[#22252E] bg-[#15171E] px-3.5 py-1">
       <div className="flex items-center gap-3">
         <WindowTrafficLights />
-        <div className="flex items-center gap-1 text-[11.5px] text-[#8A8F9E]">
+        <div className="flex flex-wrap items-center gap-1 text-[11.5px] text-[#8A8F9E]">
           <LinearIcon className="h-3.5 w-3.5 text-[#5E6AD2]" />
           <span>Paseo</span>
           <ChevronRight className="h-3 w-3 text-[#555B6E]" aria-hidden="true" />

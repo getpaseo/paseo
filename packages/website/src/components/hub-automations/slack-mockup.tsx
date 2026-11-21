@@ -97,7 +97,7 @@ function SlackWindowChrome() {
         </div>
       </div>
 
-      <div className="flex h-6 w-44 items-center gap-1.5 rounded-[5px] bg-white/[0.08] px-2.5 text-[11px] text-[#ABABAD] sm:w-56">
+      <div className="flex h-6 w-44 min-w-0 items-center gap-1.5 rounded-[5px] bg-white/[0.08] px-2.5 text-[11px] text-[#ABABAD] sm:w-56">
         <Search className="h-3 w-3 shrink-0 text-[#ABABAD]/75" aria-hidden="true" />
         <span className="truncate">{t("hub.demo.slack.searchPlaceholder")}</span>
       </div>
@@ -285,7 +285,7 @@ function SlackMessage({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-start gap-2.5">
+    <div className="flex items-start gap-2.5 @max-[14rem]:flex-col @max-[14rem]:gap-1">
       {bot ? (
         <PaseoBotAvatar size="sm" className="mt-0.5 h-8 w-8" />
       ) : (

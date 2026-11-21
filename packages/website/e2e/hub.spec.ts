@@ -28,8 +28,8 @@ async function readPreviewOnFocus(page: Page) {
   });
 }
 
-async function useLargerText(page: Page) {
-  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+async function useLargerText(page: Page, size = "125%") {
+  await page.addStyleTag({ content: `html { font-size: ${size}; }` });
 }
 
 async function expectSourceLabelFits(page: Page, name: string, text = name) {
@@ -45,8 +45,25 @@ async function expectPreviewRowsFit(page: Page, source: string, ...rows: string[
   await preview.scrollIntoViewIfNeeded();
   for (const row of rows) {
     const text = preview.getByText(row, { exact: true }).filter({ visible: true });
-    await expect(text).toBeInViewport({ ratio: 1 });
-    expect(await text.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(text.first()).toBeVisible();
+    for (const match of await text.all()) {
+      await expect
+        .poll(() =>
+          match.evaluate((element) => {
+            const frame = element.closest('[role="img"]')!.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return Array.from(range.getClientRects()).every(
+              (rect) =>
+                rect.left >= frame.left - 1 &&
+                rect.right <= frame.right + 1 &&
+                rect.top >= frame.top - 1 &&
+                rect.bottom <= frame.bottom + 1,
+            );
+          }),
+        )
+        .toBe(true);
+    }
   }
 }
 
@@ -135,4 +152,14 @@ test("preview results fit on a narrow phone with larger text", async ({ page }) 
   await waitForHydration(page);
   await expectPreviewRowsFit(page, "Discord", "Fix stale worktrees", "getpaseo/paseo#2825");
   await expectPreviewRowsFit(page, "Schedules", "tests passed");
+});
+
+test("Hub previews keep their rows visible with twice the default font size", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openHub(page, 320);
+  await useLargerText(page, "200%");
+  await waitForHydration(page);
+  await expectPreviewRowsFit(page, "Slack", "Open in Paseo");
+  await expectPreviewRowsFit(page, "Linear", "PAS-418");
+  await expectPreviewRowsFit(page, "Discord", "tests passed", "Message #engineering");
 });

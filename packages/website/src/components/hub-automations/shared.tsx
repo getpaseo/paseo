@@ -86,7 +86,7 @@ export function MockupStageWindow({
       aria-label={ariaLabel}
       initial={reduceMotion ? "shown" : "hidden"}
       animate={reduceMotion || active ? "shown" : "hidden"}
-      className={`flex h-full flex-col overflow-hidden rounded-xl border wrap-anywhere shadow-[0_24px_64px_-24px_rgba(0,0,0,0.75)] ${className}`}
+      className={`@container flex h-full flex-col overflow-hidden rounded-xl border wrap-anywhere shadow-[0_24px_64px_-24px_rgba(0,0,0,0.75)] ${className}`}
     >
       {children}
     </motion.div>
@@ -145,7 +145,7 @@ export function OpenInPaseoChip({ variant = "brand" }: { variant?: OpenChipVaria
   const { t } = useTranslation();
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium ${OPEN_CHIP_STYLES[variant]}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium ${OPEN_CHIP_STYLES[variant]}`}
     >
       <PaseoMark className="h-3.5 w-3.5 shrink-0 text-current" />
       <span>{t("hub.demo.shared.openInPaseo")}</span>
@@ -156,7 +156,7 @@ export function OpenInPaseoChip({ variant = "brand" }: { variant?: OpenChipVaria
 /** macOS-style window traffic lights for desktop-style mockup headers. */
 export function WindowTrafficLights() {
   return (
-    <div className="flex items-center gap-1.5" aria-hidden="true">
+    <div className="flex items-center gap-1.5 @max-[14rem]:hidden" aria-hidden="true">
       <span className="h-2.5 w-2.5 rounded-full bg-[#FF5F57]/85" />
       <span className="h-2.5 w-2.5 rounded-full bg-[#FEBC2E]/85" />
       <span className="h-2.5 w-2.5 rounded-full bg-[#28C840]/85" />

@@ -112,7 +112,7 @@ function DiscordPrEmbed() {
         <p className="mt-0.5 text-[12px] text-[#DBDEE1]">
           fix(worktree): prune orphaned branches on close
         </p>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+        <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] @max-[14rem]:grid-cols-1">
           <div>
             <p className="font-semibold text-[#B5BAC1]">{t("hub.demo.discord.fieldHost")}</p>
             <p className="font-mono text-[#DBDEE1]">devbox</p>
@@ -143,7 +143,7 @@ function DiscordComposer() {
   return (
     <div
       aria-hidden="true"
-      className="mx-4 mt-auto mb-3 flex items-center gap-2.5 rounded-[8px] bg-[#383A40] px-3 py-2 text-[12.5px] text-[#80848E]"
+      className="mx-4 mt-auto mb-3 flex items-center gap-2.5 rounded-[8px] bg-[#383A40] px-3 py-2 text-[12.5px] text-[#80848E] @max-[14rem]:mx-2 @max-[14rem]:px-2"
     >
       <PlusCircle className="h-4 w-4 shrink-0 text-[#B5BAC1]" />
       <span className="truncate">{t("hub.demo.discord.composerPlaceholder")}</span>
@@ -230,7 +230,7 @@ function DiscordMessage({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-start gap-2.5">
+    <div className="flex items-start gap-2.5 @max-[14rem]:flex-col @max-[14rem]:gap-1">
       {bot ? (
         <PaseoBotAvatar size="md" rounded="rounded-full" className="mt-0.5" />
       ) : (
