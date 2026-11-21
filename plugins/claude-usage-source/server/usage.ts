@@ -263,6 +263,7 @@ function unscopedWindows(resp: ClaudeUsageResponse): UsageWindow[] {
         shortLabel: spec.shortLabel,
         summary: spec.summary,
         utilizationPct: window.utilization,
+        durationSeconds: spec.field === "five_hour" ? 5 * 3600 : 7 * 86400,
         resetsAt: window.resets_at ?? null,
         tone: toneFromUsedPct(window.utilization),
       }),
@@ -283,6 +284,7 @@ function scopedWindows(limits: ScopedLimit[]): UsageWindow[] {
       label: `Weekly \u00b7 ${limit.name}`,
       shortLabel: `wk ${limit.name}`,
       utilizationPct: limit.usedPct,
+      durationSeconds: 7 * 86400,
       resetsAt: limit.resetsAt,
       tone: toneFromUsedPct(limit.usedPct),
     });

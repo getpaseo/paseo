@@ -51,8 +51,23 @@ export interface AcpOptions {
   workspaceOnlyCatalog?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
-  /** Allow delayed session/load updates before publishing the session as ready. */
+  /**
+   * For an agent that streams history after its session/load response: publish the session
+   * as ready once this long passes without a history update.
+   */
   loadReplayQuietPeriodMs?: number;
+  /**
+   * Keep a turn open after `end_turn` while qualifying tool calls are still running,
+   * settling once those tools finish and the agent finishes its follow-up reply.
+   */
+  deferTurnOnRunningTools?: {
+    /** Delay after `usage_update` closes a follow-up reply before settling. Defaults to 500ms. */
+    settleDelayMs?: number;
+    /** Quiet limit after qualifying tools finish if no reply settles via `usage_update`. Defaults to 120_000ms. */
+    quietLimitMs?: number;
+    /** Predicate deciding whether an open tool call keeps the turn open. Defaults to all running tools. */
+    keepsTurnOpen?: (toolCall: AcpToolCallSnapshot) => boolean;
+  };
   /** An unattended mode that approves ACP allow-once requests in the specified native mode. */
   autoAcceptMode?: {
     mode: Omit<ProviderMode, "isUnattended">;
@@ -70,12 +85,17 @@ export interface AcpConfigAccess {
   set(id: string, value: JsonValue): Promise<void>;
 }
 
+/** Sends an ACP extension request to the agent. Rejects with the agent's JSON-RPC error. */
+export type AcpRequest = (method: string, params: JsonValue) => Promise<JsonValue>;
+
 export interface AcpDiscoveryContext extends AcpContext {
   config: AcpConfigAccess;
+  request: AcpRequest;
 }
 
 export interface AcpConfigureContext extends AcpContext {
   config: AcpConfigAccess;
+  request: AcpRequest;
   catalog(): ProviderCatalog;
   apply(change: AcpConfigChange): Promise<void>;
 }
@@ -117,11 +137,18 @@ export interface AcpTransformer {
     context: AcpDiscoveryContext,
   ): Promise<ProviderCatalog> | ProviderCatalog;
   configure?(change: AcpConfigChange, context: AcpConfigureContext): Promise<"handled" | "pass">;
+  /** Rewrites every session config snapshot before Paseo sees it. */
+  config?(state: ProviderConfigState, context: AcpContext): ProviderConfigState;
+  /** Rewrites each advertised ACP slash command before Paseo sees it. */
+  command?(command: ProviderCommand, context: AcpContext): ProviderCommand;
   notification?(
     notification: { method: string; params: JsonValue },
     context: AcpContext,
   ): AcpVendorUpdate | readonly AcpVendorUpdate[] | null;
-  toolCall?(toolCall: AcpToolCallSnapshot, context: AcpContext): AcpToolCallSnapshot;
+  toolCall?(
+    toolCall: AcpToolCallSnapshot,
+    context: AcpContext & { mcpServerNames?: readonly string[] },
+  ): AcpToolCallSnapshot;
 }
 
 export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistration {

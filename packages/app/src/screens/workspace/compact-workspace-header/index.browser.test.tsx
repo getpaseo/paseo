@@ -20,8 +20,6 @@ afterEach(async () => {
   await act(async () => root.render(null));
   usePanelStore.setState(initialPanel, true);
 });
-const noop = () => {};
-const explorerState = { expanded: false };
 const geometry: WindowLayout = {
   bounds: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   verticalBarEdge: "trailing",
@@ -42,9 +40,8 @@ it("updates compact header actions on panel changes without rendering the worksp
         title="Workspace"
         subtitle="Project"
         isSubtitleDistinct
-        onToggleExplorer={noop}
-        explorerToggleLabel="Explorer"
-        explorerToggleAccessibilityState={explorerState}
+        explorerAction={null}
+        inDesktopTitlebar={false}
         tabSwitcher={null}
         headerVariant="full"
       >

@@ -196,7 +196,7 @@ export interface SetupHost {
 /**
  * An isolated host whose only agent history is the Claude sessions given here, so suggestions
  * never depend on the machine running the test. Its HOME is a scratch folder, so the skills setup
- * installs never land in the real ~/.agents, ~/.claude or ~/.codex. `withBrokenProvider` adds a
+ * installs never land in the real ~/.agents, ~/.claude, ~/.codex, or ~/.gemini/config. `withBrokenProvider` adds a
  * provider that cannot start.
  */
 export async function startSetupHost(

@@ -33,6 +33,9 @@ interface KnownReport {
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
+  resolveLaunch?(
+    provider: string,
+  ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
 }
 
 export interface ListUsageReportsOptions {
@@ -134,6 +137,7 @@ export class UsageSourceRegistry {
       provider: session.provider,
       model: session.model,
       env: session.env,
+      launch: session.launch,
     });
     const current = this.agents.usageSession(agentId);
     if (
