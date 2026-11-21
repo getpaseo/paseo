@@ -21,6 +21,7 @@ export class Children {
     private readonly parentId: string,
     private readonly cwd: string,
     private readonly emit: (event: ProviderEvent) => void,
+    private readonly canProjectChild: () => boolean,
   ) {}
 
   async update(item: WireItem): Promise<void> {
@@ -34,6 +35,7 @@ export class Children {
       )
     )
       return;
+    if (!this.canProjectChild()) return;
     const id = item.childSessionId;
     if (!this.children.has(id)) {
       const { session } = await this.host.request(
@@ -41,6 +43,8 @@ export class Children {
         { sessionId: id },
         childSessionSchema,
       );
+      // The parent can close while Muse reads the child.
+      if (!this.canProjectChild()) return;
       this.emit({
         type: "session.opened",
         sessionId: id,
