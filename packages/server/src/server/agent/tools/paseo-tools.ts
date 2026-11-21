@@ -871,6 +871,23 @@ function createToolCatalog(
     return parentAgent;
   };
 
+  /** The agent's current attention reason, or null when it is read. Throws for an unknown agent. */
+  const readAttentionReason = async (
+    agentId: string,
+  ): Promise<"finished" | "error" | "permission" | null> => {
+    const liveAgent = agentManager.getAgent(agentId);
+    if (liveAgent && !liveAgent.internal) {
+      return liveAgent.attention.requiresAttention ? liveAgent.attention.attentionReason : null;
+    }
+    const record = await agentStorage.get(agentId);
+    if (!record || record.internal) {
+      throw new PaseoToolInputError(`Agent ${agentId} not found`);
+    }
+    return record.requiresAttention === true && !record.archivedAt
+      ? (record.attentionReason ?? "finished")
+      : null;
+  };
+
   const workspaceBackgroundIntent = (background: boolean | undefined) => {
     const caller = resolveCallerAgent();
     return {
@@ -2272,6 +2289,34 @@ function createToolCatalog(
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "mark_agent_read",
+    {
+      title: "Mark agent as read",
+      description:
+        "Clear an agent's unread or failed state, like Mark as read in the app. Use it once you have handled a subagent's result. A pending permission request stays unread.",
+      inputSchema: {
+        agentId: z.string(),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        cleared: z.boolean(),
+      },
+    },
+    async ({ agentId }) => {
+      const reason = await readAttentionReason(agentId);
+      // Agents can't dismiss a permission request on the user's behalf.
+      const cleared = reason !== null && reason !== "permission";
+      if (cleared) {
+        await agentManager.clearAgentAttention(agentId);
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ success: true, cleared }),
       };
     },
   );
