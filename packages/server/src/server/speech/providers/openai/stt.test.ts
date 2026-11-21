@@ -21,6 +21,17 @@ vi.mock("openai", () => ({
 
 import { OpenAISTT } from "./stt.js";
 
+function drainByteCount(stream: NodeJS.ReadableStream): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    let bytes = 0;
+    stream.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+    });
+    stream.once("error", reject);
+    stream.once("end", () => resolve(bytes));
+  });
+}
+
 describe("OpenAISTT", () => {
   afterEach(() => {
     openAiConstructorOptionsMock.mockReset();
@@ -86,5 +97,39 @@ describe("OpenAISTT", () => {
         response_format: "json",
       }),
     );
+  });
+  test("audio that arrives while a segment is being transcribed goes to the next segment", async () => {
+    const uploadedBytes: number[] = [];
+    const releaseUploads: Array<() => void> = [];
+    transcriptionsCreateMock.mockImplementation(
+      async (request: { file: NodeJS.ReadableStream }) => {
+        const bytes = await drainByteCount(request.file);
+        uploadedBytes.push(bytes);
+        await new Promise<void>((resolve) => releaseUploads.push(resolve));
+        return { text: `segment of ${bytes} bytes` };
+      },
+    );
+    const provider = new OpenAISTT({ apiKey: "sk-test" }, pino({ level: "silent" }));
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+    const finals: Array<{ segmentId: string; transcript: string }> = [];
+    session.on("transcript", (event) => {
+      finals.push({ segmentId: event.segmentId, transcript: event.transcript });
+    });
+
+    const wavHeaderBytes = 44;
+    await session.connect();
+    session.appendPcm16(Buffer.alloc(1000));
+    session.commit();
+    await vi.waitFor(() => expect(releaseUploads).toHaveLength(1));
+
+    // The user keeps talking while the first segment is still with the provider.
+    session.appendPcm16(Buffer.alloc(600));
+    session.commit();
+    await vi.waitFor(() => expect(releaseUploads).toHaveLength(2));
+    releaseUploads.forEach((release) => release());
+    await vi.waitFor(() => expect(finals).toHaveLength(2));
+
+    expect(uploadedBytes).toEqual([wavHeaderBytes + 1000, wavHeaderBytes + 600]);
+    expect(new Set(finals.map((final) => final.segmentId)).size).toBe(2);
   });
 });

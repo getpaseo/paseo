@@ -414,6 +414,36 @@ describe("voice runtime", () => {
     expect(runtime.getTelemetrySnapshot().isSpeaking).toBe(false);
   });
 
+  it("stops assistant playback when the daemon reports the user's words, without a speech start", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onAssistantAudioStarted("server-1");
+
+    runtime.onServerSpeechStateChanged("server-1", false, "stop");
+
+    expect(engine.stop).toHaveBeenCalled();
+    expect(engine.clearQueue).toHaveBeenCalled();
+    expect(adapter.setAssistantAudioPlaying).toHaveBeenCalledWith(false);
+    expect(runtime.getTelemetrySnapshot().isSpeaking).toBe(false);
+  });
+
+  it("keeps assistant playback going when server speech stops without a verdict", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onAssistantAudioStarted("server-1");
+
+    runtime.onServerSpeechStateChanged("server-1", false);
+
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().phase).toBe("playing");
+  });
+
   it("stops assistant playback immediately when server speech starts", async () => {
     const adapter = createSessionAdapter();
     const { runtime, engine } = createRuntime();

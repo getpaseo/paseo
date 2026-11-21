@@ -122,13 +122,19 @@ export class OpenAISTT implements SpeechToTextProvider {
           return;
         }
 
+        // Take the segment now: audio that arrives while it is being transcribed belongs
+        // to the next one, and a second commit must not share this segment's id.
         const committedId = segmentId;
         const prev = previousSegmentId;
+        const committedPcm16 = pcm16;
+        previousSegmentId = committedId;
+        segmentId = v4();
+        pcm16 = Buffer.alloc(0);
         emitter.emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         void (async () => {
           try {
-            if (pcm16.length === 0) {
+            if (committedPcm16.length === 0) {
               emitter.emit("transcript", {
                 segmentId: committedId,
                 transcript: "",
@@ -139,7 +145,7 @@ export class OpenAISTT implements SpeechToTextProvider {
               return;
             }
 
-            const wav = convertPCMToWavBuffer(pcm16);
+            const wav = convertPCMToWavBuffer(committedPcm16);
             const result = await transcribeAudio(
               wav,
               "audio/wav",
@@ -159,10 +165,6 @@ export class OpenAISTT implements SpeechToTextProvider {
             });
           } catch (err) {
             emitter.emit("error", err);
-          } finally {
-            previousSegmentId = committedId;
-            segmentId = v4();
-            pcm16 = Buffer.alloc(0);
           }
         })();
       },
