@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
+import { createWatcherLivenessCanary } from "../watcher-liveness-canary.js";
 import type { FileChange } from "./index.js";
 import { createNativeRecursiveBackend } from "./internal/native-recursive.js";
 import { createObserverPaths } from "./internal/paths.js";
@@ -9,6 +10,7 @@ import { createObserverPaths } from "./internal/paths.js";
 test("the recursive watcher remembers newly announced files before reconciliation", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-observer-native-"));
   const paths = createObserverPaths(process.platform);
+  const canary = createWatcherLivenessCanary(root);
   const changes: FileChange[] = [];
   let active = true;
   const backend = createNativeRecursiveBackend(
@@ -34,7 +36,7 @@ test("the recursive watcher remembers newly announced files before reconciliatio
       isIgnored: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => {
-        changes.push({ type, path });
+        changes.push(...canary.filterEvents([{ type, path }]));
       },
       fail: (error) => {
         throw error;
@@ -44,6 +46,9 @@ test("the recursive watcher remembers newly announced files before reconciliatio
   );
   try {
     await backend.start();
+    await canary.verify();
+    // Reconcile the removed probe before counting the files announced by the test.
+    await backend.updateIgnore();
     const path = join(root, "new.txt");
     await writeFile(path, "created");
     await expect
