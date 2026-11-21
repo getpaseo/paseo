@@ -334,7 +334,7 @@ async function openSession(
     onRetired: () => retireSession(state, input.sessionId),
   });
   try {
-    const capabilities = await runtime.open(input, state.capabilities);
+    const capabilities = await runtime.open(input, state.capabilities, state.isClosed);
     if (state.isClosed()) {
       await runtime.closeSession();
       return;
@@ -454,12 +454,14 @@ class AcpRuntime {
    * Once ready, suppress late replay rows until the first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
-  private lastLoadUpdateAt = 0;
+  private lastLoadHistoryAt = 0;
+  private lastPartialWireAt = 0;
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
   private deferredFinalized = false;
   private processFailed = false;
+  private processFailureMessage: string | null = null;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: (options?: {
@@ -483,6 +485,7 @@ class AcpRuntime {
       timeoutMs?: number;
     }) => Promise<void> = async () => {};
     let whenConnectorClosed: () => Promise<void> | null = () => null;
+    let onPartialWireRead: (() => void) | null = null;
     if (options.options.command) {
       // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
       // Standalone callers and older hosts do not send a daemon-resolved launch.
@@ -499,7 +502,10 @@ class AcpRuntime {
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);
       const output = Writable.toWeb(child.stdin) as unknown as Parameters<typeof ndJsonStream>[0];
-      const input = Readable.toWeb(child.stdout) as unknown as Parameters<typeof ndJsonStream>[1];
+      const rawInput = Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>;
+      const input = observePartialWireReads(rawInput, () => onPartialWireRead?.()) as Parameters<
+        typeof ndJsonStream
+      >[1];
       stream = ndJsonStream(output, input);
     } else {
       const owned = ownConnectorStream(await options.options.connector());
@@ -508,6 +514,7 @@ class AcpRuntime {
       whenConnectorClosed = owned.whenClosed;
     }
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
+    onPartialWireRead = () => runtime.notePartialWireRead();
     try {
       const initialize = withTimeout(
         runtime.call(
@@ -562,6 +569,7 @@ class AcpRuntime {
     child?.on("error", (error) => {
       const message = describeError(error);
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       if (this.closing || !this.nativeSessionId) return;
       this.emit({
@@ -574,6 +582,7 @@ class AcpRuntime {
       if (this.closing || this.processFailed || !this.nativeSessionId) return;
       const message = `ACP process exited (${signal ?? code ?? "unknown"})`;
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       this.emit({
         type: "session.runtime_failed",
@@ -586,6 +595,7 @@ class AcpRuntime {
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
+    isConnectionClosed: () => boolean,
   ): Promise<readonly ProviderCapability[]> {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
@@ -656,15 +666,22 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    await this.finishSessionOpen(isConnectionClosed);
+    return sessionCapabilities;
+  }
+
+  private async finishSessionOpen(isConnectionClosed: () => boolean): Promise<void> {
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
     const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
     if (this.replayWindow && quietPeriod && quietPeriod > 0) {
-      await this.waitForLoadReplay(quietPeriod);
+      await this.waitForLoadReplay(quietPeriod, isConnectionClosed);
       this.replayWindow = "skip";
     }
-    return sessionCapabilities;
+    if (this.processFailed && !isConnectionClosed()) {
+      throw new Error(this.processFailureMessage ?? "ACP process exited during session open");
+    }
   }
 
   async discover(cwd?: string): Promise<ProviderCatalog> {
@@ -1282,16 +1299,12 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
-    if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
+    if (this.replayWindow && isReplayHistoryUpdate(notification.update)) {
+      this.lastLoadHistoryAt = performance.now();
+    }
     if (this.replayWindow === "skip") {
-      const update = notification.update;
-      if (
-        update.sessionUpdate === "available_commands_update" ||
-        update.sessionUpdate === "config_option_update" ||
-        update.sessionUpdate === "current_mode_update" ||
-        update.sessionUpdate === "usage_update"
-      ) {
-        this.reduceStateUpdate(update, wireSeq);
+      if (isSessionStateUpdate(notification.update)) {
+        this.reduceStateUpdate(notification.update, wireSeq);
       }
       return;
     }
@@ -1634,6 +1647,7 @@ class AcpRuntime {
     if (this.closing || this.processFailed) return;
     const message = "ACP transport closed unexpectedly";
     this.processFailed = true;
+    this.processFailureMessage = message;
     this.settlePendingWork(message);
     if (!this.nativeSessionId) return;
     this.emit({
@@ -1945,17 +1959,84 @@ class AcpRuntime {
       });
   }
 
-  private async waitForLoadReplay(quietPeriod: number): Promise<void> {
+  private notePartialWireRead(): void {
+    if (this.replayWindow) this.lastPartialWireAt = performance.now();
+  }
+
+  // An agent that streams history after its session/load response sends no end marker,
+  // so the history ends once a quiet period passes without a history update.
+  private async waitForLoadReplay(
+    quietPeriod: number,
+    isConnectionClosed: () => boolean,
+  ): Promise<void> {
     const start = performance.now();
-    const deadline = start + 5 * quietPeriod;
-    while (!this.closing && !this.processFailed) {
-      const idleAt = Math.max(start, this.lastLoadUpdateAt) + quietPeriod;
-      const remaining = Math.min(deadline, idleAt) - performance.now();
-      if (remaining <= 0) return;
-      await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+    while (!this.closing && !this.processFailed && !isConnectionClosed()) {
+      const lastActivityAt = Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt);
+      const remaining = lastActivityAt + quietPeriod - performance.now();
+      // A stalled event loop reaches the quiet period with history still unread in the pipe.
+      // setImmediate lets the loop read pending input once before the silence is trusted.
+      await new Promise<void>((resolve) => {
+        if (remaining > 0) setTimeout(resolve, remaining);
+        else setImmediate(resolve);
+      });
       await this.notificationLane;
+      if (
+        remaining <= 0 &&
+        Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt) === lastActivityAt
+      ) {
+        return;
+      }
     }
   }
+}
+
+function observePartialWireReads(
+  input: ReadableStream<Uint8Array>,
+  onPartialRead: () => void,
+): ReadableStream<Uint8Array> {
+  let incompleteLine = false;
+  return input.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        const wasIncomplete = incompleteLine;
+        incompleteLine = hasTrailingIncompleteLine(chunk, incompleteLine);
+        if (wasIncomplete || incompleteLine) onPartialRead();
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+function hasTrailingIncompleteLine(chunk: Uint8Array, incompleteLine: boolean): boolean {
+  const newline = chunk.lastIndexOf(0x0a);
+  const start = newline === -1 ? 0 : newline + 1;
+  if (newline !== -1) incompleteLine = false;
+  for (let index = start; index < chunk.length; index += 1) {
+    const byte = chunk[index];
+    if (byte !== 0x20 && byte !== 0x09 && byte !== 0x0d) return true;
+  }
+  return incompleteLine;
+}
+
+function isReplayHistoryUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk" ||
+    update.sessionUpdate === "tool_call" ||
+    update.sessionUpdate === "tool_call_update" ||
+    update.sessionUpdate === "plan" ||
+    update.sessionUpdate === "compaction_update"
+  );
+}
+
+function isSessionStateUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "config_option_update" ||
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "usage_update"
+  );
 }
 
 function routeIncomingMessages(

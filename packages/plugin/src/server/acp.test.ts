@@ -303,6 +303,378 @@ describe("runAcpProvider", () => {
     },
   );
 
+  it("keeps history that streams after session/load for longer than five quiet periods", async () => {
+    const sessionId = "connector-session";
+    const historyLength = 40;
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        let sent = 0;
+        stream = setInterval(() => {
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: `answer-${sent}`,
+              content: { type: "text", text: `previous answer ${sent}` },
+            },
+          });
+          sent += 1;
+          if (sent === historyLength) clearInterval(stream);
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(events.filter((event) => event.type === "timeline.item")).toHaveLength(historyLength);
+    } finally {
+      clearInterval(stream);
+      await connection.close();
+    }
+  });
+
+  it("closes without waiting for history that is still streaming after session/load", async () => {
+    const sessionId = "connector-session";
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        stream = setInterval(() => {
+          if (runtime.readsCanceled) return;
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "previous answer" },
+            },
+          });
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "timeline.item");
+      const outcome = await Promise.race([
+        connection.close().then(() => "closed"),
+        new Promise((resolve) => setTimeout(() => resolve("still replaying"), 1_000)),
+      ]);
+      expect(outcome).toBe("closed");
+    } finally {
+      clearInterval(stream);
+    }
+  });
+
+  it("keeps history left unread while the event loop stalled past the quiet period", async () => {
+    const sessionId = "connector-session";
+    const notifyAnswer = (runtime: ConnectorInstance, text: string) =>
+      runtime.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: text,
+          content: { type: "text", text },
+        },
+      });
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        notifyAnswer(runtime, "read before the stall");
+        // Stall after the timers phase, so the overdue quiet timer runs before the next I/O poll.
+        const stall = () => {
+          // Like bytes waiting in the agent's pipe: readable only once the loop polls I/O again.
+          setImmediate(() => notifyAnswer(runtime, "unread during the stall"));
+          const stalledUntil = performance.now() + 250;
+          while (performance.now() < stalledUntil);
+        };
+        setTimeout(() => setImmediate(stall), 30);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(
+        events.filter((event) => event.type === "timeline.item").map((event) => event.item),
+      ).toEqual([
+        expect.objectContaining({ text: "read before the stall" }),
+        expect.objectContaining({ text: "unread during the stall" }),
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("does not extend the load replay wait for session_info_update notifications", async () => {
+    const sessionId = "connector-session";
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        runtime.notify("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "answer-1",
+            content: { type: "text", text: "previous answer" },
+          },
+        });
+        stream = setInterval(() => {
+          if (runtime.readsCanceled) return;
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "session_info_update",
+              title: "Updated title",
+            },
+          });
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      const outcome = await Promise.race([
+        waitForEvent(events, (event) => event.type === "session.ready").then(() => "ready"),
+        new Promise((resolve) => setTimeout(() => resolve("still waiting"), 1_000)),
+      ]);
+      expect(outcome).toBe("ready");
+      expect(events.filter((event) => event.type === "timeline.item")).toHaveLength(1);
+    } finally {
+      clearInterval(stream);
+      await connection.close();
+    }
+  });
+
+  it("fails session open without emitting session.ready or leaking the session when the ACP process crashes mid-replay", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-crash-replay-"));
+    const script = path.join(dir, "crash-replay-agent.mjs");
+    await writeFile(
+      script,
+      `
+      import { createInterface } from "node:readline";
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+        } else if (msg.method === "session/load") {
+          const sid = msg.params.sessionId;
+          send({ id: msg.id, result: { configOptions: [] } });
+          send({
+            method: "session/update",
+            params: {
+              sessionId: sid,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "m-1",
+                content: { type: "text", text: "partial history" },
+              },
+            },
+          });
+          if (sid === "crash-session") {
+            setTimeout(() => process.exit(1), 20);
+          }
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const connection = await runAcpProvider({
+      id: "crash-replay",
+      label: "Crash Replay",
+      command: [process.execPath, script],
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        requestId: "req-crash",
+        sessionId: "session-1",
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "crash-session" } },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.failed" && event.requestId === "req-crash",
+      );
+      expect(events.some((event) => event.type === "session.ready")).toBe(false);
+
+      // The failed open must not leave a dead session registered under "session-1".
+      await connection.send({
+        ...openInput(),
+        requestId: "req-retry",
+        sessionId: "session-1",
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "healthy-session" } },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.ready" && event.requestId === "req-retry",
+      );
+    } finally {
+      await connection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a multi-read tool result started during an event-loop stall past the quiet period", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-large-stall-replay-"));
+    const script = path.join(dir, "large-stall-agent.mjs");
+    const outputBytes = 256 * 1024;
+    await writeFile(
+      script,
+      `
+      import { createInterface } from "node:readline";
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+        } else if (msg.method === "session/load") {
+          const sid = msg.params.sessionId;
+          send({
+            method: "session/update",
+            params: {
+              sessionId: sid,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "m-before",
+                content: { type: "text", text: "before the stall" },
+              },
+            },
+          });
+          send({ id: msg.id, result: { configOptions: [] } });
+          setTimeout(() => {
+            send({
+              method: "session/update",
+              params: {
+                sessionId: sid,
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "shell-large",
+                  name: "run_command",
+                  title: "Large output",
+                  kind: "execute",
+                  status: "completed",
+                  rawInput: { CommandLine: "cat large.log" },
+                  rawOutput: { output: "x".repeat(${outputBytes}), exit_code: 0 },
+                },
+              },
+            });
+          }, 50);
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const connection = await runAcpProvider({
+      id: "large-stall",
+      label: "Large Stall",
+      command: [process.execPath, script],
+      acpOptions: { loadReplayQuietPeriodMs: 200 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    let stalled = false;
+    const stallEventLoop = () => {
+      const until = performance.now() + 350;
+      while (performance.now() < until);
+    };
+    const scheduleStall = () => setImmediate(stallEventLoop);
+    connection.onEvent((event) => {
+      events.push(event);
+      if (!stalled && event.type === "session.config") {
+        stalled = true;
+        // Stall after the timers phase so the overdue quiet timer runs before the next I/O poll;
+        // the 256 KiB tool result fills the pipe during the stall and spans multiple stdout reads.
+        setTimeout(scheduleStall, 20);
+      }
+    });
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "large-session" } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const items = events
+        .filter((event) => event.type === "timeline.item")
+        .map((event) => event.item);
+      expect(items).toEqual([
+        expect.objectContaining({ type: "assistant_message", text: "before the stall" }),
+        expect.objectContaining({ type: "tool_call", callId: "shell-large", status: "completed" }),
+      ]);
+    } finally {
+      await connection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("auto-accepts ordinary permissions only in the unattended mode and refuses to switch while busy", async () => {
     const modeConfig = {
       id: "mode",
