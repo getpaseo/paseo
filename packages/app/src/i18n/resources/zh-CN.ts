@@ -131,6 +131,7 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "查找消息",
     placeholders: {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",
@@ -193,6 +194,8 @@ export const zhCN: TranslationResources = {
       removeReview: "移除 review 附件",
     },
     errors: {
+      messageLookupFailed: "无法刷新对话。仍无法确认是否已送达。请重新连接后再次查找消息。",
+      messageNotFound: "在可用历史记录中未找到此消息。仍无法确认是否已送达。",
       failedToSend: "发送消息失败",
       failedToCreateAgent: "创建 Agent 失败",
       noHostSelected: "未选择 Host",

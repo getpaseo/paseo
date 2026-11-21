@@ -129,6 +129,7 @@ export const en = {
     },
   },
   composer: {
+    viewMessage: "Find message",
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
@@ -191,6 +192,10 @@ export const en = {
       removeReview: "Remove review attachment",
     },
     errors: {
+      messageLookupFailed:
+        "Could not refresh the conversation. Delivery is still unconfirmed. Reconnect and try finding the message again.",
+      messageNotFound:
+        "Could not find this message in the available history. Delivery is still unconfirmed.",
       failedToSend: "Failed to send message",
       failedToCreateAgent: "Failed to create agent",
       noHostSelected: "No host selected",

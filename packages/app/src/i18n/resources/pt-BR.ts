@@ -132,6 +132,7 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "Buscar mensagem",
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",
@@ -194,6 +195,10 @@ export const ptBR: TranslationResources = {
       removeReview: "Remover anexo de revisão",
     },
     errors: {
+      messageLookupFailed:
+        "Não foi possível atualizar a conversa. A entrega ainda não foi confirmada. Reconecte e tente buscar a mensagem novamente.",
+      messageNotFound:
+        "Não foi possível encontrar esta mensagem no histórico disponível. A entrega ainda não foi confirmada.",
       failedToSend: "Falha ao enviar mensagem",
       failedToCreateAgent: "Falha ao criar agente",
       noHostSelected: "Nenhum host selecionado",
