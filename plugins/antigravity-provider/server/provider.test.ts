@@ -213,3 +213,156 @@ describe("installation", () => {
     ).resolves.toEqual({ status: "not_installed" });
   });
 });
+
+it("keeps a turn open for backgrounded run_command calls but not IsDaemon commands", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    let turn = 0;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          break;
+        case "session/prompt":
+          turn += 1;
+          if (turn === 1) {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "daemon-1", name: "run_command",
+              title: "Dev server", status: "in_progress", rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          } else {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "bg-1", name: "run_command",
+              title: "Background build", status: "in_progress", rawInput: { CommandLine: "sleep 1" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+            setTimeout(() => {
+              send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+                sessionUpdate: "tool_call_update", toolCallId: "bg-1", status: "completed",
+              } } });
+              send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+                sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Build finished." },
+              } } });
+              send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+                sessionUpdate: "usage_update", used: 50, size: 1000,
+              } } });
+            }, 80);
+          }
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const provider = createAntigravityProvider();
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-1",
+      sessionId: "agy-test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: false,
+      },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+      .toBeDefined();
+
+    // Turn 1: IsDaemon: true completes immediately on end_turn.
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-test",
+      prompt: {
+        clientMessageId: "daemon-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "start dev server" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:daemon-turn" &&
+              event.state === "completed",
+          ),
+        { timeout: 3_000 },
+      )
+      .toBeDefined();
+
+    // Turn 2: non-daemon background command keeps turn open until completion + reply + usage_update.
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-test",
+      prompt: {
+        clientMessageId: "bg-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "run build" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "timeline.item" &&
+              event.item.type === "tool_call" &&
+              event.item.id === "bg-1" &&
+              event.item.status === "running",
+          ),
+        { timeout: 3_000 },
+      )
+      .toBeDefined();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:bg-turn" &&
+          event.state === "completed",
+      ),
+    ).toBe(false);
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:bg-turn" &&
+              event.state === "completed",
+          ),
+        { timeout: 3_000 },
+      )
+      .toBeDefined();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({ type: "assistant_message", text: "Build finished." }),
+      }),
+    );
+  } finally {
+    await connection.close();
+  }
+});
