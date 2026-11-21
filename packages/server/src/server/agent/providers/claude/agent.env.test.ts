@@ -37,6 +37,9 @@ describe("Claude SDK env", () => {
   )(
     "preserves explicit launch identity $entrypoint in $command while clearing inherited session env",
     async ({ command, entrypoint }) => {
+      // A daemon started from a Claude Code terminal carries that session's env.
+      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CLAUDE_CODE_ENTRYPOINT", "cli");
       let output = "";
       let exited = Promise.resolve<unknown[]>([]);
       const query = claudeQuery(
@@ -75,6 +78,7 @@ describe("Claude SDK env", () => {
         });
       } finally {
         query.close();
+        vi.unstubAllEnvs();
       }
     },
   );
