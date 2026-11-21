@@ -106,6 +106,10 @@ function transformSourceItem(
     };
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
+    if (item.kind === "assistant_message") {
+      if (item.messageId) projected.sourceMessageId = item.messageId;
+      projected.sourceText = item.text;
+    }
     return projected;
   });
 }

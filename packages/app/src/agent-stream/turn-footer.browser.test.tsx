@@ -92,3 +92,42 @@ it.each([
     "Friday 11:11 PM": 1,
   });
 });
+
+const projectedReply: StreamItem = {
+  kind: "plugin",
+  id: "genui/reply/1",
+  sourceId: "reply",
+  sourceKind: "assistant_message",
+  sourceMessageId: "provider-reply-1",
+  sourceText: 'Done.\n\n```ui\nCard("Summary", [])\n```',
+  timelineCursor: { epoch: "e1", seq: 5 },
+  timestamp: FRIDAY_NIGHT,
+  pluginId: "genui",
+  pluginItemId: "reply/1",
+  itemKind: "genui-block",
+  version: 1,
+  data: {},
+};
+
+const projectedReplyTiming: TurnTiming = { completedAt: FRIDAY_NIGHT, durationMs: 26_000 };
+
+it("renders copy, fork, and duration for a plugin-projected assistant reply", () => {
+  const onFork = vi.fn();
+
+  act(() =>
+    root.render(
+      <CompletedTurnFooterRow
+        strategy={createNativeStreamStrategy()}
+        items={[projectedReply]}
+        timing={projectedReplyTiming}
+        startIndex={0}
+        supportsTimelineCursor={true}
+        onForkAssistantTurn={onFork}
+      />,
+    ),
+  );
+
+  expect(host.querySelector('[aria-label="Copy turn"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Fork chat from here"]')).not.toBeNull();
+  expect(host.textContent).toContain("Worked for 26s");
+});

@@ -112,4 +112,65 @@ describe("resolveAssistantTurnForkBoundary", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("resolves a fork boundary from a plugin-projected assistant reply", () => {
+    const projected: StreamItem = {
+      kind: "plugin",
+      id: "genui/assistant-1/1",
+      sourceId: "assistant-1",
+      sourceKind: "assistant_message",
+      sourceMessageId: "msg-assistant-1",
+      sourceText: "Hello",
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timestamp: timestamp(2),
+      pluginId: "genui",
+      pluginItemId: "assistant-1/1",
+      itemKind: "genui-block",
+      version: 1,
+      data: {},
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), projected],
+        startIndex: 1,
+        supportsTimelineCursor: true,
+      }),
+    ).toEqual({
+      boundaryCursor: { epoch: "timeline-1", seq: 42 },
+      boundaryMessageId: "msg-assistant-1",
+    });
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), projected],
+        startIndex: 1,
+        supportsTimelineCursor: false,
+      }),
+    ).toEqual({
+      boundaryMessageId: "msg-assistant-1",
+    });
+  });
+
+  it("ignores appended plugin rows without an assistant sourceKind", () => {
+    const appended: StreamItem = {
+      kind: "plugin",
+      id: "plugin/card-1",
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timestamp: timestamp(2),
+      pluginId: "plugin",
+      pluginItemId: "card-1",
+      itemKind: "card",
+      version: 1,
+      data: {},
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), appended],
+        startIndex: 1,
+        supportsTimelineCursor: true,
+      }),
+    ).toBeUndefined();
+  });
 });

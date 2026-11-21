@@ -192,4 +192,58 @@ describe("plugin timeline projection", () => {
     ]);
     expect(filtered).toEqual([]);
   });
+
+  it("retains source message id and text on projected assistant replies", () => {
+    const source: StreamItem = {
+      kind: "assistant_message",
+      id: "assistant-1",
+      messageId: "provider-msg-1",
+      timelineCursor: { epoch: "e1", seq: 7 },
+      turnId: "turn-1",
+      text: 'Summary\n\n```ui\nCard("Hi", [])\n```',
+      timestamp: new Date("2026-01-01T00:00:02.000Z"),
+    };
+    const split: TimelineItemTransform = ({ sourceId }) => [
+      {
+        type: "plugin",
+        id: `${sourceId}/text`,
+        pluginId: "genui",
+        kind: "genui-text",
+        version: 1,
+        data: { part: "text" },
+      },
+      {
+        type: "plugin",
+        id: `${sourceId}/card`,
+        pluginId: "genui",
+        kind: "genui-block",
+        version: 1,
+        data: { part: "card" },
+      },
+    ];
+    const projected = projectPluginTimelineItems([source], split);
+
+    expect(projected).toMatchObject([
+      {
+        kind: "plugin",
+        id: "genui/assistant-1/text",
+        sourceId: "assistant-1",
+        sourceKind: "assistant_message",
+        sourceMessageId: "provider-msg-1",
+        sourceText: source.text,
+        timelineCursor: { epoch: "e1", seq: 7 },
+        turnId: "turn-1",
+      },
+      {
+        kind: "plugin",
+        id: "genui/assistant-1/card",
+        sourceId: "assistant-1",
+        sourceKind: "assistant_message",
+        sourceMessageId: "provider-msg-1",
+        sourceText: source.text,
+        timelineCursor: { epoch: "e1", seq: 7 },
+        turnId: "turn-1",
+      },
+    ]);
+  });
 });
