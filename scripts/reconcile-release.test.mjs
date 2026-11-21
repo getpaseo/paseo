@@ -81,6 +81,35 @@ test("inserts a stable hotfix below a newer active beta entry", () => {
   assert.ok(betaIndex >= 0 && hotfixIndex > betaIndex && prevStableIndex > hotfixIndex);
 });
 
+test("keeps newer beta or promoted stable changelog entries when reconciling an older beta", () => {
+  const mainWithBeta2 = `# Changelog
+
+## 0.17.0-beta.2 - 2026-11-21
+
+- **Beta 2 highlight:** Newer beta. ([#105](https://github.com/getpaseo/paseo/pull/105))
+
+## 0.16.2 - 2026-11-18
+`;
+
+  const mainWithStable = `# Changelog
+
+## 0.17.0 - 2026-11-22
+
+- **Stable highlight:** Shipped stable. ([#105](https://github.com/getpaseo/paseo/pull/105))
+
+## 0.16.2 - 2026-11-18
+`;
+
+  assert.equal(
+    mergeChangelogEntry(mainWithBeta2, MAIN_CHANGELOG_WITH_BETA, "0.17.0-beta.1"),
+    mainWithBeta2,
+  );
+  assert.equal(
+    mergeChangelogEntry(mainWithStable, MAIN_CHANGELOG_WITH_BETA, "0.17.0-beta.1"),
+    mainWithStable,
+  );
+});
+
 test("reconcileRelease updates changelogs, F-Droid files, and versions only when tag is newer", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "reconcile-release-"));
   try {

@@ -26,17 +26,26 @@ const VISIBILITY_POLL_MS = 5_000;
 const VIEW_ATTEMPTS = 3;
 
 function usageAndExit(code = 1) {
-  process.stderr.write("Usage: node scripts/publish-release-packages.mjs [--beta] [--dry-run]\n");
+  process.stderr.write(
+    "Usage: node scripts/publish-release-packages.mjs [--beta] [--dry-run] [--otp <code>]\n",
+  );
   process.exit(code);
 }
 
 function parseArgs(argv) {
-  const args = { beta: false, dryRun: false };
-  for (const arg of argv) {
+  const args = { beta: false, dryRun: false, otp: "" };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
     if (arg === "--beta") {
       args.beta = true;
     } else if (arg === "--dry-run") {
       args.dryRun = true;
+    } else if (arg === "--otp") {
+      args.otp = argv[index + 1] ?? "";
+      if (!args.otp) {
+        usageAndExit(1);
+      }
+      index += 1;
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(0);
     } else {
@@ -46,12 +55,26 @@ function parseArgs(argv) {
   return args;
 }
 
-function defaultRunNpm(args) {
+export function getNpmStdio({
+  interactive = false,
+  stdinIsTTY = Boolean(process.stdin.isTTY),
+  stdoutIsTTY = Boolean(process.stdout.isTTY),
+} = {}) {
+  // npm's OTP helper prompts only when both stdin and stdout are TTYs; keep
+  // stderr piped so transient registry errors can still be classified for retry.
+  if (interactive && stdinIsTTY && stdoutIsTTY) {
+    return ["inherit", "inherit", "pipe"];
+  }
+  return ["ignore", "pipe", "pipe"];
+}
+
+function defaultRunNpm(args, options = {}) {
   const command = process.platform === "win32" ? "npm.cmd" : "npm";
   const result = spawnSync(command, args, {
     cwd: rootDir,
     encoding: "utf8",
     shell: process.platform === "win32",
+    stdio: getNpmStdio(options),
   });
 
   if (result.error) {
@@ -134,7 +157,7 @@ async function waitForPackageVisibility(pkg, version, { runNpm, sleep }) {
   throw new Error(`${spec} did not become visible on npm after ${VISIBILITY_ATTEMPTS} checks.`);
 }
 
-async function publishOnePackage(pkg, version, { beta, dryRun }, { runNpm, sleep }) {
+async function publishOnePackage(pkg, version, { beta, dryRun, otp }, { runNpm, sleep }) {
   const spec = `${pkg}@${version}`;
   if (!dryRun && (await isPackageVersionPublished(pkg, version, { runNpm, sleep }))) {
     console.log(`Already published ${spec}; skipping.`);
@@ -148,9 +171,12 @@ async function publishOnePackage(pkg, version, { beta, dryRun }, { runNpm, sleep
   if (dryRun) {
     args.push("--dry-run");
   }
+  if (otp) {
+    args.push(`--otp=${otp}`);
+  }
 
   for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt += 1) {
-    const result = runNpm(args);
+    const result = runNpm(args, { interactive: !dryRun });
     if (result.status === 0) {
       if (result.stdout) {
         process.stdout.write(result.stdout);
@@ -181,7 +207,7 @@ async function publishOnePackage(pkg, version, { beta, dryRun }, { runNpm, sleep
   }
 }
 
-async function syncBetaDistTags(version, { runNpm, sleep }) {
+async function syncBetaDistTags(version, { otp }, { runNpm, sleep }) {
   let distTags = {};
   for (let attempt = 1; attempt <= VIEW_ATTEMPTS; attempt += 1) {
     const result = runNpm(["view", "@getpaseo/cli", "dist-tags", "--json"]);
@@ -205,8 +231,12 @@ async function syncBetaDistTags(version, { runNpm, sleep }) {
 
   for (const pkg of PUBLISH_WORKSPACES) {
     const spec = `${pkg}@${version}`;
+    const distTagArgs = ["dist-tag", "add", spec, "beta"];
+    if (otp) {
+      distTagArgs.push(`--otp=${otp}`);
+    }
     for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt += 1) {
-      const result = runNpm(["dist-tag", "add", spec, "beta"]);
+      const result = runNpm(distTagArgs, { interactive: true });
       if (result.status === 0) {
         break;
       }
@@ -226,6 +256,7 @@ export async function publishReleasePackages(options = {}, deps = {}) {
   const sleep = deps.sleep ?? defaultSleep;
   const beta = Boolean(options.beta);
   const dryRun = Boolean(options.dryRun);
+  const otp = typeof options.otp === "string" ? options.otp.trim() : "";
   const version =
     options.version ?? JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8")).version;
 
@@ -242,11 +273,11 @@ export async function publishReleasePackages(options = {}, deps = {}) {
   }
 
   for (const pkg of PUBLISH_WORKSPACES) {
-    await publishOnePackage(pkg, version, { beta, dryRun }, { runNpm, sleep });
+    await publishOnePackage(pkg, version, { beta, dryRun, otp }, { runNpm, sleep });
   }
 
   if (!beta && !dryRun) {
-    await syncBetaDistTags(version, { runNpm, sleep });
+    await syncBetaDistTags(version, { otp }, { runNpm, sleep });
   }
 }
 

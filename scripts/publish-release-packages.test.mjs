@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PUBLISH_WORKSPACES, publishReleasePackages } from "./publish-release-packages.mjs";
+import {
+  PUBLISH_WORKSPACES,
+  getNpmStdio,
+  publishReleasePackages,
+} from "./publish-release-packages.mjs";
 
 const noSleep = () => Promise.resolve();
 
@@ -252,5 +256,63 @@ test("dry-run skips registry queries, propagation polling, and dist-tag sync", a
   for (const args of calls) {
     assert.equal(args[0], "publish");
     assert.ok(args.includes("--dry-run"));
+  }
+});
+
+test("inherits TTY stdin/stdout for interactive publish and dist-tag OTP prompts while keeping stderr piped", () => {
+  assert.deepEqual(getNpmStdio({ interactive: true, stdinIsTTY: true, stdoutIsTTY: true }), [
+    "inherit",
+    "inherit",
+    "pipe",
+  ]);
+  assert.deepEqual(getNpmStdio({ interactive: false, stdinIsTTY: true, stdoutIsTTY: true }), [
+    "ignore",
+    "pipe",
+    "pipe",
+  ]);
+  assert.deepEqual(getNpmStdio({ interactive: true, stdinIsTTY: false, stdoutIsTTY: true }), [
+    "ignore",
+    "pipe",
+    "pipe",
+  ]);
+});
+
+test("marks publish and dist-tag invocations interactive and forwards --otp when supplied", async () => {
+  const recorded = [];
+  const published = new Set();
+
+  await publishReleasePackages(
+    { version: "0.17.0", beta: false, dryRun: false, otp: "123456" },
+    {
+      sleep: noSleep,
+      runNpm(args, options) {
+        recorded.push({ args, interactive: Boolean(options?.interactive) });
+        if (args[0] === "view" && args[2] === "version") {
+          return published.has(args[1])
+            ? ok(JSON.stringify("0.17.0"))
+            : fail("npm error code E404");
+        }
+        if (args[0] === "publish") {
+          const pkg = args
+            .find((arg) => arg.startsWith("--workspace="))
+            .slice("--workspace=".length);
+          published.add(`${pkg}@0.17.0`);
+          return ok();
+        }
+        if (args[0] === "view" && args[2] === "dist-tags") {
+          return ok(JSON.stringify({ latest: "0.16.2", beta: "0.17.0-beta.2" }));
+        }
+        return ok();
+      },
+    },
+  );
+
+  for (const entry of recorded) {
+    if (entry.args[0] === "view") {
+      assert.equal(entry.interactive, false);
+    } else {
+      assert.equal(entry.interactive, true);
+      assert.ok(entry.args.includes("--otp=123456"));
+    }
   }
 });

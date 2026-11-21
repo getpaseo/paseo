@@ -69,12 +69,34 @@ export function mergeChangelogEntry(mainContent, tagContent, targetVersion) {
   }
 
   const mainParsed = splitRawEntries(mainContent);
+
+  // Never downgrade an already-reconciled newer entry in the same beta series
+  // (e.g. a retried beta.1 reconciliation after beta.2 or stable promotion landed).
+  if (
+    target.isBeta &&
+    mainParsed.blocks.some((block) => {
+      const existing = safeParseVersion(block.version);
+      return (
+        existing &&
+        existing.baseVersion === target.baseVersion &&
+        compareReleaseVersions(existing.version, target.version) > 0
+      );
+    })
+  ) {
+    return mainContent;
+  }
+
   const kept = mainParsed.blocks.filter((block) => {
     if (block.version === target.version) {
       return false;
     }
     const existing = safeParseVersion(block.version);
-    if (existing && existing.isBeta && existing.baseVersion === target.baseVersion) {
+    if (
+      existing &&
+      existing.isBeta &&
+      existing.baseVersion === target.baseVersion &&
+      compareReleaseVersions(existing.version, target.version) < 0
+    ) {
       return false;
     }
     return true;
