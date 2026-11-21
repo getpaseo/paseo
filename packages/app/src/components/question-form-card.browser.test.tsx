@@ -162,6 +162,24 @@ describe("QuestionFormCard other answers", () => {
   });
 });
 
+describe("QuestionFormCard wrapped option text", () => {
+  it("displays the folded text and submits the text the agent sent", () => {
+    const card = mountCard({
+      question: "Which branch?",
+      header: "branch",
+      options: [{ label: "基于 #8343\n分支（推荐）" }],
+      multiSelect: false,
+    });
+
+    // The card reads the folded label, so the radio is named by it.
+    card.check("基于 #8343 分支（推荐）");
+    card.submit();
+
+    // The answer goes back to the agent with the text it sent.
+    expect(card.submittedAnswers()).toEqual({ branch: "基于 #8343\n分支（推荐）" });
+  });
+});
+
 describe("QuestionFormCard explicit navigation", () => {
   it("keeps a picked option visible until Next and submits only on Submit", () => {
     const card = mountCard(singleSelectQuestion, [multiSelectQuestion]);

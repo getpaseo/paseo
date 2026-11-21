@@ -172,4 +172,105 @@ describe("question form card core", () => {
       { label: "Single page", description: undefined, preview: undefined },
     ]);
   });
+
+  test("folds wrapped question text back into flowing sentences", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "新分支怎么办\n？",
+          header: "branch",
+          options: [
+            {
+              label: "基于 #8343\n分支（推荐\n）",
+              description: "包含 zcode\n-credentials\n.ts，合并顺序\n",
+            },
+            { label: "plain" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(questions?.[0]?.question).toBe("新分支怎么办 ？");
+    expect(questions?.[0]?.options[0]?.label).toBe("基于 #8343 分支（推荐 ）");
+    expect(questions?.[0]?.options[0]?.description).toBe("包含 zcode -credentials .ts，合并顺序");
+  });
+
+  test("submits the option text the agent sent, not the folded display copy", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "新分支怎么办？",
+          header: "branch",
+          options: [{ label: "基于 #8343\n分支（推荐）" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    expect(questions[0]?.options[0]?.label).toBe("基于 #8343 分支（推荐）");
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([0]) }, {})).toEqual({
+      branch: "基于 #8343\n分支（推荐）",
+    });
+  });
+
+  test("keeps the markdown structure of a question while folding its prose", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Pick one:\n\n- Alpha\n- Beta\n\nSome more\nwrapped prose.",
+          header: "pick",
+          options: [{ label: "plain" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    // A list is a list: folding its breaks would merge the items into one
+    // line. A paragraph inside the list stays prose and folds.
+    expect(questions?.[0]?.question).toBe(
+      "Pick one:\n\n- Alpha\n- Beta\n\nSome more wrapped prose.",
+    );
+  });
+
+  test("keeps the line boundaries of a fenced code block", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Run this:\n\n```sh\nnpm run build\nnpm test\n```",
+          header: "cmd",
+          options: [{ label: "plain" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    // The code block's own lines are content, not wraps.
+    expect(questions?.[0]?.question).toBe("Run this:\n\n```sh\nnpm run build\nnpm test\n```");
+  });
+
+  test("keeps a blank line as a paragraph break while folding lone breaks", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "First paragraph\n\nSecond paragraph",
+          header: "paragraphs",
+          options: [
+            {
+              label: "只存在于\nPR\n#8343\n（feat\n/zai）里",
+              description: "one\r\ntwo",
+            },
+            { label: "plain text" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(questions?.[0]?.question).toBe("First paragraph\n\nSecond paragraph");
+    expect(questions?.[0]?.options[0]?.label).toBe("只存在于 PR #8343 （feat /zai）里");
+    expect(questions?.[0]?.options[0]?.description).toBe("one two");
+    expect(questions?.[0]?.options[1]?.label).toBe("plain text");
+  });
 });
