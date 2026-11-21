@@ -1258,6 +1258,80 @@ test("the provider receives every prompt in admission order for every short inte
   }
 });
 
+test("order and Stop hold for every short interleaving while the provider is slow to answer", async () => {
+  const actions = ["steer", "interrupt", "person", "stop", "tick", "hold", "answer"] as const;
+  const length = 5;
+  for (let scenario = 0; scenario < actions.length ** length; scenario++) {
+    // The provider is offered waiting messages as commands, so closed windows line up queue
+    // steps behind a dispatch the provider has not answered yet.
+    const recipient = createRecipient({ outOfBand: () => false });
+    const admitted: string[] = [];
+    const admittedAt = new Map<string, number>();
+    const script: string[] = [];
+    let provider: ReturnType<typeof recipient.holdProviderAnswer> | undefined;
+    let stoppedWhileHeld = false;
+    let lastStop = -1;
+    let checked = 0;
+    const answer = async () => {
+      // A turn that Stop canceled while it was starting never starts.
+      if (stoppedWhileHeld) await provider?.refuse(new Error("run was canceled"));
+      else await provider?.accept();
+      provider = undefined;
+      stoppedWhileHeld = false;
+    };
+    /** After a Stop, no queue dispatch carries only messages from before it. */
+    const checkStop = () => {
+      for (const dispatch of recipient.sent.slice(checked)) {
+        const newest = Math.max(...dispatch.ids.map((id) => admittedAt.get(id) ?? -1));
+        expect(newest, `${script.join(" → ")}: ${dispatch.ids.join(",")}`).toBeGreaterThan(
+          lastStop,
+        );
+      }
+      checked = recipient.sent.length;
+    };
+    let rest = scenario;
+    for (let step = 0; step < length; step++) {
+      const action = actions[rest % actions.length]!;
+      rest = Math.floor(rest / actions.length);
+      script.push(action);
+      if (action === "tick") await recipient.tick();
+      else if (action === "hold") provider ??= recipient.holdProviderAnswer();
+      else if (action === "answer") await answer();
+      else if (action === "stop") {
+        lastStop = step;
+        stoppedWhileHeld = provider !== undefined;
+        await recipient.stop();
+      } else if (action === "person") {
+        admitted.push(`person-${step}`);
+        admittedAt.set(`person-${step}`, step);
+        void recipient.person(`person-${step}`, `person-${step}`);
+      } else {
+        const id = recipient.send(action);
+        admitted.push(id);
+        admittedAt.set(id, step);
+      }
+      await recipient.settle();
+      checkStop();
+    }
+    await answer();
+    checkStop();
+    // Let every remaining message out: windows close, turns end, and a last prompt takes
+    // whatever a Stop still holds.
+    for (let i = 0; i < 4; i++) {
+      await recipient.tick();
+      await recipient.endTurn();
+    }
+    await recipient.person("last", "last");
+    // A turn the provider refused is sent again, so each prompt counts where it last arrived.
+    const arrived = recipient.received.filter(
+      (id, index) => recipient.received.lastIndexOf(id) === index,
+    );
+    expect(arrived, script.join(" → ")).toEqual([...admitted, "last"]);
+    expect(recipient.delivery.hasPending("recipient"), script.join(" → ")).toBe(false);
+    await recipient.delivery.close();
+  }
+});
+
 test("a person's prompt carries the queued messages ahead of it in the same prompt", async () => {
   const recipient = createRecipient();
   recipient.send("steer", "go-ahead");
@@ -1643,4 +1717,27 @@ test("shutdown delivers the messages a rejected person's turn returns to the que
   expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["report"]]);
   await expect(report.dispatched).resolves.toBe("turn_started");
   await closing;
+});
+
+test("a queue step reserved before Stop releases nothing once the queue reopens", async () => {
+  // The provider is offered waiting messages as commands, so a closed window lines up a
+  // queue step behind the dispatch in flight.
+  const recipient = createRecipient({ outOfBand: () => false });
+  const provider = recipient.holdProviderAnswer();
+  recipient.send("interrupt", "first");
+  await recipient.settle();
+  recipient.send("steer", "older");
+  await recipient.tick();
+
+  // The new interrupt arrives before the provider has finished stopping.
+  await recipient.stop();
+  recipient.send("interrupt", "newer");
+  await provider.refuse(new Error("run was canceled before its turn started"));
+  await recipient.settle();
+
+  // One turn after the Stop: the held messages, then the interrupt that follows them.
+  expect(recipient.sent.slice(1)).toEqual([
+    { ids: ["first", "older", "newer"], behavior: "interrupt", idleOnly: false, mode: undefined },
+  ]);
+  await recipient.delivery.close();
 });

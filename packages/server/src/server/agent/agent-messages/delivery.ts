@@ -58,7 +58,7 @@ interface Inbox {
   cancelCap(): void;
   /** A polling queue step is already in line behind the recipient's current operation. */
   advancing: boolean;
-  /** Stops seen. A dispatch decided before a Stop is void, whatever the queue does afterwards. */
+  /** Stops seen. A queue step reserved before a Stop is void, whatever is admitted afterwards. */
   stops: number;
 }
 interface DispatchRequest {
@@ -203,9 +203,9 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   const isHeld = (recipientId: string): boolean => inboxes.get(recipientId)?.phase === "held";
 
   /** Tells whether a Stop has reached the recipient since this call. */
-  function watchForStop(recipientId: string): () => boolean {
-    const seen = inboxes.get(recipientId)?.stops;
-    return () => inboxes.get(recipientId)?.stops !== seen;
+  function watchForStop(inbox: Inbox): () => boolean {
+    const seen = inbox.stops;
+    return () => inbox.stops !== seen;
   }
 
   function requestFor(
@@ -295,8 +295,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   /** Dispatch one batch. A batch that finds the recipient stopped, or busy when idle-only, stays queued. */
-  async function deliver(recipientId: string, batch: Admitted[], idleOnly: boolean): Promise<void> {
-    const stopped = watchForStop(recipientId);
+  async function deliver(
+    recipientId: string,
+    batch: Admitted[],
+    idleOnly: boolean,
+    stopped: () => boolean,
+  ): Promise<void> {
     for (;;) {
       const messages = batch.filter(isQueued);
       if (!messages.length) return;
@@ -340,11 +344,11 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   async function offerOutOfBand(
     recipientId: string,
     candidates: Admitted[],
+    stopped: () => boolean,
     stillDue: () => boolean = () => true,
   ): Promise<void> {
     const tryRunOutOfBand = dependencies.tryRunOutOfBand;
     if (!tryRunOutOfBand) return;
-    const stopped = watchForStop(recipientId);
     for (const message of candidates) {
       if (closed || stopped() || !stillDue()) return;
       if (!isOfferable(message)) continue;
@@ -368,32 +372,41 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
    * Move the queue forward: an interrupt takes it now, a closed window once the turn has ended.
    * `ahead` is what was admitted before this step got in line; it leaves later messages alone.
    */
-  async function advance(recipientId: string, inbox: Inbox, ahead: Admitted[]): Promise<void> {
+  async function advance(
+    recipientId: string,
+    inbox: Inbox,
+    ahead: Admitted[],
+    stopped: () => boolean,
+  ): Promise<void> {
     const interrupts = ahead.filter(isUrgent);
     if (interrupts.length) {
       // A command the provider runs beside the turn replaces nothing, so it takes nothing along.
-      await offerOutOfBand(recipientId, interrupts);
+      await offerOutOfBand(recipientId, interrupts, stopped);
       const last = ahead.findLastIndex(isUrgent);
       if (last >= 0) {
         // An interrupt does not jump the queue: everything admitted before it goes first.
-        await deliver(recipientId, ahead.slice(0, last + 1), false);
+        await deliver(recipientId, ahead.slice(0, last + 1), false, stopped);
         return;
       }
     }
     if (inbox.phase !== "waiting") return;
     const running = (): boolean => inbox.phase === "waiting" && isRunning(recipientId);
-    if (running()) await offerOutOfBand(recipientId, ahead, running);
+    if (running()) await offerOutOfBand(recipientId, ahead, stopped, running);
     // Later mode groups stay queued for the turn ends that follow.
     if (inbox.phase === "waiting" && !isRunning(recipientId))
-      await deliver(recipientId, modeGroups(ahead.filter(isQueued))[0] ?? [], true);
+      await deliver(recipientId, modeGroups(ahead.filter(isQueued))[0] ?? [], true, stopped);
   }
 
-  /** Line up a queue step behind the recipient's current operation, for what is queued now. */
+  /**
+   * Line up a queue step behind the recipient's current operation, for what is queued now.
+   * A Stop voids the steps reserved before it: what they covered waits for the next prompt.
+   */
   function lineUp(recipientId: string, inbox: Inbox, onStart?: () => void): void {
     const ahead = [...inbox.messages];
-    run(recipientId, () => {
+    const stopped = watchForStop(inbox);
+    run(recipientId, async () => {
       onStart?.();
-      return advance(recipientId, inbox, ahead);
+      if (!stopped()) await advance(recipientId, inbox, ahead, stopped);
     });
   }
 
@@ -624,7 +637,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         // flight returns to it.
         run(recipientId, async () => {
           for (const group of modeGroups(inbox.messages.filter(isQueued)))
-            await deliver(recipientId, group, false).catch(() => undefined);
+            await deliver(recipientId, group, false, () => false).catch(() => undefined);
         });
       }
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
