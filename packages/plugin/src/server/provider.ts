@@ -1249,6 +1249,7 @@ const toolCallDetailSchema: z.ZodType<ProviderToolCallDetail> = z.discriminatedU
       type: z.literal("shell"),
       command: z.string(),
       cwd: z.string().optional(),
+      description: z.string().optional(),
       output: z.string().optional(),
       exitCode: z.number().nullable().optional(),
     })
