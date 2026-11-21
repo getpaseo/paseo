@@ -58,6 +58,7 @@ import * as Clipboard from "expo-clipboard";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import { isWorkspaceRootPath } from "@/workspace/file-open";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
@@ -1487,6 +1488,10 @@ function useDiffTabNavigation({
   };
 }
 
+function resolveChangesFileRoot(status: CheckoutStatusPayload | null, cwd: string): string {
+  return status?.repoRoot ?? cwd;
+}
+
 export function ChangesSurface({
   serverId,
   workspaceId,
@@ -1667,14 +1672,30 @@ export function ChangesSurface({
     }),
     [appSettings.monoFontFamily, codeFontSize, effectiveLayout, wrapLines],
   );
-  const downloadFile = useFileDownload({ serverId, workspaceId, workspaceRoot: cwd });
+  const fileRoot = resolveChangesFileRoot(status, cwd);
+  const isRootWorkspace = isWorkspaceRootPath({ path: fileRoot, workspaceRoot: cwd });
+  const resolveFilePath = useCallback(
+    (path: string) => buildAbsoluteExplorerPath({ workspaceRoot: fileRoot, entryPath: path }),
+    [fileRoot],
+  );
+  const resolveFileTargetPath = useCallback(
+    (path: string) => (isRootWorkspace ? path : resolveFilePath(path)),
+    [isRootWorkspace, resolveFilePath],
+  );
+  const handleOpenFile = useCallback(
+    (path: string) => onOpenFile?.(resolveFileTargetPath(path)),
+    [onOpenFile, resolveFileTargetPath],
+  );
+  const handleAddToChat = useCallback(
+    (path: string) => onAddToChat?.(resolveFileTargetPath(path)),
+    [onAddToChat, resolveFileTargetPath],
+  );
+  const downloadFile = useFileDownload({ serverId, workspaceId, workspaceRoot: fileRoot });
   const handleCopyPath = useCallback(
     (path: string) => {
-      void Clipboard.setStringAsync(
-        buildAbsoluteExplorerPath({ workspaceRoot: cwd, entryPath: path }),
-      );
+      void Clipboard.setStringAsync(resolveFilePath(path));
     },
-    [cwd],
+    [resolveFilePath],
   );
   const handleCopyRelativePath = useCallback((path: string) => {
     void Clipboard.setStringAsync(path);
@@ -1688,7 +1709,7 @@ export function ChangesSurface({
         await openDesktopTarget({
           editorId: fileManagerTarget.id,
           workspacePath: cwd,
-          filePath: buildAbsoluteExplorerPath({ workspaceRoot: cwd, entryPath: path }),
+          filePath: resolveFilePath(path),
         });
       } catch (cause) {
         toast.error(
@@ -1696,7 +1717,7 @@ export function ChangesSurface({
         );
       }
     },
-    [cwd, fileManagerTarget, t, toast],
+    [cwd, fileManagerTarget, resolveFilePath, t, toast],
   );
   const handleDownloadPath = useCallback(
     (path: string) => {
@@ -1710,7 +1731,7 @@ export function ChangesSurface({
         return;
       }
       try {
-        const payload = await client.duplicateFileEntry({ cwd, path });
+        const payload = await client.duplicateFileEntry({ cwd: fileRoot, path });
         if (!payload.success) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.duplicateFailed"));
         }
@@ -1718,7 +1739,7 @@ export function ChangesSurface({
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [client, cwd, t, toast],
+    [client, fileRoot, t, toast],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
   const [localFocusRequest, setLocalFocusRequest] = useState<{
@@ -1754,9 +1775,9 @@ export function ChangesSurface({
       focusPath: documentFocusRequest?.path,
       focusRequestId: documentFocusRequest?.revision,
       workspaceFileDragScope: workspaceId ? { serverId, workspaceId } : undefined,
-      onOpenFile,
+      onOpenFile: onOpenFile ? handleOpenFile : undefined,
       onOpenToSide,
-      onAddToChat,
+      onAddToChat: onAddToChat ? handleAddToChat : undefined,
       onCopyPath: handleCopyPath,
       onCopyRelativePath: handleCopyRelativePath,
       onReveal: fileManagerTarget ? handleRevealPath : undefined,
@@ -1772,8 +1793,10 @@ export function ChangesSurface({
       serverId,
       workspaceId,
       onOpenFile,
+      handleOpenFile,
       onOpenToSide,
       onAddToChat,
+      handleAddToChat,
       handleCopyPath,
       handleCopyRelativePath,
       handleDownloadPath,
