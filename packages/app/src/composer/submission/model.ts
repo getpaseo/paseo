@@ -5,6 +5,9 @@ export interface PendingMessageSubmission {
 export type MessageSubmissionRecord = PendingMessageSubmission & {
   providerAcknowledged: boolean;
   rpcSettled: boolean;
+  pendingAttempts?: number;
+  /** Preserve an existing history row without treating its presence as acceptance. */
+  existingTimelineRow?: true;
 };
 
 const EMPTY_MESSAGE_SUBMISSIONS: readonly MessageSubmissionRecord[] = [];
@@ -42,10 +45,14 @@ export interface MessageSubmissionRejectionResult {
 
 export function beginMessageSubmission(
   submissions: readonly MessageSubmissionRecord[],
-  input: PendingMessageSubmission,
+  input: PendingMessageSubmission & { existingTimelineRow?: true },
 ): MessageSubmissionRecord[] {
   if (submissions.some((submission) => submission.clientMessageId === input.clientMessageId)) {
-    throw new Error(`Message submission already exists: ${input.clientMessageId}`);
+    return submissions.map((record) =>
+      record.clientMessageId === input.clientMessageId
+        ? { ...record, pendingAttempts: (record.pendingAttempts ?? 1) + 1 }
+        : record,
+    );
   }
   return [...submissions, { ...input, providerAcknowledged: false, rpcSettled: false }];
 }
@@ -59,7 +66,7 @@ export function acceptMessageSubmission(
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
   const submission = submissions[index];
-  if (submission.providerAcknowledged) {
+  if (submission.providerAcknowledged || submission.existingTimelineRow) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
   if (submission.rpcSettled) return submissions as MessageSubmissionRecord[];
@@ -76,7 +83,11 @@ export function observeMessageSubmissionCanonical(
   const observed = new Set(clientMessageIds);
   let changed = false;
   const next = submissions.flatMap((submission): MessageSubmissionRecord[] => {
-    if (submission.providerAcknowledged || !observed.has(submission.clientMessageId)) {
+    if (
+      submission.providerAcknowledged ||
+      submission.existingTimelineRow ||
+      !observed.has(submission.clientMessageId)
+    ) {
       return [submission];
     }
     changed = true;
@@ -92,6 +103,24 @@ export function rejectMessageSubmission(
   const submission = submissions.find((item) => item.clientMessageId === clientMessageId);
   if (!submission) {
     return { outcome: "unknown", submissions: submissions as MessageSubmissionRecord[] };
+  }
+  if (
+    !submission.rpcSettled &&
+    !submission.providerAcknowledged &&
+    (submission.pendingAttempts ?? 1) > 1
+  ) {
+    return {
+      outcome: "unknown",
+      submissions: submissions.map((record) =>
+        record === submission
+          ? { ...record, pendingAttempts: (record.pendingAttempts ?? 1) - 1 }
+          : record,
+      ),
+    };
+  }
+  if (submission.rpcSettled && !submission.providerAcknowledged) {
+    // A failed retry cannot revoke an earlier accepted RPC. Keep waiting for its echo.
+    return { outcome: "accepted", submissions: submissions as MessageSubmissionRecord[] };
   }
   return {
     outcome: submission.providerAcknowledged ? "accepted" : "rejected",
