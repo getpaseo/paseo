@@ -1,6 +1,7 @@
 import { useWorkspaceRowPress } from "../../../modules/paseo-press-feedback";
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import {
+  Children,
   memo,
   useCallback,
   useMemo,
@@ -219,43 +220,46 @@ export function SidebarStatusWorkspaceList({
       }),
     [renderPinnedWorkspaceRow],
   );
-  const content = (
-    <>
-      {pinnedWorkspaces.length > 0 ? (
-        <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <SidebarSectionHeader
-            title={t("sidebar.pinned.title")}
-            collapsed={pinnedCollapsed}
-            onToggle={togglePinnedCollapsed}
-            testID="sidebar-pinned-section-header"
-          />
-          {pinnedCollapsed ? null : (
-            <>
-              {leadingPinnedWorkspace ? renderPinnedWorkspaceRow(leadingPinnedWorkspace) : null}
-              <DraggableList
-                testID="sidebar-pinned-list"
-                data={visiblePinnedWorkspaces}
-                keyExtractor={statusWorkspaceKeyExtractor}
-                renderItem={renderPinnedWorkspace}
-                onDragEnd={onPinnedWorkspaceReorder}
-                scrollEnabled={false}
-                useDragHandle
-                nestable={platformIsNative}
-                simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
+  const pinnedSection =
+    pinnedWorkspaces.length > 0 ? (
+      <View style={styles.pinnedSection} testID="sidebar-pinned-section">
+        <SidebarSectionHeader
+          title={t("sidebar.pinned.title")}
+          collapsed={pinnedCollapsed}
+          onToggle={togglePinnedCollapsed}
+          testID="sidebar-pinned-section-header"
+        />
+        {pinnedCollapsed ? null : (
+          <>
+            {leadingPinnedWorkspace ? renderPinnedWorkspaceRow(leadingPinnedWorkspace) : null}
+            <DraggableList
+              testID="sidebar-pinned-list"
+              data={visiblePinnedWorkspaces}
+              keyExtractor={statusWorkspaceKeyExtractor}
+              renderItem={renderPinnedWorkspace}
+              onDragEnd={onPinnedWorkspaceReorder}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={platformIsNative}
+              simultaneousGestureRef={parentGestureRef}
+              gestureHostPresented={dragGestureHostActive}
+            />
+            {canTogglePinnedWorkspaces ? (
+              <SidebarGroupToggleRow
+                expanded={pinnedWorkspacesExpanded}
+                onPress={togglePinnedWorkspacesExpanded}
+                testID="sidebar-pinned-show-more"
               />
-              {canTogglePinnedWorkspaces ? (
-                <SidebarGroupToggleRow
-                  expanded={pinnedWorkspacesExpanded}
-                  onPress={togglePinnedWorkspacesExpanded}
-                  testID="sidebar-pinned-show-more"
-                />
-              ) : null}
-            </>
-          )}
-        </View>
-      ) : null}
-      {listHeaderComponent}
+            ) : null}
+          </>
+        )}
+      </View>
+    ) : null;
+  const header = listHeaderComponent;
+  const content = Children.toArray([
+    pinnedSection,
+    header,
+    <>
       {sidebarFilterEmpty ? (
         <SidebarFilterEmptyState />
       ) : (
@@ -272,8 +276,9 @@ export function SidebarStatusWorkspaceList({
         />
       )}
       <SidebarToastClearance />
-    </>
-  );
+    </>,
+  ]);
+  const stickyHeaderIndices = header ? [pinnedSection ? 1 : 0] : [];
 
   return (
     <View style={styles.container}>
@@ -281,6 +286,7 @@ export function SidebarStatusWorkspaceList({
         <NestableScrollContainer
           style={styles.list}
           contentContainerStyle={styles.listContent}
+          stickyHeaderIndices={stickyHeaderIndices}
           showsVerticalScrollIndicator={false}
           testID="sidebar-status-list-scroll"
         >
@@ -290,6 +296,7 @@ export function SidebarStatusWorkspaceList({
         <ScrollView
           style={styles.list}
           contentContainerStyle={styles.listContent}
+          stickyHeaderIndices={stickyHeaderIndices}
           showsVerticalScrollIndicator={false}
           testID="sidebar-status-list-scroll"
         >

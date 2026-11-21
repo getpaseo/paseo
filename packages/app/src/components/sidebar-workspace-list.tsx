@@ -11,6 +11,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import {
+  Children,
   memo,
   useCallback,
   useMemo,
@@ -2488,61 +2489,61 @@ function ProjectModeList({
       />
     );
 
-  const content = (
-    <>
-      {pinnedChats.length > 0 ? (
-        <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <SidebarSectionHeader
-            title={t("sidebar.pinned.title")}
-            collapsed={pinnedCollapsed}
-            onToggle={togglePinnedCollapsed}
-            testID="sidebar-pinned-section-header"
-          />
-          {pinnedCollapsed ? null : (
-            <>
-              {leadingPinnedChat ? renderPinnedChatRow(leadingPinnedChat) : null}
-              <DraggableList
-                testID="sidebar-pinned-list"
-                data={visiblePinnedChats}
-                keyExtractor={workspaceKeyExtractor}
-                renderItem={renderPinnedChat}
-                onDragEnd={onPinnedWorkspaceReorder}
-                extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-                scrollEnabled={false}
-                useDragHandle
-                nestable={platformIsNative}
-                simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
-                containerStyle={styles.workspaceListContainer}
+  const pinnedSection =
+    pinnedChats.length > 0 ? (
+      <View style={styles.pinnedSection} testID="sidebar-pinned-section">
+        <SidebarSectionHeader
+          title={t("sidebar.pinned.title")}
+          collapsed={pinnedCollapsed}
+          onToggle={togglePinnedCollapsed}
+          testID="sidebar-pinned-section-header"
+        />
+        {pinnedCollapsed ? null : (
+          <>
+            {leadingPinnedChat ? renderPinnedChatRow(leadingPinnedChat) : null}
+            <DraggableList
+              testID="sidebar-pinned-list"
+              data={visiblePinnedChats}
+              keyExtractor={workspaceKeyExtractor}
+              renderItem={renderPinnedChat}
+              onDragEnd={onPinnedWorkspaceReorder}
+              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={platformIsNative}
+              simultaneousGestureRef={parentGestureRef}
+              gestureHostPresented={dragGestureHostActive}
+              containerStyle={styles.workspaceListContainer}
+            />
+            {canTogglePinnedChats ? (
+              <SidebarGroupToggleRow
+                expanded={pinnedChatsExpanded}
+                onPress={togglePinnedChatsExpanded}
+                testID="sidebar-pinned-show-more"
               />
-              {canTogglePinnedChats ? (
-                <SidebarGroupToggleRow
-                  expanded={pinnedChatsExpanded}
-                  onPress={togglePinnedChatsExpanded}
-                  testID="sidebar-pinned-show-more"
-                />
-              ) : null}
-            </>
-          )}
-        </View>
-      ) : null}
-      {/* The header carries the display menu, which is the only way back out of a filter, so it
-        stays for as long as a filter is what emptied the list. It is absent only when the
-        sidebar is genuinely empty, where a section heading would sit over nothing.
-        Every filter that can empty this branch needs a term here: a project filter pinned to a
-        project whose chats are all pinned leaves `unpinnedProjects` empty, and without its term
-        the header would go with it, taking the only route back to the filter page. */}
-      {unpinnedProjects.length > 0 ||
-      hasActiveHostFilter ||
-      hasActiveProjectFilter ||
-      sidebarFilterEmpty
-        ? listHeaderComponent
-        : null}
+            ) : null}
+          </>
+        )}
+      </View>
+    ) : null;
+  // A filtered empty list keeps its Display menu so the filter can be cleared.
+  const header =
+    unpinnedProjects.length > 0 ||
+    hasActiveHostFilter ||
+    hasActiveProjectFilter ||
+    sidebarFilterEmpty
+      ? listHeaderComponent
+      : null;
+  const content = Children.toArray([
+    pinnedSection,
+    header,
+    <>
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
       <SidebarToastClearance />
-    </>
-  );
+    </>,
+  ]);
+  const stickyHeaderIndices = header ? [pinnedSection ? 1 : 0] : [];
 
   return (
     <View style={styles.container}>
@@ -2551,6 +2552,7 @@ function ProjectModeList({
           {...nativeScrollGestureProps}
           style={styles.list}
           contentContainerStyle={styles.listContent}
+          stickyHeaderIndices={stickyHeaderIndices}
           showsVerticalScrollIndicator={false}
           testID="sidebar-project-workspace-list-scroll"
         >
@@ -2560,6 +2562,7 @@ function ProjectModeList({
         <ScrollView
           style={styles.list}
           contentContainerStyle={styles.listContent}
+          stickyHeaderIndices={stickyHeaderIndices}
           showsVerticalScrollIndicator={false}
           testID="sidebar-project-workspace-list-scroll"
         >

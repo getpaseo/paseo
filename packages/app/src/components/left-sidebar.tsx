@@ -952,23 +952,24 @@ function DesktopSidebar({
 
 function WorkspacesSectionHeader() {
   return (
-    <SidebarSectionHeader title="Workspaces">
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <View>
-            <SidebarDisplayPreferencesMenu />
-          </View>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <IconTooltipContent label="Display preferences" />
-        </TooltipContent>
-      </Tooltip>
-    </SidebarSectionHeader>
+    <View style={styles.workspacesSectionHeader} testID="sidebar-workspaces-section-header">
+      <SidebarSectionHeader title="Workspaces">
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <View>
+              <SidebarDisplayPreferencesMenu />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <IconTooltipContent label="Display preferences" />
+          </TooltipContent>
+        </Tooltip>
+      </SidebarSectionHeader>
+    </View>
   );
 }
 
-// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
-// renders (WorkspacesSectionHeader takes no props).
+// Keep the list header element stable across sidebar renders.
 const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
@@ -1006,6 +1007,12 @@ const styles = StyleSheet.create((theme) => ({
   sidebarContent: {
     flex: 1,
     minHeight: 0,
+  },
+  workspacesSectionHeader: {
+    // Cover the list's gutters as rows pass under the sticky header.
+    marginHorizontal: -theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   mobileCloseButton: (rightInset: number) => ({
     marginRight: theme.spacing[2] + rightInset,
