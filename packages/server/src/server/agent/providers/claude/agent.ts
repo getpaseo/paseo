@@ -5730,7 +5730,8 @@ class ClaudeAgentSession implements AgentSession {
     this.pushEvent({ type: "timeline", item, provider: "claude" });
   }
 
-  private flushPendingToolCalls() {
+  /** Cancels every tool call that started without a result, then forgets them. */
+  private cancelUnfinishedToolCalls(target?: AgentTimelineItem[]) {
     for (const [id, entry] of this.toolUseCache) {
       if (entry.started) {
         this.pushToolCall(
@@ -5740,10 +5741,15 @@ class ClaudeAgentSession implements AgentSession {
             input: entry.input ?? null,
             output: null,
           }),
+          target,
         );
       }
     }
     this.toolUseCache.clear();
+  }
+
+  private flushPendingToolCalls() {
+    this.cancelUnfinishedToolCalls();
     this.sidechainTracker.clear();
     // The task protocol's routing table is session-scoped, so it is deliberately NOT reset here:
     // the turn ended, the session did not. Wiping it would strand every task id the session still
@@ -5904,6 +5910,13 @@ class ClaudeAgentSession implements AgentSession {
     const timeline: PersistedTimelineEntry[] = [];
     for await (const entry of entries) {
       await this.ingestPersistedHistoryEntry(entry, timeline, replay);
+    }
+    // History loads while no turn runs, so a call the transcript never answered is not running:
+    // a branch taken mid-call or a daemon stopped mid-turn leaves one behind.
+    const unfinished: AgentTimelineItem[] = [];
+    this.cancelUnfinishedToolCalls(unfinished);
+    for (const item of unfinished) {
+      timeline.push({ item: labelReplayedSubagentCard(item, replay.subagentToolCalls) });
     }
 
     if (timeline.length > 0) {

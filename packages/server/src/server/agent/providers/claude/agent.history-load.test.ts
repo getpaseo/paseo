@@ -628,7 +628,7 @@ describe("ClaudeAgentSession persisted history load", () => {
           }
         }
         expect(exists.mock.calls.filter(([target]) => target === filePath)).toEqual([]);
-        expect(items).toEqual([
+        const running = [
           {
             type: "tool_call",
             callId: "Write",
@@ -645,12 +645,47 @@ describe("ClaudeAgentSession persisted history load", () => {
             error: null,
             detail: { type: "edit", filePath },
           },
-        ]);
+        ];
+        // The parent transcript ends without results, so replay cancels its calls.
+        expect(items).toEqual(
+          scope === "parent"
+            ? [...running, ...running.map((item) => ({ ...item, status: "canceled" }))]
+            : running,
+        );
       } finally {
         await session.close();
       }
     },
   );
+
+  test("replays a tool call the transcript never answered as canceled", async () => {
+    // A branch taken mid-tool-call, or a daemon stopped mid-turn, leaves a call without a result.
+    const call = { type: "tool_use", id: "sleep", name: "Bash", input: { command: "sleep 25" } };
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(
+      transcriptPath(),
+      [
+        { type: "user", message: { content: "Run it" } },
+        { type: "assistant", message: { content: [call] } },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const session = await resume();
+    try {
+      const calls = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "tool_call") calls.push(event.item);
+      }
+      expect(calls.map((item) => [item.callId, item.status])).toEqual([
+        ["sleep", "running"],
+        ["sleep", "canceled"],
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
 
   test("logs the resolved transcript path when the transcript does not exist", async () => {
     await (await resume()).close();
