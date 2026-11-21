@@ -13,6 +13,8 @@ import {
   corruptPaseoConfig,
   editWorktreeSetup,
   expectEmptyScriptList,
+  expectHomeCardsInColumns,
+  expectHomeCardsStacked,
   expectProjectHostContextHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
@@ -465,4 +467,12 @@ test.describe("Projects settings — error UX", () => {
 
     await expectNoEditableTarget(page);
   });
+});
+
+test("home cards follow the available pane width", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 1000 });
+  await page.goto(buildOpenProjectRoute());
+  await expectHomeCardsStacked(page);
+  await page.setViewportSize({ width: 1200, height: 1000 });
+  await expectHomeCardsInColumns(page);
 });
