@@ -63,6 +63,22 @@ interface TurnFooterSource {
   index: number;
 }
 
+const turnFooterItemsCache = new WeakMap<StreamItem[], StreamItem[]>();
+
+function originalFooterItem(item: StreamItem): StreamItem {
+  return item.kind === "plugin" ? (item.turnFooterSource ?? item) : item;
+}
+
+function getTurnFooterItems(items: StreamItem[]): StreamItem[] {
+  const cached = turnFooterItemsCache.get(items);
+  if (cached) return cached;
+  const original = items.some((item) => originalFooterItem(item) !== item)
+    ? items.map(originalFooterItem)
+    : items;
+  turnFooterItemsCache.set(items, original);
+  return original;
+}
+
 function createTurnFooterHost(input: {
   item: StreamItem;
   items: StreamItem[];
@@ -71,8 +87,8 @@ function createTurnFooterHost(input: {
 }): TurnFooterHost {
   return {
     itemId: input.item.id,
-    items: input.items,
-    timing: input.timingByItemId.get(input.item.id),
+    items: getTurnFooterItems(input.items),
+    timing: input.timingByItemId.get(originalFooterItem(input.item).id),
     startIndex: input.index,
   };
 }
@@ -99,13 +115,17 @@ function findTurnFooterSource(input: {
       index = input.strategy.getNeighborIndex(index, "above")
     ) {
       const item = items[index];
-      if (!item || (laterItem && !continuesResponse(item, laterItem))) {
+      if (!item) {
         return toolFallback;
       }
-      if (item.kind === "assistant_message") {
+      const original = originalFooterItem(item);
+      if (laterItem && !continuesResponse(original, laterItem)) {
+        return toolFallback;
+      }
+      if (original.kind === "assistant_message") {
         return { item, items, index };
       }
-      laterItem = item;
+      laterItem = original;
     }
 
     if (
@@ -162,7 +182,9 @@ function resolveCompletedFooter(input: {
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
 }): TurnFooterHost | null {
-  if (input.item.kind === "user_message" || !isResponseBoundary(input.item, input.belowItem)) {
+  const original = originalFooterItem(input.item);
+  const below = input.belowItem ? originalFooterItem(input.belowItem) : null;
+  if (original.kind === "user_message" || !isResponseBoundary(original, below)) {
     return null;
   }
 

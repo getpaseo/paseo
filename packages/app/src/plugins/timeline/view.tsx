@@ -69,6 +69,7 @@ function PluginTimelineItemBody({
     host,
     layout,
     timestamp: item.timestamp,
+    ...(item.turnFooterSource?.kind === "assistant_message" ? { nativeTurnFooter: true } : {}),
     item: {
       type: "plugin",
       kind: item.itemKind,

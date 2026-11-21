@@ -20,6 +20,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import { submitNewWorkspaceEmpty } from "../support/helpers/new-workspace";
+import { withDirectoryPlugin } from "../support/helpers/plugin-timeline";
 
 const test = base.extend<{
   seedForkWorkspace: (options: MockAgentOptions) => Promise<MockAgentWorkspace>;
@@ -35,8 +36,93 @@ const test = base.extend<{
   },
 });
 
+const forkFooterPlugin = `import React from "react";
+import { Text } from "react-native";
+import { z } from "zod";
+
+export default function contribute(client) {
+  const removeTransformer = client.addTimelineTransformer({
+    id: "style-assistant",
+    query: { itemType: "assistant_message" },
+    transform({ item }) {
+      return {
+        nativeTurnFooter: true,
+        items: [{ type: "plugin", kind: "styled-reply", version: 1, data: { text: item.text } }],
+      };
+    },
+  });
+  const removeRenderer = client.addTimelineRenderer({
+    kind: "styled-reply",
+    version: 1,
+    schema: z.object({ text: z.string() }),
+    Component: ({ item, nativeTurnFooter }) => (
+      <Text testID={nativeTurnFooter ? "styled-reply-native-footer" : "styled-reply"}>
+        {"Styled reply: " + item.data.text}
+      </Text>
+    ),
+  });
+  return () => {
+    removeRenderer();
+    removeTransformer();
+  };
+}`;
+
 test.describe("Assistant fork menu", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  for (const destination of ["tab", "workspace"] as const) {
+    test(`forks a historical plugin reply into a new ${destination}`, async ({
+      page,
+      seedForkWorkspace,
+    }) => {
+      const firstPrompt = "First turn: keep this in the fork.";
+      const laterPrompt = "Second turn: exclude this from the fork.";
+      const assistantReply = "This is the original assistant reply.";
+      const session = await seedForkWorkspace({
+        repoPrefix: "assistant-fork-plugin-",
+        title: "Plugin reply fork",
+        initialPrompt: firstPrompt,
+        featureValues: {
+          mockStreamingAssistantResponse: assistantReply,
+          mockStreamingAssistantIntervalMs: 1,
+        },
+      });
+      await session.client.waitForFinish(session.agentId, 45_000);
+      await session.client.sendAgentMessage(session.agentId, laterPrompt);
+      await session.client.waitForFinish(session.agentId, 45_000);
+
+      const forkAttachment = observeForkAttachment(page);
+      await withDirectoryPlugin({
+        pluginId: "assistant-fork-footer-e2e",
+        source: forkFooterPlugin,
+        run: async () => {
+          await openAgentRoute(page, session);
+          const replies = page.getByTestId("styled-reply-native-footer");
+          await expect(replies).toHaveCount(2, { timeout: 30_000 });
+          await expect(replies.first()).toContainText(assistantReply);
+
+          const forkButtons = page.getByRole("button", { name: "Fork chat from here" });
+          await expect(forkButtons).toHaveCount(2);
+          await forkButtons.first().click();
+          await page.getByRole("menuitem", { name: `Fork in a new ${destination}` }).click();
+
+          if (destination === "workspace") {
+            await expect(page).toHaveURL(/\/new\?.*draftId=/);
+          } else {
+            await expect(
+              page.getByTestId("workspace-tabs-row").locator('[aria-selected="true"]'),
+            ).toHaveAttribute("data-testid", /^workspace-tab-draft_/);
+          }
+          await expectChatHistoryAttachment(page);
+          const history = await forkAttachment.waitForText();
+          expect(history).toContain(firstPrompt);
+          expect(history).toContain(assistantReply);
+          expect(history).not.toContain(laterPrompt);
+          expect(history).not.toContain("Styled reply:");
+        },
+      });
+    });
+  }
 
   test("forks a failed assistant turn that has no provider message id", async ({
     page,
