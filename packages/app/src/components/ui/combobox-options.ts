@@ -10,6 +10,7 @@ export interface ComboboxOptionModel {
   id: string;
   label: string;
   description?: string;
+  descriptionLayout?: "stacked";
   /** Additional text to match without displaying it in the option row. */
   searchText?: string;
   kind?: ComboboxOptionKind;

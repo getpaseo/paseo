@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactElement, type RefObject } from "react";
-import { View } from "react-native";
-import { withUnistyles } from "react-native-unistyles";
+import { Text, View } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginAttachmentItem, PluginSerializableIcon } from "@getpaseo/plugin";
 import type { PluginAttachmentSourceContribution } from "../types";
@@ -9,6 +9,7 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useFetchQuery } from "@/data/query";
+import { useHosts } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { PluginIconView } from "../icons";
 import { useInstalledPlugins } from "../registry";
@@ -42,6 +43,7 @@ interface PluginAttachmentPickerInput {
 
 interface PluginAttachmentPickerBinding {
   menuItems: AttachmentMenuItem[];
+  newAgentShortcutItems: AttachmentMenuItem[];
   picker: ReactElement | null;
 }
 
@@ -67,17 +69,22 @@ function installedAttachmentSources(
 }
 
 function attachmentOptions(items: PluginAttachmentItem[]): ComboboxOption[] {
-  return items.map((item) => ({
-    id: item.id,
-    label: `${item.identifier} ${item.title}`,
-    description: item.subtitle,
-  }));
+  return items.map((item) => {
+    const isChatHistory = item.contextKind === "chat_history";
+    return {
+      id: item.id,
+      label: isChatHistory ? item.title : `${item.identifier} ${item.title}`,
+      description: item.subtitle,
+      ...(isChatHistory ? { descriptionLayout: "stacked", searchText: item.identifier } : {}),
+    };
+  });
 }
 
 export function usePluginAttachmentPicker(
   input: PluginAttachmentPickerInput,
 ): PluginAttachmentPickerBinding {
   const plugins = useInstalledPlugins();
+  const hosts = useHosts();
   const sources = useMemo(
     () => installedAttachmentSources(plugins, input.serverId),
     [input.serverId, plugins],
@@ -153,9 +160,28 @@ export function usePluginAttachmentPicker(
       })),
     [sources],
   );
-  if (!active) return { menuItems, picker: null };
+  const newAgentShortcutItems = useMemo(() => {
+    const shortcutIds = new Set(
+      sources
+        .filter(({ source }) => source.newAgentShortcut === true)
+        .map(({ key }) => `plugin:${key}`),
+    );
+    return menuItems.filter((item) => shortcutIds.has(item.id));
+  }, [menuItems, sources]);
+  const hostLabel = hosts.find((host) => host.serverId === active?.plugin.serverId)?.label;
+  const sourceHostHeader = useMemo(
+    () =>
+      hostLabel ? (
+        <Text testID="plugin-attachment-source-host" numberOfLines={1} style={styles.sourceHost}>
+          {hostLabel}
+        </Text>
+      ) : undefined,
+    [hostLabel],
+  );
+  if (!active) return { menuItems, newAgentShortcutItems, picker: null };
   return {
     menuItems,
+    newAgentShortcutItems,
     picker: (
       <Combobox
         options={options}
@@ -167,6 +193,7 @@ export function usePluginAttachmentPicker(
           active.plugin.locale,
         )}
         title={active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)}
+        stickyHeader={sourceHostHeader}
         open
         onOpenChange={handleOpenChange}
         onSearchQueryChange={setQuery}
@@ -177,3 +204,12 @@ export function usePluginAttachmentPicker(
     ),
   };
 }
+
+const styles = StyleSheet.create((theme) => ({
+  sourceHost: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+  },
+}));

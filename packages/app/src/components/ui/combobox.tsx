@@ -232,6 +232,7 @@ export interface ComboboxItemProps {
   /** Muted text before the label, such as a pull request number. */
   labelPrefix?: string;
   description?: string;
+  descriptionLayout?: ComboboxOption["descriptionLayout"];
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
@@ -249,6 +250,7 @@ export function ComboboxItem({
   label,
   labelPrefix,
   description,
+  descriptionLayout,
   kind,
   leadingSlot,
   trailingSlot,
@@ -291,9 +293,10 @@ export function ComboboxItem({
   const itemContentStyle = useMemo(
     () => [
       styles.comboboxItemContent,
-      (description || labelPrefix) && styles.comboboxItemContentInline,
+      (labelPrefix || (description && descriptionLayout !== "stacked")) &&
+        styles.comboboxItemContentInline,
     ],
-    [description, labelPrefix],
+    [description, descriptionLayout, labelPrefix],
   );
   const labelStyle = useMemo(
     () => [styles.comboboxItemLabel, labelPrefix && styles.comboboxItemLabelAfterPrefix],
@@ -364,6 +367,7 @@ function OptionRow({ option, selected, active, onSelect, renderOption }: OptionR
     <ComboboxItem
       label={option.label}
       description={option.description}
+      descriptionLayout={option.descriptionLayout}
       kind={option.kind}
       selected={selected}
       active={active}
