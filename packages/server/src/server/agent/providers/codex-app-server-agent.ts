@@ -103,7 +103,11 @@ import {
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
 import { codexAppServerStartup } from "./codex/app-server-startup.js";
-import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
+import {
+  type CodexUserMessageTurnIndex,
+  branchCodexConversation,
+  revertCodexConversation,
+} from "./codex/rewind.js";
 import {
   type CodexHistoryRow,
   type CodexHistoryStatus,
@@ -279,6 +283,13 @@ function formatOutOfBandStatusMessage(text: string): string {
   return `${text.replace(/\n+$/u, "")}\n\n`;
 }
 
+interface CodexPersistenceHandle {
+  provider: typeof CODEX_PROVIDER;
+  sessionId: string;
+  nativeHandle: string;
+  metadata: Record<string, unknown>;
+}
+
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -290,6 +301,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsNativeFork: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -4389,6 +4401,16 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async readArchivedHistory(): Promise<CodexThreadHistory> {
+    const client = await this.startDetachedClient();
+    try {
+      return await this.readThreadHistory(client);
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  /** A second app-server with this session's launch settings, for work the caller disposes of. */
+  private async startDetachedClient(): Promise<CodexAppServerClient> {
     const { client } = await codexAppServerStartup.start({
       stateDirKey: codexStartupStateDirKey(this.harnessEnvironment),
       spawn: this.spawnAppServer,
@@ -4398,11 +4420,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       logger: this.logger,
       signal: this.startupAbort.signal,
     });
-    try {
-      return await this.readThreadHistory(client);
-    } finally {
-      await client.dispose();
-    }
+    return client;
   }
 
   // Reads the thread and its sub-agent threads, rebuilding the turn index and
@@ -5437,14 +5455,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  describePersistence(): {
-    provider: typeof CODEX_PROVIDER;
-    sessionId: string;
-    nativeHandle: string;
-    metadata: Record<string, unknown>;
-  } | null {
+  describePersistence(): CodexPersistenceHandle | null {
     const threadId = this.savedCurrentThreadId();
     if (!threadId) return null;
+    const handle = this.persistenceHandle(threadId, this.config.cwd);
+    return {
+      ...handle,
+      metadata: {
+        ...handle.metadata,
+        asyncQuestions: this.asyncQuestions.serialize(),
+        ...(this.instructionSnapshot.describe(threadId)
+          ? { paseoInstructionReceipt: this.instructionSnapshot.describe(threadId) }
+          : {}),
+      },
+    };
+  }
+
+  private persistenceHandle(threadId: string, cwd: string): CodexPersistenceHandle {
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null;
     return {
       provider: CODEX_PROVIDER,
@@ -5452,7 +5479,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       nativeHandle: threadId,
       metadata: {
         provider: CODEX_PROVIDER,
-        cwd: this.config.cwd,
+        cwd,
         title: this.config.title ?? null,
         threadId,
         modeId: this.config.modeId,
@@ -5461,12 +5488,43 @@ export class CodexAppServerAgentSession implements AgentSession {
         toolPolicy: this.config.toolPolicy,
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
-        asyncQuestions: this.asyncQuestions.serialize(),
-        ...(this.instructionSnapshot.describe(threadId)
-          ? { paseoInstructionReceipt: this.instructionSnapshot.describe(threadId) }
-          : {}),
       },
     };
+  }
+
+  /**
+   * Forks the thread through the turn holding the assistant message into `cwd`. The branch
+   * starts without the source's async questions; its first load delivers Paseo's instructions.
+   */
+  async forkConversation(input: {
+    messageId: string;
+    cwd: string;
+  }): Promise<AgentPersistenceHandle> {
+    await this.connect();
+    if (!this.currentThreadId) {
+      throw new Error("Codex thread is not ready for fork");
+    }
+    // The app-server that forks keeps the new thread loaded and holds its writer lock
+    // until the thread idles out (a minute on Codex 0.169), so the branch agent could not
+    // resume it. Fork in a throwaway app-server; its exit releases the lock.
+    const client = await this.startDetachedClient();
+    let threadId: string;
+    try {
+      threadId = await branchCodexConversation({
+        client,
+        threadId: this.currentThreadId,
+        messageId: input.messageId,
+        cwd: input.cwd,
+        model: this.config.model ?? null,
+        serviceTier: this.serviceTier,
+        config: this.buildCodexInnerConfig(),
+        developerInstructions: composeAgentSystemPrompt(this.config),
+        threadRollbackAvailable: this.threadRollbackAvailable,
+      });
+    } finally {
+      await client.dispose();
+    }
+    return this.persistenceHandle(threadId, input.cwd);
   }
 
   private savedCurrentThreadId(): string | null {

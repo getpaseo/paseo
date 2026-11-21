@@ -2878,6 +2878,70 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("branches a Codex thread in a throwaway app-server and leaves the source on its thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const forker = createFakeCodexAppServer({
+      "thread/read": () => ({
+        thread: {
+          id: "thread-1",
+          historyMode: "legacy",
+          turns: [
+            {
+              id: "turn-1",
+              items: [
+                { type: "userMessage", id: "user-1", content: [] },
+                { type: "agentMessage", id: "assistant-1", text: "first" },
+              ],
+            },
+            {
+              id: "turn-2",
+              items: [
+                { type: "userMessage", id: "user-2", content: [] },
+                { type: "agentMessage", id: "assistant-2", text: "second" },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const children = [appServer.child, forker.child];
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project", title: "Fix login" }),
+      null,
+      createTestLogger(),
+      async () => children.shift()!,
+    );
+    await session.startTurn("remember first");
+    appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const forkerExited = new Promise<void>((resolve) => forker.child.once("exit", () => resolve()));
+
+    const handle = await session.forkConversation({
+      messageId: "assistant-1",
+      cwd: "/workspace/branch",
+    });
+
+    // The app-server that forks holds the new thread's writer lock until it exits.
+    await forkerExited;
+    const fork = forker.requests().find((request) => request.method === "thread/fork");
+    expect(fork?.params).toMatchObject({ threadId: "thread-1", cwd: "/workspace/branch" });
+    expect(forker.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 1 }]);
+    expect(appServer.requests().map((request) => request.method)).not.toContain("thread/fork");
+    expect(handle).toMatchObject({
+      provider: "codex",
+      sessionId: "forked-thread",
+      metadata: { cwd: "/workspace/branch", threadId: "forked-thread", title: "Fix login" },
+    });
+    expect(handle.metadata).not.toHaveProperty("asyncQuestions");
+    expect(handle.metadata).not.toHaveProperty("paseoInstructionReceipt");
+    await session.startTurn("after the branch");
+    const turnStarts = appServer.requests().filter((request) => request.method === "turn/start");
+    expect(turnStarts.at(-1)?.params).toMatchObject({ threadId: "thread-1" });
+    appServer.assertNoErrors();
+    forker.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds a legacy conversation with a bounded fork on Codex without thread/rollback", async () => {
     const appServer = createFakeCodexAppServer({
       initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
