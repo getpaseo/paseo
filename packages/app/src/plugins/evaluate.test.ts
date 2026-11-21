@@ -108,6 +108,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } }).remove,
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
+          plugin.addTimelineFooter({ id: "footer", Component }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
         ];
@@ -139,6 +140,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
+        plugin.timelineFooters,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
       ].every((items) => items.length === 1),
@@ -160,6 +162,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
+        plugin.timelineFooters,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
       ].every((items) => items.length === 0),

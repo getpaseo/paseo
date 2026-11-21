@@ -143,6 +143,7 @@ export function runPluginClientBundle(
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    timelineFooters: [],
     timelineTransformers: [],
     timelineRenderers: [],
   };
@@ -162,6 +163,7 @@ export function runPluginClientBundle(
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
+  const timelineFooterIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
@@ -521,6 +523,17 @@ export function runPluginClientBundle(
       themeIds.add(normalizedId);
       return register(collector.themes, theme, () => themeIds.delete(normalizedId));
     },
+    addTimelineFooter(contribution) {
+      const normalizedId = requireId(contribution.id, "timeline footer id");
+      if (timelineFooterIds.has(normalizedId))
+        throw new Error(`Duplicate timeline footer: ${normalizedId}`);
+      if (typeof contribution.Component !== "function")
+        throw new Error(`Timeline footer ${normalizedId} is not a component`);
+      timelineFooterIds.add(normalizedId);
+      return register(collector.timelineFooters, { ...contribution, id: normalizedId }, () =>
+        timelineFooterIds.delete(normalizedId),
+      );
+    },
     addTimelineTransformer(contribution: PluginTimelineTransformerContribution) {
       const normalizedId = requireId(contribution.id, "timeline transformer id");
       if (timelineTransformerIds.has(normalizedId)) {
@@ -663,6 +676,7 @@ export function runPluginClientBundle(
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
+    timelineFooters: collector.timelineFooters,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
   };

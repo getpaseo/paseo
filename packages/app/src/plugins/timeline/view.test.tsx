@@ -7,6 +7,7 @@ import React, { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const compactLayout = vi.hoisted(() => ({ value: false }));
 const hostClient = vi.hoisted(() => ({ invokePluginRpc: async () => null }));
 const selectedHost = vi.hoisted(() => ({ client: null as DaemonClient | null }));
 vi.mock("@/runtime/host-runtime", async (importOriginal) => ({
@@ -16,7 +17,7 @@ vi.mock("@/runtime/host-runtime", async (importOriginal) => ({
 }));
 vi.mock("@/constants/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/constants/layout")>()),
-  useIsCompactFormFactor: () => false,
+  useIsCompactFormFactor: () => compactLayout.value,
 }));
 vi.mock("../navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -115,6 +116,7 @@ afterEach(() => {
   for (const container of containers.splice(0)) container.remove();
   pluginRegistry.removeHost("host-1");
   selectedHost.client = null;
+  compactLayout.value = false;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -355,4 +357,62 @@ it("a renderer releases its observation on the plugin's client when it crashes, 
     await survivor.release();
     await client.close();
   }
+});
+
+describe("PluginTimelineFooters", () => {
+  it.each([false, true])(
+    "mounts for the matching host without plugin rows in compact=%s",
+    async (compact) => {
+      compactLayout.value = compact;
+      const { PluginTimelineFooters } = await import("./footer");
+      const footerBundle = `(function(require) {
+      const React = require("react");
+      return { default: function(plugin) {
+        plugin.addTimelineFooter({ id: "progress", Component: function(props) {
+          return React.createElement("span", null, props.agentId + ":" + props.activeCalls.length);
+        } });
+        return function() {};
+      } };
+    })`;
+      pluginRegistry.installCatalog(
+        "host-1",
+        [
+          {
+            id: "progress",
+            requirements: { paseo: `>=${appPackage.version}` },
+            clientBundle: footerBundle,
+          },
+        ],
+        { client: daemonClient, audio },
+      );
+      const container = document.createElement("div");
+      containers.push(container);
+      const root = createRoot(container);
+      roots.push(root);
+      await act(async () =>
+        root.render(<PluginTimelineFooters serverId="host-1" agentId="a" activeCalls={[]} />),
+      );
+      expect(container.textContent).toBe("a:0");
+      const activeCalls = [
+        {
+          type: "tool_call",
+          name: "Read",
+          callId: "one",
+          status: "running",
+          error: null,
+          detail: { type: "read", filePath: "a" },
+        },
+      ] as const;
+      await act(async () =>
+        root.render(
+          <PluginTimelineFooters serverId="host-1" agentId="a" activeCalls={activeCalls} />,
+        ),
+      );
+      expect(container.textContent).toBe("a:1");
+      await act(async () =>
+        root.render(<PluginTimelineFooters serverId="other-host" agentId="a" activeCalls={[]} />),
+      );
+      expect(container.textContent).toBe("");
+    },
+  );
 });

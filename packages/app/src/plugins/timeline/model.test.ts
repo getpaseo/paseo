@@ -47,6 +47,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    timelineFooters: [],
   };
 }
 
