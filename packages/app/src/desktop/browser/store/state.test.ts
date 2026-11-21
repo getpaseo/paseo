@@ -6,6 +6,7 @@ import {
   createBrowserRecord,
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
+  parseBrowserHomeUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
 } from "./state";
@@ -39,6 +40,35 @@ describe("normalizeBrowserUrl", () => {
   it("falls back to a default URL when input is blank", () => {
     expect(normalizeBrowserUrl(null)).toBe("https://example.com");
     expect(normalizeBrowserUrl("   ")).toBe("https://example.com");
+  });
+});
+
+describe("parseBrowserHomeUrl", () => {
+  it("keeps blank input blank so new tabs use the default page", () => {
+    expect(parseBrowserHomeUrl("")).toBe("");
+    expect(parseBrowserHomeUrl("   ")).toBe("");
+    expect(parseBrowserHomeUrl(null)).toBe("");
+  });
+
+  it("normalizes typed hosts like the address bar does", () => {
+    expect(parseBrowserHomeUrl(" google.com ")).toBe("https://google.com");
+    expect(parseBrowserHomeUrl("localhost:3000")).toBe("http://localhost:3000");
+    expect(parseBrowserHomeUrl("http://intranet/start")).toBe("http://intranet/start");
+  });
+
+  it("encodes spaces in the path and query", () => {
+    expect(parseBrowserHomeUrl("https://example.com/search?q=hello world")).toBe(
+      "https://example.com/search?q=hello%20world",
+    );
+    expect(parseBrowserHomeUrl("example.com/my page")).toBe("https://example.com/my%20page");
+  });
+
+  it("rejects URLs a browser tab would not load", () => {
+    expect(parseBrowserHomeUrl("https://exa mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("exa mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("https://exa%20mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("file:///tmp/index.html")).toBeNull();
+    expect(parseBrowserHomeUrl("javascript:alert(1)")).toBeNull();
   });
 });
 

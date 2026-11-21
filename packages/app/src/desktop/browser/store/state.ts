@@ -87,10 +87,12 @@ export function trimNonEmpty(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export const DEFAULT_BROWSER_URL = "https://example.com";
+
 export function normalizeBrowserUrl(value: string | null | undefined): string {
   const trimmed = trimNonEmpty(value);
   if (!trimmed) {
-    return "https://example.com";
+    return DEFAULT_BROWSER_URL;
   }
   if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-fA-F:.]+])(?::\d+)?(?:[/?#]|$)/.test(trimmed)) {
     return `http://${trimmed}`;
@@ -102,6 +104,36 @@ export function normalizeBrowserUrl(value: string | null | undefined): string {
     return `https:${trimmed}`;
   }
   return `https://${trimmed}`;
+}
+
+/** Whether a browser tab will load the URL; matches the pane's navigation guard. */
+export function isLoadableBrowserUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalizes a typed home URL. Blank returns "" (the built-in default page); a URL a tab
+ * could not load returns null so it is never saved.
+ */
+export function parseBrowserHomeUrl(value: string | null | undefined): string | null {
+  const trimmed = trimNonEmpty(value);
+  if (!trimmed) {
+    return "";
+  }
+  // Spaces are fine in a path or query once encoded. In the host they stay encoded: Chromium's
+  // URL parser keeps "exa%20mple.com" as the hostname where Node's throws, so check for "%".
+  const url = normalizeBrowserUrl(trimmed.replace(/\s/g, encodeURIComponent));
+  if (!isLoadableBrowserUrl(url)) {
+    return null;
+  }
+  return new URL(url).hostname.includes("%") ? null : url;
 }
 
 export function createBrowserRecord(input: {
