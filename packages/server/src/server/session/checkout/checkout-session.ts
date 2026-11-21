@@ -1110,7 +1110,7 @@ export class CheckoutSession {
       checkoutState.base,
     );
     if (
-      /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:#\d+\b|[\w.-]+\/[\w.-]+#\d+\b|https?:\/\/\S+)/i.test(
+      /\b(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|implement(?:s|ed|ing)?)\s*:?\s+(?:issues?\s+)?(?:#\d+\b|(?:[\w.-]+\/)+[\w.-]+#\d+\b|https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+\b)/i.test(
         `${generated.title}\n${generated.body}`,
       )
     ) {

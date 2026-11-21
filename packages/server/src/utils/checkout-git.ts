@@ -4431,7 +4431,10 @@ export async function createPullRequest(
     : ["push", "-u", "origin", head];
   await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
   if (options.approvedHeadSha) {
-    await runGitCommand(["branch", `--set-upstream-to=origin/${head}`, "--", head], { cwd });
+    // Match push -u without requiring a remote-tracking ref: single-branch
+    // clones may deliberately exclude this branch from origin's fetch refspec.
+    await runGitCommand(["config", `branch.${head}.remote`, "origin"], { cwd });
+    await runGitCommand(["config", `branch.${head}.merge`, `refs/heads/${head}`], { cwd });
   }
 
   const result = await forgeService.createPullRequest({

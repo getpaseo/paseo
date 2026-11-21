@@ -1984,6 +1984,30 @@ it("previews related issues and creates only explicitly approved issue links", a
     });
     // A closed or lower-ranked issue is still the same approved identity.
     expect(requests).toHaveLength(2);
+    expect(git(created.worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
+      `origin/${created.branchName}`,
+    );
+    for (const directive of [
+      "Closing #7",
+      "Fixing #7",
+      "Implements #7",
+      "Resolving issue #7",
+      "Implemented group/subgroup/project#7",
+      "Implementing https://gitlab.example/project/-/issues/7",
+      "Closed PROJ-7",
+    ]) {
+      generatedBody = directive;
+      await checkout.handleCheckoutPrCreateRequest({
+        type: "checkout_pr_create_request",
+        cwd: created.worktreePath,
+        previewOnly: true,
+        requestId: "gitlab-directive",
+      });
+      expect(emitted.at(-1)).toMatchObject({
+        payload: { error: { message: expect.stringContaining("issue-closing directives") } },
+      });
+    }
+    expect(requests).toHaveLength(2);
     generatedBody = "Closes\n#7";
     await checkout.handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
@@ -2049,6 +2073,8 @@ it("previews related issues and creates only explicitly approved issue links", a
     const approved = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
     expect(approved.baseSha).toBe(git(repo, "rev-parse", "origin/main"));
     git(created.worktreePath, "commit", "--allow-empty", "-m", "after approval");
+    git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main");
+    git(repo, "update-ref", "-d", `refs/remotes/origin/${created.branchName}`);
     await createPullRequest(
       created.worktreePath,
       {
@@ -2065,9 +2091,13 @@ it("previews related issues and creates only explicitly approved issue links", a
       approved.headSha,
     );
     expect(git(created.worktreePath, "rev-parse", "HEAD")).not.toBe(approved.headSha);
-    expect(git(created.worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
-      `origin/${created.branchName}`,
+    expect(git(created.worktreePath, "config", `branch.${created.branchName}.remote`)).toBe(
+      "origin",
     );
+    expect(git(created.worktreePath, "config", `branch.${created.branchName}.merge`)).toBe(
+      `refs/heads/${created.branchName}`,
+    );
+    expect(requests).toHaveLength(3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
