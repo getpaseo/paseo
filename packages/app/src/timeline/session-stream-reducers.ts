@@ -1542,7 +1542,20 @@ function processTimelineSequencingGate(input: {
       cursorChanged: true,
     };
   }
-  if (decision === "gap") {
+  if (decision === "drop_epoch" && seq === 1) {
+    return {
+      ...base,
+      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
+      cursorChanged: true,
+      resetLiveTimeline: true,
+    };
+  }
+  // A gap and an epoch change both mean the local cursor cannot certify the next row.
+  // The epoch case is a rewind or replacement this client did not observe as an
+  // invalidation; the daemon answers an `after` request carrying the stale epoch with a
+  // reset tail, which installs current history. Dropping those rows would leave the chat
+  // on pre-rewind history while the new epoch streams.
+  if (decision === "gap" || decision === "drop_epoch") {
     return {
       ...base,
       shouldApplyStreamEvent: false,
@@ -1554,14 +1567,6 @@ function processTimelineSequencingGate(input: {
             : { epoch, endSeq: 0 },
         },
       ],
-    };
-  }
-  if (decision === "drop_epoch" && seq === 1) {
-    return {
-      ...base,
-      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
-      cursorChanged: true,
-      resetLiveTimeline: true,
     };
   }
   return {
