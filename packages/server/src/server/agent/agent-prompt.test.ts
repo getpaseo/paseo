@@ -29,10 +29,9 @@ test("isSystemInjectedEnvelope matches the envelope formatSystemNotificationProm
 });
 
 // Independent of the production constant so shortening the budget breaks this test.
-const EXPECTED_RUN_START_BUDGET_MS = 60_000;
-// The slowest provider startup budget the run-start wait has to sit outside of today
-// (OpenCode's OPENCODE_SERVER_STARTUP_TIMEOUT_MS).
-const SLOWEST_PROVIDER_STARTUP_BUDGET_MS = 30_000;
+const EXPECTED_RUN_START_BUDGET_MS = 120_000;
+// Codex turn/start has a 90-second provider request budget.
+const SLOWEST_PROVIDER_STARTUP_BUDGET_MS = 90_000;
 
 const RUN_START_TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -239,7 +238,7 @@ test("waiting for a run start still gives up at the run start budget", async () 
     const { started } = await scenario.startRun();
     const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId, started);
     const rejection = expect(wait).rejects.toThrow(
-      "codex run did not start within 60 seconds (phase: run start)",
+      "codex run did not start within 120 seconds (phase: run start)",
     );
     let settled = false;
     const markSettled = () => {
