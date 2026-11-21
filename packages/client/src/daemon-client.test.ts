@@ -3134,7 +3134,7 @@ test("a foreground window that spanned a second suspension is discarded when the
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000); // window 1 silent, window 2 outstanding
   expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
-  await suspendFor(60_000);
+  await suspendFor(20_000);
   daemon.daemonAnswersPingsAfter("fast"); // the socket is healthy on resume
   await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
   client.ensureConnected({ verify: true }); // then AppState lands
@@ -3155,7 +3155,7 @@ test("a foreground window that spanned a second suspension is discarded when App
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000);
   expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
-  await suspendFor(60_000);
+  await suspendFor(20_000);
   daemon.daemonAnswersPingsAfter("fast");
   client.ensureConnected({ verify: true }); // AppState lands before the queued timer
   await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
@@ -3180,7 +3180,7 @@ test("a dead socket after a second suspension mid-cycle still gets two fresh win
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000);
   first.receiveChunk(true); // a frame before the second suspension is not evidence after it
-  await suspendFor(60_000);
+  await suspendFor(20_000);
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000); // the late timer discards window 2 and starts over
   expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
@@ -3325,6 +3325,234 @@ test("an obsolete heartbeat cannot close a replacement connection", async () => 
   expect(attempts).toBe(2);
   expect(client.getConnectionState()).toEqual({ status: "connected" });
   expect(second.closesFromClient()).toEqual([]);
+});
+
+test("foreground reconnects immediately when the claimed application lease expired during suspension", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("lease-expired-foreground", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // first ping claims the 45s daemon lease
+  expect(first.pingTimestamps()).toEqual(["10s"]);
+
+  first.daemonGoesSilent(); // daemon closed the socket once the lease expired in background
+  await suspendFor(45_000);
+  client.ensureConnected({ verify: true });
+
+  expect(first.closesFromClient()).toEqual([
+    { code: 1001, reason: "Application socket lease expired" },
+  ]);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(second.pingTimestamps()).toEqual(["20s"]);
+  expect(second.closesFromClient()).toEqual([]);
+});
+
+test("foreground still probes when suspension stayed within the 45s application lease", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("within-lease-foreground", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // first ping claims the 45s daemon lease
+
+  await suspendFor(44_999);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("outbound session traffic renews the local application lease deadline", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("outbound-renews-lease", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // ping at 10s -> deadline 55s
+
+  await suspendFor(20_000); // wall clock 30s (< 55s)
+  client.sendHeartbeat({
+    deviceType: "mobile",
+    focusedAgentId: null,
+    lastActivityAt: new Date().toISOString(),
+    appVisible: true,
+  }); // renews deadline to 75s
+
+  await suspendFor(35_000); // wall clock 65s (< 75s, though 55s after the ping)
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("wake-up outbound traffic after lease expiry does not suppress immediate foreground reconnect", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("wakeup-send-after-expiry", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // ping at 10s -> deadline 55s
+
+  first.daemonGoesSilent();
+  await suspendFor(60_000); // wall clock 70s (> 55s)
+
+  // A sibling AppState listener (e.g. client_heartbeat) or an overdue heartbeat timer
+  // may send onto the dead socket before bindHostRuntimeAppState calls ensureConnected.
+  client.sendHeartbeat({
+    deviceType: "mobile",
+    focusedAgentId: null,
+    lastActivityAt: new Date().toISOString(),
+    appVisible: true,
+  });
+  await vi.advanceTimersByTimeAsync(10_000); // overdue heartbeat timer fires and sends ping
+  client.ensureConnected({ verify: true });
+
+  expect(first.closesFromClient()).toEqual([
+    { code: 1001, reason: "Application socket lease expired" },
+  ]);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("an inbound frame received after the lease deadline proves the socket alive", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("inbound-clears-expired-lease", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // ping at 10s -> deadline 55s
+
+  await suspendFor(60_000); // wall clock 70s (> 55s)
+  // An older daemon without a lease (or one whose sweep tick has not run yet) answers the overdue ping.
+  await vi.advanceTimersByTimeAsync(10_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("foreground mid-cycle reconnects immediately when a second suspension exceeds the application lease", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("mid-cycle-lease-expired", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true }); // window 1 ping at 0s -> deadline 45s
+  await vi.advanceTimersByTimeAsync(5_000); // window 2 ping at 5s -> deadline 50s
+  await suspendFor(60_000); // wall clock 65s (> 50s)
+  client.ensureConnected({ verify: true }); // AppState fires before the late window 2 timer
+
+  expect(first.closesFromClient()).toEqual([
+    { code: 1001, reason: "Application socket lease expired" },
+  ]);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("foreground still probes after a long suspension if the connection never claimed a lease", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("unclaimed-lease-foreground", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  // Suspended before the 10s first ping: daemon never entered the socket into its lease map.
+  await suspendFor(60_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("foreground with reconnect disabled still probes instead of tearing down on an expired lease", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("lease-expired-no-reconnect", [daemon], {
+    reconnect: { enabled: false },
+  });
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // ping at 10s -> deadline 55s
+
+  await suspendFor(60_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("an immediate reconnect after an expired lease backs off normally if it fails and deduplicates repeated foreground events", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  const third = new FakeDaemon();
+  first.daemonAnswersPingsAfter("fast");
+  const { client, attempts } = connectThroughReplacements("lease-expired-backoff", [
+    first,
+    second,
+    third,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  first.daemonGoesSilent();
+  await suspendFor(60_000);
+  client.ensureConnected({ verify: true });
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(2);
+
+  second.daemonClosesWith("connection refused");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  third.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
 });
 
 test("stays online through ten minutes of pongs that arrive five seconds late", async () => {
