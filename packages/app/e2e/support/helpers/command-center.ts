@@ -23,6 +23,11 @@ export async function openCommandCenter(page: Page): Promise<Locator> {
   return panel;
 }
 
+export async function openCommandCenterWithShortcut(page: Page): Promise<void> {
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByTestId("command-center-panel")).toBeVisible();
+}
+
 export async function closeCommandCenter(page: Page): Promise<void> {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("command-center-panel")).not.toBeVisible();

@@ -40,6 +40,7 @@ import {
   usageModal,
   installTallUsageSource,
 } from "../support/helpers/usage-sidebar-item";
+import { seedDockedSidebarWidth } from "../support/helpers/sidebar-footer-overflow";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 import { createTempGitRepo } from "../support/helpers/workspace";
@@ -576,4 +577,98 @@ test("visible usage summary requests reports on load", async ({ page }) => {
   await gotoAppShell(page);
   await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
   expect(usage.listRequests()).toHaveLength(1);
+});
+
+test("sidebar usage falls back to period shorthands before dropping all labels", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const [claude, codex] = claudeAndCodexReports();
+  const fetchedAt = new Date().toISOString();
+  await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...codex!,
+          report: {
+            status: "available",
+            windows: [
+              { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 97 },
+            ],
+          },
+        },
+        {
+          ...claude!,
+          report: {
+            status: "available",
+            windows: [
+              { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 100 },
+              { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 14 },
+              {
+                id: "weekly_model_opus",
+                label: "Weekly · Opus",
+                shortLabel: "wk Opus",
+                summary: true,
+                usedPct: 22,
+              },
+            ],
+          },
+        },
+        {
+          id: "antigravity:default",
+          account: {},
+          fetchedAt,
+          sourceId: "antigravity",
+          sourceLabel: "Antigravity",
+          report: {
+            status: "available",
+            windows: [
+              {
+                id: "gemini-weekly",
+                label: "Gemini Models · Weekly",
+                shortLabel: "Gemini wk",
+                summary: true,
+                usedPct: 6,
+              },
+              {
+                id: "gemini-5h",
+                label: "Gemini Models · 5h",
+                shortLabel: "Gemini 5h",
+                summary: true,
+                usedPct: 20,
+              },
+            ],
+          },
+        },
+      ],
+    ],
+  });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await seedDockedSidebarWidth(page, 432);
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+
+  await expectPinnedUsage(page, ["6% wk", "20% 5h", "100% 5h", "14% wk", "22% wk", "97% wk"]);
+
+  const handle = page.getByTestId("left-sidebar-resize-handle");
+  const dragSidebarTo = async (targetX: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(targetX, box.y + box.height / 2, { steps: 10 });
+    await page.mouse.up();
+  };
+
+  await dragSidebarTo(600);
+  await expectPinnedUsage(page, [
+    "6% Gemini wk",
+    "20% Gemini 5h",
+    "100% 5h",
+    "14% wk",
+    "22% wk Opus",
+    "97% wk",
+  ]);
+
+  await dragSidebarTo(300);
+  await expectPinnedUsage(page, ["6%", "20%", "100%", "14%", "22%", "97%"]);
 });

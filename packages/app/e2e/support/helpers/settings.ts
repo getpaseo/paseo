@@ -515,8 +515,8 @@ export async function serveJson(page: Page, url: string, body: unknown): Promise
   });
 }
 
-export async function openAddProviderArea(page: Page): Promise<void> {
-  await page.getByTestId("host-page-add-provider-card").scrollIntoViewIfNeeded();
+export async function openAddProvider(page: Page): Promise<void> {
+  await page.getByTestId("provider-list-add").click();
   await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
 }
 
@@ -528,15 +528,80 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
   await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
+  // The sheet closes once the add is done. Adding probes the new provider, which can outlast an
+  // assertion's default wait.
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0, {
+    timeout: 60_000,
+  });
 }
 
+/** Adding opens the new provider's page; its row waits in the list behind it. */
 export async function expectProviderInstalledInSettings(
   page: Page,
   providerName: string,
 ): Promise<void> {
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+  await page.getByTestId("provider-detail-back").click();
   await expect(
     page.getByRole("button", { name: `${providerName} provider details`, exact: true }),
   ).toBeVisible();
+}
+
+export async function openProviderDetail(page: Page, providerName: string): Promise<void> {
+  await page.getByRole("button", { name: `${providerName} provider details`, exact: true }).click();
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+}
+
+/** Load a provider's Settings page from its URL, as a reload or a shared link does. */
+export async function gotoProviderPage(
+  page: Page,
+  serverId: string,
+  providerId: string,
+): Promise<void> {
+  await page.goto(
+    `/settings/hosts/${encodeURIComponent(serverId)}/providers/${encodeURIComponent(providerId)}`,
+  );
+}
+
+export async function expectProviderPageLoaded(page: Page, providerName: string): Promise<void> {
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName, {
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Provider status")).toBeVisible({ timeout: 30_000 });
+}
+
+export async function expectProviderNotOnHost(page: Page): Promise<void> {
+  await expect(page.getByText("This provider isn't on this host")).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+/**
+ * The provider page says the provider's CLI is missing, and Install opens the given guide. The
+ * guide is served locally so the test never reaches the network.
+ */
+export async function expectInstallOpensGuide(page: Page, guideUrl: string): Promise<void> {
+  const installation = page.getByTestId("provider-installation");
+  await expect(installation.getByText("Not installed", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.context().route(guideUrl, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<title>Install guide</title>",
+    }),
+  );
+  const guide = page.waitForEvent("popup");
+  await installation.getByRole("button", { name: "Install", exact: true }).click();
+  const opened = await guide;
+  expect(opened.url()).toBe(guideUrl);
+  await opened.close();
+}
+
+export async function leaveProviderDetail(page: Page): Promise<void> {
+  await page.getByTestId("provider-detail-back").click();
+  await expect(page.getByTestId("provider-list")).toBeVisible();
 }
 
 export async function expectHostNoDaemonLifecycleRow(page: Page): Promise<void> {

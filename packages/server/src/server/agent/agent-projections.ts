@@ -120,6 +120,13 @@ function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
   return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
 }
 
+function projectInterruptRecovery(
+  agent: ManagedAgent,
+): Pick<AgentSnapshotPayload, "interruptRecoveryPending"> {
+  const interruptRecoveryPending = agent.session?.hasPendingInterruptRecovery?.();
+  return interruptRecoveryPending === undefined ? {} : { interruptRecoveryPending };
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -144,7 +151,7 @@ export function toAgentPayload(
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle,
-    interruptRecoveryPending: agent.session?.hasPendingInterruptRecovery?.(),
+    ...projectInterruptRecovery(agent),
     activeTurn: agent.activeTurnId
       ? {
           turnId: agent.activeTurnId,
@@ -261,10 +268,18 @@ function buildStoredOptionControls(
   };
 }
 
+function visibleStoredBackgroundWork(
+  record: StoredAgentRecord,
+  summary: AgentSnapshotPayload["backgroundWork"],
+): AgentSnapshotPayload["backgroundWork"] {
+  return record.internal || record.archivedAt ? undefined : summary;
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
   effectiveOptionsFor: EffectiveOptionsResolver,
+  backgroundWork?: AgentSnapshotPayload["backgroundWork"],
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -305,6 +320,7 @@ export function buildStoredAgentPayload(
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: record.lastStatus,
+    backgroundWork: visibleStoredBackgroundWork(record, backgroundWork),
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],

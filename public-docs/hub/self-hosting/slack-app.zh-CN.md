@@ -1,58 +1,57 @@
 ---
-title: 在 Hub 中使用 Slack
-description: 通过 Socket Mode 连接 Slack，或从公开的 Hub 使用 webhook。
+title: 为 Hub 配置 Slack
+description: 通过 Socket Mode 或 webhook 将 Slack 连接到自托管 Hub。
 nav: Slack 应用
 ---
 
-# 在 Hub 中使用 Slack {#slack-for-hub}
+# 为 Hub 配置 Slack {#slack-for-hub}
 
-Slack 可以通过两种方式连接 Hub：
+Slack 可以通过两种方式连接到自托管 Hub：
 
-| 传输方式    | 需要公开 HTTPS | 适用场景                 |
-| ----------- | -------------- | ------------------------ |
-| Socket Mode | 否             | 本地、个人和单进程的 Hub |
-| Webhooks    | 是             | 公开服务器部署           |
+| 传输方式    | 需要公开 HTTPS | 最适合                 |
+| ----------- | -------------- | ---------------------- |
+| Socket Mode | 否             | 本地、个人或单进程 Hub |
+| Webhooks    | 是             | 公开服务器部署         |
 
-浏览器设置中默认使用 Socket Mode。两种传输方式产生相同的 `slack.mention` 触发器和线程回复。
+浏览器设置默认使用 Socket Mode。两种传输方式均支持 `slack.mention` 触发器、讨论串回复以及[受控 Slack 集成工具](/docs/hub/tools)。
 
-## 设置 Socket Mode {#set-up-socket-mode}
+## 配置 Socket Mode {#set-up-socket-mode}
 
-在 Hub 中打开 **Apps → Slack**，保持选中 **Socket Mode**。Hub 会给出 Slack manifest 以及具体步骤：
+在 Hub 中打开 **Apps → Slack**，保持选中 **Socket Mode**。Hub 会生成 Slack manifest 并引导完成以下步骤：
 
-1. 用 manifest 创建 Slack 应用。
-2. 生成带有 `connections:write` 的 App-level token。
-3. 安装应用并复制它的 Bot User OAuth Token。
+1. 使用生成的 manifest 创建 Slack 应用。
+2. 生成带有 `connections:write` 权限的 App-level token。
+3. 安装应用并复制 Bot User OAuth Token。
+4. 将两个令牌粘贴到 Hub 中，选择 **Connect Slack**。
 
-把两个 token 粘贴到 Hub 中，然后选择 **Connect Slack**。Hub 会验证安装，为当前组织保存它，并打开出站的 Socket Mode 连接。
+Hub 会验证安装、将其保存在 **Integrations** 下，并建立出站 Socket Mode 连接。
 
-把机器人邀请到每个它需要关注的频道：
+将机器人邀请到它要监听或发送消息的每个频道：
 
 ```text
 /invite @Paseo
 ```
 
-现在编写一个 [Slack 触发器](/docs/hub/triggers/slack)。
+Socket Mode 在 Hub 进程内维持一条实时连接。请仅运行一个 Hub 进程并保持运行，因为停止期间到达的事件会丢失。
 
-Socket Mode 在 Hub 进程中保持一条活动连接。使用这种传输方式时，请只运行一个 Hub 进程并保持它运行；它停止期间到达的事件会丢失。
+接下来创建一个 [Slack 触发器](/docs/hub/triggers/slack)。
 
 ## 使用 webhook {#use-webhooks}
 
-当 Slack 应该把事件发送到一个稳定的公开 Hub 时，选择 **Webhooks**。设置之前，Hub 必须已经在其公开 HTTPS 地址上打开，这样生成的重定向 URL 和请求 URL 才正确。
+如果让 Slack 将事件发送到公开 Hub，请选择 **Webhooks**。配置前请先通过[公开 HTTPS 地址](/docs/hub/self-hosting#public-addresses)打开 Hub，以确保生成的 manifest 使用正确 URL。
 
-Apps 指南会给出一份 webhook manifest，并要求填写 App ID、Client ID、Client Secret 和 Signing Secret。保存后会跳转到 Slack，以便你把应用安装到某个 Slack 工作区。
+**Apps → Slack** 会提供 webhook manifest，并要求填写 **App ID**、**Client ID**、**Client Secret** 和 **Signing Secret**。保存后会跳转到 Slack 以授权工作区。请始终从 Hub 发起工作区安装，使工作区绑定到当前 Hub 组织。
 
-Slack 调用：
+Slack 会调用这些 Hub URL：
 
 | Provider 设置 | Hub URL                                               |
 | ------------- | ----------------------------------------------------- |
 | Redirect URL  | `<PASEO_HUB_APP_URL>/api/integrations/slack/callback` |
 | Request URL   | `<PASEO_HUB_APP_URL>/api/integrations/slack/events`   |
 
-请从 Hub 发起安装。只从 Slack 发起的安装不会绑定到任何 Hub 组织。
-
 ## 通过环境变量配置 {#configure-from-environment}
 
-把应用密钥保存在 Hub 之外的部署可以使用一套完整的传输配置。
+在 Hub 之外管理密钥的部署可通过环境变量提供一套完整的传输配置。
 
 Socket Mode：
 
@@ -62,7 +61,7 @@ SLACK_APP_ID=A01234567
 SLACK_APP_TOKEN=xapp-...
 ```
 
-Bot User OAuth Token 仍然附加在每个已保存的 Slack 工作区连接上；它不属于 Socket Mode 的环境变量配置。
+Bot User OAuth Token 保留在 **Integrations** 下每个已保存的 Slack 工作区上，不属于 Socket Mode 环境变量。
 
 Webhooks：
 

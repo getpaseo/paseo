@@ -527,7 +527,17 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     expect(gate.getClientRequestCount("agent.timeline.set_subscription.request")).toBe(
       subscriptionRequests,
     );
+    const requestsBeforeRelease = rememberTimelineRequestCounts(gate, target.agentId);
     gate.releaseHeldAgentStreamEvent("turn_started");
+    // The chat never saw the hidden prompt's live row, so the reply's first row is a gap.
+    // The chat recovers the missing rows once, while its workspace is still evicted.
+    await expect
+      .poll(() => gate.getTimelineRequestCount("after", target.agentId))
+      .toBe(requestsBeforeRelease.after + 1);
+    await gate.waitForServerMessage(
+      "fetch_agent_timeline_response",
+      gate.getClientRequestCount("fetch_agent_timeline_request"),
+    );
     const requestsBeforeReturn = rememberTimelineRequestCounts(gate, target.agentId);
     await waitForWorkspaceInSidebar(page, {
       serverId: getServerId(),

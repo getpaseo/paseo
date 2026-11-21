@@ -22,7 +22,7 @@ type AgentSkillsClient = Pick<
   "close" | "connect" | "getAgentSkillsStatus" | "saveAgentSkillsSelection"
 >;
 
-export type SkillTargetName = "agents" | "claude";
+export type SkillTargetName = "agents" | "claude" | "antigravity";
 
 export interface AgentSkillsSandbox {
   available: string[];
@@ -64,6 +64,7 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
   const targets = {
     agents: path.join(home, ".agents", "skills"),
     claude: path.join(home, ".claude", "skills"),
+    antigravity: path.join(home, ".gemini", "config", "skills"),
   };
   const codexSkillsDir = path.join(home, ".codex", "skills");
 

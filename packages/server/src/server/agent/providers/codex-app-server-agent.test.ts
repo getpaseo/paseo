@@ -2522,6 +2522,24 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("passes a cwd override when loading a persisted Codex thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const cwd = "/workspace/new-directory";
+    const session = await provider.resumeSession(
+      { sessionId: "saved-thread", metadata: { cwd: "/workspace/old-directory" } },
+      { cwd },
+    );
+
+    try {
+      const resume = appServer.requests().find((request) => request.method === "thread/resume");
+      expect(resume?.params).toMatchObject({ threadId: "saved-thread", cwd });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reopening an agent whose timeline Paseo still holds does not read Codex history", async () => {
     const codex = createReopenableCodexAgent({
       "saved-thread": [
@@ -5340,8 +5358,7 @@ describe("Codex app-server provider", () => {
     );
 
     try {
-      const resultPromise = session.run("Start working.");
-      await appServer.waitForTurnStart();
+      await session.startTurn("Start working.");
 
       const interruptPromise = session.interrupt();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-identified-late" });
@@ -5349,9 +5366,6 @@ describe("Codex app-server provider", () => {
       await interruptPromise;
 
       expect(interruptedTurns).toEqual([{ threadId: "thread-1", turnId: "turn-identified-late" }]);
-      appServer.completeTurn();
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await resultPromise;
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -5374,14 +5388,12 @@ describe("Codex app-server provider", () => {
     );
 
     try {
-      const resultPromise = session.run("Finish before identification.");
-      await appServer.waitForTurnStart();
+      await session.startTurn("Finish before identification.");
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(interruptPromise).resolves.toBeUndefined();
-      await resultPromise;
       expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
     } finally {
@@ -5415,33 +5427,21 @@ describe("Codex app-server provider", () => {
       async () => appServer.child,
     );
     const resultPromise = session.run("Start after the delayed thread.");
+    void resultPromise.catch(() => undefined);
 
     try {
       await appServer.waitForRequest("thread/start");
-      let interruptSettled = false;
-      const interruptPromise = session.interrupt().then(() => {
-        interruptSettled = true;
-        return undefined;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(interruptSettled).toBe(false);
-
-      threadStart.resolve({ thread: { id: "thread-1" } });
-      await expect(interruptPromise).resolves.toBeUndefined();
+      await expect(session.interrupt()).resolves.toBeUndefined();
       await expect(resultPromise).resolves.toMatchObject({ canceled: true, timeline: [] });
+      expect(
+        appServer.requests().filter((request) => request.method === "initialize"),
+      ).toHaveLength(1);
       expect(appServer.requests()).not.toContainEqual(
         expect.objectContaining({ method: "turn/start" }),
       );
       appServer.assertNoErrors();
     } finally {
       threadStart.resolve({ thread: { id: "thread-1" } });
-      const nativeStart = await appServer.waitForTurnStart().catch(() => null);
-      if (nativeStart) {
-        appServer.startsTurn({ threadId: "thread-1", turnId: "cleanup-turn" });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        appServer.completeTurn();
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
       await resultPromise.catch(() => undefined);
       await session.close();
     }
@@ -6836,7 +6836,11 @@ describe("Codex app-server provider", () => {
       { method: "thread/loaded/list", params: {} },
       {
         method: "thread/resume",
-        params: { threadId: "archived-thread-id", excludeTurns: true },
+        params: {
+          threadId: "archived-thread-id",
+          cwd: "/tmp/codex-question-test",
+          excludeTurns: true,
+        },
       },
     ]);
   });
