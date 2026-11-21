@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { TimelineItemTransform } from "@/plugins/timeline/model";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
@@ -8,6 +10,7 @@ import {
 } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { layoutStream, type StreamLayout, type StreamLayoutItem } from "./layout";
+import { resolveAssistantTurnForkBoundary } from "./turn-boundary";
 
 function timestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -116,6 +119,64 @@ function footerOwners(layout: StreamLayout): string[] {
   ];
   return owners;
 }
+
+describe("native footer for a transformed assistant reply", () => {
+  const replaceMessages: TimelineItemTransform = ({ item, sourceId }) => [
+    {
+      type: "plugin",
+      pluginId: "styled-messages",
+      id: sourceId,
+      kind: "styled-message",
+      version: 1,
+      data: { text: "Styled body" },
+      nativeTurnFooter: item.type === "assistant_message",
+    },
+  ];
+
+  it.each(["web", "android"] as const)(
+    "uses the original fork boundary, copy text and timing on %s",
+    (platform) => {
+      const reply = {
+        ...assistantMessage("reply", 2),
+        messageId: "reply-message",
+        timelineCursor: { epoch: "epoch", seq: 2 },
+      };
+      const tail = projectPluginTimelineItems(
+        [userMessage("prompt", 1), reply, userMessage("next-prompt", 3)],
+        replaceMessages,
+      );
+      const head = projectPluginTimelineItems(
+        [assistantMessage("next-reply", 4)],
+        replaceMessages,
+        "streaming",
+      );
+      const layout = layoutFor({
+        platform,
+        tail,
+        head,
+        isTurnActive: true,
+        timingIds: [reply.id],
+      });
+      const row = layout.history.find(
+        ({ item }) => item.kind === "plugin" && item.sourceId === reply.id,
+      );
+      expect(row?.item.kind).toBe("plugin");
+      const footer = row?.completedFooter;
+      expect(footer?.timing?.durationMs).toBe(8000);
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      if (!footer) throw new Error("Expected native turn footer");
+      expect(resolveAssistantTurnForkBoundary({ ...footer, supportsTimelineCursor: true })).toEqual(
+        {
+          boundaryCursor: reply.timelineCursor,
+          boundaryMessageId: reply.messageId,
+        },
+      );
+      expect(
+        strategyFor(platform).collectAssistantResponseContent(footer.items, footer.startIndex),
+      ).toBe(reply.text);
+    },
+  );
+});
 
 function footerAssistantIds(layout: StreamLayout): string[] {
   return [

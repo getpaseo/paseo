@@ -106,6 +106,14 @@ function transformSourceItem(
     };
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
+    // Keep legacy prompt boundaries and opt-in assistant metadata within the host.
+    if (
+      transformed.length === 1 &&
+      (item.kind === "user_message" ||
+        (item.kind === "assistant_message" && pluginItem.nativeTurnFooter))
+    ) {
+      projected.turnFooterSource = item;
+    }
     return projected;
   });
 }

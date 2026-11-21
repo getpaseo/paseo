@@ -126,6 +126,8 @@ export interface PluginTimelineItem {
 
 export interface PluginTimelineTransformResult {
   items: PluginTimelineItem[];
+  /** Keep Paseo's turn footer for a single replacement of an assistant message. */
+  nativeTurnFooter?: boolean;
 }
 
 export type PluginCleanup = () => void | Promise<void>;
