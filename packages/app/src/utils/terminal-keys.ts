@@ -180,6 +180,18 @@ export function resolveMacTerminalEditingShortcut(
   return null;
 }
 
+// xterm's macOptionIsMeta turns every Option chord into ESC+key, but many non-US layouts put
+// ASCII symbols on the Option layer (Swiss/German Option+G -> "@", Option+5 -> "["). The US
+// Option layer only yields non-ASCII (Option+B -> "∫"), so an ASCII key means a typed character.
+export function resolveMacOptionLayerCharacter(
+  args: MacTerminalEditingShortcutInput,
+): string | null {
+  if (!args.altKey || args.ctrlKey || args.metaKey) {
+    return null;
+  }
+  return /^[!-~]$/.test(args.key) ? args.key : null;
+}
+
 export function mergeTerminalModifiers(args: {
   pendingModifiers: PendingTerminalModifiers;
   ctrlKey: boolean;
