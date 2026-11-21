@@ -17,6 +17,10 @@ const patchedPackages = [
   // Backport https://github.com/software-mansion/enriched-markdown/pull/924: preserve settled
   // Android measurements across parent clones. Remove those hunks when upgrading past
   // 1.2.0-nightly-20261019-926ef06f0; reconcile the other local patch hunks separately.
+  // Android list layout: backports of https://github.com/software-mansion/enriched-markdown/pull/1015
+  // and https://github.com/software-mansion/enriched-markdown/pull/1023, so a numbered list under
+  // a bullet does not draw its numbers over the item text. Remove the list span, renderer and
+  // ListRenderingTest hunks when upgrading to 1.2.0 or later, which includes both.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
     patchPrefix: "react-native-enriched-markdown+",
