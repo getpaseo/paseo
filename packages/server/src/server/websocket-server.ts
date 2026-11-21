@@ -2910,6 +2910,7 @@ export class VoiceAssistantWebSocketServer {
     if (!activity) {
       return {
         appVisible: false,
+        deviceType: null,
         focusedAgentId: null,
         focusedTerminalId: null,
         lastActivityAtMs: null,
@@ -2918,6 +2919,7 @@ export class VoiceAssistantWebSocketServer {
 
     return {
       appVisible: activity.appVisible,
+      deviceType: activity.deviceType,
       focusedAgentId: activity.focusedAgentId,
       focusedTerminalId: activity.focusedTerminalId,
       lastActivityAtMs: activity.lastActivityAt.getTime(),
