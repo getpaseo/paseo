@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveSidebarFooterLayout,
+  resolveSidebarFooterSlots,
   SIDEBAR_FOOTER_ACTIONS,
 } from "@/components/sidebar-footer-layout";
 import { DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from "@/stores/panel-store";
@@ -85,5 +86,20 @@ describe("sidebar footer layout", () => {
     for (const controlSize of [TOUCH, POINTER]) {
       expect(layout(0, controlSize)).toEqual({ inline: [], overflow: [] });
     }
+  });
+
+  // A sidebar drag measures the row at every width it passes. The footer re-renders only when the
+  // slot count changes, so widths that keep the count must keep the layout too.
+  it("keeps the same layout for every width with the same slot count", () => {
+    const slots = (rowWidth: number) =>
+      resolveSidebarFooterSlots({ rowWidth, controlSize: TOUCH, rowPadding: ROW_PADDING });
+    expect(slots(0)).toBe(-1);
+    for (let rowWidth = 160; rowWidth <= 320; rowWidth += 1) {
+      const next = rowWidth + 1;
+      if (slots(rowWidth) === slots(next)) {
+        expect(layout(next, TOUCH)).toEqual(layout(rowWidth, TOUCH));
+      }
+    }
+    expect(slots(160)).toBeLessThan(slots(320));
   });
 });
