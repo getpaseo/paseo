@@ -30,10 +30,12 @@ export function OverlayScrollbar({
   metrics,
   onScrollToOffset,
   onUserScrollUp,
+  visible = true,
 }: {
   metrics: OverlayScrollbarMetrics;
   onScrollToOffset: (offset: number) => void;
   onUserScrollUp?: () => void;
+  visible?: boolean;
 }) {
   const geometry = useMemo(() => computeOverlayScrollbarGeometry(metrics), [metrics]);
   const geometryRef = useRef(geometry);
@@ -102,7 +104,7 @@ export function OverlayScrollbar({
     ],
     [geometry.thumbOffset, geometry.thumbSize, isDragging],
   );
-  if (!geometry.isVisible) return null;
+  if (!geometry.isVisible || (!visible && !isDragging)) return null;
 
   return (
     <View style={styles.overlay} pointerEvents="box-none" testID="workspace-overlay-scrollbar">
