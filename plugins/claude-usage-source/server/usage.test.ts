@@ -162,6 +162,64 @@ describe("claude usage source", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
+  it.each([false, true])("reports USD extra usage with rolling windows %j", async (hasWindows) => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              ...(hasWindows ? makeClaudeResponse() : {}),
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 5000,
+                used_credits: 1250,
+                currency: "USD",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({
+        id: "extra_usage_monthly",
+        used: 12.5,
+        remaining: 37.5,
+        limit: 50,
+        unit: "usd",
+      }),
+    ]);
+    expect(claude.details).toContainEqual(
+      expect.objectContaining({ id: "extra_usage", value: "Enabled" }),
+    );
+  });
+
+  it.each(["EUR", null, undefined])(
+    "does not report extra usage balances for currency %j",
+    async (currency) => {
+      writeClaudeCredentials(claudeHome, "at_valid");
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                ...makeClaudeResponse(),
+                extra_usage: { monthly_limit: 5000, used_credits: 1250, currency },
+              }),
+          ],
+        ]),
+      );
+
+      const claude = findProvider(await service().listUsage(), "claude");
+
+      expect(claude.balances).toEqual([]);
+    },
+  );
 
   it("accepts a null Claude resets_at when a window has no scheduled reset", async () => {
     writeClaudeCredentials(claudeHome, "at_valid");

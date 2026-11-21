@@ -34,6 +34,15 @@ const rateLimitSchema = z.object({
   primary_window: windowSchema.nullish(),
   secondary_window: windowSchema.nullish(),
 });
+const spendControlSchema = z.object({
+  individual_limit: z
+    .object({
+      used_percent: number.nullish(),
+      remaining_percent: number.nullish(),
+      reset_at: number.nullish(),
+    })
+    .nullish(),
+});
 const responseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
@@ -48,6 +57,7 @@ const responseSchema = z.object({
     )
     .nullish(),
   code_review_rate_limit: rateLimitSchema.nullish(),
+  spend_control: spendControlSchema.nullish(),
   credits: z.object({ balance: number.optional() }).nullish(),
 });
 
@@ -227,6 +237,27 @@ export async function fetchUsage(
         },
       });
     }),
+    ...(usage.spend_control?.individual_limit
+      ? (() => {
+          const limit = usage.spend_control.individual_limit;
+          const usedPct =
+            limit.used_percent ??
+            (limit.remaining_percent != null ? 100 - limit.remaining_percent : undefined);
+          if (usedPct === undefined) return [];
+          return [
+            {
+              id: "individual_limit",
+              label: "Individual spend limit",
+              summary: true,
+              usedPct,
+              remainingPct: limit.remaining_percent ?? Math.max(0, 100 - usedPct),
+              resetsAt:
+                limit.reset_at != null ? new Date(limit.reset_at * 1000).toISOString() : null,
+              tone: toneFromUsedPct(usedPct),
+            },
+          ];
+        })()
+      : []),
     ...usageWindows({
       rateLimit: usage.code_review_rate_limit,
       scope: { id: "code_review", label: "Code review" },
