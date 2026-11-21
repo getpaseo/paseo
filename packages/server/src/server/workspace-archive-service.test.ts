@@ -1019,6 +1019,94 @@ describe("archiveByScope", () => {
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
+
+  test("returns without waiting on the post-archive main-repo refresh and skips forge lookup", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "nonblocking-refresh");
+    const workspaceId = "ws-nonblocking-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          mainRepoRoot: repoDir,
+          isPaseoOwnedWorktree: true,
+        },
+      ],
+    });
+    const refreshGate = gate();
+    let directoryExistedAtRefresh: boolean | null = null;
+    const getSnapshot = vi.fn(async () => {
+      directoryExistedAtRefresh = existsSync(worktree.worktreePath);
+      refreshGate.reach();
+      await refreshGate.wait;
+      return null;
+    });
+    deps.workspaceGitService.getSnapshot =
+      getSnapshot as unknown as WorkspaceGitService["getSnapshot"];
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-nonblocking-refresh",
+    });
+    await refreshGate.reached;
+
+    assertArchiveResult(result, { archivedWorkspaceIds: [workspaceId], removedDirectory: true });
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(directoryExistedAtRefresh).toBe(false);
+    expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
+    expect(getSnapshot).toHaveBeenCalledWith(repoDir, {
+      force: true,
+      includeForge: false,
+      reason: "archive-worktree",
+    });
+
+    refreshGate.open();
+  }, 5_000);
+
+  test("logs a warning when the background post-archive main-repo refresh rejects", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "refresh-failure");
+    const workspaceId = "ws-refresh-failure";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          mainRepoRoot: repoDir,
+          isPaseoOwnedWorktree: true,
+        },
+      ],
+    });
+    const refreshError = new Error("git snapshot failed");
+    const warnGate = gate();
+    vi.mocked(deps.sessionLogger!.warn).mockImplementation(() => {
+      warnGate.reach();
+    });
+    deps.workspaceGitService.getSnapshot = vi.fn(async () => {
+      throw refreshError;
+    }) as unknown as WorkspaceGitService["getSnapshot"];
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-refresh-failure",
+    });
+    await warnGate.reached;
+
+    assertArchiveResult(result, { archivedWorkspaceIds: [workspaceId], removedDirectory: true });
+    expect(deps.sessionLogger!.warn).toHaveBeenCalledWith(
+      { err: refreshError, cwd: repoDir, requestId: "req-refresh-failure" },
+      "Failed to force-refresh workspace git snapshot after archiving",
+    );
+  });
 });
 
 function gate(): {
@@ -1135,6 +1223,7 @@ describe("archiveByScope cancellation", () => {
       activeWorkspaceIds: (await deps.listActiveWorkspaces()).map((w) => w.workspaceId),
       directoryExists: existsSync(worktree.worktreePath),
     }).toEqual({ activeWorkspaceIds: [], directoryExists: true });
+    expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   });
 
   test("an archive aborted before it starts touches nothing", async () => {

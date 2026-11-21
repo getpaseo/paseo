@@ -190,20 +190,6 @@ async function archiveByScopeWithPriority(
     );
     checkpoint();
 
-    if (target.backing?.mainRepoRoot) {
-      try {
-        await dependencies.workspaceGitService.getSnapshot(target.backing.mainRepoRoot, {
-          force: true,
-          reason: "archive-worktree",
-        });
-      } catch (error) {
-        dependencies.sessionLogger?.warn(
-          { err: error, cwd: target.backing.mainRepoRoot, requestId: request.requestId },
-          "Failed to force-refresh workspace git snapshot after archiving",
-        );
-      }
-    }
-
     if (target.backing !== null) {
       const removal = await maybeRemoveDirectory(
         dependencies,
@@ -213,6 +199,29 @@ async function archiveByScopeWithPriority(
       );
       removedDirectory = removal.removedDirectory;
       directoryLeftBehind = removal.directoryLeftBehind;
+    }
+
+    const mainRepoRoot = target.backing?.mainRepoRoot;
+    if (mainRepoRoot) {
+      // Refresh the main repo after worktree removal without blocking archive_workspace_response
+      // on the FIFO workspace refresh queue or Forge CLI lookups.
+      const warnRefreshFailure = (error: unknown) => {
+        dependencies.sessionLogger?.warn(
+          { err: error, cwd: mainRepoRoot, requestId: request.requestId },
+          "Failed to force-refresh workspace git snapshot after archiving",
+        );
+      };
+      try {
+        void dependencies.workspaceGitService
+          .getSnapshot(mainRepoRoot, {
+            force: true,
+            includeForge: false,
+            reason: "archive-worktree",
+          })
+          .catch(warnRefreshFailure);
+      } catch (error) {
+        warnRefreshFailure(error);
+      }
     }
 
     return {
