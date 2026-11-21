@@ -1172,6 +1172,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+// The daemon allows 90s per provider; retain its result through the delivery margin.
+const RECENT_PROVIDER_SESSIONS_TIMEOUT_MS = 100_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -2998,6 +3000,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: RECENT_PROVIDER_SESSIONS_TIMEOUT_MS,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_recent_provider_sessions_response") {

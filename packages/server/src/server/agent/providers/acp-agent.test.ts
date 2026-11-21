@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -2896,6 +2897,275 @@ describe("ACPAgentClient listImportableSessions", () => {
       cursor: "cursor-2",
       cwd: "/Users/moonshot",
     });
+  });
+});
+
+describe("ACPAgentClient import listing deadlines", () => {
+  type ListingPhase = "spawn" | "initialize" | "session/list";
+  const phases: ListingPhase[] = ["initialize", "session/list"];
+
+  function createBlockedListing(phase: ListingPhase, terminator = new FakeTerminator()) {
+    const child = createProbeChildStub();
+    const clientToAgent = new PassThrough();
+    const agentToClient = new PassThrough();
+    child.stdin = clientToAgent;
+    child.stdout = agentToClient;
+    child.stderr = new PassThrough();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const operations: string[] = [];
+    const agent: Agent = {
+      async initialize() {
+        operations.push("initialize");
+        if (phase === "initialize") {
+          markStarted();
+          await blocked;
+        }
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { sessionCapabilities: { list: {} } },
+        };
+      },
+      async listSessions() {
+        operations.push("session/list");
+        if (phase === "session/list") {
+          markStarted();
+          await blocked;
+        }
+        return { sessions: [] };
+      },
+      async newSession() {
+        throw new Error("Import listing must not create a session");
+      },
+      async prompt() {
+        throw new Error("Import listing must not submit a prompt");
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(Writable.toWeb(agentToClient), Readable.toWeb(clientToAgent)),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(Writable.toWeb(clientToAgent), Readable.toWeb(agentToClient)),
+    );
+
+    const processError = new Promise<never>((_resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => reject(new Error("Import probe exited during cleanup")));
+    });
+
+    class ListingClient extends ACPAgentClient {
+      protected override async spawnTransport() {
+        if (phase === "spawn") {
+          operations.push("spawn");
+          markStarted();
+          await blocked;
+        }
+        return {
+          child,
+          connection,
+          stderrChunks: [],
+          spawnReady: Promise.resolve(),
+          processError,
+        };
+      }
+    }
+
+    const client = new ListingClient({
+      provider: "test-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+      terminateProcess: async (target, options) => {
+        const result = await terminator.terminate(target, options);
+        child.emit("close", 0, null);
+        return result;
+      },
+    });
+    return { client, child, agentConnection, terminator, started, release, operations };
+  }
+
+  test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions({ limit: 1 }).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(89_999);
+
+      expect(errors).toEqual([
+        expect.objectContaining({ message: expect.stringMatching(/timed out/i) }),
+      ]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(phases)("cleans up when import listing is aborted in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+
+      probe.release();
+      await listing;
+      expect(probe.operations).toEqual(
+        phase === "initialize" ? ["initialize"] : ["initialize", "session/list"],
+      );
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("closes an import probe that finishes spawning after cancellation", async () => {
+    const probe = createBlockedListing("spawn");
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled before spawn completed");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const unhandledRejections: unknown[] = [];
+    function recordUnhandledRejection(error: unknown): void {
+      unhandledRejections.push(error);
+    }
+    process.on("unhandledRejection", recordUnhandledRejection);
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([]);
+
+      probe.release();
+      // Node reports unhandled rejections after the cleanup microtasks settle.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+      expect(probe.operations).toEqual(["spawn"]);
+      expect(errors).toEqual([reason]);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      probe.release();
+      await listing;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      process.removeListener("unhandledRejection", recordUnhandledRejection);
+    }
+  });
+
+  test("preserves process failures during import probe initialization", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("initialize");
+    const failure = new Error("Import probe failed during initialize");
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions({ limit: 1 }).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      probe.child.emit("error", failure);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([
+        expect.objectContaining({ message: "Import probe failed during initialize" }),
+      ]);
+      expect(probe.operations).toEqual(["initialize"]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits for owned import probe cleanup before rejecting cancellation", async () => {
+    vi.useFakeTimers();
+    const terminator = new FakeTerminator("deferred");
+    const probe = createBlockedListing("session/list", terminator);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled during session/list");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(terminator.terminated).toEqual([probe.child]);
+      expect(errors).toEqual([]);
+
+      terminator.releaseAll();
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await vi.advanceTimersByTimeAsync(0);
+      terminator.releaseAll();
+      await listing;
+      vi.useRealTimers();
+    }
   });
 });
 

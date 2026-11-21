@@ -343,6 +343,8 @@ const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
+// Reserve time for process-tree cleanup before the manager's 90s listing deadline.
+const ACP_IMPORT_LIST_TIMEOUT_MS = 85_000;
 
 /**
  * An ACP agent publishes its slash-command inventory incrementally. Wait this
@@ -1354,13 +1356,27 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options?: ListImportableSessionsOptions,
+    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
   ): Promise<ImportableProviderSession[]> {
     const history = new ACPImportHistoryCollector();
-    const probe = await this.spawnProcess(PROBE_ENV, {
-      client: this.buildProbeClient((params) => history.accept(params)),
-    });
+    const deadline = new AbortController();
+    const timeout = setTimeout(
+      () =>
+        deadline.abort(
+          new Error(`ACP import listing timed out after ${ACP_IMPORT_LIST_TIMEOUT_MS}ms`),
+        ),
+      ACP_IMPORT_LIST_TIMEOUT_MS,
+    );
+    const signal = options?.signal
+      ? AbortSignal.any([deadline.signal, options.signal])
+      : deadline.signal;
+    let probe: SpawnedACPProcess | undefined;
     try {
+      signal.throwIfAborted();
+      probe = await this.spawnProcess(PROBE_ENV, {
+        signal,
+        client: this.buildProbeClient((params) => history.accept(params)),
+      });
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
       }
@@ -1373,10 +1389,16 @@ export class ACPAgentClient implements AgentClient {
       let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
-        const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+        signal.throwIfAborted();
+        const connection = probe.connection;
+        const page: ListSessionsResponse = await raceProviderRefreshAbort(
+          signal,
+          this.runACPRequest(() =>
+            connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+          ),
         );
         for (const session of page.sessions) {
+          signal.throwIfAborted();
           if (scanned >= scanLimit || sessions.length >= resultLimit) break;
           scanned += 1;
           const descriptor = await this.describeImportableSession(
@@ -1385,6 +1407,7 @@ export class ACPAgentClient implements AgentClient {
             session,
             canLoadHistory,
             historyDeadline,
+            signal,
           );
           if (descriptor) sessions.push(descriptor);
         }
@@ -1393,9 +1416,11 @@ export class ACPAgentClient implements AgentClient {
         if (scanned >= scanLimit || sessions.length >= resultLimit) break;
       }
 
+      signal.throwIfAborted();
       return sessions;
     } finally {
-      await this.closeProbe(probe);
+      clearTimeout(timeout);
+      if (probe) await this.closeProbe(probe);
     }
   }
 
@@ -1405,9 +1430,10 @@ export class ACPAgentClient implements AgentClient {
     session: ListSessionsResponse["sessions"][number],
     canLoadHistory: boolean,
     historyDeadline: number,
+    signal: AbortSignal,
   ): Promise<ImportableProviderSession | null> {
     const loadedPreviews = canLoadHistory
-      ? await this.loadImportPromptPreviews(probe, history, session, historyDeadline)
+      ? await this.loadImportPromptPreviews(probe, history, session, historyDeadline, signal)
       : null;
     if (loadedPreviews?.hasConversation === false) return null;
     return {
@@ -1425,7 +1451,9 @@ export class ACPAgentClient implements AgentClient {
     history: ACPImportHistoryCollector,
     session: ListSessionsResponse["sessions"][number],
     historyDeadline: number,
+    signal: AbortSignal,
   ): Promise<ACPImportPromptPreviews | null> {
+    signal.throwIfAborted();
     const updatedAt = session.updatedAt ?? null;
     const cached = this.importPromptCache.get(session.sessionId);
     if (updatedAt !== null && cached?.updatedAt === updatedAt) {
@@ -1443,12 +1471,15 @@ export class ACPAgentClient implements AgentClient {
     history.begin(session.sessionId);
     try {
       await withTimeout(
-        this.runACPRequest(() =>
-          probe.connection.loadSession({
-            sessionId: session.sessionId,
-            cwd: session.cwd,
-            mcpServers: [],
-          }),
+        raceProviderRefreshAbort(
+          signal,
+          this.runACPRequest(() =>
+            probe.connection.loadSession({
+              sessionId: session.sessionId,
+              cwd: session.cwd,
+              mcpServers: [],
+            }),
+          ),
         ),
         loadTimeoutMs,
         `ACP import history load timed out after ${loadTimeoutMs}ms`,
@@ -1460,13 +1491,16 @@ export class ACPAgentClient implements AgentClient {
       return previews;
     } catch (error) {
       history.discard(session.sessionId);
+      signal.throwIfAborted();
       this.logger.debug(
         { err: error, sessionId: session.sessionId },
         "ACP import history load failed; keeping the session visible",
       );
       return null;
     } finally {
-      await this.closeLoadedSession(probe, session.sessionId, historyDeadline);
+      if (!signal.aborted) {
+        await this.closeLoadedSession(probe, session.sessionId, historyDeadline, signal);
+      }
     }
   }
 
@@ -1474,6 +1508,7 @@ export class ACPAgentClient implements AgentClient {
     probe: SpawnedACPProcess,
     sessionId: string,
     historyDeadline: number,
+    signal: AbortSignal,
   ): Promise<void> {
     if (!probe.initialize.agentCapabilities?.sessionCapabilities?.close) return;
     const remainingMs = historyDeadline - this.now();
@@ -1481,11 +1516,12 @@ export class ACPAgentClient implements AgentClient {
     const closeTimeoutMs = Math.min(ACP_PROBE_CLOSE_TIMEOUT_MS, remainingMs);
     try {
       await withTimeout(
-        probe.connection.unstable_closeSession({ sessionId }),
+        raceProviderRefreshAbort(signal, probe.connection.unstable_closeSession({ sessionId })),
         closeTimeoutMs,
         `ACP loaded session/close timed out after ${closeTimeoutMs}ms`,
       );
     } catch (error) {
+      signal.throwIfAborted();
       this.logger.debug({ err: error, sessionId }, "ACP loaded session close failed");
     }
   }
@@ -1515,21 +1551,47 @@ export class ACPAgentClient implements AgentClient {
       providerOptions?: Record<string, unknown>;
       onSpawned?: (probe: UninitializedACPProcess) => void;
       client?: ACPClient;
+      signal?: AbortSignal;
     },
   ): Promise<SpawnedACPProcess> {
     const configuredOptions = ACPProviderOptionsSchema.parse(options?.providerOptions ?? {});
-    const transport = await this.spawnTransport(launchEnv, options?.client);
-    const probe: UninitializedACPProcess = {
-      child: transport.child,
-      connection: transport.connection,
-      stderrChunks: transport.stderrChunks,
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    let transport: ACPProcessTransport | undefined;
+    let closePromise: Promise<void> | undefined;
+    const closeTransport = (): Promise<void> => {
+      if (!transport) return Promise.resolve();
+      closePromise ??= terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      return closePromise;
     };
-    options?.onSpawned?.(probe);
     try {
-      const initialize = await this.initializeTransport(
-        transport,
-        options?.initializeTimeoutMs,
-        configuredOptions.clientCapabilities,
+      const spawned = await raceProviderRefreshAbort(
+        signal,
+        this.spawnTransport(launchEnv, options?.client).then(async (spawnedTransport) => {
+          transport = spawnedTransport;
+          // Cancellation can close the process before initialize observes its failure.
+          void spawnedTransport.processError.catch(() => undefined);
+          if (signal?.aborted) {
+            await closeTransport();
+            signal.throwIfAborted();
+          }
+          return spawnedTransport;
+        }),
+      );
+      const probe: UninitializedACPProcess = {
+        child: spawned.child,
+        connection: spawned.connection,
+        stderrChunks: spawned.stderrChunks,
+      };
+      options?.onSpawned?.(probe);
+      signal?.throwIfAborted();
+      const initialize = await raceProviderRefreshAbort(
+        signal,
+        this.initializeTransport(
+          spawned,
+          options?.initializeTimeoutMs,
+          configuredOptions.clientCapabilities,
+        ),
       );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
@@ -1538,7 +1600,7 @@ export class ACPAgentClient implements AgentClient {
       probe.initialize = initialize;
       return initializedProbe;
     } catch (error) {
-      await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      await closeTransport();
       throw error;
     }
   }
