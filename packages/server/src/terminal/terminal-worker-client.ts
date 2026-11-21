@@ -12,10 +12,24 @@ import {
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 
+/** How a worker connection ended: who ended it, and what the socket reported. */
+export interface TerminalWorkerCloseDetails {
+  /** The daemon called disconnect(); otherwise the worker's side went away. */
+  initiatedByUs: boolean;
+  /** The peer sent FIN before the socket closed. */
+  peerEnded: boolean;
+  /** Socket error code (EPIPE, ECONNRESET, ...) when the close carried one. */
+  errorCode: string | null;
+  readBytes: number;
+  writtenBytes: number;
+}
+
 /** The daemon's (or cleanup's) authenticated connection to one terminal worker. */
 export interface TerminalWorkerConnection {
   readonly connected: boolean;
   readonly workerPid: number;
+  /** Read in the `close` listener: why this socket ended. */
+  readonly closeDetails?: TerminalWorkerCloseDetails;
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
   /** Closes the socket. The worker keeps running and keeps its terminals. */
   disconnect(): void;
@@ -34,15 +48,34 @@ class SocketTerminalWorkerConnection extends EventEmitter implements TerminalWor
   readonly workerPid: number;
   private readonly framed: FramedSocket;
   private closed = false;
+  private disconnectRequested = false;
+  private peerEnded = false;
+  private errorCode: string | null = null;
 
   constructor(framed: FramedSocket, workerPid: number) {
     super();
     this.framed = framed;
     this.workerPid = workerPid;
+    framed.socket.on("end", () => {
+      this.peerEnded = true;
+    });
+    framed.socket.on("error", (error: NodeJS.ErrnoException) => {
+      this.errorCode = error.code ?? error.message;
+    });
     framed.socket.once("close", () => {
       this.closed = true;
       this.emit("close");
     });
+  }
+
+  get closeDetails(): TerminalWorkerCloseDetails {
+    return {
+      initiatedByUs: this.disconnectRequested,
+      peerEnded: this.peerEnded,
+      errorCode: this.errorCode,
+      readBytes: this.framed.socket.bytesRead,
+      writtenBytes: this.framed.socket.bytesWritten,
+    };
   }
 
   get connected(): boolean {
@@ -54,6 +87,7 @@ class SocketTerminalWorkerConnection extends EventEmitter implements TerminalWor
   }
 
   disconnect(): void {
+    this.disconnectRequested = true;
     this.framed.close();
   }
 

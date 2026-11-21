@@ -38,9 +38,17 @@ import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
 import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
+import { TerminalWorkerConnectionClosedError } from "./terminal-worker-errors.js";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 
 const MAX_TERMINAL_STREAM_SLOTS = 256;
+// A snapshot interrupted by a worker socket close is retried once the manager reconnects.
+// Bounded so a worker that keeps dropping lands in the ordinary failure path, not a loop.
+const MAX_SNAPSHOT_ATTEMPTS_AFTER_WORKER_RECONNECT = 3;
+// A restore staged below this size is emitted only once its replay completed, which makes the
+// retry after a worker reconnect free of duplicate frames. Visible snapshots (a few hundred
+// lines) sit far below it; a whole-scrollback replay streams instead.
+const MAX_STAGED_RESTORE_BYTES = 1024 * 1024;
 
 interface TerminalDirectorySubscription {
   cwd: string | undefined;
@@ -66,6 +74,9 @@ interface ActiveTerminalStream {
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
   retrySnapshotErrors: boolean;
+  // Set when the stream ends because the snapshot could not be read: completion reports it in
+  // its single stream exit instead of emitting a second one.
+  exitError?: string;
   // Readiness is independent of revision: reconnect adoption has no revision.
   snapshotReady: boolean;
   restore?: TerminalRestoreOptions;
@@ -1052,55 +1063,112 @@ export class TerminalSessionController {
     activeStream.outputCoalescer.flush();
     activeStream.snapshotInFlight = true;
     try {
-      // A pressure catch-up replaces the skipped batch with a recent window.
-      // Keep the subscription demand intact for later adoption/full restores.
-      const restore =
-        activeStream.snapshotOutput !== undefined
-          ? resolveRestoreAfterOutputOverflow(activeStream.restore)
-          : activeStream.restore;
-      const snapshotResult = restore
-        ? await this.emitRestoreSnapshot(activeStream, terminalManager, restore)
-        : await this.emitRestoreSnapshot(activeStream, terminalManager, { mode: "full-snapshot" });
-      if (!snapshotResult.shouldContinue) {
-        return;
+      // A worker socket that closed mid-snapshot is not a terminal exit: the worker keeps its
+      // terminals and the manager reconnects. Waiting for that reconnect and reading again keeps
+      // the stream alive for every client. Bounded so a worker that keeps dropping lands in the
+      // ordinary failure path; a real terminal exit detaches the stream during the wait and ends
+      // the loop.
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          // A pressure catch-up replaces the skipped batch with a recent window.
+          // Keep the subscription demand intact for later adoption/full restores.
+          const restore =
+            activeStream.snapshotOutput !== undefined
+              ? resolveRestoreAfterOutputOverflow(activeStream.restore)
+              : activeStream.restore;
+          const snapshotResult = restore
+            ? await this.emitRestoreSnapshot(activeStream, terminalManager, restore)
+            : await this.emitRestoreSnapshot(activeStream, terminalManager, {
+                mode: "full-snapshot",
+              });
+          if (!snapshotResult.shouldContinue) {
+            return;
+          }
+          activeStream.snapshotOutput = undefined;
+          this.replayTerminalOutputAfterSnapshot(activeStream, terminal, snapshotResult.replay);
+          activeStream.needsSnapshot = false;
+          activeStream.outputBytesSinceSnapshot = 0;
+          return;
+        } catch (error) {
+          if (this.activeStreams.get(activeStream.slot) !== activeStream) return;
+          if (
+            attempt < MAX_SNAPSHOT_ATTEMPTS_AFTER_WORKER_RECONNECT &&
+            (await this.waitForWorkerReconnect(activeStream, error, attempt))
+          ) {
+            continue;
+          }
+          this.sessionLogger.warn(
+            { err: error, terminalId: activeStream.terminalId, attempt },
+            "Failed to pull terminal snapshot",
+          );
+          const errorMessage =
+            error instanceof Error ? error.message : "Unable to read terminal snapshot";
+          // Natural completion owns the buffered final bytes and waits for this read. It also
+          // owns the single stream exit, so hand it the reason instead of emitting a second one.
+          if (activeStream.exiting) {
+            activeStream.exitError ??= errorMessage;
+            return;
+          }
+          // COMPAT(terminalSnapshotErrors): restored in v0.8.0; remove after 2027-03-11 once client floor >= v0.8.0.
+          // Old clients interpret every stream exit as PTY exit. Preserve their
+          // attached stream after failure. Another snapshot notification can retry;
+          // this does not schedule recovery. Source teardown still releases the stream.
+          if (activeStream.retrySnapshotErrors) {
+            activeStream.needsSnapshot = true;
+            return;
+          }
+          activeStream.owner.emit({
+            type: "terminal_stream_exit",
+            payload: {
+              terminalId: activeStream.terminalId,
+              error: errorMessage,
+            },
+          });
+          // Cleanup removes this slot/listeners synchronously, then awaits this task.
+          // Awaiting release here would make the snapshot task wait for itself.
+          void activeStream.owner
+            .release()
+            .catch((releaseError) =>
+              this.sessionLogger.warn({ err: releaseError }, "Failed to release terminal stream"),
+            );
+          return;
+        }
       }
-      activeStream.snapshotOutput = undefined;
-      this.replayTerminalOutputAfterSnapshot(activeStream, terminal, snapshotResult.replay);
-      activeStream.needsSnapshot = false;
-      activeStream.outputBytesSinceSnapshot = 0;
-    } catch (error) {
-      if (this.activeStreams.get(activeStream.slot) !== activeStream) return;
-      this.sessionLogger.warn(
-        { err: error, terminalId: activeStream.terminalId },
-        "Failed to pull terminal snapshot",
-      );
-      // Natural completion owns the buffered final bytes and waits for this read.
-      if (activeStream.exiting) return;
-      // COMPAT(terminalSnapshotErrors): restored in v0.8.0; remove after 2027-03-11 once client floor >= v0.8.0.
-      // Old clients interpret every stream exit as PTY exit. Preserve their
-      // attached stream after failure. Another snapshot notification can retry;
-      // this does not schedule recovery. Source teardown still releases the stream.
-      if (activeStream.retrySnapshotErrors) {
-        activeStream.needsSnapshot = true;
-        return;
-      }
-      activeStream.owner.emit({
-        type: "terminal_stream_exit",
-        payload: {
-          terminalId: activeStream.terminalId,
-          error: error instanceof Error ? error.message : "Unable to read terminal snapshot",
-        },
-      });
-      // Cleanup removes this slot/listeners synchronously, then awaits this task.
-      // Awaiting release here would make the snapshot task wait for itself.
-      void activeStream.owner
-        .release()
-        .catch((releaseError) =>
-          this.sessionLogger.warn({ err: releaseError }, "Failed to release terminal stream"),
-        );
     } finally {
       activeStream.snapshotInFlight = false;
     }
+  }
+
+  /**
+   * Waits out a worker reconnect after a snapshot failed because the worker socket closed.
+   * Returns whether the same stream is still attached and the worker is usable again; false
+   * means the stream must take the ordinary failure path.
+   */
+  private async waitForWorkerReconnect(
+    activeStream: ActiveTerminalStream,
+    error: unknown,
+    attempt: number,
+  ): Promise<boolean> {
+    if (!(error instanceof TerminalWorkerConnectionClosedError)) return false;
+    const terminalManager = this.terminalManager;
+    const waitForWorker = terminalManager?.waitForTerminalWorker;
+    if (!terminalManager || !waitForWorker) return false;
+    this.sessionLogger.warn(
+      { terminalId: activeStream.terminalId, attempt },
+      "Terminal worker connection closed during snapshot; waiting for reconnect",
+    );
+    const recovered = await waitForWorker.call(terminalManager).catch(() => false);
+    if (!recovered) {
+      this.sessionLogger.warn(
+        { terminalId: activeStream.terminalId, attempt },
+        "Terminal worker did not reconnect; ending the terminal stream",
+      );
+    }
+    return (
+      recovered &&
+      this.activeStreams.get(activeStream.slot) === activeStream &&
+      !activeStream.exiting
+    );
   }
 
   private async emitRestoreSnapshot(
@@ -1114,11 +1182,32 @@ export class TerminalSessionController {
       return { shouldContinue: true, replay: null };
     }
 
+    // A restore staged within this budget is emitted only after its replay completes, so a retry
+    // after a worker reconnect never repeats frames on the stream. A larger replay streams as it
+    // arrives to keep memory bounded: a retry then starts with a fresh ReplayBegin, which resets
+    // the client emulator (packages/app/src/terminal/runtime/terminal-emulator-runtime.ts:938),
+    // so frames from the abandoned attempt cannot survive into the recovered stream.
+    const staged: Uint8Array[] = [];
+    let stagedBytes = 0;
+    let streaming = false;
     const deliver = createTerminalRestoreDelivery({
       slot: activeStream.slot,
       chunked,
       // Network delivery belongs to the bounded application transport, not the worker request.
-      send: (frame) => activeStream.owner.emitBinary(frame),
+      send: (frame) => {
+        if (streaming) {
+          activeStream.owner.emitBinary(frame);
+          return;
+        }
+        stagedBytes += frame.byteLength;
+        if (stagedBytes > MAX_STAGED_RESTORE_BYTES) {
+          streaming = true;
+          for (const pending of staged.splice(0)) activeStream.owner.emitBinary(pending);
+          activeStream.owner.emitBinary(frame);
+          return;
+        }
+        staged.push(frame);
+      },
     });
     const snapshot = await terminalManager.replayTerminal(
       activeStream.terminalId,
@@ -1135,6 +1224,7 @@ export class TerminalSessionController {
       this.detachStream(activeStream.terminalId, { emitExit: true });
       return { shouldContinue: false };
     }
+    for (const frame of staged.splice(0)) activeStream.owner.emitBinary(frame);
 
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
@@ -1208,7 +1298,13 @@ export class TerminalSessionController {
     }
     // Completion must not turn this final flush into another backpressure read.
     stream.outputCoalescer.flush();
-    stream.owner.emit({ type: "terminal_stream_exit", payload: { terminalId: stream.terminalId } });
+    stream.owner.emit({
+      type: "terminal_stream_exit",
+      payload:
+        stream.exitError === undefined
+          ? { terminalId: stream.terminalId }
+          : { terminalId: stream.terminalId, error: stream.exitError },
+    });
     await stream.owner.release();
   }
 

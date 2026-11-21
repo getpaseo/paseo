@@ -1,5 +1,6 @@
 import type { Socket } from "node:net";
 import { deserialize, serialize } from "node:v8";
+import { TerminalWorkerConnectionClosedError } from "./terminal-worker-errors.js";
 
 // Frames on the terminal worker socket: a 4-byte big-endian length, then a v8-serialized
 // payload (the same structured-clone semantics the old fork IPC used with
@@ -80,7 +81,7 @@ export function attachFramedSocket(
     socket,
     send(message, callback) {
       if (socket.destroyed || !socket.writable) {
-        callback?.(new Error("Terminal worker socket is closed"));
+        callback?.(new TerminalWorkerConnectionClosedError("Terminal worker socket is closed"));
         return false;
       }
       let frame: Buffer;
