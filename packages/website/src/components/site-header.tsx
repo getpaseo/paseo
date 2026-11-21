@@ -22,7 +22,7 @@ export function SiteHeader() {
       >
         <PaseoLockup className="h-[22px] w-auto" />
       </a>
-      <div className="flex flex-wrap items-center justify-center gap-4">
+      <nav className="flex flex-wrap items-center justify-center gap-4">
         {PLUGINS_LINKED && (
           <a href={localize("/plugins")} className={NAV_LINK_CLASS}>
             {t("nav.plugins")}
@@ -63,7 +63,7 @@ export function SiteHeader() {
           <GitHubIcon width="18" height="18" />
           {stars && <span className="text-sm">{stars}</span>}
         </a>
-      </div>
+      </nav>
     </header>
   );
 }

@@ -50,6 +50,16 @@ describe("paseo brand assets", () => {
     }
   });
 
+  it("tightens symbol-to-wordmark spacing for display-scale lockups while keeping canonical paths", () => {
+    const html = renderToStaticMarkup(<PaseoHubLockup size="display" className="h-12 w-auto" />);
+    const canonical = readFileSync(path.join(BRAND_ROOT, "lockups/paseo-hub-white.svg"), "utf8");
+
+    expect(html).toContain('viewBox="0 0 798 144"');
+    expect(html).toContain('width="798"');
+    expect(html).toContain('transform="translate(-44 0)"');
+    expect(extractPathData(html)).toEqual(extractPathData(canonical));
+  });
+
   it("keeps public/logo.svg and public/favicon.svg aligned with assets/brand", () => {
     const canonicalPaseo = readFileSync(path.join(BRAND_ROOT, "marks/paseo-white.svg"), "utf8");
     const publicLogo = readFileSync(path.join(WEBSITE_PUBLIC, "logo.svg"), "utf8");
