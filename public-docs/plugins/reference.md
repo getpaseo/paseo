@@ -2178,6 +2178,44 @@ Precedence is built-in client commands, plugin commands, then provider commands.
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
 order wins a collision between plugins. Commands do not run while the composer has attachments.
 
+## Assistant selection actions
+
+Add an item to the iOS system edit menu for text selected in a finished assistant message:
+
+```ts
+client.addAssistantSelectionAction?.({
+  id: "annotate",
+  title: "Annotate",
+  async onSelect({ selection, agent, rpc }) {
+    await rpc(saveAnnotation, {
+      agentId: agent.id,
+      messageId: selection.messageId,
+      text: selection.text,
+    });
+  },
+});
+```
+
+| Field      | Required | Meaning                                                  |
+| ---------- | -------- | -------------------------------------------------------- |
+| `id`       | Yes      | Stable action ID, unique within the plugin.              |
+| `title`    | Yes      | Menu label. Plain text or a plugin translation.          |
+| `onSelect` | Yes      | Client callback that receives the agent command context. |
+
+`onSelect` receives the agent Command Center callback context plus `selection`. `selection.text` is
+the rendered text, not Markdown, and has no offsets into the message source. `selection.messageId`
+identifies the assistant message.
+
+Keep the optional call (`?.`) unless your plugin only supports app versions with this method.
+`requirements.paseo` is checked against the daemon, so an older app can load your plugin. Calling a
+missing method throws during setup and removes all of the plugin's client contributions.
+
+Two actions cannot share a title. The first plugin in stable catalog order keeps it.
+
+The action appears for paragraphs, list items, and text with bold or inline code. It does not appear
+in blockquotes, code blocks, tables, user messages, messages that are still streaming, Android, web,
+or desktop. A selection stays within one text segment.
+
 ## Header buttons
 
 Try the [button example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/buttons) for

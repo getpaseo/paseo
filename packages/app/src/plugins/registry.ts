@@ -132,6 +132,7 @@ export class PluginRegistry {
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],
+          assistantSelectionActions: [],
           attachmentSources: [],
           themes: [],
           timelineTransformers: [],

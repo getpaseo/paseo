@@ -44,6 +44,7 @@ function installed(
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    assistantSelectionActions: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

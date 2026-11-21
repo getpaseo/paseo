@@ -1,5 +1,9 @@
 import { memo, useMemo, useState } from "react";
-import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
+import {
+  EnrichedMarkdownText,
+  type TextContextMenuItem,
+  type LinkPressEvent,
+} from "react-native-enriched-markdown";
 import { withUnistyles } from "react-native-unistyles";
 import {
   useAssistantFileLinkActions,
@@ -55,6 +59,8 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
+  /** Extra items for the native selection menu. */
+  contextMenuItems?: TextContextMenuItem[];
   /**
    * Author-controlled Markdown from outside this host, such as a plugin README: only its https
    * links and images work, nothing is read as a file, forge reference or command, and the lines of
@@ -95,6 +101,7 @@ const MarkdownPart = memo(function MarkdownPart({
   streaming = false,
   onLinkPress,
   agentCommands: _agentCommands,
+  contextMenuItems,
   external = false,
   commandHints = null,
   ...imageContext
@@ -171,6 +178,7 @@ const MarkdownPart = memo(function MarkdownPart({
               enableTaskListItemToggle={false}
               enableLinkPreview={false}
               enableBlockContextMenu={false}
+              contextMenuItems={contextMenuItems}
               // JS reveal owns pacing; native fade animation is a separate experiment.
               streamingAnimation={false}
               onLinkPress={pressLink}

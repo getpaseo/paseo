@@ -247,6 +247,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
     contribution: PluginCommandCenterItemContribution<PluginText>,
   ): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution<PluginText>): PluginCleanup;
+  addAssistantSelectionAction(
+    contribution: PluginAssistantSelectionActionContribution<PluginText>,
+  ): PluginCleanup;
   addHeaderButton(
     contribution: PluginHeaderButtonContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
@@ -430,6 +433,20 @@ export type PluginClientSlashCommandContribution<Text extends PluginText = strin
       context: "agent";
       onSubmit(context: PluginAgentCommandContext & { args: string }): void | Promise<void>;
     });
+
+export interface PluginAssistantSelection {
+  /** Rendered text of the selection, not its Markdown source. */
+  text: string;
+  messageId: string;
+}
+
+export interface PluginAssistantSelectionActionContribution<Text extends PluginText = string> {
+  id: string;
+  title: Text;
+  onSelect(
+    context: PluginAgentCommandContext & { selection: PluginAssistantSelection },
+  ): void | Promise<void>;
+}
 
 export type SettingsState<Schema extends ZodType> = (
   | { status: "loading" }

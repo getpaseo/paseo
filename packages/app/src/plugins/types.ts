@@ -11,6 +11,7 @@ import type {
   PluginFilePanelContribution as SDKPluginFilePanelContribution,
   PluginCommandCenterItemContribution as SDKPluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution as SDKPluginClientSlashCommandContribution,
+  PluginAssistantSelectionActionContribution as SDKPluginAssistantSelectionActionContribution,
   PluginComposerItemContribution,
   PluginNewWorkspaceItemContribution,
   PluginComposerPillContribution as SDKPluginComposerPillContribution,
@@ -31,6 +32,8 @@ type PluginAttachmentSourceContribution = SDKPluginAttachmentSourceContribution<
 type PluginThemeContribution = SDKPluginThemeContribution<PluginText>;
 type PluginCommandCenterItemContribution = SDKPluginCommandCenterItemContribution<PluginText>;
 type PluginClientSlashCommandContribution = SDKPluginClientSlashCommandContribution<PluginText>;
+type PluginAssistantSelectionActionContribution =
+  SDKPluginAssistantSelectionActionContribution<PluginText>;
 type PluginComposerPillContribution = SDKPluginComposerPillContribution<PluginText>;
 type PluginSidebarContribution = SDKPluginSidebarContribution<PluginText>;
 type PluginSidebarItemContribution = SDKPluginSidebarItemContribution<PluginText>;
@@ -66,6 +69,7 @@ export interface EvaluatedPlugin {
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
+  assistantSelectionActions: PluginAssistantSelectionActionContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
@@ -90,6 +94,7 @@ export interface InstalledPlugin extends EvaluatedPlugin {
 }
 
 export type {
+  PluginAssistantSelectionActionContribution,
   PluginFilePanelContribution,
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,

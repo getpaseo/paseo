@@ -1780,6 +1780,41 @@ Paseo 负责。它不会等待 `onSubmit`，也不会显示进行中的状态；
 优先级依次是内置客户端命令、插件命令、Provider 命令。优先级较低的冲突命令会被省略。内置别名也会占用
 它们的名称。插件之间发生冲突时，按稳定的目录顺序排在前面的插件胜出。Composer 中有附件时，命令不会运行。
 
+## Assistant 选区操作 {#assistant-selection-actions}
+
+为已完成的 Assistant 消息中选中的文本，在 iOS 系统编辑菜单中添加一项：
+
+```ts
+client.addAssistantSelectionAction?.({
+  id: "annotate",
+  title: "Annotate",
+  async onSelect({ selection, agent, rpc }) {
+    await rpc(saveAnnotation, {
+      agentId: agent.id,
+      messageId: selection.messageId,
+      text: selection.text,
+    });
+  },
+});
+```
+
+| 字段       | 是否必填 | 含义                                |
+| ---------- | -------- | ----------------------------------- |
+| `id`       | 是       | 稳定的操作 ID，在插件内唯一。       |
+| `title`    | 是       | 菜单标签。纯文本或插件翻译。        |
+| `onSelect` | 是       | 接收 Agent 命令上下文的客户端回调。 |
+
+`onSelect` 接收 Agent 的 Command Center 回调上下文以及 `selection`。`selection.text` 是渲染后的文本，
+不是 Markdown，也不包含消息源文本中的偏移量。`selection.messageId` 标识该 Assistant 消息。
+
+除非插件只支持带有此方法的 App 版本，否则请保留可选调用（`?.`）。`requirements.paseo` 针对 daemon
+检查，因此较旧的 App 仍可能加载你的插件。调用不存在的方法会在初始化时抛出错误，并移除该插件的全部客户端贡献。
+
+两个操作不能使用相同的标题。按稳定的目录顺序排在前面的插件保留该标题。
+
+该操作出现在段落、列表项以及含粗体或行内代码的文本中。它不会出现在引用块、代码块、表格、用户消息、
+仍在流式输出的消息、Android、Web 或桌面端。选区限制在一个文本片段内。
+
 ## 标题栏按钮 {#header-buttons}
 
 试试[按钮示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/buttons)，它在标题栏和

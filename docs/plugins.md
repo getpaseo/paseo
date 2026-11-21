@@ -928,6 +928,17 @@ the agent. Built-in client commands win name and alias collisions, plugin comman
 provider-command collisions, and the first plugin in stable catalog order wins collisions between
 plugins. Plugin slash commands do not run when the composer has attachments.
 
+## Contribute assistant selection actions
+
+`addAssistantSelectionAction` adds an item to the iOS system edit menu for text selected in a
+finished assistant message. The Markdown library dispatches menu presses by label, so Paseo keeps the
+first action for each resolved title, in stable catalog order, and logs the rest. See the
+[public reference](../public-docs/plugins/reference.md#assistant-selection-actions) for the callback
+and limits.
+
+Do not offer the action while a message streams: presses did not arrive in testing, and iOS drops the
+selection when the stream completes.
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
