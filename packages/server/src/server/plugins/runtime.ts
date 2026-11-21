@@ -833,15 +833,12 @@ export class PluginRuntime {
     const plugins = [...this.plugins.values()]
       .filter((plugin) => plugin.worktreeManager !== null)
       .sort((left, right) => left.id.localeCompare(right.id));
-    // Share one 120s budget across the full serial manager chain so clients waiting on
-    // create_paseo_worktree_request (150s) never time out while the daemon is still running managers.
+    // All create callbacks share one timeout budget.
     const deadline = Date.now() + WORKTREE_MANAGER_TIMEOUT_MS;
     for (const loaded of plugins) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
-        throw new Error(
-          `Plugin ${loaded.id} worktree.create failed: Plugin RPC timed out: ${loaded.id}.worktree.create`,
-        );
+        throw new Error("Worktree creation manager budget expired");
       }
       try {
         const raw = await this.request(

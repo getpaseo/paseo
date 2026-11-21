@@ -547,7 +547,7 @@ async function maybeRemoveDirectory(
   if (
     !(await isDirectoryUnreferenced(
       remainingActive,
-      backing.path,
+      backing,
       new Set(archivedWorkspaceIds),
       dependencies,
     ))
@@ -688,24 +688,25 @@ export async function archiveWorkspaceContents(
   return archivedAgents;
 }
 
-// True when, after archiving
-// the in-scope records, no active workspace still points at or inside targetDir. Derived
-// from records each call — no stored counter.
+// Active workspaces on the same checkout keep it alive. A manager can place
+// a checkout anywhere, so also protect nested workspaces when either checkout
+// is manager-owned.
 async function isDirectoryUnreferenced(
   activeWorkspaces: ActiveWorkspaceRef[],
-  targetDir: string,
+  targetDirectory: BackingDirectory,
   archivedWorkspaceIds: ReadonlySet<string>,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<boolean> {
-  const target = resolve(targetDir);
+  const target = targetDirectory.path;
   const matchesTarget = createRealpathAwarePathMatcher(target);
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
     const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
+    if (matchesTarget(backingDirectory.path)) return false;
     if (
-      matchesTarget(backingDirectory.path) ||
-      isRealpathInsideRoot(target, backingDirectory.path) ||
-      isRealpathInsideRoot(target, workspace.cwd)
+      (targetDirectory.worktreeManagerPluginId || backingDirectory.worktreeManagerPluginId) &&
+      (isRealpathInsideRoot(target, backingDirectory.path) ||
+        isRealpathInsideRoot(target, workspace.cwd))
     ) {
       return false;
     }

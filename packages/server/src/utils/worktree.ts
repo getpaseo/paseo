@@ -1379,10 +1379,6 @@ export async function deletePaseoWorktree({
   }
 
   if (await pathExists(resolvedWorktree)) {
-    await assertNoNestedGitWorktrees(
-      cwd ?? ownership.repoRoot ?? resolvedWorktree,
-      resolvedWorktree,
-    );
     const removedByPlugin = await prepareAndTryPluginWorktreeRemove({
       cwd,
       resolvedWorktree,
@@ -1417,81 +1413,42 @@ export async function deletePaseoWorktree({
   await pruneWorktreesBestEffort(cwd);
 }
 
-async function assertNoNestedGitWorktrees(
-  repoCwd: string,
-  resolvedWorktree: string,
-): Promise<void> {
-  const gitCommonDir = await getGitCommonDir(repoCwd).catch(() => null);
-  if (gitCommonDir) {
-    const { entries } = await readGitWorktreeEntries(repoCwd);
-    const targetIdentity = normalizePathForIdentity(resolvedWorktree);
-    for (const entry of entries) {
-      const entryIdentity = normalizePathForIdentity(entry.path);
-      if (entryIdentity === targetIdentity) continue;
-      if (isPathInsideRoot(targetIdentity, entryIdentity) && (await pathExists(entry.path))) {
-        throw new Error(
-          `Refusing to delete worktree ${resolvedWorktree}: contains nested Git worktree ${entry.path}`,
-        );
-      }
-    }
-  }
-  const trackedSubmodulePaths = await readTrackedSubmodulePaths(resolvedWorktree);
-  const nestedCheckout = await findNestedGitCheckoutOnDisk(resolvedWorktree, trackedSubmodulePaths);
-  if (nestedCheckout) {
-    throw new Error(
-      `Refusing to delete worktree ${resolvedWorktree}: contains nested Git checkout ${nestedCheckout}`,
-    );
-  }
-}
-
-async function readTrackedSubmodulePaths(worktreeRoot: string): Promise<Set<string>> {
-  const submodules = new Set<string>();
-  try {
-    const { stdout } = await runGitCommand(["ls-files", "--stage", "-z"], {
-      cwd: worktreeRoot,
-      timeout: 15_000,
-    });
-    for (const record of stdout.split("\0")) {
-      if (!record.startsWith("160000 ")) continue;
-      const tabIndex = record.indexOf("\t");
-      if (tabIndex === -1) continue;
-      const relativePath = record.slice(tabIndex + 1);
-      if (!relativePath) continue;
-      submodules.add(normalizePathForIdentity(join(worktreeRoot, relativePath)));
-    }
-  } catch {
-    // Missing or damaged git admin dir: fall back to treating any nested .git as unsafe.
-  }
-  return submodules;
-}
-
-async function findNestedGitCheckoutOnDisk(
-  resolvedWorktree: string,
-  trackedSubmodulePaths: ReadonlySet<string>,
-): Promise<string | null> {
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: resolvedWorktree, depth: 0 }];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
+async function assertNoNestedLinkedWorktrees(worktreePath: string): Promise<void> {
+  const pending = [worktreePath];
+  for (let directory = pending.pop(); directory !== undefined; directory = pending.pop()) {
     let entries: Dirent[];
     try {
-      entries = await readdir(current.dir, { withFileTypes: true });
-    } catch {
-      continue;
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
     }
-    if (current.depth > 0 && entries.some((entry) => entry.name === ".git")) {
-      const currentIdentity = normalizePathForIdentity(current.dir);
-      if (!trackedSubmodulePaths.has(currentIdentity)) {
-        return current.dir;
-      }
+    if (
+      directory !== worktreePath &&
+      entries.some((entry) => entry.name === ".git" && !entry.isDirectory()) &&
+      (await isLinkedGitWorktree(directory))
+    ) {
+      throw new Error(
+        `Refusing to delete worktree ${worktreePath}: contains nested Git worktree ${directory}`,
+      );
     }
     for (const entry of entries) {
-      if (entry.name === ".git" || entry.isSymbolicLink() || !entry.isDirectory()) {
-        continue;
+      if (entry.name !== ".git" && entry.isDirectory()) {
+        pending.push(join(directory, entry.name));
       }
-      stack.push({ dir: join(current.dir, entry.name), depth: current.depth + 1 });
     }
   }
-  return null;
+}
+
+async function isLinkedGitWorktree(directory: string): Promise<boolean> {
+  // A linked worktree's Git directory contains a commondir file pointing to the
+  // shared repository. A submodule or a clone with a separate Git directory
+  // uses its own Git directory as the common directory.
+  const result = await runGitCommand(
+    ["rev-parse", "--path-format=absolute", "--git-path", "commondir"],
+    { cwd: directory, envOverlay: READ_ONLY_GIT_ENV },
+  ).catch(() => null);
+  return result !== null && (await pathExists(result.stdout.replace(/\r?\n$/, "")));
 }
 
 async function pruneWorktreesBestEffort(cwd: string | null): Promise<void> {
@@ -1534,6 +1491,9 @@ async function prepareAndTryPluginWorktreeRemove(options: {
       ? worktreeManagerPluginId
       : ((await readPaseoWorktreeMetadata(resolvedWorktree).catch(() => null))
           ?.worktreeManagerPluginId ?? null);
+  if (effectiveManagerPluginId) {
+    await assertNoNestedLinkedWorktrees(resolvedWorktree);
+  }
   const branch = effectiveManagerPluginId
     ? await getCurrentBranch(resolvedWorktree).catch(() => null)
     : null;

@@ -767,11 +767,11 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-- **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`, with a
-  120-second timeout. Return `{ type: "created", path }` to claim creation, or `undefined` to decline
-  so the next manager or Paseo's built-in Git checkout runs. For branch-off, Paseo resolves
-  `baseRef` and refreshes a remote-tracking starting ref before calling the manager, using the
-  cached ref if the fetch fails. When `request.untrusted` is `true` (for
+- **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`.
+  All managers share 120 seconds for each create request. Return `{ type: "created", path }` to
+  claim creation. If you return `undefined`, Paseo tries the next manager or uses built-in Git.
+  For branch-off, Paseo resolves `baseRef` and refreshes a remote-tracking starting ref before
+  calling the manager. If the fetch fails, Paseo uses the cached ref. When `request.untrusted` is `true` (for
   example, a fork change request), skip repository-defined hooks. Paseo verifies that `path` is a
   safe, newly created Git worktree of the same repository on a named branch, then records the
   checked-out `HEAD` branch (managers may normalize or uniquely name the branch, and should create a
@@ -784,7 +784,12 @@ export default function contribute(server: PluginServerContext) {
   `{ type: "removed" }` after removing the directory, or `undefined` to fall back to Git. When
   `untrusted` is `true` (for example, a fork change request) or `repoRoot` is `null`, skip
   repository-defined hooks and run against `repoRoot` when available. Paseo routes removal to the
-  plugin that created the worktree, falling back to Git when that plugin is disabled or uninstalled.
+  plugin that created the worktree and falls back to Git when that plugin is disabled or uninstalled.
+  Paseo keeps the directory if it contains another linked Git worktree. Standalone clones and
+  submodules follow normal removal. During archive, an active workspace nested inside the directory
+  also keeps it on disk. If the callback throws or times out after 120 seconds, Paseo skips Git
+  fallback. During archive, Paseo logs the callback failure and still archives the workspace.
+  Any files the callback left stay on disk.
 - **Restore** is optional and runs when unarchiving a workspace whose worktree directory was deleted.
   It receives the recorded `path` that the recreated worktree must occupy, `target` (`branch`,
   `commit`, or `from-base`), and `untrusted`. Return `{ type: "restored", path }` or `undefined` to

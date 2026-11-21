@@ -665,8 +665,8 @@ export default function contribute(server) {
       });
       return { type: "created", path: target };
     },
-    async remove() {
-      // Claims removed without deleting the directory.
+    async remove({ branch }) {
+      if (branch === "remove-throws") throw new Error("Remove failed before touching the checkout");
       return { type: "removed" };
     },
   });
@@ -685,16 +685,17 @@ export default function contribute(server) {
     );
 
     expect((await client.installDirectoryPlugin(leakyRemoveDir)).status).toBe("running");
-    const created = await client.createWorkspace({
-      source: { kind: "worktree", cwd: repository, branchName: "still-here" },
-    });
-    expect(created.error).toBeNull();
-    const worktreePath = created.workspace!.workspaceDirectory;
+    for (const branchName of ["still-here", "remove-throws"]) {
+      const created = await client.createWorkspace({
+        source: { kind: "worktree", cwd: repository, branchName },
+      });
+      expect(created.error).toBeNull();
+      const worktreePath = created.workspace!.workspaceDirectory;
 
-    const archived = await client.archiveWorkspace(created.workspace!.id);
-    expect(archived.error).toBeNull();
-    // Removal failure keeps the directory instead of silently deleting behind the manager.
-    expect((await stat(worktreePath)).isDirectory()).toBe(true);
+      const archived = await client.archiveWorkspace(created.workspace!.id);
+      expect(archived.error).toBeNull();
+      expect((await stat(worktreePath)).isDirectory()).toBe(true);
+    }
   } finally {
     await client.close();
     await daemon.close();
@@ -1384,6 +1385,57 @@ export default function contribute(server) {
   }
 }, 60_000);
 
+async function addNestedGitContent(checkout: string, dependency: string, middle: string) {
+  await writeFile(path.join(checkout, ".gitignore"), ".build/\n");
+  const checkouts = path.join(checkout, ".build", "checkouts");
+  await mkdir(checkouts, { recursive: true });
+  git(checkout, ["clone", dependency, path.join(checkouts, "dependency")]);
+  git(checkout, ["-c", "protocol.file.allow=always", "submodule", "add", middle, "middle"]);
+  git(checkout, [
+    "-c",
+    "protocol.file.allow=always",
+    "submodule",
+    "update",
+    "--init",
+    "--recursive",
+  ]);
+  expect(await readFile(path.join(checkout, "middle", "leaf", "README.md"), "utf8")).toBe(
+    "hello\n",
+  );
+}
+
+test("built-in archive removes the worktree with dependency clones and recursive submodules", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-built-in-archive-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    const repository = await createRepo(path.join(root, "repo"));
+    const leaf = await createRepo(path.join(root, "leaf"));
+    const middle = await createRepo(path.join(root, "middle"));
+    git(middle, ["-c", "protocol.file.allow=always", "submodule", "add", leaf, "leaf"]);
+    git(middle, ["commit", "-am", "Add leaf submodule"]);
+
+    await client.connect();
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "built-in" },
+    });
+    expect(created.error).toBeNull();
+    const checkout = created.workspace!.workspaceDirectory;
+    await addNestedGitContent(checkout, leaf, middle);
+
+    const archived = await client.archiveWorkspace(created.workspace!.id);
+    expect(archived.error).toBeNull();
+    await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain(
+      "refs/heads/built-in",
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
 test("archive and rollback refuse to delete a worktree containing a live nested Git worktree", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-nested-delete-guard-"));
   const repository = await createRepo(path.join(root, "repo"));
@@ -1505,6 +1557,23 @@ export default function contribute(server) {
     expect(crossRepoArchived.error).toBeNull();
     expect(await readFile(otherRepoDirtyFile, "utf8")).toBe("keep-repo-b");
     await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const middle = await createRepo(path.join(root, "middle"));
+    git(middle, ["-c", "protocol.file.allow=always", "submodule", "add", otherRepo, "leaf"]);
+    git(middle, ["commit", "-am", "Add leaf submodule"]);
+    const managed = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "nested-content" },
+    });
+    expect(managed.error).toBeNull();
+    const checkout = managed.workspace!.workspaceDirectory;
+    await addNestedGitContent(checkout, otherRepo, middle);
+
+    const archivedWithContent = await client.archiveWorkspace(managed.workspace!.id);
+    expect(archivedWithContent.error).toBeNull();
+    expect(path.normalize((await readFile(removeCallsFile, "utf8")).trim())).toBe(
+      path.normalize(checkout),
+    );
+    await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await client.close();
     await daemon.close();
