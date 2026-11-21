@@ -393,6 +393,30 @@ describe("layoutStream", () => {
     expect(findLayoutItem(layout, thinking.id).toolSequence).toBe("last");
   });
 
+  it("includes plugin items projected from tool-like rows in the tool sequence", () => {
+    const shell = toolCall("tool-1", 2);
+    const pluginTool: Extract<StreamItem, { kind: "plugin" }> = {
+      kind: "plugin",
+      id: "tools/tool-2/0",
+      timestamp: timestamp(3),
+      pluginId: "tools",
+      pluginItemId: "tool-2/0",
+      itemKind: "tool",
+      version: 1,
+      data: null,
+      sourceKind: "tool_call",
+    };
+    const layout = layoutFor({
+      platform: "android",
+      tail: [userMessage("u1", 1), shell, pluginTool, assistantMessage("a1", 4)],
+    });
+
+    expect(findLayoutItem(layout, shell.id).toolSequence).toBe("first");
+    expect(findLayoutItem(layout, shell.id).gapBelow).toBe(0);
+    expect(findLayoutItem(layout, pluginTool.id).toolSequence).toBe("last");
+    expect(findLayoutItem(layout, pluginTool.id).isLastInToolSequence).toBe(true);
+  });
+
   it("keeps bottom and inline footer ownership mutually exclusive", () => {
     const assistant = assistantMessage("a1", 2);
     const layout = layoutFor({
