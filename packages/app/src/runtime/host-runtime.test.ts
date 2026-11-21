@@ -21,6 +21,7 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { checkoutStatusQueryKey } from "@/git/query-keys";
 import {
   HostRuntimeController,
   HostRuntimeStore,
@@ -2068,6 +2069,166 @@ describe("HostRuntimeController", () => {
 
     unsubscribe();
     await controller.stop();
+  });
+
+  it("keeps active client status updates working after a failed make-before-break upgrade", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        createClient: (input) => {
+          const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+          if (input.connection.id === relayAlternate.id) {
+            client.connect = async () => {
+              throw new Error("replacement handshake failed");
+            };
+          }
+          return client as unknown as DaemonClient;
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    initialClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 100;
+
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+    initialClient.setConnectionState({ status: "disconnected", reason: "transport closed" });
+    expect(controller.getSnapshot().connectionStatus).toBe("error");
+    expect(controller.getSnapshot().lastError).toBe("transport closed");
+    await controller.stop();
+  });
+
+  it("aborts a pending make-before-break upgrade when the candidate connection is removed", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const replacementGate = createDeferred<void>();
+    const replacementClients: FakeDaemonClient[] = [];
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        createClient: (input) => {
+          const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+          if (input.connection.id === relayAlternate.id) {
+            replacementClients.push(client);
+            const origConnect = client.connect.bind(client);
+            client.connect = async () => {
+              await replacementGate.promise;
+              return origConnect();
+            };
+          }
+          return client as unknown as DaemonClient;
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    initialClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 100;
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const switchingCycle = controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(replacementClients).toHaveLength(1);
+
+    const updatePromise = controller.updateHost({
+      ...host,
+      connections: [relayPrimary],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    replacementGate.resolve();
+    await Promise.all([switchingCycle, updatePromise]);
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).toBe(initialClient);
+    expect(initialClient.isDisposed()).toBe(false);
+    expect(replacementClients[0]?.isDisposed()).toBe(true);
+    await controller.stop();
+  });
+
+  it("runs store cache recovery when a make-before-break adaptive switch advances the online epoch", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      serverId: "srv_upgrade_cache_recovery",
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: makeDeps(latencies, clients),
+    });
+    const queryKey = checkoutStatusQueryKey(host.serverId, "/repo");
+
+    try {
+      store.syncHosts([host]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot(host.serverId)?.connectionStatus).toBe("online");
+      const initialEpoch = store.getSnapshot(host.serverId)?.connectionEpoch ?? 0;
+      const activeClient = store.getSnapshot(host.serverId)?.client as unknown as FakeDaemonClient;
+      const initialHistoryGen =
+        useSessionStore.getState().sessions[host.serverId]?.historySyncGeneration ?? 0;
+
+      queryClient.setQueryData(queryKey, { branch: "main" });
+      expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(false);
+
+      activeClient.heartbeatReportsRtt(300);
+      latencies[relayAlternate.id] = 100;
+      for (let index = 0; index < 3; index += 1) {
+        await vi.advanceTimersByTimeAsync(120_000);
+        await store.runProbeCycleNow(host.serverId);
+      }
+
+      expect(store.getSnapshot(host.serverId)?.activeConnectionId).toBe(relayAlternate.id);
+      expect(store.getSnapshot(host.serverId)?.connectionStatus).toBe("online");
+      expect(store.getSnapshot(host.serverId)?.connectionEpoch).toBeGreaterThan(initialEpoch);
+      expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.historySyncGeneration ?? 0,
+      ).toBeGreaterThan(initialHistoryGen);
+    } finally {
+      queryClient.removeQueries({ queryKey });
+      store.syncHosts([]);
+    }
   });
 
   it("exposes one snapshot with active connection and status from same source", async () => {

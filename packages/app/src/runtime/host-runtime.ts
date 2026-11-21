@@ -1530,50 +1530,13 @@ export class HostRuntimeController {
 
     const nextGeneration = this.snapshot.clientGeneration + 1;
     if (makeBeforeBreak) {
-      const replacement = this.deps.createClient({
-        host: this.host,
+      await this.switchToConnectionMakeBeforeBreak({
         connection,
         clientId,
-        runtimeGeneration: nextGeneration,
+        nextGeneration,
+        requestVersion,
+        expectedProbeVersion,
       });
-      replacement.setReconnectEnabled(false);
-      try {
-        await replacement.connect();
-      } catch (error) {
-        const authFailure = getConnectionAuthFailureReason(error);
-        if (authFailure) {
-          this.authRejectedConnectionIds.add(connection.id);
-          const probes = new Map(this.snapshot.probeByConnectionId);
-          probes.set(connection.id, { status: "unavailable", latencyMs: null });
-          this.updateSnapshot({ probeByConnectionId: probes });
-        }
-        await replacement.close().catch(() => undefined);
-        return;
-      }
-
-      if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
-        await replacement.close().catch(() => undefined);
-        return;
-      }
-
-      replacement.setReconnectEnabled(true);
-      await this.disposePreviousActiveClient();
-
-      if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
-        await replacement.close().catch(() => undefined);
-        return;
-      }
-
-      this.activeClient = replacement;
-      this.clearActiveRttSamples();
-      this.resetInactiveOnlineProbeBackoff();
-      this.applyConnectionEvent({
-        type: "select_connection",
-        connectionId: connection.id,
-        connection: toActiveConnection(connection),
-      });
-      this.snapshot = { ...this.snapshot, clientGeneration: nextGeneration };
-      this.attachActiveClient({ client: replacement, connection, requestVersion });
       return;
     }
 
@@ -1616,27 +1579,84 @@ export class HostRuntimeController {
     try {
       if (!existingClient) await client.connect();
       if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
-      this.attachActiveClient({ client, connection, requestVersion });
+      this.attachActiveClient({ client, connection });
     } catch (error) {
-      await this.failActiveConnection({ client, connection, requestVersion, error });
+      await this.failActiveConnection({ client, connection, error });
     }
   }
 
-  private attachActiveClient(input: {
-    client: DaemonClient;
+  private async switchToConnectionMakeBeforeBreak(input: {
     connection: HostConnection;
+    clientId: string;
+    nextGeneration: number;
     requestVersion: number;
-  }): void {
-    const { client, connection, requestVersion } = input;
+    expectedProbeVersion?: number;
+  }): Promise<void> {
+    const { connection, clientId, nextGeneration, requestVersion, expectedProbeVersion } = input;
+    const replacement = this.deps.createClient({
+      host: this.host,
+      connection,
+      clientId,
+      runtimeGeneration: nextGeneration,
+    });
+    replacement.setReconnectEnabled(false);
+    try {
+      await replacement.connect();
+    } catch (error) {
+      const authFailure = getConnectionAuthFailureReason(error);
+      if (authFailure) {
+        this.authRejectedConnectionIds.add(connection.id);
+        const probes = new Map(this.snapshot.probeByConnectionId);
+        probes.set(connection.id, { status: "unavailable", latencyMs: null });
+        this.updateSnapshot({ probeByConnectionId: probes });
+      }
+      await replacement.close().catch(() => undefined);
+      return;
+    }
+
+    const resolveValidTarget = (): HostConnection | null => {
+      if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) return null;
+      const saved = findConnectionById(this.host, connection.id);
+      if (!saved || connectionNeedsNewClient(connection, saved, replacement)) return null;
+      return saved;
+    };
+
+    if (!resolveValidTarget()) {
+      await replacement.close().catch(() => undefined);
+      return;
+    }
+
+    replacement.setReconnectEnabled(true);
+    await this.disposePreviousActiveClient();
+
+    const target = resolveValidTarget();
+    if (!target) {
+      await replacement.close().catch(() => undefined);
+      return;
+    }
+
+    this.activeClient = replacement;
+    this.clearActiveRttSamples();
+    this.resetInactiveOnlineProbeBackoff();
+    this.applyConnectionEvent({
+      type: "select_connection",
+      connectionId: target.id,
+      connection: toActiveConnection(target),
+    });
+    this.snapshot = { ...this.snapshot, clientGeneration: nextGeneration };
+    this.attachActiveClient({ client: replacement, connection: target });
+  }
+
+  private attachActiveClient(input: { client: DaemonClient; connection: HostConnection }): void {
+    const { client, connection } = input;
     this.unsubscribeClientHandlers =
       this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
-      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+      if (this.activeClient !== client) return;
       if (client.authFailureReason) {
         void this.failActiveConnection({
           client,
           connection,
-          requestVersion,
           error: new DaemonAuthenticationError(client.authFailureReason),
         });
         return;
@@ -1661,11 +1681,10 @@ export class HostRuntimeController {
   private async failActiveConnection(input: {
     client: DaemonClient;
     connection: HostConnection;
-    requestVersion: number;
     error: unknown;
   }): Promise<void> {
-    const { client, connection, requestVersion, error } = input;
-    if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+    const { client, connection, error } = input;
+    if (this.activeClient !== client) return;
     const authFailure = getConnectionAuthFailureReason(error);
     if (authFailure) this.authRejectedConnectionIds.add(connection.id);
     this.unsubscribeClientStatus?.();
@@ -1841,6 +1860,7 @@ export class HostRuntimeStore {
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
+  private lastOnlineEpochByServer = new Map<string, number>();
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
@@ -2098,6 +2118,7 @@ export class HostRuntimeStore {
 
     rekeyMap(this.controllers, oldServerId, newServerId);
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
+    rekeyMap(this.lastOnlineEpochByServer, oldServerId, newServerId);
     rekeyMap(this.connectionStatusStartedAtByServer, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
     projectIconCache.reconcileServerId(oldServerId, newServerId);
@@ -2590,6 +2611,7 @@ export class HostRuntimeStore {
       this.fleetDirectoryDemand.delete(serverId);
       this.controllers.delete(serverId);
       this.lastConnectionStatusByServer.delete(serverId);
+      this.lastOnlineEpochByServer.delete(serverId);
       this.connectionStatusStartedAtByServer.delete(serverId);
       this.directorySyncByServer.get(serverId)?.dispose();
       this.directorySyncByServer.delete(serverId);
@@ -2640,6 +2662,9 @@ export class HostRuntimeStore {
       );
       const initialSnapshot = controller.getSnapshot();
       this.lastConnectionStatusByServer.set(host.serverId, initialSnapshot.connectionStatus);
+      if (initialSnapshot.connectionStatus === "online") {
+        this.lastOnlineEpochByServer.set(host.serverId, initialSnapshot.connectionEpoch);
+      }
       this.connectionStatusStartedAtByServer.set(host.serverId, Date.now());
       controller.subscribe(() => {
         const snapshot = controller.getSnapshot();
@@ -2739,6 +2764,7 @@ export class HostRuntimeStore {
     const controller = this.controllers.get(serverId);
     if (!controller) {
       this.lastConnectionStatusByServer.delete(serverId);
+      this.lastOnlineEpochByServer.delete(serverId);
       this.connectionStatusStartedAtByServer.delete(serverId);
       return;
     }
@@ -2753,6 +2779,7 @@ export class HostRuntimeStore {
       },
     });
     const previousStatus = this.lastConnectionStatusByServer.get(serverId);
+    const previousOnlineEpoch = this.lastOnlineEpochByServer.get(serverId);
     const statusChanged = previousStatus !== snapshot.connectionStatus;
     const isUnavailable =
       snapshot.connectionStatus !== "online" && snapshot.connectionStatus !== "idle";
@@ -2763,7 +2790,11 @@ export class HostRuntimeStore {
     }
     this.lastConnectionStatusByServer.set(serverId, snapshot.connectionStatus);
     const didTransitionOnline =
-      snapshot.connectionStatus === "online" && previousStatus !== "online";
+      snapshot.connectionStatus === "online" &&
+      (previousStatus !== "online" || previousOnlineEpoch !== snapshot.connectionEpoch);
+    if (snapshot.connectionStatus === "online") {
+      this.lastOnlineEpochByServer.set(serverId, snapshot.connectionEpoch);
+    }
     if (didTransitionOnline) {
       useSessionStore.getState().bumpHistorySyncGeneration(serverId);
       for (const child of this.controllers.values()) void child.reconnectVia(serverId);
