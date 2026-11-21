@@ -87,6 +87,73 @@ describe("TTSManager", () => {
     expect(calls.slice(1).some((text) => text.length > calls[0].length)).toBe(true);
   });
 
+  it("peels the opening clause off a long first sentence so speech starts sooner", async () => {
+    const calls: string[] = [];
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech(text: string): Promise<{ stream: Readable; format: string }> {
+        calls.push(text);
+        return {
+          stream: Readable.from([Buffer.from("x")]),
+          format: "pcm;rate=24000",
+        };
+      },
+    };
+
+    const manager = new TTSManager("s1", pino({ level: "silent" }), tts);
+    const abort = new AbortController();
+    const firstSentence =
+      "I looked through the failing workflow logs on the release branch, and the typecheck step is the one breaking the build.";
+    const secondSentence = "The fix is already staged.";
+
+    await manager.generateAndWaitForPlayback(
+      `${firstSentence} ${secondSentence}`,
+      (msg) => {
+        if (msg.type === "audio_output") {
+          manager.confirmAudioPlayed(msg.payload.id);
+        }
+      },
+      abort.signal,
+      true,
+    );
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0].length).toBeLessThanOrEqual(90);
+    expect(calls[0].endsWith(",")).toBe(true);
+    expect(`${calls[0]} ${calls[1]}`).toBe(firstSentence);
+    expect(calls[2]).toBe(secondSentence);
+  });
+
+  it("keeps a long first sentence whole when it has no clause boundary", async () => {
+    const calls: string[] = [];
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech(text: string): Promise<{ stream: Readable; format: string }> {
+        calls.push(text);
+        return {
+          stream: Readable.from([Buffer.from("x")]),
+          format: "pcm;rate=24000",
+        };
+      },
+    };
+
+    const manager = new TTSManager("s1", pino({ level: "silent" }), tts);
+    const abort = new AbortController();
+    const sentence =
+      "The deploy finished cleanly and every smoke test on the release branch passed without a single retry.";
+
+    await manager.generateAndWaitForPlayback(
+      sentence,
+      (msg) => {
+        if (msg.type === "audio_output") {
+          manager.confirmAudioPlayed(msg.payload.id);
+        }
+      },
+      abort.signal,
+      true,
+    );
+
+    expect(calls).toEqual([sentence]);
+  });
+
   it("prefetches the next segment before current playback completes", async () => {
     const started: string[] = [];
     const gateResolvers = new Map<string, () => void>();
