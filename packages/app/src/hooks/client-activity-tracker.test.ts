@@ -221,6 +221,37 @@ describe("client activity tracker", () => {
     });
   });
 
+  it("becoming hidden sends a heartbeat right away with appVisible false", () => {
+    const { tracker, client, clock } = buildTracker({ initialAppVisible: true });
+    tracker.recordUserActivity();
+    tracker.maybeSendImmediateHeartbeat();
+    client.reset();
+
+    clock.advance(1_000);
+    tracker.notifyAppVisibility(false);
+
+    expect(client.recordedHeartbeats).toHaveLength(1);
+    expect(client.latest()).toMatchObject({
+      focusedAgentId: "agent-1",
+      appVisible: false,
+      appVisibilityChangedAt: new Date(START_MS + 1_000).toISOString(),
+    });
+  });
+
+  it("becoming visible sends a heartbeat right away with appVisible true", () => {
+    const { tracker, client, clock } = buildTracker({ initialAppVisible: false });
+
+    clock.advance(1_000);
+    tracker.notifyAppVisibility(true);
+
+    expect(client.recordedHeartbeats).toHaveLength(1);
+    expect(client.latest()).toMatchObject({
+      focusedAgentId: "agent-1",
+      appVisible: true,
+      appVisibilityChangedAt: new Date(START_MS + 1_000).toISOString(),
+    });
+  });
+
   it("treats no-op visibility transitions as no change", () => {
     const { tracker } = buildTracker({ initialAppVisible: true });
     const result = tracker.notifyAppVisibility(true);
