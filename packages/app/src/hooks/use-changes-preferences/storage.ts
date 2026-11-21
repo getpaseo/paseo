@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import type { DiffLayoutPreference } from "@/git/diff-layout";
 import { readValidatedJson, readValidatedString } from "@/storage/validated-storage";
 
 export const CHANGES_PREFERENCES_STORAGE_KEY = "@paseo:changes-preferences";
@@ -7,7 +8,7 @@ export const LEGACY_WRAP_LINES_STORAGE_KEY = "diff-wrap-lines";
 export const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 
 const changesPreferencesSchema = z.strictObject({
-  layout: z.enum(["unified", "split"]).optional(),
+  layout: z.enum(["unified", "split", "auto"]).optional(),
   desktopTreeVisible: z.boolean().optional(),
   // Read the former overloaded preference once so existing installations keep their desktop tree.
   viewMode: z.enum(["flat", "tree"]).optional(),
@@ -18,7 +19,7 @@ const changesPreferencesSchema = z.strictObject({
 });
 
 export interface ChangesPreferences {
-  layout: "unified" | "split";
+  layout: DiffLayoutPreference;
   desktopTreeVisible: boolean;
   wrapLines: boolean;
   hideWhitespace: boolean;
