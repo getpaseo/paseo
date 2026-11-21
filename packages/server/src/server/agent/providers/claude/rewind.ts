@@ -73,6 +73,53 @@ function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
 }
 
 /**
+ * The uuid of the transcript entry that ends the assistant message `messageId`, the place to fork
+ * a conversation after that message. `messageId` is either an entry uuid (rows replayed from the
+ * transcript) or the API message id (rows streamed live). Claude Code writes one entry per content
+ * block, all sharing the API message id, so the message ends at the last of them. Null when the
+ * main conversation holds no such message; subagent sidechains are skipped, since forkSession
+ * cannot resolve their uuids.
+ */
+export async function findAssistantMessageEnd(
+  transcriptPath: string,
+  messageId: string,
+): Promise<string | null> {
+  const input = createReadStream(transcriptPath, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let apiMessageId: string | null = null;
+  let end: string | null = null;
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const entry = parsed as {
+        type?: unknown;
+        uuid?: unknown;
+        isSidechain?: unknown;
+        message?: { id?: unknown };
+      };
+      if (entry.isSidechain === true || typeof entry.uuid !== "string") continue;
+      const entryApiId = entry.type === "assistant" ? entry.message?.id : undefined;
+      if (apiMessageId === null) {
+        if (entry.uuid !== messageId && entryApiId !== messageId) continue;
+        if (typeof entryApiId !== "string") return entry.uuid;
+        apiMessageId = entryApiId;
+      }
+      if (entryApiId === apiMessageId) end = entry.uuid;
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  return end;
+}
+
+/**
  * The entry a message steered into a running turn follows. Claude Code gives such a message no
  * entry of its own: it records a queued_command attachment, under the uuid Paseo minted for the
  * message, hung off the entry it was read after. Forking at that entry drops the message and

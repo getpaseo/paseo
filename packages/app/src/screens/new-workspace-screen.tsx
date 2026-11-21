@@ -82,6 +82,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
+import { runCreateBranchedWorkspace } from "./new-workspace-branch";
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
@@ -1393,6 +1394,34 @@ export function NewWorkspaceScreen({
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
+        const branch = forkDraftSetup?.branch;
+        if (branch) {
+          setPendingAction("chat");
+          let outcome: SubmitOutcome = "background";
+          await runCreateBranchedWorkspace({
+            payload,
+            branch,
+            ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
+            client: withConnectedClient(),
+            serverId: selectedServerId,
+            navigate: (targetServerId, workspaceId, agentId) => {
+              if (!isStillOnCreateScreen()) {
+                return;
+              }
+              outcome = "navigated";
+              leaveFullscreen();
+              navigateToWorkspace({
+                serverId: targetServerId,
+                workspaceId,
+                target: { kind: "agent", agentId },
+              });
+            },
+          });
+          if (outcome === "background") {
+            setPendingAction(null);
+          }
+          return;
+        }
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";

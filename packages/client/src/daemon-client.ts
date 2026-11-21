@@ -808,6 +808,12 @@ function normalizeListCommandsOptions(
   }
   return { agentId: input, ...legacyOptions };
 }
+export interface AgentForkOptions {
+  /** The assistant message that ends the turn to branch after. */
+  boundaryMessageId: string;
+  cwd?: string;
+  workspaceId?: string;
+}
 export interface AgentForkContextOptions {
   boundaryCursor?: FetchAgentTimelineCursor;
   boundaryMessageId?: string;
@@ -4252,6 +4258,36 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  /** Branch the agent's provider session after a turn and open the branch as a new agent. */
+  async forkAgent(agentId: string, options: AgentForkOptions): Promise<AgentSnapshotPayload> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork.request",
+      agentId,
+      requestId,
+      boundaryMessageId: options.boundaryMessageId,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+    });
+
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork.response" || msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+
+    if (!payload.agent) {
+      throw new Error(payload.error ?? "Fork failed");
+    }
+    return payload.agent;
   }
 
   // ============================================================================

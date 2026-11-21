@@ -175,6 +175,7 @@ function renderStreamItemWithTurnFooter(input: {
   turnIndent: TurnIndent;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
+  forkBranchUnavailableReason: string | null;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
   if (!input.content) {
@@ -189,6 +190,7 @@ function renderStreamItemWithTurnFooter(input: {
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
+      forkBranchUnavailableReason={input.forkBranchUnavailableReason}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
@@ -404,6 +406,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
     );
+    const supportsAgentNativeFork = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.agentNativeFork === true,
+    );
+    let forkBranchUnavailableReason: string | null = null;
+    if (!supportsAgentNativeFork) {
+      forkBranchUnavailableReason = t("message.actions.forkUnavailable");
+    } else if (!context.capabilities?.supportsNativeFork) {
+      forkBranchUnavailableReason = t("message.actions.forkBranchUnsupported");
+    }
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
     );
@@ -970,10 +981,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           turnIndent: getTurnIndent(layoutItem),
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
+          forkBranchUnavailableReason,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
         });
       },
       [
+        forkBranchUnavailableReason,
         getTurnIndent,
         handleForkAssistantTurn,
         readOnly,
@@ -1005,11 +1018,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
+            forkBranchUnavailableReason={forkBranchUnavailableReason}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
+        forkBranchUnavailableReason,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,
