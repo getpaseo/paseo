@@ -51,7 +51,10 @@ export interface AcpOptions {
   workspaceOnlyCatalog?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
-  /** Allow delayed session/load updates before publishing the session as ready. */
+  /**
+   * For an agent that streams history after its session/load response: publish the session
+   * as ready once this long passes without a history update.
+   */
   loadReplayQuietPeriodMs?: number;
   /**
    * Keep a turn open after `end_turn` while qualifying tool calls are still running,

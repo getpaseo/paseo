@@ -303,6 +303,107 @@ describe("runAcpProvider", () => {
     },
   );
 
+  it("keeps history that streams after session/load for longer than five quiet periods", async () => {
+    const sessionId = "connector-session";
+    const historyLength = 40;
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        let sent = 0;
+        stream = setInterval(() => {
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: `answer-${sent}`,
+              content: { type: "text", text: `previous answer ${sent}` },
+            },
+          });
+          sent += 1;
+          if (sent === historyLength) clearInterval(stream);
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(events.filter((event) => event.type === "timeline.item")).toHaveLength(historyLength);
+    } finally {
+      clearInterval(stream);
+      await connection.close();
+    }
+  });
+
+  it("keeps history left unread while the event loop stalled past the quiet period", async () => {
+    const sessionId = "connector-session";
+    const notifyAnswer = (runtime: ConnectorInstance, text: string) =>
+      runtime.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: text,
+          content: { type: "text", text },
+        },
+      });
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        notifyAnswer(runtime, "read before the stall");
+        // Stall after the timers phase, so the overdue quiet timer runs before the next I/O poll.
+        const stall = () => {
+          // Like bytes waiting in the agent's pipe: readable only once the loop polls I/O again.
+          setImmediate(() => notifyAnswer(runtime, "unread during the stall"));
+          const stalledUntil = performance.now() + 250;
+          while (performance.now() < stalledUntil);
+        };
+        setTimeout(() => setImmediate(stall), 30);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(
+        events.filter((event) => event.type === "timeline.item").map((event) => event.item),
+      ).toEqual([
+        expect.objectContaining({ text: "read before the stall" }),
+        expect.objectContaining({ text: "unread during the stall" }),
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("auto-accepts ordinary permissions only in the unattended mode and refuses to switch while busy", async () => {
     const modeConfig = {
       id: "mode",

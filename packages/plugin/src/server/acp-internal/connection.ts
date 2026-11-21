@@ -454,7 +454,7 @@ class AcpRuntime {
    * Once ready, suppress late replay rows until the first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
-  private lastLoadUpdateAt = 0;
+  private lastLoadHistoryAt = 0;
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
@@ -1282,17 +1282,10 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
-    if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
+    const isHistory = !isSessionStateUpdate(notification.update);
+    if (this.replayWindow && isHistory) this.lastLoadHistoryAt = performance.now();
     if (this.replayWindow === "skip") {
-      const update = notification.update;
-      if (
-        update.sessionUpdate === "available_commands_update" ||
-        update.sessionUpdate === "config_option_update" ||
-        update.sessionUpdate === "current_mode_update" ||
-        update.sessionUpdate === "usage_update"
-      ) {
-        this.reduceStateUpdate(update, wireSeq);
-      }
+      if (!isHistory) this.reduceStateUpdate(notification.update, wireSeq);
       return;
     }
     if (
@@ -1945,17 +1938,32 @@ class AcpRuntime {
       });
   }
 
+  // An agent that streams history after its session/load response sends no end marker,
+  // so the history ends once a quiet period passes without a history update.
   private async waitForLoadReplay(quietPeriod: number): Promise<void> {
     const start = performance.now();
-    const deadline = start + 5 * quietPeriod;
     while (!this.closing && !this.processFailed) {
-      const idleAt = Math.max(start, this.lastLoadUpdateAt) + quietPeriod;
-      const remaining = Math.min(deadline, idleAt) - performance.now();
-      if (remaining <= 0) return;
-      await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+      const lastHistoryAt = Math.max(start, this.lastLoadHistoryAt);
+      const remaining = lastHistoryAt + quietPeriod - performance.now();
+      // A stalled event loop reaches the quiet period with history still unread in the pipe.
+      // setImmediate lets the loop read pending input once before the silence is trusted.
+      await new Promise<void>((resolve) => {
+        if (remaining > 0) setTimeout(resolve, remaining);
+        else setImmediate(resolve);
+      });
       await this.notificationLane;
+      if (remaining <= 0 && Math.max(start, this.lastLoadHistoryAt) === lastHistoryAt) return;
     }
   }
+}
+
+function isSessionStateUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "config_option_update" ||
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "usage_update"
+  );
 }
 
 function routeIncomingMessages(
