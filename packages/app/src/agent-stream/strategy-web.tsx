@@ -1062,9 +1062,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       }
 
-      // The browser can apply the wheel movement after stream output has
-      // already requested another scroll to the bottom.
+      // A vertical wheel gesture can arrive before the browser moves the viewport.
+      // Mixed-axis gestures may move nested content sideways, so wait for an upward scroll.
       if (
+        event.deltaX === 0 &&
         followOutputRef.current &&
         Math.max(scrollContainer.scrollTop, lastKnownScrollTopRef.current) >
           USER_SCROLL_DELTA_EPSILON
