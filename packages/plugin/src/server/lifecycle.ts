@@ -154,6 +154,7 @@ export type PluginHooks = {
   };
 } & { [Name in keyof PluginHookEvents]: { payload: PluginHookEvents[Name] } } & {
   "worktree.create.after": { payload: { worktree: PluginHookWorktree } };
+  "workspace.archive.before": { payload: { workspace: PluginHookWorkspace } };
 };
 
 export type PluginHookPayload<Name extends keyof PluginHooks> = {
@@ -200,6 +201,7 @@ export interface PluginLifecycleRegistration {
 export const pluginHookRegistry = {
   "workspace.create.before": { waits: true },
   "workspace.create.after": { waits: false },
+  "workspace.archive.before": { waits: true },
   "workspace.archive.after": { waits: false },
   "worktree.create.before": { waits: true },
   "worktree.create.after": { waits: true },

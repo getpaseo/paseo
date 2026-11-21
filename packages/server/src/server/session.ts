@@ -8149,6 +8149,7 @@ export class Session {
               killTerminalsForWorkspace: (workspaceId) =>
                 this.terminalController.killTerminalsForWorkspace(workspaceId),
               stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+              lifecycle: this.pluginRuntime,
               sessionLogger: this.sessionLogger,
             },
             {

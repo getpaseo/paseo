@@ -141,6 +141,7 @@ export interface PaseoToolHostDependencies {
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
+  lifecycle?: ArchiveDependencies["lifecycle"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
@@ -3412,6 +3413,7 @@ function archiveWorktreeDependencies(
   if (!options.clearWorkspaceArchiving) {
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
+  const workspaceRegistry = options.workspaceRegistry;
   return {
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
@@ -3423,6 +3425,10 @@ function archiveWorktreeDependencies(
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
+    lifecycle: options.lifecycle,
+    getWorkspace: workspaceRegistry
+      ? (workspaceId) => workspaceRegistry.get(workspaceId)
+      : undefined,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,
     killTerminalsForWorkspace: (workspaceId: string) =>

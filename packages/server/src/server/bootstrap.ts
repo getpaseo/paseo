@@ -1329,6 +1329,7 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
+        lifecycle: pluginRuntime,
         sessionLogger: logger,
       },
       { scope: { kind: "workspace", workspaceId }, requestId },
@@ -1457,6 +1458,7 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
+        lifecycle: pluginRuntime,
         sessionLogger: logger,
       },
       {
@@ -1588,6 +1590,7 @@ export async function createPaseoDaemon(
     archiveWorkspaceRecord: (workspaceId, archivedAt) =>
       archiveWorkspaceRecordExternal(workspaceId, undefined, archivedAt),
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+    lifecycle: pluginRuntime,
     workspaceRegistry,
     projectRegistry,
     createDirectoryWorkspace: async (cwd, title, projectId, context) => {

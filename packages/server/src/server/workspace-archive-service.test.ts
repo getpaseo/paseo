@@ -23,6 +23,7 @@ import {
   WorkspaceArchiveCanceledError,
 } from "./workspace-archive-service.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
 const cleanupPaths: string[] = [];
 
@@ -270,6 +271,45 @@ describe("archiveByScope", () => {
       removedDirectory: true,
     });
     expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("a failing workspace.archive.before hook leaves the workspace untouched", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "before-hook-workspace");
+    const workspaceId = "ws-before-hook";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    const now = new Date().toISOString();
+    deps.getWorkspace = async () =>
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "project",
+        cwd: worktree.worktreePath,
+        kind: "worktree",
+        displayName: "before-hook",
+        createdAt: now,
+        updatedAt: now,
+      });
+    const wait = vi.fn(async () => {
+      throw new Error("blocked");
+    });
+    deps.lifecycle = { wait };
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-before-hook",
+      }),
+    ).rejects.toThrow("blocked");
+
+    expect(wait).toHaveBeenCalledWith("workspace.archive.before", {
+      workspace: expect.objectContaining({ id: workspaceId }),
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
   test("workspace scope archives the record but leaves a plugin-placed directory whose marker is gone", async () => {
