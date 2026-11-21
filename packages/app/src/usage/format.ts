@@ -150,11 +150,8 @@ export function formatRunsOutLabel(
   now = Date.now(),
   t: TFunction = i18n.t,
 ): string | null {
-  if (!iso) return null;
-  const rel = relativeDuration(iso, now);
-  if (!rel) return null;
-  if (rel.kind === "now") return t("providerUsage.timing.runsOutNow");
-  return t("providerUsage.timing.runsOutIn", { duration: formatRelativeDuration(rel, t) });
+  const time = formatResetTime(iso, now, t);
+  return time ? t("providerUsage.timing.runsOutAt", { time }) : null;
 }
 
 export function formatAgo(

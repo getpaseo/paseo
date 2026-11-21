@@ -836,6 +836,8 @@ test("usage percentages state their meaning and follow the selected language", a
   }
 });
 
+const exhaustionClock = /^runs out \d{1,2}:\d{2}(?: [AP]M)?$/;
+
 test("open usage clocks advance without refreshing or reopening", async ({ page }) => {
   test.setTimeout(120_000);
   const now = new Date();
@@ -853,12 +855,15 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     const card = page.getByTestId("usage-report-login-journey:account");
     await expect(card.getByTestId("usage-freshness")).toHaveText("Updated just now");
     await expect(card.getByText("resets in 30m", { exact: false }).first()).toBeVisible();
+    const forecast = card.getByText(exhaustionClock);
+    await expect(forecast).toBeVisible();
+    const forecastAt = await forecast.innerText();
     // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
     // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
     await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
     await expect(card.getByText(/resets in (28|29)m/).first()).toBeVisible();
-    await expect(card.getByText(/runs out in (28|29)m/)).toBeVisible();
+    await expect(forecast).toHaveText(forecastAt);
     await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
       /^resets in (28|29)m\s·\s/,
     );
@@ -875,7 +880,7 @@ test("Refresh all keeps quota visible and restores the forecast after a timeout"
   try {
     const transport = await installDaemonWebSocketGate(page);
     await openCompactUsageWithClock(page, reading);
-    await expectQuota(page, "40% used", /runs out in /);
+    await expectQuota(page, "40% used", exhaustionClock);
 
     await timeOutUsageRefresh(page, transport);
     await expectQuota(page, "40% used", null);
@@ -897,7 +902,7 @@ test("a card refresh timeout is visible alongside a newer quota forecast", async
   try {
     const transport = await installDaemonWebSocketGate(page);
     await openCompactUsageWithClock(page, reading);
-    await expectQuota(page, "40% used", /runs out in /);
+    await expectQuota(page, "40% used", exhaustionClock);
 
     await delayCardRefreshResponse(page, transport);
     await login.setReport(usageReading(reading, 10));
@@ -947,7 +952,7 @@ async function expectQuota(page: Page, amount: string, forecast: string | RegExp
   await expect(usage.getByText(amount, { exact: true })).toBeVisible();
   await expect(usage.getByText(/^resets in /)).toBeVisible();
   if (forecast === null) {
-    await expect(usage.getByText(/^runs out in /)).toBeHidden();
+    await expect(usage.getByText(/^runs out /)).toBeHidden();
     return;
   }
   await expect(usage.getByText(forecast)).toBeVisible();

@@ -67,7 +67,7 @@ it("discovers the resolved account and maps the CLI's quota buckets", async () =
     windows: [
       {
         id: "gemini-5h",
-        label: "Gemini Models · 5h",
+        label: "Gemini · 5h",
         shortLabel: "5h",
         durationSeconds: 18_000,
         usedPct: 75,
@@ -77,7 +77,7 @@ it("discovers the resolved account and maps the CLI's quota buckets", async () =
       { id: "gemini-weekly", shortLabel: "wk", usedPct: expect.closeTo(30), summary: true },
       {
         id: "disabled",
-        label: "Gemini Models · Weekly · Disabled",
+        label: "Gemini · Weekly · Disabled",
         shortLabel: "wk",
         usedPct: null,
         remainingPct: null,
@@ -112,12 +112,12 @@ it("uses compact group and period shorthands when multiple groups are reported",
     windows: [
       {
         id: "gemini-weekly",
-        label: "Gemini Models · Weekly",
+        label: "Gemini · Weekly",
         shortLabel: "Gemini wk",
         durationSeconds: 604_800,
       },
-      { id: "gemini-5h", label: "Gemini Models · 5h", shortLabel: "Gemini 5h" },
-      { id: "3p-weekly", label: "Claude and GPT models · Weekly", shortLabel: "Claude and GPT wk" },
+      { id: "gemini-5h", label: "Gemini · 5h", shortLabel: "Gemini 5h" },
+      { id: "3p-weekly", label: "Claude and GPT · Weekly", shortLabel: "Claude and GPT wk" },
     ],
   });
 });

@@ -35,7 +35,7 @@ describe("usage pace", () => {
     const sampledAt = "2026-11-21T10:28:17.000Z";
     const weekly: UsageWindow = {
       id: "gemini-weekly",
-      label: "Gemini Models · Weekly",
+      label: "Gemini · Weekly",
       durationSeconds: 604_800,
       usedPct: 6,
       resetsAt: "2026-11-28T08:48:17.000Z",

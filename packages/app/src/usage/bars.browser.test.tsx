@@ -8,6 +8,7 @@ import { UsageBalanceBar } from "./balance-bar";
 import { UsageMeter } from "./meter";
 
 const window: UsageWindow = { id: "session", label: "Session", usedPct: 70 };
+const exhaustedWindow: UsageWindow = { ...window, usedPct: 100 };
 const balance: UsageBalance = { id: "credits", label: "Credits", unit: "usd", remaining: 12 };
 const ignorePin = () => {};
 
@@ -77,6 +78,27 @@ it("colors healthy quota bars green and keeps the warning and danger colors", ()
     "rgb(185, 28, 28)",
     "rgb(212, 212, 216)",
   ]);
+});
+
+it("keeps an exhausted quota red when a failed refresh removes its forecast", () => {
+  act(() =>
+    root.render(
+      <UsageWindowBar
+        window={exhaustedWindow}
+        forecastAt={null}
+        retained
+        displayAs="used"
+        pinnable={false}
+        pinned={false}
+        onTogglePin={ignorePin}
+        pinLabel=""
+        pinTestID=""
+      />,
+    ),
+  );
+  expect(container.textContent).toBe("Session100% used");
+  const fill = container.firstElementChild!.children[1].firstElementChild!;
+  expect(getComputedStyle(fill).backgroundColor).toBe("rgb(185, 28, 28)");
 });
 
 const narrowReadingMs = Date.now();

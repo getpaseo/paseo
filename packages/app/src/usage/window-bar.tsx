@@ -18,6 +18,7 @@ import { displayPercent, usageWindowRowLabel } from "./model";
 import { usagePace } from "./pace";
 import { UsageDatapointLine } from "./datapoint-line";
 import type { UsageDisplayAs } from "./preferences";
+import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
 
@@ -62,6 +63,7 @@ export function UsageWindowBar({
     exactTime,
     forecast,
     percent: shownPct ?? 0,
+    tone: forecast?.tone ?? windowTone(window),
     pinned,
   };
 
@@ -100,6 +102,7 @@ function WindowRowContent({
   exactTime,
   forecast,
   percent,
+  tone,
   pinnable,
   pinned,
 }: {
@@ -109,6 +112,7 @@ function WindowRowContent({
   exactTime: string | null;
   forecast: PaceLabel | null;
   percent: number;
+  tone: UsageTone;
   pinnable: boolean;
   pinned: boolean;
 }) {
@@ -123,7 +127,7 @@ function WindowRowContent({
         </Text>
         {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
-      <UsageMeter percent={percent} tone={forecast?.tone ?? "default"} />
+      <UsageMeter percent={percent} tone={tone} />
       <UsageDatapointLine datapoints={[countdown, exactTime, forecast?.label ?? null]} />
     </>
   );

@@ -38,11 +38,9 @@ describe("formatAmount", () => {
 
     expect(formatPct(7, "en")).toBe("7%");
     expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("resets in 2h");
-    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("runs out in 2h");
 
     await i18n.changeLanguage("ja");
     expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("2時間後にリセット");
-    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("2時間後に上限に到達");
     expect(formatAgo(threeDaysAgo, NOW)).toBe("3日前");
   });
 
@@ -57,18 +55,15 @@ describe("formatAmount", () => {
     const daysAgo = new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString();
 
     expect(formatResetLabel(daysFromNow, false, NOW)).toBe("se réinitialise dans 1\u202f234 j");
-    expect(formatRunsOutLabel(daysFromNow, NOW)).toBe("s’épuise dans 1\u202f234 j");
     expect(formatAgo(daysAgo, NOW)).toBe("il y a 1\u202f234 j");
   });
 
   it("selects Arabic plural forms for relative durations", async () => {
     await i18n.changeLanguage("ar");
     const twoHoursFromNow = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
-    const threeHoursFromNow = new Date(NOW + 3 * 60 * 60 * 1000).toISOString();
     const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
 
     expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("تتم إعادة التعيين خلال ساعتين");
-    expect(formatRunsOutLabel(threeHoursFromNow, NOW)).toBe("ينفد خلال 3 ساعات");
     expect(formatAgo(twoDaysAgo, NOW)).toBe("قبل يومين");
   });
 
@@ -117,23 +112,15 @@ describe("reset countdown", () => {
     expect(countdown(59 * 1000)).toBe("resets in 0m");
   });
 
-  it("shows a single day as 24 hours in reset and exhaustion countdowns", () => {
+  it("shows a single day as 24 hours in the reset countdown", () => {
     expect(countdown(DAY)).toBe("resets in 24h");
     expect(countdown(DAY + 30 * MINUTE)).toBe("resets in 24h");
-    expect(formatRunsOutLabel(new Date(NOW + DAY + 30 * MINUTE).toISOString(), NOW)).toBe(
-      "runs out in 24h",
-    );
     expect(countdown(DAY + HOUR)).toBe("resets in 1d 1h");
     expect(countdown(2 * DAY)).toBe("resets in 2d");
   });
-
-  it("joins the at-risk countdown the same way", () => {
-    const iso = new Date(NOW + 3 * HOUR + 5 * MINUTE).toISOString();
-    expect(formatRunsOutLabel(iso, NOW)).toBe("runs out in 3h 5m");
-  });
 });
 
-describe("exact reset time", () => {
+describe("exact quota times", () => {
   // Local-time dates, so the thresholds hold in any timezone the tests run in.
   const now = new Date(2026, 9, 29, 12, 0).getTime();
   const at = (...args: [number, number, number, number, number]) =>
@@ -155,6 +142,23 @@ describe("exact reset time", () => {
 
   it("adds the date after 7 days", () => {
     expect(at(2026, 10, 5, 12, 0)).toMatch(/^Nov 5, (12:00 PM|12:00)$/);
+  });
+
+  it("shows the exhaustion clock time with the same weekday and date rules as reset time", () => {
+    const runsOut = (...args: [number, number, number, number, number]) =>
+      formatRunsOutLabel(new Date(...args).toISOString(), now)?.replace(/\s/g, " ");
+
+    expect(runsOut(2026, 9, 29, 15, 0)).toMatch(/^runs out (3:00 PM|15:00)$/);
+    expect(runsOut(2026, 9, 30, 15, 30)).toMatch(/^runs out Fri (3:30 PM|15:30)$/);
+    expect(runsOut(2026, 10, 5, 15, 30)).toMatch(/^runs out Nov 5, (3:30 PM|15:30)$/);
+  });
+
+  it("uses the app language for the exhaustion label and weekday", async () => {
+    await i18n.changeLanguage("ja");
+    const time = new Date(2026, 9, 30, 15, 30).toISOString();
+    expect(formatRunsOutLabel(time, now)?.replace(/\s/g, " ")).toMatch(
+      /^金 (?:3:30 PM|15:30)に上限に到達$/,
+    );
   });
 
   it("names the weekday in the app language", async () => {
