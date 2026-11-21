@@ -465,6 +465,42 @@ owns payloads, ordering, failure behavior, and examples. `agent.create.before` e
 configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
 every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
 
+### Launch wrap
+
+An `agent.open.before` result can carry `wrap: [executable, ...args]`. The provider then starts that
+session's harness as `[...wrap, command, ...args]`: one direct argv exec with `shell: false` and the
+final hook env, so an argument with spaces stays one element. `executable` must be an absolute path.
+The wrap is never saved on the agent; every open asks the hooks again, and a plugin session reopen
+reuses the wrap it opened with.
+
+- **Support is a provider property.** The provider snapshot entry carries `launchWrap: true` when the
+  provider can apply a wrap. Read it in `agent.create.before` with `paseo.providers.snapshot()`; an
+  absent field means unsupported, which is also what a host without this feature reports. Core
+  providers declare it in the provider contract table in `provider-registry.ts` (Codex and providers
+  that extend it). A plugin provider declares `ProviderRegistration.launchWrap`;
+  `runAcpProvider({ command })` sets it, a connector does not. The declaration travels with the
+  registration metadata, so it is in the snapshot before the provider first connects.
+- **One wrap per open.** A later hook, in the same plugin or a later one, may omit the wrap or return
+  the same value. A different value fails the open.
+- **Fail closed.** `buildLaunchContext` admits a wrapped open before anything starts. It throws
+  `LaunchWrapUnsupportedError` (`code: "launch_wrap_unsupported"`) when the provider does not declare
+  support, when a plugin provider's live connection lacks `session.launch_wrap`, or on Windows when the
+  wrap executable or provider command is a command script, which would need a shell. A host that
+  predates `wrap` rejects the key: the hook result schema is strict. A missing launcher fails the
+  spawn; nothing retries the bare command.
+
+Once an open selects a wrap, a supported provider runs that session's harness through it or fails
+before starting the harness. The guarantee covers the harness process only:
+
+1. Paseo's host terminal tools (`create_terminal`, `send_terminal_keys`) run outside the wrap. A
+   sandbox that relies on the wrap must also keep the agent's daemon access off.
+2. Work before the open hook runs unwrapped: draft command and control discovery, and the catalog
+   lookup during create when no model is set.
+3. Host-side operations run unwrapped: availability and capability probes (the ACP connection's
+   initialize probe included), catalog and session listing, version and update commands, usage
+   queries, and Codex native archive and unarchive.
+4. Losing the plugin that chose the wrap is not covered: a later open without it runs unwrapped.
+
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
 Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,

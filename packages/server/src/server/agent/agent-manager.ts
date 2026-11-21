@@ -1,5 +1,5 @@
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
-import { ProviderOptionsValidationError } from "./provider-options.js";
+import { LaunchWrapUnsupportedError, ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
@@ -14,7 +14,7 @@ import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/inde
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
-import { basename, resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
@@ -6516,6 +6516,7 @@ export class AgentManager {
     let appendSystemPrompt: string[] | undefined;
     let mcpServers: AgentSessionConfig["mcpServers"];
     let mcpServerOwners: Record<string, string> | undefined;
+    let wrap: AgentLaunchContext["wrap"];
     if (this.pluginLifecycle) {
       const request = {
         agentId,
@@ -6533,15 +6534,18 @@ export class AgentManager {
       };
       const transformed = await this.pluginLifecycle.before("agent.open.before", request);
       env = transformed.env;
+      wrap = transformed.wrap;
       if (request.purpose === "interactive") {
         this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
         appendSystemPrompt = transformed.appendSystemPrompt;
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }
+      await this.admitLaunchWrap(agentId, client, wrap);
     }
     const context: AgentLaunchContext = {
       agentId,
+      wrap,
       ...pluginPromptContext(appendSystemPrompt),
       mcpServers,
       mcpServerOwners,
@@ -6571,6 +6575,21 @@ export class AgentManager {
     }
     this.sessionOpenGenerations.set(agentId, generation);
     return context;
+  }
+
+  /** Admit a wrapped open only for a provider that applies the wrap; nothing has started yet. */
+  private async admitLaunchWrap(
+    agentId: string,
+    client: AgentClient,
+    wrap: AgentLaunchContext["wrap"],
+  ): Promise<void> {
+    if (!wrap) return;
+    try {
+      await requireLaunchWrap(client, wrap);
+    } catch (error) {
+      this.detachPluginTools(agentId);
+      throw error;
+    }
   }
 
   private resolveProviderLaunchConfig(
@@ -6732,4 +6751,20 @@ function pluginPromptContext(
   appendSystemPrompt: string[] | undefined,
 ): Pick<AgentLaunchContext, "appendSystemPrompt"> {
   return appendSystemPrompt?.length ? { appendSystemPrompt } : {};
+}
+
+async function requireLaunchWrap(
+  client: AgentClient,
+  wrap: NonNullable<AgentLaunchContext["wrap"]>,
+): Promise<void> {
+  if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
+  // The wrap is one direct exec; a Windows command script would need a shell to start.
+  const extension = extname(wrap[0]).toLowerCase();
+  if (process.platform === "win32" && (extension === ".cmd" || extension === ".bat")) {
+    throw new LaunchWrapUnsupportedError(
+      client.provider,
+      `A launch wrap cannot start ${wrap[0]} on Windows: a command script needs a shell`,
+    );
+  }
+  await client.requireLaunchWrap?.();
 }

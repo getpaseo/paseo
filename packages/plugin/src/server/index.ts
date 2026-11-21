@@ -31,7 +31,7 @@ export type {
   PluginLifecycleRegistration,
 } from "./lifecycle.js";
 
-export { spawnProcess, execCommand, terminateProcess } from "./process.js";
+export { applyLaunchWrap, spawnProcess, execCommand, terminateProcess } from "./process.js";
 
 export { defineAgentTool } from "./agent-tools.js";
 export type { AgentToolDefinition, AgentToolResult, AgentToolContext } from "./agent-tools.js";

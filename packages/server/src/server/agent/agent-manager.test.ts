@@ -16259,3 +16259,156 @@ test("importProviderSession keeps the stats the provider reported with its histo
     ["assistant_message", null],
   ]);
 });
+
+class LaunchWrapRecordingClient extends TestAgentClient {
+  readonly sessions: CloseRecordingTestAgentSession[] = [];
+  readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
+  calls = { create: 0, resume: 0, import: 0 };
+
+  constructor(supportsLaunchWrap: boolean) {
+    super("codex");
+    if (supportsLaunchWrap) this.supportsLaunchWrap = true;
+  }
+
+  supportsLaunchWrap?: boolean;
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.create += 1;
+    this.launchContexts.push(launchContext);
+    const session = new CloseRecordingTestAgentSession(config);
+    this.sessions.push(session);
+    return session;
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.resume += 1;
+    this.launchContexts.push(launchContext);
+    return await super.resumeSession(handle, config, launchContext);
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    this.calls.import += 1;
+    return {
+      session: new TestAgentSession(context.config),
+      config: context.storedConfig,
+      persistence: { provider: this.provider, sessionId: input.providerHandleId },
+      timeline: [],
+    };
+  }
+}
+
+function createLaunchWrapManager(client: LaunchWrapRecordingClient) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const detached: string[] = [];
+  const hook: { wrap: [string, ...string[]] | undefined } = { wrap: undefined };
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    pluginAgentTools: {
+      isToolPluginAvailable: () => true,
+      detachTools: (agentId) => detached.push(agentId),
+      callTool: async () => {
+        throw new Error("unused");
+      },
+    },
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.open.before" && hook.wrap
+          ? {
+              ...request,
+              wrap: hook.wrap,
+              tools: [
+                {
+                  name: "sandbox_status",
+                  description: "Report the sandbox",
+                  inputSchema: {},
+                  pluginId: "sandbox",
+                  pluginInstanceId: "sandbox-1",
+                },
+              ],
+            }
+          : request,
+    },
+  });
+  return { manager, storage, workdir, detached, hook };
+}
+
+test("a wrapped open rejects on every path for a provider that does not apply wraps", async () => {
+  const client = new LaunchWrapRecordingClient(false);
+  const { manager, storage, workdir, detached, hook } = createLaunchWrapManager(client);
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const existing = client.sessions[0]!;
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const calls = { ...client.calls };
+  const unsupported = { code: "launch_wrap_unsupported", provider: "codex" };
+
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, { workspaceId: undefined }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.resumeAgentFromPersistence({ provider: "codex", sessionId: "saved" }, { cwd: workdir }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "native",
+      cwd: workdir,
+      workspaceId: "import",
+    }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(manager.reloadAgentSession(created.id)).rejects.toMatchObject(unsupported);
+
+  expect(client.calls).toEqual(calls);
+  expect(existing.closed).toBe(false);
+  expect(manager.getAgent(created.id)?.session).toBe(existing);
+  // The hook attached a tool for this open; the rejection takes it away again.
+  expect(manager.getPluginTools(created.id)).toEqual([]);
+  expect(detached.filter((id) => id === created.id).length).toBeGreaterThanOrEqual(2);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+test("a supporting provider receives the wrap at launch and the record never stores it", async () => {
+  const client = new LaunchWrapRecordingClient(true);
+  const { manager, storage, workdir, hook } = createLaunchWrapManager(client);
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  expect(client.launchContexts[0]?.wrap).toEqual(["/opt/sandbox/bin/run", "--profile", "a b"]);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+test("a supporting provider rejects a Windows command-script wrap before it starts", async () => {
+  const client = new LaunchWrapRecordingClient(true);
+  const { manager, workdir, hook } = createLaunchWrapManager(client);
+  hook.wrap = ["C:\\tools\\sandbox.cmd"];
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toMatchObject({ code: "launch_wrap_unsupported" });
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+  }
+  expect(client.calls.create).toBe(0);
+});

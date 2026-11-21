@@ -645,6 +645,26 @@ test("new provider extending codex archives and unarchives its native sessions",
   ]);
 });
 
+test("launch-wrap support comes from the provider contract and follows extends", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: { "my-codex": { extends: "codex", label: "My Codex" } },
+  });
+
+  for (const provider of ["codex", "my-codex"]) {
+    expect(registry[provider].supportsLaunchWrap).toBe(true);
+    expect(registry[provider].createClient(logger).supportsLaunchWrap).toBe(true);
+  }
+  for (const provider of Object.keys(registry).filter(
+    (id) => id !== "codex" && id !== "my-codex",
+  )) {
+    expect({ provider, supportsLaunchWrap: registry[provider].supportsLaunchWrap }).toEqual({
+      provider,
+      supportsLaunchWrap: false,
+    });
+  }
+  expect(registry.claude.createClient(logger).supportsLaunchWrap).toBe(false);
+});
+
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
   const omp = new FakeOmp(["custom-omp"]);
   const registry = buildProviderRegistry(logger, {

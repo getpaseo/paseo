@@ -3,6 +3,7 @@ import {
   createLifecycleRegistration,
   pluginHookRegistry,
 } from "@getpaseo/plugin/internal/lifecycle";
+import { isAbsolute } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   serializeAgentTool,
@@ -117,6 +118,12 @@ const beforeSchemas = {
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
+      wrap: z
+        .tuple(
+          [z.string().refine(isAbsolute, "agent.open.before wrap executable must be absolute")],
+          z.string(),
+        )
+        .optional(),
     })
     .strict(),
   "workspace.create.before": WorkspaceCreateRequestSchema.omit({
@@ -280,8 +287,14 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
         "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
       );
     }
+    // One wrap per open: a later hook may omit or repeat it, never replace it.
+    if (previous.wrap && next.wrap && !isDeepStrictEqual(previous.wrap, next.wrap)) {
+      throw new Error("agent.open.before hooks cannot change a wrap an earlier hook selected");
+    }
+    const wrap = previous.wrap ?? next.wrap;
     return {
       ...result,
+      ...(wrap ? { wrap } : {}),
       background: previous.background,
       metadata: previous.metadata,
       ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined

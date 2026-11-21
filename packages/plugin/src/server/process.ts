@@ -44,6 +44,22 @@ function shouldUseWindowsShell(
   return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
 }
 
+/**
+ * Put `wrap` in front of a launch as one direct argv exec. A Windows command script on either side
+ * would need a shell to start, so it is rejected instead of being quoted into one.
+ */
+export function applyLaunchWrap(
+  wrap: readonly [string, ...string[]],
+  launch: { command: string; args: readonly string[] },
+): { command: string; args: string[] } {
+  for (const executable of [wrap[0], launch.command]) {
+    if (isWindowsCommandScript(executable)) {
+      throw new Error(`A launch wrap cannot start ${executable}: a command script needs a shell`);
+    }
+  }
+  return { command: wrap[0], args: [...wrap.slice(1), launch.command, ...launch.args] };
+}
+
 /** Launch a CLI with Windows command-script handling and argv quoting. The caller owns env. */
 export function spawnProcess(
   command: string,

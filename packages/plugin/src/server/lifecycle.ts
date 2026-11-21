@@ -98,6 +98,13 @@ export interface PluginSessionOpenRequest {
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+  /**
+   * Run the provider's harness as `[...wrap, command, ...args]`. The executable must be an absolute
+   * path. Set it only for a provider whose snapshot entry has `launchWrap: true`: any other provider
+   * fails the open. A later hook may omit it or return the same value; a different value fails the
+   * open. Not saved on the agent.
+   */
+  wrap?: readonly [executable: string, ...args: string[]];
 }
 
 export type PluginTurnOutcome =

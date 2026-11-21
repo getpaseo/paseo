@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { spawnProcess, terminateProcess } from "../process.js";
+import { applyLaunchWrap, spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -86,6 +86,8 @@ export async function createAcpProviderConnection(
     emit: () => undefined,
   });
   const supportedCapabilities: ProviderCapability[] = [...ADAPTER_CAPABILITIES];
+  // A connector stream has no process of its own to wrap.
+  if (options.command) supportedCapabilities.push("session.launch_wrap");
   if (probe.agentCapabilities.promptCapabilities?.image) {
     supportedCapabilities.push("prompt.image");
   }
@@ -333,6 +335,7 @@ async function openSession(
     boundarySessionId: input.sessionId,
     cwd: input.config.cwd,
     env: input.config.env,
+    wrap: input.config.wrap,
     emit: state.emit,
     onRetired: () => retireSession(state, input.sessionId),
   });
@@ -375,6 +378,7 @@ interface StartRuntimeOptions {
   boundarySessionId: string;
   cwd?: string;
   env: Readonly<Record<string, string>>;
+  wrap?: readonly [string, ...string[]];
   emit(event: ProviderEvent): void;
   onRetired?: () => void;
 }
@@ -497,7 +501,8 @@ class AcpRuntime {
         args: options.options.command.slice(1),
         env: process.env,
       };
-      child = spawnProcess(launch.command, launch.args, {
+      const spawned = options.wrap ? applyLaunchWrap(options.wrap, launch) : launch;
+      child = spawnProcess(spawned.command, spawned.args, {
         cwd: options.cwd,
         env: { ...launch.env, ...options.env },
         stdio: "pipe",
@@ -511,6 +516,7 @@ class AcpRuntime {
       >[1];
       stream = ndJsonStream(output, input);
     } else {
+      if (options.wrap) throw new Error("An ACP connector cannot run behind a launch wrap");
       const owned = ownConnectorStream(await options.options.connector());
       stream = owned.stream;
       closeConnector = owned.close;
