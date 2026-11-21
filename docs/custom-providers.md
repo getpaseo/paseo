@@ -422,6 +422,22 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+A Codex-compatible fork that implements `app-server` can use this same configuration. Give
+`command` the binary and any global arguments; Paseo appends `app-server` itself. Set the fork's
+own home-directory environment variables as needed. `CODEX_HOME` controls the native adapter's
+local prompts, skills, and history lookups.
+
+For a fork that also offers ACP, choose the transport that reports its autonomous turn lifecycle.
+The native adapter consumes `turn/started` and `turn/completed`, including goal continuations
+started without a new user prompt. An ACP implementation that returns from `session/prompt`
+after one turn and then continues without lifecycle notifications cannot keep Paseo's execution
+state synchronized. A goal's active or paused status alone does not say whether its current turn
+has exited.
+
+Test the native transport under a separate provider ID while existing ACP conversations continue.
+Adding a provider does not convert those conversations; reopen or import them through the new
+provider only after their current execution has stopped.
+
 ### OMP profiles and Pi-compatible forks
 
 OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
