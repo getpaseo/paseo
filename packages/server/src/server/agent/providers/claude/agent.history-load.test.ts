@@ -99,6 +99,43 @@ describe("ClaudeAgentSession persisted history load", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test("resumes many records within a chunk-sized event-loop turn budget", async () => {
+    const count = 512;
+    const text = "🙂".repeat(1024);
+    const entries = Array.from({ length: count }, (_, index) =>
+      JSON.stringify({ type: "assistant", message: { content: `${index}:${text}` } }),
+    );
+    entries.splice(count / 2, 0, JSON.stringify({ type: "system", subtype: "compact_boundary" }));
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.join("\n"));
+
+    let turns = 0;
+    let ticker: NodeJS.Immediate;
+    function tick() {
+      turns++;
+      const deadline = performance.now() + 2;
+      while (performance.now() < deadline) {}
+      ticker = setImmediate(tick);
+    }
+    ticker = setImmediate(tick);
+
+    const session = await resume().finally(() => clearImmediate(ticker));
+
+    try {
+      const messages = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "assistant_message") {
+          messages.push(event.item.text);
+        }
+      }
+      expect(messages).toEqual(Array.from({ length: count }, (_, index) => `${index}:${text}`));
+      // Allow ample room for filesystem scheduling on this ~2 MiB transcript.
+      expect(turns).toBeLessThan(256);
+    } finally {
+      await session.close();
+    }
+  }, 30_000);
+
   test("serves unrelated health requests while resuming 32 MiB of ordered history", async () => {
     const startedAt = performance.now();
     mkdirSync(path.dirname(transcriptPath()), { recursive: true });
