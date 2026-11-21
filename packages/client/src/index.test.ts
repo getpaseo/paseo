@@ -2149,6 +2149,51 @@ test("background work subscriptions report a failed list to onError", async () =
   await client.close();
 });
 
+const RUNNING_SUBAGENT = {
+  id: "subagent-1",
+  parentAgentId: "agent-a",
+  parentSubagentId: null,
+  provider: "claude",
+  title: "Explore",
+  description: "Map the auth code",
+  status: "running",
+  createdAt: "2026-10-06T10:00:00.000Z",
+  updatedAt: "2026-10-06T10:00:05.000Z",
+  toolCallId: "toolu_1",
+};
+
+test("agent handles list provider subagents", async () => {
+  const { client, ws } = await connectClient({ providerSubagents: true });
+
+  const pending = client.agents.ref("agent-a").subagents.list();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.provider_subagents.list.request",
+    parentAgentId: "agent-a",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.provider_subagents.list.response",
+      payload: {
+        requestId: request.requestId,
+        parentAgentId: "agent-a",
+        subagents: [RUNNING_SUBAGENT],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(pending).resolves.toEqual([RUNNING_SUBAGENT]);
+  await client.close();
+});
+
+test("subagents ask for a host update when the daemon lacks them", async () => {
+  const { client } = await connectClient({ ownedSubscriptions: true });
+
+  await expect(client.agents.ref("agent-a").subagents.list()).rejects.toThrow("Update the host");
+  await client.close();
+});
+
 test("background work asks for a host update when the daemon lacks it", async () => {
   const { client } = await connectClient({ ownedSubscriptions: true });
   const handle = client.agents.ref("agent-a");

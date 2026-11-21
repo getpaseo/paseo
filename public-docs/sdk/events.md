@@ -44,7 +44,7 @@ await directory.subscription.release();
 
 ## Follow an agent's background work
 
-Background work is what an agent left running after its tool call returned: a Claude shell started with `run_in_background`, a `Monitor` watch, or another task that is not a subagent. Subagents and workflows stay in the agent's subagents.
+Background work is what an agent left running after its tool call returned: a Claude shell started with `run_in_background`, a `Monitor` watch, or another task that is not a subagent. Subagents and workflows stay in the agent's subagents: read them with `agent.subagents.list()`, where a subagent still working reports `status: "running"` even after the agent goes idle.
 
 ```ts
 const agent = client.agents.ref(agentId);
