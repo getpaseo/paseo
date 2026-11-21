@@ -11,6 +11,8 @@ Delegates Paseo worktree creation, removal, and restoration to [Worktrunk](https
 
 ## Prerequisites
 
+Use [Worktrunk v0.82.0](https://github.com/max-sixty/worktrunk/releases/tag/v0.82.0) with Git 2.43.0 or later on the daemon host.
+
 Install Worktrunk (`wt`, or `git-wt.exe` on Windows) on `PATH`, or set `WORKTRUNK_BIN` in the daemon environment.
 
 ## Install
