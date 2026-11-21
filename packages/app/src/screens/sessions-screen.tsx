@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { AgentList } from "@/components/agent-list";
 import { SearchField } from "@/components/ui/search-field";
+import { SelectField, type SelectFieldOption } from "@/components/ui/select-field";
 import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { type AgentHistoryHostError, useAgentHistory } from "@/hooks/use-agent-history";
@@ -18,6 +19,13 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
+import {
+  ALL_PROJECTS_OPTION_ID,
+  buildSessionProjectOptions,
+  filterAgentsByProject,
+  sessionProjectKey,
+  sessionProjectLabel,
+} from "./sessions-screen-state";
 
 /** Long enough that a typed word is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -49,13 +57,96 @@ function SessionHostErrorsBanner({
   );
 }
 
+function SessionsEmptyState({
+  emptyText,
+  isSearching,
+  hasMore,
+  isLoadingMore,
+  onClearSearch,
+  onBack,
+  onImport,
+  onLoadMore,
+}: {
+  emptyText: string;
+  isSearching: boolean;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onClearSearch: () => void;
+  onBack: () => void;
+  onImport: () => void;
+  onLoadMore: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyContainer} testID="sessions-empty">
+      <Text style={styles.emptyText}>{emptyText}</Text>
+      {isSearching ? (
+        <Button variant="ghost" onPress={onClearSearch}>
+          {t("sessions.actions.clearSearch")}
+        </Button>
+      ) : (
+        <Button variant="ghost" leftIcon={ChevronLeft} onPress={onBack}>
+          Back
+        </Button>
+      )}
+      {hasMore ? (
+        <Button variant="ghost" onPress={onLoadMore} disabled={isLoadingMore}>
+          {isLoadingMore ? "Loading..." : t("sessions.actions.loadMore")}
+        </Button>
+      ) : null}
+      <Button variant="ghost" leftIcon={Import} onPress={onImport}>
+        {t("importSession.title")}
+      </Button>
+    </View>
+  );
+}
+
+function SessionProjectSelect({
+  projectFilter,
+  label,
+  options,
+  onChange,
+}: {
+  projectFilter: string;
+  label: string;
+  options: SelectFieldOption<string>[];
+  onChange: (value: string) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const selectedDisplay = useMemo(
+    () => (projectFilter === ALL_PROJECTS_OPTION_ID ? null : { label }),
+    [projectFilter, label],
+  );
+  return (
+    <SelectField
+      label={t("sessions.projectFilter.label")}
+      value={projectFilter}
+      selectedDisplay={selectedDisplay}
+      options={options}
+      onChange={onChange}
+      placeholder={t("sessions.projectFilter.all")}
+      emptyText={t("sessions.projectFilter.empty")}
+      title={t("sessions.projectFilter.title")}
+      field={false}
+      size="sm"
+      testID="sessions-project-filter"
+      triggerTestID="sessions-project-filter-trigger"
+    />
+  );
+}
+
 /** An empty list means something different once a query is narrowing it. */
 function resolveEmptyText(input: {
   t: TFunction;
   isSearching: boolean;
   isAllHosts: boolean;
+  projectFilter: string;
+  projectLabel: string;
 }): string {
   if (input.isSearching) return input.t("sessions.noMatches");
+  if (input.projectFilter !== ALL_PROJECTS_OPTION_ID) {
+    return input.t("sessions.projectFilter.emptyFiltered", { project: input.projectLabel });
+  }
   if (input.isAllHosts) return input.t("sessions.empty");
   return "No sessions for this host";
 }
@@ -95,6 +186,42 @@ function SessionsScreenContent() {
     search,
   });
   const isSearching = isSearchSupported && search.length > 0;
+  const [projectFilter, setProjectFilter] = useState(ALL_PROJECTS_OPTION_ID);
+  const projectOptions = useMemo(() => buildSessionProjectOptions(agents), [agents]);
+  // Both search and the project filter narrow the already-loaded pages;
+  // loading more history widens the project options.
+  const visibleAgents = useMemo(
+    () => filterAgentsByProject(agents, projectFilter),
+    [agents, projectFilter],
+  );
+  const selectedProjectLabel = useMemo(
+    () =>
+      projectFilter === ALL_PROJECTS_OPTION_ID
+        ? ""
+        : (projectOptions.find((option) => option.projectKey === projectFilter)?.label ??
+          sessionProjectLabel(projectFilter)),
+    [projectFilter, projectOptions],
+  );
+  const projectFilterOptions = useMemo<SelectFieldOption<string>[]>(
+    () => [
+      {
+        id: ALL_PROJECTS_OPTION_ID,
+        value: ALL_PROJECTS_OPTION_ID,
+        label: t("sessions.projectFilter.all"),
+        testID: "sessions-project-filter-all",
+      },
+      ...projectOptions.map((option) => ({
+        id: option.projectKey,
+        value: option.projectKey,
+        label: option.label,
+      })),
+    ],
+    [projectOptions, t],
+  );
+  const handleProjectPress = useCallback(
+    (agent: (typeof agents)[number]) => setProjectFilter(sessionProjectKey(agent)),
+    [],
+  );
 
   useEffect(() => {
     if (
@@ -117,9 +244,11 @@ function SessionsScreenContent() {
     t,
     isSearching,
     isAllHosts: selectedHost === ALL_HOSTS_OPTION_ID,
+    projectFilter,
+    projectLabel: selectedProjectLabel,
   });
   const showHostFilter = hosts.length > 1;
-  const showFilterRow = showHostFilter || isSearchSupported;
+  const showFilterRow = showHostFilter || isSearchSupported || projectOptions.length > 0;
   const showLoadError = isError && agents.length === 0;
 
   const handleBack = useCallback(() => {
@@ -174,6 +303,12 @@ function SessionsScreenContent() {
               hostOptionTestID={sessionsHostOptionTestID}
             />
           ) : null}
+          <SessionProjectSelect
+            projectFilter={projectFilter}
+            label={selectedProjectLabel}
+            options={projectFilterOptions}
+            onChange={setProjectFilter}
+          />
         </View>
       ) : null}
       {hostErrors.length > 0 ? <SessionHostErrorsBanner errors={hostErrors} t={t} /> : null}
@@ -190,26 +325,21 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length === 0 ? (
-        <View style={styles.emptyContainer} testID="sessions-empty">
-          <Text style={styles.emptyText}>{emptyText}</Text>
-          {isSearching ? (
-            <Button variant="ghost" onPress={handleClearSearch}>
-              {t("sessions.actions.clearSearch")}
-            </Button>
-          ) : (
-            <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
-              Back
-            </Button>
-          )}
-          <Button variant="ghost" leftIcon={Import} onPress={importSession.open}>
-            {t("importSession.title")}
-          </Button>
-        </View>
+      {!isInitialLoad && !showLoadError && visibleAgents.length === 0 ? (
+        <SessionsEmptyState
+          emptyText={emptyText}
+          isSearching={isSearching}
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onClearSearch={handleClearSearch}
+          onBack={handleBack}
+          onImport={importSession.open}
+          onLoadMore={loadMore}
+        />
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length > 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length > 0 ? (
         <AgentList
-          agents={agents}
+          agents={visibleAgents}
           showCheckoutInfo={false}
           isRefreshing={isManualRefresh}
           onRefresh={handleRefresh}
@@ -217,6 +347,7 @@ function SessionsScreenContent() {
           showAttentionIndicator={false}
           showHostColumn
           search={isSearching ? search : undefined}
+          onProjectPress={handleProjectPress}
         />
       ) : null}
       {importSession.sheet}
