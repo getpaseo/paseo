@@ -35,6 +35,27 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["--ozone-platform=x11"],
+    ["--ozone-platform", "wayland"],
+    ["--ozone-platform-hint=auto"],
+  ])("keeps graphics arguments out of CLI passthrough (%s)", (...args) => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", ...args],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toBeNull();
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", ...args, "daemon", "status"],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toEqual(["daemon", "status"]);
+  });
+
   it("ignores macOS GUI launch arguments", () => {
     expect(
       parsePassthroughCliArgs({
@@ -43,6 +64,21 @@ describe("passthrough CLI", () => {
         forceCli: false,
       }),
     ).toBeNull();
+  });
+
+  it.each([
+    ["agent", "send", "ID", "--prompt", "--ozone-platform=x11 causes a blank window"],
+    ["agent", "send", "ID", "--prompt", "--ozone-platform", "wayland"],
+    ["agent", "send", "ID", "--", "--no-sandbox", "--class=example"],
+    ["--", "--ozone-platform=x11", "--ozone-platform-hint", "auto"],
+  ])("preserves command data after launcher switches (%s)", (...args) => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", "--no-sandbox", "--ozone-platform=x11", ...args],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toEqual(args);
   });
 
   it("ignores --no-sandbox injected by Linux wrapper", () => {

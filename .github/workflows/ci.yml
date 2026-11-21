@@ -367,6 +367,10 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: npm run test:e2e:renderer --workspace=@getpaseo/desktop
 
+      - name: Run desktop startup and background browser E2E
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
+
       - name: Run desktop browser E2E
         if: ${{ runner.os == 'Linux' }}
         run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop

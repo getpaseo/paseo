@@ -1,3 +1,10 @@
+import type {
+  NativeBrowserFrameRequest,
+  NativeBrowserCommandRequest,
+  NativeBrowserEventsRequest,
+  NativeBrowserFrame,
+  NativeBrowserEvents,
+} from "@getpaseo/protocol/browser-native";
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { BrowserKeyboardPolicy } from "@/keyboard";
@@ -145,6 +152,10 @@ export interface DesktopAttachedBrowserRegistration {
 }
 
 export interface DesktopBrowserBridge {
+  readonly nativeBridgeVersion?: number;
+  captureNativeFrame?: (input: NativeBrowserFrameRequest) => Promise<NativeBrowserFrame | null>;
+  sendNativeCommand?: (input: NativeBrowserCommandRequest) => Promise<unknown>;
+  readNativeEvents?: (input: NativeBrowserEventsRequest) => Promise<NativeBrowserEvents>;
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;

@@ -244,10 +244,16 @@ async function capturePaintedViewport(contents: TabContents): Promise<TabImage> 
       const controller = new AbortController();
       try {
         await waitForPaint(contents, deadline);
-        contents.invalidate();
-        return await withPixelCaptureTimeout(
-          contents.captureFrame(controller.signal),
-          deadline - Date.now(),
+        return await capturePixelFrameWithRetry(
+          contents,
+          async () => {
+            const image = await contents.captureFrame(controller.signal);
+            if (!hasPaintedPixels(image)) {
+              throw new Error("Viewport screenshot returned no painted frame");
+            }
+            return image;
+          },
+          deadline,
         );
       } finally {
         controller.abort();

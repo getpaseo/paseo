@@ -78,6 +78,7 @@ class FakeTab implements TabContents {
   public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
   public paintDelayMs = 0;
   public captureNeverPaints = false;
+  public unpaintedViewportCaptures = 0;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
   public deferCaptures = false;
@@ -191,6 +192,10 @@ class FakeTab implements TabContents {
       return new Promise<TabImage>((resolve) => {
         this.deferredCaptures.push(resolve);
       });
+    }
+    if (this.unpaintedViewportCaptures > 0) {
+      this.unpaintedViewportCaptures -= 1;
+      return new FakeImage(undefined, undefined, 0);
     }
     return new FakeImage();
   }
@@ -1806,6 +1811,28 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.capturedViewports).toHaveLength(1);
     expect(browser.tab.capturedViewports[0].aborted).toBe(true);
     expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+  });
+
+  test("screenshot retries a fully transparent viewport and returns the painted frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.unpaintedViewportCaptures = 1;
+      const result = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A },
+      });
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      await expect(result).resolves.toMatchObject({
+        ok: true,
+        result: { dataBase64: "iVBORwECAw==" },
+      });
+      expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("screenshot returns no-frame when the viewport never paints", async () => {
