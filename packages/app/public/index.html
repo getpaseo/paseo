@@ -26,6 +26,19 @@
         padding: 0;
         overflow: hidden;
         overscroll-behavior: none;
+        /* The appearance system points app text at `--paseo-ui-font`; anything it does
+           not cover (pre-mount markup, `noscript`, DOM injected outside `#root`) would
+           otherwise inherit Chromium's initial family — Times New Roman on Windows.
+           Keep the sans stack here so the shell is never serif. */
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
       }
       /* These styles smooth text rendering in the app shell. */
       body {
