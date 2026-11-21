@@ -42,6 +42,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   constructor(options: GenericACPAgentClientOptions) {
     super({
       provider: "acp",
+      grokAutonomousTurns: options.providerId === "grok",
       usageProvider: options.usageProvider,
       logger: options.logger,
       runtimeSettings: {
