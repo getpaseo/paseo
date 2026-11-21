@@ -1,4 +1,4 @@
-import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -8,7 +8,7 @@ import {
 } from "@/agent-controls/policy";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
-export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
+export type FeatureHighlightColor = "blue" | "default" | "green" | "purple" | "yellow";
 export type AgentControlHintKey =
   | "agentControls.hints.thinking"
   | "agentControls.hints.model"
@@ -35,14 +35,10 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
   return normalized;
 }
 
-export function getFeatureTooltip(feature: Pick<AgentFeature, "label" | "tooltip">): string {
-  return feature.tooltip ?? feature.label;
-}
-
-export function isFeatureActive(feature: AgentFeature): boolean {
-  if (feature.type === "toggle") return feature.value;
-  const selectedOption = feature.options.find((option) => option.id === feature.value);
-  return selectedOption !== undefined && !selectedOption.isDefault;
+// Drops a provider namespace ("openrouter/gpt-5.5" -> "gpt-5.5") for the compact trigger.
+// A namespace segment has no spaces, so slashes inside a display name ("52/56") survive.
+export function shortModelLabel(label: string): string {
+  return label.replace(/^(?:[^\s/]+\/)+(?=\S)/, "");
 }
 
 export function getFeatureHighlightColor(featureId: string): FeatureHighlightColor {
@@ -52,11 +48,21 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
       return "yellow";
     case "auto_accept":
       return "green";
+    case "ultracode":
+      return "purple";
     case PLAN_MODE_FEATURE_ID:
       return "blue";
     default:
       return "default";
   }
+}
+
+export function resolveProviderSnapshotEntry(
+  entries: readonly ProviderSnapshotEntry[] | null | undefined,
+  provider: string | null | undefined,
+): ProviderSnapshotEntry | null {
+  if (!entries || !provider) return null;
+  return entries.find((entry) => entry.provider === provider) ?? null;
 }
 
 function findModelById(

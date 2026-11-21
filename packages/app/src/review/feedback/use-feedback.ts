@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createElement, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   useReviewDraftComments,
   getReviewDraftComments,
@@ -14,7 +14,7 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { useSessionStore, selectAgentTurnPresentation } from "@/stores/session-store";
 import { FLOATING_ACTION_BUTTON_CLEARANCE } from "@/components/ui/floating-action-button";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { SPACING } from "@/styles/theme";
 import { i18n } from "@/i18n/i18next";
 import {
@@ -22,6 +22,8 @@ import {
   type FeedbackAttachment,
   type FeedbackRecipient,
 } from "./index";
+import { useToast } from "@/contexts/toast-context";
+import { FeedbackSentMessage } from "./surface";
 
 const feedbackScope = createReviewFeedbackScope();
 
@@ -32,6 +34,7 @@ export function useReviewFeedback(input: {
   attachment: FeedbackAttachment | null;
 }) {
   const { serverId, reviewDraftKey, workspaceId } = input;
+  const toast = useToast();
   const isCompact = useIsCompactFormFactor();
   const workspaceKey = workspaceId
     ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
@@ -49,12 +52,14 @@ export function useReviewFeedback(input: {
     connected,
     attachment: input.attachment,
     sendBehavior: settings.sendBehavior,
+    toast,
   });
   live.current = {
     client,
     connected,
     attachment: input.attachment,
     sendBehavior: settings.sendBehavior,
+    toast,
   };
   const model = useMemo(
     () =>
@@ -85,12 +90,20 @@ export function useReviewFeedback(input: {
                   ).turnId ?? undefined)
                 : undefined,
           });
+          live.current.toast.show(
+            createElement(FeedbackSentMessage, {
+              recipient,
+              serverId,
+              workspaceId: workspaceId ?? "",
+            }),
+            { variant: "success" },
+          );
         },
         clearSent: (sentComments) =>
           clearSentReviewDraftComments({ key: reviewDraftKey, comments: sentComments }),
         failedMessage: () => i18n.t("review.feedback.failed"),
       }),
-    [reviewDraftKey, serverId, workspaceKey],
+    [reviewDraftKey, serverId, workspaceKey, workspaceId],
   );
   useEffect(() => {
     model.refresh();
@@ -101,7 +114,9 @@ export function useReviewFeedback(input: {
     state,
     clearance:
       state.commentCount > 0
-        ? (isCompact ? FLOATING_ACTION_BUTTON_CLEARANCE : buttonControlHeight.sm + SPACING[4]) + 44
+        ? (isCompact
+            ? FLOATING_ACTION_BUTTON_CLEARANCE
+            : controlHeightForLayout("md", isCompact) + SPACING[4]) + 44
         : 0,
   };
 }

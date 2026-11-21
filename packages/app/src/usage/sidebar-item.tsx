@@ -8,16 +8,16 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type PressableStateCallbackType,
-} from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { TriangleAlert } from "lucide-react-native";
+import { Text, View, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import type { Theme } from "@/styles/theme";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useAppVisible } from "@/hooks/use-app-visible";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
-import { useUsagePreferences } from "./display";
+import { useUsageDisplay } from "./display";
+import { useUsageInSidebar } from "./in-sidebar";
 import { useUsageHostId } from "./hosts";
 import { useUsageHostReports } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
@@ -29,19 +29,26 @@ import {
   resolvePinnedUsage,
   type PinnedUsageLayout,
   type PinnedUsageSource,
+  type PinnedUsageWindow,
 } from "./pinned";
 import { UsageModal } from "./usage-modal";
 
-/** Each summary window with data on the usage host, under its source; empty while none has. */
-function useUsageSummary(): readonly PinnedUsageSource[] {
-  const { preferences } = useUsagePreferences();
-  const reports = useUsageHostReports(useUsageHostId());
-  return useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
-}
+const ThemedTriangleAlert = withUnistyles(TriangleAlert);
+const errorIconColor = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
-/** Whether the sidebar Usage item has anything to show. */
-export function useHasUsageSummary(): boolean {
-  return useUsageSummary().length > 0;
+/** Each summary window with data on the usage host, under its source; empty while none has. */
+export function useUsageSummary(): readonly PinnedUsageSource[] {
+  const { t } = useTranslation();
+  const active = useRetainedPanelActive();
+  const isAppVisible = useAppVisible();
+  const { inSidebar } = useUsageInSidebar();
+  const serverId = useUsageHostId();
+  const reports = useUsageHostReports({
+    serverId: inSidebar ? serverId : null,
+    shouldPoll: active && inSidebar && isAppVisible,
+  });
+  const { preferences } = useUsageDisplay(reports);
+  return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
 
 /**
@@ -49,13 +56,19 @@ export function useHasUsageSummary(): boolean {
  * while no summary window has data, since the footer's Usage icon already opens Usage.
  * Pressing it opens the Usage modal.
  */
-export function UsageSidebarItem() {
+export function UsageSidebarItem({ sources }: { sources: readonly PinnedUsageSource[] }) {
   const { t } = useTranslation();
   const label = t(builtinSidebarNavLabelKey("usage"));
   const openUsage = useOpenSidebarUsage();
-  const sources = useUsageSummary();
   if (sources.length === 0) return null;
-  return <PinnedUsageTrigger label={label} sources={sources} onPress={openUsage} />;
+  return (
+    <PinnedUsageTrigger
+      label={label}
+      sources={sources}
+      errorLabel={t("providerUsage.refreshFailed")}
+      onPress={openUsage}
+    />
+  );
 }
 
 const OpenSidebarUsageContext = createContext<(() => void) | null>(null);
@@ -90,13 +103,19 @@ export function useOpenSidebarUsage(): () => void {
   return openUsage;
 }
 
-function pinnedUsageLabel(label: string, sources: readonly PinnedUsageSource[]): string {
+function pinnedUsageLabel(
+  label: string,
+  sources: readonly PinnedUsageSource[],
+  errorLabel: string,
+): string {
   const windows = sources.flatMap((source) => source.windows);
-  return `${label}: ${windows.map((window) => window.label).join(", ")}`;
+  const summary = windows.map((window) => window.label).join(", ");
+  const error = sources.some((source) => source.hasError) ? `, ${errorLabel}` : "";
+  return `${label}: ${summary}${error}`;
 }
 
 function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
-  return hovered ? [styles.trigger, styles.triggerHovered] : styles.trigger;
+  return [styles.trigger, hovered && styles.triggerHovered];
 }
 
 function layoutWidth(event: LayoutChangeEvent): number {
@@ -105,20 +124,23 @@ function layoutWidth(event: LayoutChangeEvent): number {
 
 /**
  * One line: each account's icon, then per window a meter and "31% 5h". Off-screen copies measure
- * the line with labels and with percents alone; the richest layout that fits is shown, and what
- * it leaves out takes no space at all.
+ * the line with full labels, bare period shorthands, and percents alone; the richest layout that
+ * fits is shown, and what it leaves out takes no space at all.
  */
 function PinnedUsageTrigger({
   label,
   sources,
+  errorLabel,
   onPress,
 }: {
   label: string;
   sources: readonly PinnedUsageSource[];
+  errorLabel: string;
   onPress: () => void;
 }) {
   const [available, setAvailable] = useState<number | null>(null);
   const [labelsWidth, setLabelsWidth] = useState<number | null>(null);
+  const [compactWidth, setCompactWidth] = useState<number | null>(null);
   const [percentsWidth, setPercentsWidth] = useState<number | null>(null);
   const handleAvailableLayout = useCallback((event: LayoutChangeEvent) => {
     setAvailable(layoutWidth(event));
@@ -126,21 +148,26 @@ function PinnedUsageTrigger({
   const handleLabelsLayout = useCallback((event: LayoutChangeEvent) => {
     setLabelsWidth(layoutWidth(event));
   }, []);
+  const handleCompactLayout = useCallback((event: LayoutChangeEvent) => {
+    setCompactWidth(layoutWidth(event));
+  }, []);
   const handlePercentsLayout = useCallback((event: LayoutChangeEvent) => {
     setPercentsWidth(layoutWidth(event));
   }, []);
   const layout = choosePinnedUsageLayout({
     available,
     labelsWidth,
+    compactWidth,
     percentsWidth,
     windowCount: sources.reduce((count, source) => count + source.windows.length, 0),
   });
   return (
-    <Pressable
+    <PressHighlight
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={pinnedUsageLabel(label, sources)}
+      accessibilityLabel={pinnedUsageLabel(label, sources, errorLabel)}
       style={triggerStyle}
+      highlightStyle={styles.triggerPressed}
       testID="sidebar-usage"
     >
       <View style={styles.line} onLayout={handleAvailableLayout}>
@@ -156,12 +183,21 @@ function PinnedUsageTrigger({
         <View style={styles.measured} onLayout={handleLabelsLayout}>
           <PinnedUsageLine sources={sources} layout="labels" measuring />
         </View>
+        <View style={styles.measured} onLayout={handleCompactLayout}>
+          <PinnedUsageLine sources={sources} layout="compact" measuring />
+        </View>
         <View style={styles.measured} onLayout={handlePercentsLayout}>
           <PinnedUsageLine sources={sources} layout="percents" measuring />
         </View>
       </View>
-    </Pressable>
+    </PressHighlight>
   );
+}
+
+function windowSuffix(window: PinnedUsageWindow, layout: PinnedUsageLayout): string {
+  if (layout === "percents") return "";
+  if (layout === "compact") return window.compactLabel;
+  return window.shortLabel;
 }
 
 /**
@@ -180,23 +216,26 @@ function PinnedUsageLine({
   return sources.map((source, sourceIndex) => (
     <Fragment key={source.key}>
       <View
-        style={sourceIndex === 0 ? null : styles.sourceGap}
+        style={[styles.source, sourceIndex === 0 ? null : styles.sourceGap]}
         testID={measuring ? undefined : "sidebar-usage-source"}
       >
         <UsageSourceIcon svg={source.icon} size={14} />
+        {source.hasError ? (
+          <ThemedTriangleAlert
+            size={12}
+            uniProps={errorIconColor}
+            testID={measuring ? undefined : "sidebar-usage-error"}
+          />
+        ) : null}
       </View>
       {source.windows.map((window, windowIndex) => {
         const leadStyle = windowIndex === 0 ? styles.iconGap : styles.windowGap;
+        const suffix = windowSuffix(window, layout);
         return (
           <Fragment key={window.key}>
             {layout === "meters" ? (
               <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter
-                  percent={window.percent}
-                  tone={window.tone}
-                  quiet
-                  style={styles.meter}
-                />
+                <UsageMeter percent={window.percent} tone={window.tone} quiet />
               </View>
             ) : null}
             <Text
@@ -205,9 +244,7 @@ function PinnedUsageLine({
               testID={measuring ? undefined : "sidebar-usage-pinned-window"}
             >
               {window.percentText}
-              {layout === "percents" || window.shortLabel === "" ? null : (
-                <Text style={styles.windowLabel}>{` ${window.shortLabel}`}</Text>
-              )}
+              {suffix === "" ? null : <Text style={styles.windowLabel}>{` ${suffix}`}</Text>}
             </Text>
           </Fragment>
         );
@@ -231,6 +268,9 @@ const styles = StyleSheet.create((theme) => ({
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
+  triggerPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
   line: {
     flex: 1,
     minWidth: 0,
@@ -251,6 +291,11 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
   },
+  source: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   sourceGap: {
     marginLeft: theme.spacing[3],
   },
@@ -267,10 +312,6 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: 0,
     minWidth: MIN_METER_WIDTH,
     marginRight: METER_GAP,
-  },
-  meter: {
-    height: 6,
-    borderRadius: 3,
   },
   percent: {
     flexShrink: 0,

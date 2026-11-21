@@ -1,11 +1,23 @@
-import { parseAgentMessage } from "./agent-messages/index.js";
+import { AgentRunState, ForegroundPromptStart } from "./agent-run-state.js";
+import {
+  createFinishSubscriptions,
+  createFinishObservation,
+  createJsonFinishSubscriptionStore,
+  type FinishSubscriptionStore,
+  type FinishSubscriptions,
+  type FinishSubscription,
+} from "./finish-subscriptions/index.js";
+import type { AgentMessageDelivery } from "./agent-messages/index.js";
+import { createTestAgentMessages } from "../test-utils/agent-messages.js";
+import { type PromptDispatchDisposition } from "./agent-prompt.js";
+import { parseAgentMessage, parseAgentMessages } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -15,15 +27,19 @@ import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
-import type {
-  AgentClient,
-  AgentMode,
-  AgentPromptInput,
-  AgentProvider,
-  AgentRunResult,
-  AgentSession,
-  AgentStreamEvent,
-  ProviderSnapshotEntry,
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
+import {
+  AgentTurnStartCanceledError,
+  type AgentClient,
+  type AgentMode,
+  type AgentPermissionRequest,
+  type AgentPromptInput,
+  type AgentProvider,
+  type AgentRunResult,
+  type AgentSession,
+  type AgentStreamEvent,
+  type ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
@@ -61,13 +77,14 @@ import { createGitMutationService } from "../session/git-mutation/git-mutation-s
 import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.js";
 import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
-import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import { createTerminalManager, type TerminalManager } from "../../terminal/terminal-manager.js";
+import { startWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { PASEO_TOOL_NAMES } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
-import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
@@ -119,6 +136,15 @@ interface RegisteredMcpToolWithHandler extends RegisteredMcpTool {
   }>;
 }
 
+const subscriptionServices: FinishSubscriptions[] = [];
+afterEach(async () => {
+  for (const service of subscriptionServices.splice(0)) await service.close();
+});
+const serverSubscriptionRecords = new WeakMap<object, Map<string, FinishSubscription>>();
+const serverSubscriptions = new WeakMap<object, FinishSubscriptions>();
+const serverDeliveries = new WeakMap<object, AgentMessageDelivery>();
+const toolDeliveries = new WeakMap<object, AgentMessageDelivery>();
+
 function lookupTool(
   server: Awaited<ReturnType<typeof createAgentMcpServer>>,
   name: string,
@@ -139,16 +165,38 @@ function registeredTool(
   if (!handler) {
     throw new Error(`MCP tool has no callable handler: ${name}`);
   }
-  return { ...tool, handler };
+  const registered = { ...tool, handler };
+  const delivery = serverDeliveries.get(server);
+  if (delivery) toolDeliveries.set(registered, delivery);
+  return registered;
 }
 
 async function invokeToolWithParsedInput(
   tool: RegisteredMcpToolWithHandler,
   input: Record<string, unknown>,
+  awaitDispatch = true,
 ) {
   const parsed = await tool.inputSchema.safeParseAsync(input);
   expect(parsed.success).toBe(true);
-  return tool.handler(parsed.data);
+  const response = await tool.handler(parsed.data);
+  if (awaitDispatch && response.structuredContent.deliveryStatus === "queued") {
+    await toolDeliveries
+      .get(tool)!
+      .waitForDispatch(input.agentId as string, new AbortController().signal);
+  }
+  return response;
+}
+
+async function sendMcpAndAwaitDispatch(
+  client: Client,
+  server: object,
+  input: Record<string, unknown>,
+) {
+  const response = await client.callTool({ name: "send_agent_prompt", arguments: input });
+  await serverDeliveries
+    .get(server)!
+    .waitForDispatch(input.agentId as string, new AbortController().signal);
+  return response;
 }
 
 function agentsOf(response: {
@@ -173,20 +221,6 @@ async function waitForWorkspaceTitle(
   await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.title).toBe(title), {
     timeout: 5_000,
   });
-}
-
-async function waitForWorkspaceBranch(
-  workspaceRecords: Map<string, PersistedWorkspaceRecord>,
-  workspaceId: string,
-  branch: string,
-): Promise<void> {
-  await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.branch).toBe(branch), {
-    timeout: 5_000,
-  });
-}
-
-async function waitForUnexpectedWorkspaceNamingSideEffects(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 async function removeTempDir(path: string): Promise<void> {
@@ -226,29 +260,43 @@ function buildAgentManagerSpies() {
     setAgentMode: vi.fn().mockResolvedValue(undefined),
     setAgentModel: vi.fn().mockResolvedValue(undefined),
     setAgentThinkingOption: vi.fn().mockResolvedValue(undefined),
-    setAgentFeature: vi.fn().mockResolvedValue(undefined),
+    setAgentOptions: vi.fn().mockResolvedValue(undefined),
     setLabels: vi.fn().mockResolvedValue(undefined),
     setTitle: vi.fn().mockResolvedValue(undefined),
     updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
+    getAgentBackgroundWorkSummary: vi.fn().mockReturnValue(undefined),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
+    getPluginTools: () => [],
+    effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
+    reloadStalePluginSession: async () => {},
     hasInFlightRun: vi.fn().mockReturnValue(false),
+    hasPendingPermissions: () => false,
+    steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
-    streamAgent: vi.fn(() => (async function* noop() {})()),
-    waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
+    onStop: () => () => {},
+    streamAgent: vi.fn(
+      (agentId: string, _prompt: unknown, _options: unknown, start?: ForegroundPromptStart) => {
+        const runs = new AgentRunState();
+        const run = runs.createPendingRun(agentId);
+        runs.settleForegroundStart(run, { status: "started", turnId: `${agentId}-turn` });
+        start?.bind(run);
+        return (async function* noop() {})();
+      },
+    ),
     respondToPermission: vi.fn(),
     cancelAgentRun: vi.fn(),
     getPendingPermissions: vi.fn(),
     getRegisteredProviderIds: vi.fn().mockReturnValue(["claude"]),
-    listDraftFeatures: vi.fn(),
+    listDraftControls: vi.fn(),
   };
 }
 
@@ -258,7 +306,9 @@ function buildAgentStorageSpies() {
     setTitle: vi.fn().mockResolvedValue(undefined),
     upsert: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
-    list: vi.fn().mockResolvedValue([]),
+    listActive: vi.fn().mockResolvedValue([]),
+    listByWorkspaces: vi.fn().mockResolvedValue([]),
+    lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
     remove: vi.fn(),
   };
 }
@@ -438,9 +488,9 @@ function configureOpenCodeProviderStub(
     const opts = input as {
       provider: AgentProvider;
       requestedMode: string | undefined;
-      featureValues: Record<string, unknown> | undefined;
+      providerOptions: Record<string, unknown> | undefined;
     };
-    return { modeId: opts.requestedMode, featureValues: opts.featureValues };
+    return { modeId: opts.requestedMode, providerOptions: opts.providerOptions };
   });
 }
 
@@ -528,6 +578,7 @@ function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent
     pendingPermissions: new Map(),
     persistence: null,
     labels: {},
+    metadata: {},
     attention: { requiresAttention: false },
     ...overrides,
   } as ManagedAgent;
@@ -585,6 +636,19 @@ class FakeBrowserToolsBroker {
 }
 
 class BoundaryAgentManagerFake {
+  subscribe() {
+    return () => {};
+  }
+  onStop() {
+    return () => {};
+  }
+  hasPendingPermissions() {
+    return false;
+  }
+  public getPluginTools(): [] {
+    return [];
+  }
+
   private readonly agent = createManagedAgent({
     id: "agent-1",
     cwd: REPO_CWD,
@@ -601,7 +665,16 @@ class BoundaryAgentManagerFake {
 }
 
 class BoundaryAgentStorageFake {
-  public async list(): Promise<StoredAgentRecord[]> {
+  public async listActive(): Promise<StoredAgentRecord[]> {
+    return [];
+  }
+  async listByWorkspaces() {
+    return [];
+  }
+  async lastUserMessageAtByWorkspace() {
+    return new Map<string, string>();
+  }
+  async listAll() {
     return [];
   }
 }
@@ -687,7 +760,6 @@ function createPaseoWorktreeForMcpTest(options: {
   createdWorkspaceIds?: string[];
   workspaceRecords?: Map<string, PersistedWorkspaceRecord>;
   generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
-  setupContinuations?: Array<"workspace" | "agent" | undefined>;
   startedAgentSetupIds?: string[];
 }): CreatePaseoWorktreeWorkflowFn {
   const projects = new Map<string, PersistedProjectRecord>();
@@ -735,7 +807,8 @@ function createPaseoWorktreeForMcpTest(options: {
     initialize: async () => {},
     existsOnDisk: async () => true,
     get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
-    list: async () => Array.from(workspaces.values()),
+    listAll: async () => Array.from(workspaces.values()),
+    listActive: async () => Array.from(workspaces.values()).filter((w) => !w.archivedAt),
     update: async (workspaceId, updater) => {
       const workspace = workspaces.get(workspaceId);
       if (!workspace) return null;
@@ -755,6 +828,7 @@ function createPaseoWorktreeForMcpTest(options: {
     },
   };
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
@@ -784,7 +858,6 @@ function createPaseoWorktreeForMcpTest(options: {
   });
 
   return async (input, serviceOptions) => {
-    options.setupContinuations?.push(serviceOptions?.setupContinuation?.kind);
     const result = await createPaseoWorktreeWorkflow(
       {
         paseoHome: options.paseoHome,
@@ -818,28 +891,136 @@ function createPaseoWorktreeForMcpTest(options: {
     );
     options.broadcasts.push(result.workspace.workspaceId);
     options.createdWorkspaceIds?.push(result.workspace.workspaceId);
-    if (serviceOptions?.setupContinuation?.kind === "agent") {
-      return {
-        ...result,
-        setupContinuation: {
-          kind: "agent",
-          startAfterAgentCreate: ({ agentId }) => {
-            options.startedAgentSetupIds?.push(agentId);
-          },
-        },
-      };
-    }
     return result;
   };
 }
 
 // Typed in-memory workspace port for catalogue tests without workspace setup.
-function createAgentMcpServer(options: Parameters<typeof createAgentMcpServerWithDependencies>[0]) {
-  return createAgentMcpServerWithDependencies({
-    workspaceRegistry: { get: async () => null, list: async () => [], upsert: async () => {} },
+async function createAgentMcpServer(
+  options: Parameters<typeof createAgentMcpServerWithDependencies>[0],
+  subscriptionStore?: FinishSubscriptionStore,
+  schedule?: (delayMs: number, callback: () => void) => () => void,
+) {
+  const messages = createTestAgentMessages({ ...options, schedule });
+  const records = new Map<string, FinishSubscription>();
+  const subscriptions = createFinishSubscriptions({
+    store: subscriptionStore ?? {
+      list: async () => [...records.values()],
+      put: async (record) => {
+        records.set(record.id, record);
+      },
+      remove: async (id) => {
+        records.delete(id);
+      },
+    },
+    messages: () => messages,
+    callerIsActive: async (id) => !(await options.agentStorage.get(id))?.archivedAt,
+    serverId: options.serverId ?? "self",
+    logger: options.logger,
+    ...createFinishObservation({
+      ...options,
+      waitForResume: async () => {},
+      messages: () => messages,
+      serverId: options.serverId ?? "self",
+      hosts: () => {
+        if (!options.hosts) throw new Error("No hosts");
+        return options.hosts();
+      },
+    }),
+  });
+  subscriptionServices.push(subscriptions);
+  const server = await createAgentMcpServerWithDependencies({
+    agentMessages: () => messages,
+    finishSubscriptions: () => subscriptions,
+    workspaceRegistry: {
+      get: async () => null,
+      listActive: async () => [],
+      upsert: async () => {},
+    },
     ...options,
   });
+  serverSubscriptionRecords.set(server, records);
+  serverSubscriptions.set(server, subscriptions);
+  serverDeliveries.set(server, messages);
+  return server;
 }
+
+describe("bundled Paseo skill", () => {
+  it("documents only advertised create_workspace input names", async () => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const skill = await readFile(
+        new URL("../../../../../skills/paseo/SKILL.md", import.meta.url),
+        "utf8",
+      );
+      const paragraph = skill.split("\n").find((line) => line.startsWith("**`create_workspace`**"));
+      expect(paragraph).toBeTypeOf("string");
+      // The final sentence describes output, rather than tool inputs.
+      const inputGuidance = paragraph!.split("Returns ")[0]!;
+      const documentedInputs = [...inputGuidance.matchAll(/`([a-zA-Z][a-zA-Z0-9]*)`/g)].map(
+        (match) => match[1]!,
+      );
+      expect(documentedInputs.length).toBeGreaterThan(0);
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === "create_workspace")!;
+      const properties = tool.inputSchema.properties!;
+      const advertisedNamesAndValues = new Set([
+        ...Object.keys(properties),
+        ...Object.values(properties).flatMap((property) =>
+          typeof property === "object" && property !== null && Array.isArray(property.enum)
+            ? property.enum
+            : [],
+        ),
+      ]);
+      expect(documentedInputs.filter((name) => !advertisedNamesAndValues.has(name))).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("Paseo tool timeline presentation", () => {
+  it("catalogs a timeline label for every advertised tool", async () => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
+      browserToolsBroker: new FakeBrowserToolsBroker({
+        requestId: "req-catalog",
+        ok: true,
+        result: { command: "list_tabs", tabs: [] },
+      }) as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const { tools } = await client.listTools();
+      const cataloged = new Set<string>(PASEO_TOOL_NAMES);
+      // speak renders as a voice message, not a tool call row.
+      const uncataloged = tools
+        .map((tool) => tool.name)
+        .filter((name) => name !== "speak" && !cataloged.has(name));
+      expect(tools.length).toBeGreaterThan(40);
+      expect(uncataloged).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
 
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
@@ -1169,6 +1350,180 @@ describe("browser MCP tools", () => {
 describe("terminal MCP tools", () => {
   const logger = createTestLogger();
 
+  it.each<[string, string, string, boolean]>([
+    ["Down", "\x1b[B", "", false],
+    ["Up", "\x1b[A", "", false],
+    ["Left", "\x1b[D", "", false],
+    ["Right", "\x1b[C", "", false],
+    ["PageUp", "\x1b[5~", "", false],
+    ["PageDown", "\x1b[6~", "", false],
+    ["Home", "\x1b[H", "", false],
+    ["End", "\x1b[F", "", false],
+    ["Insert", "\x1b[2~", "", false],
+    ["Delete", "\x1b[3~", "", false],
+    ["F1", "\x1bOP", "", false],
+    ["F5", "\x1b[15~", "", false],
+    ["F12", "\x1b[24~", "", false],
+    ["S-Tab", "\x1b[Z", "", false],
+    ["C-r", "\x12", "", false],
+    ["M-b", "\x1bb", "", false],
+    ["C-M-Left", "\x1b[1;7D", "", false],
+    ["C-S-Up", "\x1b[1;6A", "", false],
+    ["C-Space", "\x00", "", false],
+    ["Enter", "\r", "", false],
+    ["Tab", "\t", "", false],
+    ["Escape", "\x1b", "", false],
+    ["Space", " ", "", false],
+    ["BSpace", "\x7f", "", false],
+    ["C-c", "\x03", "", false],
+    ["C-d", "\x04", "", false],
+    ["C-z", "\x1a", "", false],
+    ["C-l", "\x0c", "", false],
+    ["C-a", "\x01", "", false],
+    ["C-e", "\x05", "", false],
+    ["Down", "\x1bOB", "\x1b[?1h", false],
+    ["S-Enter", "\x1b[13;2u", "\x1b[=1;1u", false],
+    ["C-Enter", "\x1b[13;28;13;1;8;1_", "\x1b[?9001h", false],
+    ["echo hello\r", "echo hello\r", "", false],
+    ["\x1b[B", "\x1b[B", "", false],
+    ["UnknownKey", "UnknownKey", "", false],
+    ["constructor", "constructor", "", false],
+    ["__proto__", "__proto__", "", false],
+    ["", "", "", false],
+    ["Down", "Down", "\x1b[?1h", true],
+    ["C-r", "C-r", "", true],
+    ["S-Tab", "S-Tab", "", true],
+  ])(
+    "sends terminal token %j as %j (preamble=%j, literal=%s)",
+    async (keys, data, preamble, literal) => {
+      const { agentManager, agentStorage } = createTestDeps();
+      const send = vi.fn();
+      const terminalManager = createTerminalManagerStub({
+        getTerminal: vi.fn().mockReturnValue({
+          send,
+          getReplayPreamble: () => preamble,
+        }),
+      });
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        terminalManager,
+        logger,
+      });
+
+      try {
+        const response = await registeredTool(server, "send_terminal_keys").handler({
+          terminalId: "term-1",
+          keys,
+          literal,
+        });
+        expect(response.structuredContent).toEqual({ success: true });
+        expect(send).toHaveBeenCalledExactlyOnceWith({ type: "input", data });
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  it.each([
+    ["in-process", async () => ({ manager: createTerminalManager(), home: null })],
+    [
+      "worker",
+      async () => {
+        const home = await mkdtemp(join(tmpdir(), "mcp-terminal-keys-home-"));
+        const manager = await startWorkerTerminalManager({
+          paseoHome: home,
+          paseoVersion: "0.0.0-test",
+          logger,
+        });
+        return { manager, home };
+      },
+    ],
+  ] as const)(
+    "delivers MCP key tokens through %s after terminal input modes change",
+    async (_name, createManager) => {
+      const { agentManager, agentStorage } = createTestDeps();
+      const { manager: terminalManager, home } = await createManager();
+      const terminal = await terminalManager.createTerminal({
+        cwd: process.cwd(),
+        workspaceId: "ws-terminal-keys",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdin.setRawMode(true);
+         process.stdout.write("READY\\r\\n");
+         process.stdin.on("data", data => {
+           if (data.toString() === "application") {
+             process.stdout.write("\\x1b[?1hAPPLICATION_READY\\r\\n");
+             return;
+           }
+           if (data.toString() === "normal") {
+             process.stdout.write("\\x1b[?1lNORMAL_READY\\r\\n");
+             return;
+           }
+           process.stdout.write("HEX:" + data.toString("hex") + "\\r\\n");
+         });`,
+        ],
+      });
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        terminalManager,
+        logger,
+      });
+
+      // Every step is a round trip through a real PTY. A loaded Windows runner (ConPTY) has
+      // taken over 3 s to reach READY, so each step gets the same window rather than 1 s.
+      const roundTrip = { timeout: 5000 };
+      let output = "";
+      const unsubscribe = terminal.subscribe((message) => {
+        if (message.type === "output") {
+          output += message.data;
+        }
+      });
+      try {
+        await vi.waitFor(async () => {
+          const capture = await terminalManager.captureTerminal(terminal.id);
+          expect(capture.lines).toContain("READY");
+        }, roundTrip);
+        const tool = registeredTool(server, "send_terminal_keys");
+        await tool.handler({ terminalId: terminal.id, keys: "application", literal: true });
+        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"), roundTrip);
+        for (const [keys, hex] of [
+          ["Down", "1b4f42"],
+          ["Up", "1b4f41"],
+          ["Left", "1b4f44"],
+          ["Right", "1b4f43"],
+          ["PageDown", "1b5b367e"],
+          ["S-Tab", "1b5b5a"],
+          ["C-r", "12"],
+          ["M-b", "1b62"],
+        ]) {
+          await tool.handler({ terminalId: terminal.id, keys });
+          await vi.waitFor(async () => {
+            const capture = await terminalManager.captureTerminal(terminal.id);
+            expect(capture.lines.join("\n")).toContain(`HEX:${hex}`);
+          }, roundTrip);
+        }
+        await tool.handler({ terminalId: terminal.id, keys: "normal", literal: true });
+        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"), roundTrip);
+        await tool.handler({ terminalId: terminal.id, keys: "Down" });
+        await vi.waitFor(async () => {
+          const capture = await terminalManager.captureTerminal(terminal.id);
+          expect(capture.lines).toContain("HEX:1b5b42");
+        }, roundTrip);
+      } finally {
+        unsubscribe();
+        await server.close();
+        await terminalManager.killTerminalAndWait(terminal.id);
+        terminalManager.killAll();
+        if (home) await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("captures terminal output through the terminal manager authority", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const captureTerminal = vi.fn().mockResolvedValue({
@@ -1180,7 +1535,6 @@ describe("terminal MCP tools", () => {
         id: "term-1",
         name: "daemon",
         cwd: process.cwd(),
-        getState: vi.fn().mockReturnValue({ scrollback: [], grid: [[]] }),
       }),
       captureTerminal,
     });
@@ -1220,16 +1574,6 @@ describe("create_agent MCP tool", () => {
   const detachedDirectoryWorkspace = (path = existingCwd) => ({
     relationship: { kind: "detached" as const },
     workspace: { kind: "create" as const, source: { kind: "directory" as const, path } },
-  });
-  const detachedWorktreeWorkspace = (
-    cwd: string,
-    target:
-      | { kind: "branch-off"; worktreeSlug?: string; branchName?: string; baseBranch?: string }
-      | { kind: "checkout-branch"; branch: string }
-      | { kind: "checkout-pr"; githubPrNumber: number },
-  ) => ({
-    relationship: { kind: "detached" as const },
-    workspace: { kind: "create" as const, source: { kind: "worktree" as const, cwd, target } },
   });
   const subagentCurrentWorkspace = (cwd?: string) => ({
     relationship: { kind: "subagent" as const },
@@ -1345,11 +1689,11 @@ describe("create_agent MCP tool", () => {
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: existingCwd }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
-  it("rejects public internal helpers and the old top-level execution background option", async () => {
+  it("rejects public internal helpers", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-public-helper-removal-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const agentManager = new AgentManager({
@@ -1367,9 +1711,6 @@ describe("create_agent MCP tool", () => {
       const tool = registeredTool(server, "create_agent");
       const input = { title: "Helper", provider: "codex/gpt-5.4", initialPrompt: "Summarize" };
       await expect(tool.handler({ ...input, internal: true })).rejects.toThrow(/Unrecognized key/);
-      await expect(tool.handler({ ...input, background: true })).rejects.toThrow(
-        /Unrecognized key/,
-      );
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
@@ -1491,7 +1832,7 @@ describe("create_agent MCP tool", () => {
         cwd: existingCwd,
       }),
       undefined,
-      { workspaceId: "wks_existing" },
+      { workspaceId: "wks_existing", background: false },
     );
   });
 
@@ -1503,7 +1844,7 @@ describe("create_agent MCP tool", () => {
       lifecycle: "idle",
       currentModeId: null,
       availableModes: [],
-      config: { title: "Feature test", featureValues: { fast_mode: true } },
+      config: { title: "Feature test", providerOptions: { fast_mode: true } },
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
@@ -1532,10 +1873,10 @@ describe("create_agent MCP tool", () => {
       expect.objectContaining({
         provider: "codex",
         model: "gpt-5.4",
-        featureValues: { fast_mode: true },
+        providerOptions: { fast_mode: true },
       }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
@@ -1657,29 +1998,6 @@ describe("create_agent MCP tool", () => {
     ).rejects.toThrow("Unrecognized key");
   });
 
-  it("accepts worktree workspace intent in create_agent input validation", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      logger,
-    });
-    const tool = registeredTool(server, "create_agent");
-
-    const parsed = await tool.inputSchema.safeParseAsync({
-      ...detachedWorktreeWorkspace(existingCwd, {
-        kind: "checkout-pr",
-        githubPrNumber: 42,
-      }),
-      title: "Short title",
-      provider: "codex/gpt-5.4",
-      initialPrompt: "test",
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
   it("exposes workspace tools instead of worktree tools", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
@@ -1754,7 +2072,7 @@ describe("create_agent MCP tool", () => {
         title: "Fix auth bug",
       }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
@@ -1789,7 +2107,7 @@ describe("create_agent MCP tool", () => {
         title: "Fix auth",
       }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
@@ -1833,446 +2151,9 @@ describe("create_agent MCP tool", () => {
       {
         labels: { source: "mcp" },
         workspaceId: "workspace-created",
+        background: false,
       },
     );
-  });
-
-  it("registers and broadcasts a workspace when create_agent creates a worktree", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-worktree-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const createdWorkspaceIds: string[] = [];
-    const setupContinuations: Array<"workspace" | "agent" | undefined> = [];
-    const startedAgentSetupIds: string[] = [];
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-with-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Worktree agent" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
-          broadcasts,
-          createdWorkspaceIds,
-          setupContinuations,
-          startedAgentSetupIds,
-        }),
-        logger,
-      });
-      const tool = registeredTool(server, "create_agent");
-      await tool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "branch-off",
-          worktreeSlug: "agent-worktree",
-          branchName: "feature/agent-worktree",
-          baseBranch: "main",
-        }),
-        title: "Worktree agent",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Do work",
-      });
-
-      expect(broadcasts).toHaveLength(1);
-      expect(createdWorkspaceIds).toHaveLength(1);
-      expect(broadcasts[0]).toBe(createdWorkspaceIds[0]);
-      expect(setupContinuations).toEqual(["agent"]);
-      expect(startedAgentSetupIds).toEqual(["agent-with-worktree"]);
-      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
-      const branchName = execFileSync("git", ["branch", "--show-current"], {
-        cwd: agentCwd,
-        stdio: "pipe",
-      })
-        .toString()
-        .trim();
-      expect(branchName).toBe("feature/agent-worktree");
-      // The agent is stamped with the freshly created worktree's workspaceId so
-      // workspaceId-scoped archive can find and tear it down later.
-      expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cwd: expect.stringContaining("agent-worktree"),
-        }),
-        undefined,
-        { workspaceId: createdWorkspaceIds[0] },
-      );
-    } finally {
-      await removeTempDir(tempDir);
-    }
-  });
-
-  it("creates a create_agent branch-off worktree without invoking the legacy metadata branch rename", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-name-context-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const workspaceGitService = {
-      getSnapshot: vi.fn(async () => {
-        throw new Error("agent metadata branch rename should not run");
-      }),
-    };
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-auto-named-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Worktree agent" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
-        workspaceGitService: workspaceGitService as unknown as Pick<
-          WorkspaceGitService,
-          "getSnapshot" | "listWorktrees"
-        >,
-        logger,
-      });
-      const tool = registeredTool(server, "create_agent");
-      await tool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "branch-off",
-          baseBranch: "main",
-        }),
-        title: "Worktree agent",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Fix workspace creation naming",
-      });
-
-      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
-      const initialBranch = execFileSync("git", ["branch", "--show-current"], {
-        cwd: agentCwd,
-        stdio: "pipe",
-      })
-        .toString()
-        .trim();
-      expect(initialBranch).not.toBe("");
-      expect(initialBranch).not.toBe("main");
-      await waitForUnexpectedWorkspaceNamingSideEffects();
-      expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toHaveLength(1);
-    } finally {
-      await removeTempDir(tempDir);
-    }
-  });
-
-  it("auto-titles and renames an agent-created branch-off worktree from the initial prompt", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-auto-title-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const createdWorkspaceIds: string[] = [];
-    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-auto-titled-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Agent title" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
-          broadcasts,
-          createdWorkspaceIds,
-          workspaceRecords,
-          generateWorkspaceName: async () => ({
-            title: "Workspace Auto Title Flow",
-            branch: "workspace-auto-title-flow",
-          }),
-        }),
-        logger,
-      });
-      const tool = registeredTool(server, "create_agent");
-      await tool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "branch-off",
-          branchName: "feat/placeholder-auto-title",
-          baseBranch: "main",
-        }),
-        title: "Agent title",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Build a workspace auto title flow",
-      });
-      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
-      await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Workspace Auto Title Flow");
-
-      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
-      const workspace = workspaceRecords.get(workspaceId);
-      const branchName = execFileSync("git", ["branch", "--show-current"], {
-        cwd: agentCwd,
-        stdio: "pipe",
-      })
-        .toString()
-        .trim();
-      const metadata = readPaseoWorktreeMetadata(agentCwd);
-
-      expect(metadata).toMatchObject({
-        version: 2,
-        firstAgentBranchAutoName: {
-          status: "attempted",
-          placeholderBranchName: "feat/placeholder-auto-title",
-        },
-      });
-      expect(branchName).toBe("workspace-auto-title-flow");
-      expect(workspace).toMatchObject({
-        title: "Workspace Auto Title Flow",
-        branch: "workspace-auto-title-flow",
-      });
-    } finally {
-      await removeTempDir(tempDir);
-    }
-  });
-
-  it("keeps a manual workspace title when agent-created worktree naming finishes later", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-manual-title-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const createdWorkspaceIds: string[] = [];
-    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-manual-title-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Agent title" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
-          broadcasts,
-          createdWorkspaceIds,
-          workspaceRecords,
-          generateWorkspaceName: async () => ({
-            title: "Generated Manual Race Title",
-            branch: "generated-manual-race-title",
-          }),
-        }),
-        workspaceRegistry: {
-          get: async (workspaceId) => workspaceRecords.get(workspaceId) ?? null,
-          upsert: async (record) => {
-            workspaceRecords.set(record.workspaceId, record);
-          },
-        },
-        emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
-          broadcasts.push(...workspaceIds);
-        },
-        logger,
-      });
-      const createAgentTool = registeredTool(server, "create_agent");
-      await createAgentTool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "branch-off",
-          branchName: "feat/manual-title-placeholder",
-          baseBranch: "main",
-        }),
-        title: "Agent title",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Keep the manually renamed workspace title",
-      });
-      const renameWorkspaceTool = registeredTool(server, "rename_workspace");
-      await renameWorkspaceTool.handler({
-        workspaceId: createdWorkspaceIds[0],
-        title: "Manual Workspace Title",
-      });
-      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
-      await waitForWorkspaceBranch(workspaceRecords, workspaceId, "generated-manual-race-title");
-
-      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
-      const workspace = workspaceRecords.get(workspaceId);
-      const branchName = execFileSync("git", ["branch", "--show-current"], {
-        cwd: agentCwd,
-        stdio: "pipe",
-      })
-        .toString()
-        .trim();
-
-      expect(branchName).toBe("generated-manual-race-title");
-      expect(workspace).toMatchObject({
-        title: "Manual Workspace Title",
-        branch: "generated-manual-race-title",
-      });
-    } finally {
-      await removeTempDir(tempDir);
-    }
-  });
-
-  it("uses create_agent title for the agent while still auto-titling the worktree workspace", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-title-workspace-title-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const createdWorkspaceIds: string[] = [];
-    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-explicit-title-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Explicit Agent Title" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
-          broadcasts,
-          createdWorkspaceIds,
-          workspaceRecords,
-          generateWorkspaceName: async () => ({
-            title: "Generated Workspace Title",
-            branch: "generated-workspace-title",
-          }),
-        }),
-        logger,
-      });
-      const tool = registeredTool(server, "create_agent");
-      await tool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "branch-off",
-          branchName: "feat/agent-title-placeholder",
-          baseBranch: "main",
-        }),
-        title: "Explicit Agent Title",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Generate the workspace title anyway",
-      });
-      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
-      await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Generated Workspace Title");
-
-      const workspace = workspaceRecords.get(workspaceId);
-      expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Explicit Agent Title",
-        }),
-        undefined,
-        { workspaceId },
-      );
-      expect(workspace).toMatchObject({
-        title: "Generated Workspace Title",
-        branch: "generated-workspace-title",
-      });
-    } finally {
-      await removeTempDir(tempDir);
-    }
   });
 
   it("auto-titles an agent-created directory workspace from the initial prompt", async () => {
@@ -2373,7 +2254,7 @@ describe("create_agent MCP tool", () => {
           title: "Directory agent",
         }),
         undefined,
-        { workspaceId: "workspace-directory-auto-title" },
+        { workspaceId: "workspace-directory-auto-title", background: false },
       );
       expect(workspaceRecords.get("workspace-directory-auto-title")).toMatchObject({
         title: "Directory Workspace Title",
@@ -2385,221 +2266,12 @@ describe("create_agent MCP tool", () => {
     }
   });
 
-  it("auto-titles without renaming a create_agent checkout worktree from the initial prompt", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-checkout-name-context-"));
-    const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
-    const broadcasts: string[] = [];
-    const createdWorkspaceIds: string[] = [];
-    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
-    let generateCalls = 0;
-    const workspaceGitService = {
-      getSnapshot: vi.fn(async () => {
-        throw new Error("agent metadata branch rename should not run");
-      }),
-    };
-
-    try {
-      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["config", "commit.gpgsign", "false"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["checkout", "-b", "existing-feature"], {
-        cwd: repoDir,
-        stdio: "pipe",
-      });
-      await writeFile(join(repoDir, "feature.txt"), "feature\n");
-      execFileSync("git", ["add", "feature.txt"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", "feature"], { cwd: repoDir, stdio: "pipe" });
-      execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
-
-      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-        id: "agent-checkout-worktree",
-        cwd: config.cwd,
-        lifecycle: "idle",
-        currentModeId: null,
-        availableModes: [],
-        config: { title: "Checkout agent" },
-      }));
-
-      const server = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        providerSnapshotManager: createOpenCodeManager().manager,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
-          broadcasts,
-          createdWorkspaceIds,
-          workspaceRecords,
-          generateWorkspaceName: async () => {
-            generateCalls += 1;
-            return {
-              title: "Generated Checkout Workspace Title",
-              branch: "generated-checkout-workspace-title",
-            };
-          },
-        }),
-        workspaceGitService: workspaceGitService as unknown as Pick<
-          WorkspaceGitService,
-          "getSnapshot" | "listWorktrees"
-        >,
-        logger,
-      });
-      const tool = registeredTool(server, "create_agent");
-      await tool.handler({
-        ...detachedWorktreeWorkspace(repoDir, {
-          kind: "checkout-branch",
-          branch: "existing-feature",
-        }),
-        title: "Checkout agent",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Rename this checkout from the prompt",
-      });
-
-      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
-      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
-      await waitForWorkspaceTitle(
-        workspaceRecords,
-        workspaceId,
-        "Generated Checkout Workspace Title",
-      );
-      expect(
-        execFileSync("git", ["branch", "--show-current"], { cwd: agentCwd, stdio: "pipe" })
-          .toString()
-          .trim(),
-      ).toBe("existing-feature");
-      expect(workspaceRecords.get(workspaceId)).toMatchObject({
-        title: "Generated Checkout Workspace Title",
-        branch: "existing-feature",
-      });
-      expect(readPaseoWorktreeMetadata(agentCwd)).toMatchObject({
-        version: 1,
-        baseRefName: "main",
-      });
-      expect(generateCalls).toBe(1);
-      expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toEqual([workspaceId, workspaceId]);
-    } finally {
-      await removeTempDir(tempDir);
-    }
-  });
-
-  it("passes create_agent GitHub PR worktrees through workspace creation without metadata branch rename", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const startedAgentSetupIds: string[] = [];
-    const createPaseoWorktree = vi.fn(
-      async (
-        input: CreatePaseoWorktreeInput,
-        options?: Parameters<CreatePaseoWorktreeWorkflowFn>[1],
-      ) => ({
-        worktree: {
-          branchName: "pr-123",
-          worktreePath: "/tmp/worktrees/pr-123",
-        },
-        intent: {
-          kind: "checkout-github-pr" as const,
-          githubPrNumber: input.githubPrNumber ?? 123,
-          headRef: "pr-123",
-          baseRefName: "main",
-        },
-        workspace: {
-          workspaceId: "ws-pr-123",
-          projectId: REPO_CWD,
-          cwd: "/tmp/worktrees/pr-123",
-          kind: "worktree" as const,
-          displayName: "pr-123",
-          createdAt: "2026-04-30T00:00:00.000Z",
-          updatedAt: "2026-04-30T00:00:00.000Z",
-          archivedAt: null,
-        },
-        repoRoot: REPO_CWD,
-        created: true,
-        ...(options?.setupContinuation?.kind === "agent"
-          ? {
-              setupContinuation: {
-                kind: "agent" as const,
-                startAfterAgentCreate: ({ agentId }: { agentId: string }) => {
-                  startedAgentSetupIds.push(agentId);
-                },
-              },
-            }
-          : {}),
-      }),
-    );
-    const workspaceGitService = {
-      getSnapshot: vi.fn(async () => {
-        throw new Error("agent metadata branch rename should not run");
-      }),
-    };
-    spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
-      id: "agent-pr-worktree",
-      cwd: config.cwd,
-      lifecycle: "idle",
-      currentModeId: null,
-      availableModes: [],
-      config: { title: "PR agent" },
-    }));
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      createPaseoWorktree,
-      workspaceGitService: workspaceGitService as unknown as Pick<
-        WorkspaceGitService,
-        "getSnapshot" | "listWorktrees"
-      >,
-      logger,
-    });
-    const tool = registeredTool(server, "create_agent");
-    await tool.handler({
-      ...detachedWorktreeWorkspace(REPO_CWD, {
-        kind: "checkout-pr",
-        githubPrNumber: 123,
-      }),
-      title: "PR agent",
-      provider: "codex/gpt-5.4",
-      initialPrompt: "Rename this PR branch from prompt",
-    });
-
-    expect(createPaseoWorktree).toHaveBeenCalledWith(
-      expect.objectContaining({
-        githubPrNumber: 123,
-        firstAgentContext: { prompt: "Rename this PR branch from prompt" },
-      }),
-      expect.objectContaining({
-        setupContinuation: expect.objectContaining({ kind: "agent" }),
-      }),
-    );
-    expect(startedAgentSetupIds).toEqual(["agent-pr-worktree"]);
-    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/tmp/worktrees/pr-123" }),
-      undefined,
-      { workspaceId: "ws-pr-123" },
-    );
-    await waitForUnexpectedWorkspaceNamingSideEffects();
-    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-  });
-
   it("creates a worktree-isolated workspace", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-create-worktree-"));
     const repoDir = join(tempDir, "repo");
     const paseoHome = join(tempDir, ".paseo");
     const broadcasts: string[] = [];
-    const setupContinuations: Array<"workspace" | "agent" | undefined> = [];
 
     try {
       execFileSync("git", ["init", repoDir], { stdio: "pipe" });
@@ -2630,7 +2302,6 @@ describe("create_agent MCP tool", () => {
         createPaseoWorktree: createPaseoWorktreeForMcpTest({
           paseoHome,
           broadcasts,
-          setupContinuations,
         }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
@@ -2651,7 +2322,6 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.cwd).toContain("tool-worktree");
       expect(response.structuredContent.workspaceId).toBe(broadcasts[0]);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(setupContinuations).toEqual([undefined]);
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {
@@ -2880,7 +2550,10 @@ describe("create_agent MCP tool", () => {
         force: true,
         reason: "archive-worktree",
       });
-      expect(archiveWorkspaceRecord).toHaveBeenCalledWith("ws-archive-tool-worktree");
+      expect(archiveWorkspaceRecord).toHaveBeenCalledWith(
+        "ws-archive-tool-worktree",
+        expect.any(String),
+      );
       expect(markWorkspaceArchiving).toHaveBeenCalledWith(
         ["ws-archive-tool-worktree"],
         expect.any(String),
@@ -3069,7 +2742,7 @@ describe("create_agent MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: vi.fn(async () => workspace),
-        list: vi.fn(async () => [workspace]),
+        listActive: vi.fn(async () => [workspace]),
         upsert: vi.fn(async () => undefined),
       },
       logger,
@@ -3102,7 +2775,7 @@ describe("create_agent MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: vi.fn(async () => backgroundWorkspace),
-        list: vi.fn(async () => [backgroundWorkspace]),
+        listActive: vi.fn(async () => [backgroundWorkspace]),
         upsert: vi.fn(async () => undefined),
       },
       createDirectoryWorkspace: async (cwd, _title, _projectId, context) => {
@@ -3198,12 +2871,13 @@ describe("create_agent MCP tool", () => {
           source: "voice",
         },
         workspaceId: "wks_voice",
+        background: false,
       },
     );
     await rm(baseDir, { recursive: true, force: true });
   });
 
-  it("rejects background from caller agents and defaults notify-on-finish on", async () => {
+  it("defaults notify-on-finish on for caller agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
@@ -3223,16 +2897,6 @@ describe("create_agent MCP tool", () => {
     });
 
     const tool = registeredTool(server, "create_agent");
-    await expect(
-      tool.handler({
-        ...subagentCurrentWorkspace(),
-        title: "Child",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Do work",
-        background: false,
-      }),
-    ).rejects.toThrow(/Unrecognized key/);
-
     const parsed = await tool.inputSchema.safeParseAsync({
       ...subagentCurrentWorkspace(),
       title: "Child",
@@ -3296,6 +2960,50 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("notifies the caller when a created child finishes its initial turn before the turn start returns", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-create-fast-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", false, { finishTurnsDuringStart: true });
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const response = await invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+        ...subagentCurrentWorkspace(),
+        title: "Fast Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Finish immediately",
+      });
+      const childId = z.object({ agentId: z.string() }).parse(response.structuredContent).agentId;
+
+      await vi.waitFor(() => {
+        const parentPrompts = parentClient.sessions[0]!.prompts;
+        expect(parentPrompts).toHaveLength(1);
+        expect(parentPrompts[0]).toContain(childId);
+        expect(parentPrompts[0]).toContain("finished");
+      });
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
   it("creates detached caller agents without a parent label", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
@@ -3345,6 +3053,7 @@ describe("create_agent MCP tool", () => {
           source: "handoff",
         },
         workspaceId: "wks_parent",
+        background: false,
       },
     );
   });
@@ -3365,12 +3074,12 @@ describe("create_agent MCP tool", () => {
       lifecycle: "idle",
       currentModeId: null,
       availableModes: [],
-      config: { title: "Child", featureValues: { fast_mode: true } },
+      config: { title: "Child", providerOptions: { fast_mode: true } },
     } as ManagedAgent);
     const providerSnapshot = createOpenCodeManager();
     providerSnapshot.stub.resolveCreateConfig.mockImplementation(async (input) => {
-      const opts = input as { featureValues: Record<string, unknown> | undefined };
-      return { modeId: undefined, featureValues: opts.featureValues };
+      const opts = input as { providerOptions: Record<string, unknown> | undefined };
+      return { modeId: undefined, providerOptions: opts.providerOptions };
     });
 
     const server = await createAgentMcpServer({
@@ -3398,7 +3107,7 @@ describe("create_agent MCP tool", () => {
       expect.objectContaining({
         provider: "codex",
         model: "gpt-5.4",
-        featureValues: { fast_mode: true },
+        providerOptions: { fast_mode: true },
       }),
       undefined,
       {
@@ -3406,6 +3115,7 @@ describe("create_agent MCP tool", () => {
           [PARENT_AGENT_ID_LABEL]: "parent-agent",
         },
         workspaceId: "wks_parent",
+        background: false,
       },
     );
   });
@@ -3544,6 +3254,7 @@ describe("create_agent MCP tool", () => {
     expect(agentIdArg).toBeUndefined();
     expect(optionsArg).toEqual({
       workspaceId: "workspace-created",
+      background: false,
     });
   });
 
@@ -3599,7 +3310,7 @@ describe("create_agent MCP tool", () => {
     provStub.resolveCreateConfig.mockImplementation(async (input) => {
       const opts = input as { requestedMode: string | undefined };
       expect(opts.requestedMode).toBe("dynamic");
-      return { modeId: "dynamic", featureValues: undefined };
+      return { modeId: "dynamic", providerOptions: undefined };
     });
     const server = await createAgentMcpServer({
       agentManager,
@@ -3621,7 +3332,7 @@ describe("create_agent MCP tool", () => {
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ modeId: "dynamic" }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
@@ -3633,12 +3344,12 @@ describe("create_agent MCP tool", () => {
       lifecycle: "idle",
       currentModeId: "build",
       availableModes: [],
-      config: { title: "Child", featureValues: { auto_accept: true } },
+      config: { title: "Child", providerOptions: { auto_accept: true } },
     } as ManagedAgent);
     const providerSnapshot = createOpenCodeManager();
     providerSnapshot.stub.resolveCreateConfig.mockResolvedValue({
       modeId: "build",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     const server = await createAgentMcpServer({
       agentManager,
@@ -3658,9 +3369,9 @@ describe("create_agent MCP tool", () => {
     });
 
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: "build", featureValues: { auto_accept: true } }),
+      expect.objectContaining({ modeId: "build", providerOptions: { auto_accept: true } }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", background: false },
     );
   });
 
@@ -3686,7 +3397,7 @@ describe("create_agent MCP tool", () => {
     const providerSnapshot = createOpenCodeManager();
     providerSnapshot.stub.resolveCreateConfig.mockResolvedValue({
       modeId: "resolver-mode",
-      featureValues: { resolver_feature: true },
+      providerOptions: { resolver_feature: true },
     });
 
     const server = await createAgentMcpServer({
@@ -3710,7 +3421,7 @@ describe("create_agent MCP tool", () => {
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         modeId: "resolver-mode",
-        featureValues: { resolver_feature: true },
+        providerOptions: { resolver_feature: true },
       }),
       undefined,
       expect.any(Object),
@@ -3770,6 +3481,14 @@ const HELD_TURN_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 
+interface HeldTurnOptions {
+  finishDuringSteer?: boolean;
+  rejectSteer?: boolean;
+  steerResult?: "accepted" | "unavailable";
+  /** Run the whole turn before the turn-start request returns. */
+  finishTurnsDuringStart?: boolean;
+}
+
 /**
  * Provider session that records every prompt it receives. With `holdTurns`, a started
  * turn stays running until `finishTurn()` so a caller's bounded wait can run out first.
@@ -3778,20 +3497,34 @@ class HeldTurnAgentSession implements AgentSession {
   readonly capabilities = HELD_TURN_CAPABILITIES;
   readonly id = randomUUID();
   readonly prompts: string[] = [];
+  readonly steeredPrompts: AgentPromptInput[] = [];
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  private readonly permissions = new Map<string, AgentPermissionRequest>();
   private activeTurnId: string | null = null;
   private turnStartGate: Promise<void> | null = null;
+  private cancelHeldStart: (() => void) | null = null;
+  private interruptGate: Promise<void> | null = null;
   private nextStartError: Error | null = null;
 
   constructor(
     readonly provider: AgentProvider,
     private readonly holdTurns: boolean,
+    private readonly options: HeldTurnOptions = {},
   ) {}
 
   /** Hold the next turn's acknowledgment, as a provider awaiting its turn-start request does. */
   holdTurnStart(): () => void {
     let release!: () => void;
     this.turnStartGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** Hold the next interrupt, as a provider that takes a moment to stop does. */
+  holdInterrupt(): () => void {
+    let release!: () => void;
+    this.interruptGate = new Promise((resolve) => {
       release = resolve;
     });
     return release;
@@ -3806,19 +3539,45 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
-    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
-    return text === "/side-command" ? { run: async () => {} } : null;
+    return prompt === "/side-command" ? { run: async () => {} } : null;
+  }
+
+  async steerActiveTurn(prompt: AgentPromptInput) {
+    const status = this.options.steerResult ?? "unavailable";
+    if (status === "accepted") this.steeredPrompts.push(prompt);
+    if (status === "accepted" && this.options.finishDuringSteer) this.finishTurn();
+    if (this.options.rejectSteer) throw new Error("Steer rejected");
+    return { status };
   }
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
     this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
-    await this.turnStartGate;
+    if (this.turnStartGate) {
+      // An interrupt that arrives before the acknowledgment cancels the start.
+      const canceled = new Promise<"canceled">((resolve) => {
+        this.cancelHeldStart = () => resolve("canceled");
+      });
+      const outcome = await Promise.race([this.turnStartGate, canceled]);
+      this.cancelHeldStart = null;
+      if (outcome === "canceled") {
+        // The hold belonged to the start that was canceled.
+        this.turnStartGate = null;
+        throw new AgentTurnStartCanceledError();
+      }
+    }
     if (this.nextStartError) {
       const error = this.nextStartError;
       this.nextStartError = null;
       throw error;
     }
     const turnId = randomUUID();
+    if (this.options.finishTurnsDuringStart) {
+      // The whole turn runs before the turn-start request returns, as a provider whose
+      // start acknowledgment arrives together with the turn's completion does.
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      return { turnId };
+    }
     this.activeTurnId = turnId;
     this.pushEvent({
       type: "timeline",
@@ -3892,17 +3651,35 @@ class HeldTurnAgentSession implements AgentSession {
 
   async setMode(): Promise<void> {}
 
-  getPendingPermissions() {
-    return [];
+  requestPermission(id: string): void {
+    const request: AgentPermissionRequest = {
+      id,
+      name: "Write",
+      kind: "tool",
+      input: { path: id },
+    };
+    this.permissions.set(id, request);
+    this.pushEvent({ type: "permission_requested", provider: this.provider, request });
   }
 
-  async respondToPermission(): Promise<void> {}
+  getPendingPermissions() {
+    return [...this.permissions.values()];
+  }
+
+  async respondToPermission(requestId: string): Promise<void> {
+    this.permissions.delete(requestId);
+    this.pushEvent({ type: "permission_resolved", provider: this.provider, requestId });
+  }
 
   describePersistence() {
     return { provider: this.provider, sessionId: this.id };
   }
 
   async interrupt(): Promise<void> {
+    const gate = this.interruptGate;
+    this.interruptGate = null;
+    await gate;
+    this.cancelHeldStart?.();
     const turnId = this.activeTurnId;
     if (!turnId) {
       return;
@@ -3926,6 +3703,7 @@ class HeldTurnAgentClient implements AgentClient {
   constructor(
     readonly provider: AgentProvider,
     private readonly holdTurns: boolean,
+    private readonly options: HeldTurnOptions = {},
   ) {}
 
   async isAvailable(): Promise<boolean> {
@@ -3933,7 +3711,7 @@ class HeldTurnAgentClient implements AgentClient {
   }
 
   async createSession(): Promise<AgentSession> {
-    const session = new HeldTurnAgentSession(this.provider, this.holdTurns);
+    const session = new HeldTurnAgentSession(this.provider, this.holdTurns, this.options);
     this.sessions.push(session);
     return session;
   }
@@ -3948,6 +3726,247 @@ class HeldTurnAgentClient implements AgentClient {
 }
 
 describe("send_agent_prompt MCP tool", () => {
+  it.each([
+    { agentScoped: true, behavior: undefined, available: true },
+    { agentScoped: true, behavior: "interrupt", available: true },
+    { agentScoped: true, behavior: "steer", available: true },
+    { agentScoped: false, behavior: undefined, available: true },
+    { agentScoped: false, behavior: "steer", available: true },
+    { agentScoped: true, behavior: undefined, available: false },
+  ] as const)(
+    "dispatches behavior $behavior for agent-scoped=$agentScoped, steering available=$available",
+    async ({ agentScoped, behavior, available }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-send-behavior-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const client = new HeldTurnAgentClient("codex", true, {
+        steerResult: available ? "accepted" : "unavailable",
+      });
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      try {
+        const parent = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: agentScoped ? parent.id : undefined,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const tool = registeredTool(server, "send_agent_prompt");
+        await invokeToolWithParsedInput(tool, {
+          agentId: child.id,
+          prompt: "Original work",
+          notifyOnFinish: false,
+        });
+        const originalTurn = manager.getAgent(child.id)!.activeTurnId;
+        const queued = agentScoped && behavior !== "interrupt";
+        const steered = !agentScoped && behavior === "steer";
+        const response = await invokeToolWithParsedInput(
+          tool,
+          {
+            agentId: child.id,
+            prompt: "New message",
+            notifyOnFinish: false,
+            ...(behavior ? { activeTurnBehavior: behavior } : {}),
+          },
+          !queued,
+        );
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          ...(agentScoped
+            ? { deliveryStatus: "queued" }
+            : { disposition: steered ? "steered" : "turn_started" }),
+        });
+        if (queued) {
+          expect(client.sessions[1]!.prompts).toHaveLength(1);
+          expect(client.sessions[1]!.steeredPrompts).toEqual([]);
+          expect(manager.getAgent(child.id)!.activeTurnId).toBe(originalTurn);
+          client.sessions[1]!.finishTurn();
+          await serverDeliveries
+            .get(server)!
+            .waitForDispatch(child.id, new AbortController().signal);
+        }
+        expect(client.sessions[1]!.prompts).toHaveLength(steered ? 1 : 2);
+        expect(client.sessions[1]!.steeredPrompts).toHaveLength(steered ? 1 : 0);
+        expect(manager.getAgent(child.id)!.activeTurnId === originalTurn).toBe(steered);
+      } finally {
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    { rejected: false, priorNotification: false },
+    { rejected: false, priorNotification: true },
+    { rejected: true, priorNotification: false },
+    { rejected: true, priorNotification: true },
+  ])(
+    "keeps completion tied to queued dispatch acknowledgement (rejected: $rejected, prior notification: $priorNotification)",
+    async ({ rejected, priorNotification }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-queued-ack-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const options: HeldTurnOptions = {};
+      const client = new HeldTurnAgentClient("codex", true, options);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      let mcpClient: Client | undefined;
+      try {
+        const parent = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        mcpClient = await connectInMemoryMcpClient(server);
+        await sendMcpAndAwaitDispatch(mcpClient, server, {
+          agentId: child.id,
+          prompt: "Original work",
+          notifyOnFinish: priorNotification,
+        });
+        const session = client.sessions[1]!;
+        const release = session.holdTurnStart();
+        options.finishTurnsDuringStart = true;
+        if (rejected) session.rejectNextTurnStart(new Error("Start rejected"));
+        const response = await mcpClient.callTool({
+          name: "send_agent_prompt",
+          arguments: { agentId: child.id, prompt: "New message", notifyOnFinish: true },
+        });
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          deliveryStatus: "queued",
+        });
+        const dispatch = serverDeliveries
+          .get(server)!
+          .waitForDispatch(child.id, new AbortController().signal);
+        const rejectedDispatch = rejected
+          ? expect(dispatch).rejects.toThrow("Start rejected")
+          : null;
+        expect(client.sessions[0]!.prompts).toHaveLength(0);
+        session.finishTurn();
+        await vi.waitFor(() => expect(session.prompts).toHaveLength(2));
+        expect(client.sessions[0]!.prompts).toHaveLength(0);
+        release();
+        if (rejectedDispatch) await rejectedDispatch;
+        else await dispatch;
+        if (!rejected || priorNotification) {
+          await vi.waitFor(() => expect(client.sessions[0]!.prompts).toHaveLength(1), {
+            timeout: 5000,
+          });
+          expect(parseAgentMessage(client.sessions[0]!.prompts[0])).toMatchObject({
+            source: { kind: "agent-notification", agentId: child.id, event: "finished" },
+          });
+        } else {
+          await serverSubscriptions.get(server)!.close();
+          expect(client.sessions[0]!.prompts).toHaveLength(0);
+        }
+      } finally {
+        await mcpClient?.close();
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    [false, true],
+    [true, false],
+    [false, false],
+    [true, true],
+  ])(
+    "overlapping follow-ups notify once (first accepted: %s, second accepted: %s)",
+    async (firstAccepted, secondAccepted) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-send-behavior-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const client = new HeldTurnAgentClient("codex", true, {
+        steerResult: "accepted",
+        finishDuringSteer: false,
+        rejectSteer: true,
+      });
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      let mcpClient: Client | undefined;
+      try {
+        const parent = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          {
+            workspaceId: "wks_parent",
+          },
+        );
+        const child = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          {
+            workspaceId: "wks_parent",
+          },
+        );
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        mcpClient = await connectInMemoryMcpClient(server);
+        const send = (input: Record<string, unknown>) =>
+          sendMcpAndAwaitDispatch(mcpClient!, server, input);
+        await send({
+          agentId: child.id,
+          prompt: "Original work",
+          notifyOnFinish: true,
+        });
+        let firstResolve!: (result: PromptDispatchDisposition | false) => void;
+        let secondResolve!: (result: PromptDispatchDisposition | false) => void;
+        const first = new Promise<PromptDispatchDisposition | false>((resolve) => {
+          firstResolve = resolve;
+        });
+        const second = new Promise<PromptDispatchDisposition | false>((resolve) => {
+          secondResolve = resolve;
+        });
+        for (const dispatchResult of [first, second]) {
+          const registration = await serverSubscriptions
+            .get(server)!
+            .register({ childAgentId: child.id, callerAgentId: parent.id }, true);
+          void dispatchResult.then((result) => {
+            if (result) registration.accept();
+            else void registration.reject();
+            return undefined;
+          });
+        }
+        firstResolve(firstAccepted ? "steered" : false);
+        await first;
+        secondResolve(secondAccepted ? "steered" : false);
+        await second;
+        client.sessions[1]!.finishTurn();
+        await vi.waitFor(() => expect(client.sessions[0]!.prompts).toHaveLength(1));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(client.sessions[0]!.prompts).toHaveLength(1);
+        expect(parseAgentMessage(client.sessions[0]!.prompts[0])).toMatchObject({
+          source: { kind: "agent-notification", agentId: child.id, event: "finished" },
+        });
+      } finally {
+        await mcpClient?.close();
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
@@ -3998,11 +4017,13 @@ describe("send_agent_prompt MCP tool", () => {
 
     const response = await tool.handler(parsed.data as Record<string, unknown>);
 
-    expect(spies.agentManager.subscribe).toHaveBeenCalledTimes(1);
-    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
-    expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
-    );
+    expect(response.structuredContent).toMatchObject({ deliveryStatus: "queued" });
+    expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
+    await serverDeliveries
+      .get(server)!
+      .waitForDispatch("child-agent", new AbortController().signal);
+    expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
+    expect(response.structuredContent.guidance).toContain("You will get notified");
   });
 
   it("acknowledges top-level prompts without a completion wait", async () => {
@@ -4038,7 +4059,7 @@ describe("send_agent_prompt MCP tool", () => {
 
     await tool.handler(parsed.data as Record<string, unknown>);
 
-    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+    expect(serverSubscriptionRecords.get(server)!.size).toBe(0);
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
@@ -4081,7 +4102,7 @@ describe("send_agent_prompt MCP tool", () => {
       notifyOnFinish: false,
     });
 
-    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+    expect(serverSubscriptionRecords.get(server)!.size).toBe(0);
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
@@ -4146,10 +4167,10 @@ describe("send_agent_prompt MCP tool", () => {
         unsubscribe();
         expect(response.structuredContent).toMatchObject({
           success: true,
-          disposition: "turn_started",
+          deliveryStatus: "queued",
         });
         if (!immediateFinish) {
-          expect(response.structuredContent.status).toBe("running");
+          expect(response.structuredContent.deliveryStatus).toBe("queued");
           if (failure) childClient.sessions[0]!.failTurn("Retry failed");
           else childClient.sessions[0]!.finishTurn("Retry done");
         }
@@ -4168,7 +4189,7 @@ describe("send_agent_prompt MCP tool", () => {
     },
   );
 
-  it.each(["out_of_band", "startup_failure"] as const)(
+  it.each(["out_of_band", "out_of_band_interrupt", "startup_failure"] as const)(
     "preserves %s dispatch notification semantics",
     async (scenario) => {
       const workdir = await mkdtemp(join(tmpdir(), "mcp-dispatch-notification-"));
@@ -4204,15 +4225,19 @@ describe("send_agent_prompt MCP tool", () => {
           prompt: "Ongoing task",
           notifyOnFinish: false,
         });
-        if (scenario === "out_of_band") {
-          const response = await invokeToolWithParsedInput(tool, {
-            agentId: child.id,
-            prompt: "/side-command",
-          });
+        if (scenario !== "startup_failure") {
+          const response = await invokeToolWithParsedInput(
+            tool,
+            {
+              agentId: child.id,
+              prompt: "/side-command",
+              activeTurnBehavior: scenario === "out_of_band_interrupt" ? "interrupt" : "steer",
+            },
+            scenario !== "out_of_band",
+          );
           expect(response.structuredContent).toMatchObject({
             success: true,
-            disposition: "out_of_band",
-            status: "running",
+            deliveryStatus: "queued",
           });
           expect(childClient.sessions[0]!.prompts).toHaveLength(1);
           expect(parseAgentMessage(childClient.sessions[0]!.prompts[0])).toMatchObject({
@@ -4221,6 +4246,9 @@ describe("send_agent_prompt MCP tool", () => {
           });
           expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
           childClient.sessions[0]!.finishTurn("Ongoing task done");
+          await serverDeliveries
+            .get(server)!
+            .waitForDispatch(child.id, new AbortController().signal);
           await vi.waitFor(() => {
             expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
             expect(parentClient.sessions[0]!.prompts[0]).toContain("finished.");
@@ -4228,7 +4256,11 @@ describe("send_agent_prompt MCP tool", () => {
         } else {
           childClient.sessions[0]!.rejectNextTurnStart(new Error("Requested turn could not start"));
           await expect(
-            invokeToolWithParsedInput(tool, { agentId: child.id, prompt: "Replacement task" }),
+            invokeToolWithParsedInput(tool, {
+              agentId: child.id,
+              prompt: "Replacement task",
+              activeTurnBehavior: "interrupt",
+            }),
           ).rejects.toThrow("Requested turn could not start");
           // A later real turn must not inherit a subscription from the rejected dispatch.
           await invokeToolWithParsedInput(tool, {
@@ -4283,9 +4315,8 @@ describe("send_agent_prompt MCP tool", () => {
       });
       const response = await pending;
       expect(response.structuredContent).toMatchObject({
-        status: "running",
-        guidance:
-          "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+        deliveryStatus: "queued",
+        guidance: expect.stringContaining("You will get notified"),
       });
       expect(response.structuredContent).not.toHaveProperty("lastMessage");
 
@@ -4340,10 +4371,11 @@ describe("send_agent_prompt MCP tool", () => {
       const sent = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
         agentId: childId,
         prompt: "Stop and reply instead",
+        activeTurnBehavior: "interrupt",
       });
       expect(sent.structuredContent).toMatchObject({
         success: true,
-        status: "running",
+        deliveryStatus: "queued",
       });
       const childSession = childClient.sessions[0]!;
       await vi.waitFor(() => expect(childSession.prompts).toHaveLength(2));
@@ -4368,7 +4400,7 @@ describe("send_agent_prompt MCP tool", () => {
     }
   });
 
-  it("reports a background prompt's accepted turn as running", async () => {
+  it("reports queue admission before the background prompt starts", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-background-send-status-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const parentClient = new HeldTurnAgentClient("claude", false);
@@ -4414,7 +4446,7 @@ describe("send_agent_prompt MCP tool", () => {
       acknowledgeTurnStart();
       const response = await pending;
 
-      expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
+      expect(response.structuredContent).toMatchObject({ success: true, deliveryStatus: "queued" });
       expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
 
       childSession.finishTurn();
@@ -4484,7 +4516,7 @@ describe("send_agent_prompt MCP tool", () => {
       unsubscribe();
       expect(response.structuredContent).toMatchObject({
         success: true,
-        disposition: "turn_started",
+        deliveryStatus: "queued",
       });
       await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
       await vi.waitFor(() => {
@@ -4493,6 +4525,573 @@ describe("send_agent_prompt MCP tool", () => {
         expect(parentPrompts[0]).toContain(child.id);
         expect(parentPrompts[0]).toContain("finished");
       });
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+});
+
+describe("message order for one recipient", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  /** A sending agent, a person, and a recipient whose turns end only when the test says so. */
+  async function setupRecipient() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-message-order-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+    });
+    const sender = await agentManager.createAgent(
+      { provider: "codex", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const recipient = await agentManager.createAgent(
+      { provider: "codex", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const session = client.sessions[1]!;
+
+    const timers: Array<{ at: number; callback: () => void }> = [];
+    let now = 0;
+    const base = {
+      agentManager,
+      agentStorage: storage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    };
+    const agentServer = await createAgentMcpServer(
+      { ...base, callerAgentId: sender.id },
+      undefined,
+      (delayMs, callback) => {
+        const timer = { at: now + delayMs, callback };
+        timers.push(timer);
+        return () => {
+          const index = timers.indexOf(timer);
+          if (index >= 0) timers.splice(index, 1);
+        };
+      },
+    );
+    const delivery = serverDeliveries.get(agentServer)!;
+    let personPromptsAdmitted = 0;
+    // A person reaches the same daemon queue through a server with no caller agent.
+    const personServer = await createAgentMcpServer({
+      ...base,
+      agentMessages: () => ({
+        ...delivery,
+        sendDirect(direct, send) {
+          const sending = delivery.sendDirect(direct, send);
+          personPromptsAdmitted++;
+          return sending;
+        },
+      }),
+    });
+    const agentSend = registeredTool(agentServer, "send_agent_prompt");
+    const personSend = registeredTool(personServer, "send_agent_prompt");
+
+    function advance(ms: number): void {
+      const end = now + ms;
+      for (;;) {
+        const due = timers.filter((timer) => timer.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        timers.splice(timers.indexOf(due), 1);
+        now = due.at;
+        due.callback();
+      }
+      now = end;
+    }
+    /** Everything the queue will deliver without a new prompt has been delivered. */
+    async function settled(): Promise<void> {
+      await delivery.waitForDispatch(recipient.id, new AbortController().signal);
+      expect(delivery.hasPending(recipient.id)).toBe(false);
+    }
+    /** Resolves when the message is queued; an interrupt by default when it is dispatched. */
+    function agentSends(
+      prompt: string,
+      activeTurnBehavior: "steer" | "interrupt" = "steer",
+      awaitDispatch = activeTurnBehavior === "interrupt",
+    ) {
+      return invokeToolWithParsedInput(
+        agentSend,
+        { agentId: recipient.id, prompt, notifyOnFinish: false, activeTurnBehavior },
+        awaitDispatch,
+      );
+    }
+
+    await agentSends("Original work");
+    advance(2000);
+    await settled();
+    expect(session.prompts).toHaveLength(1);
+
+    return {
+      recipientId: recipient.id,
+      session,
+      agentManager,
+      advance,
+      settled,
+      agentSends,
+      personSends: (prompt: string) =>
+        invokeToolWithParsedInput(personSend, { agentId: recipient.id, prompt }),
+      /** The person's prompts that have taken their place in the recipient's queue. */
+      personPromptsAdmitted: () => personPromptsAdmitted,
+      /** Stop reached the queue: what it holds waits for the recipient's next prompt. */
+      queueIsHeld: () => !delivery.hasPending(recipient.id),
+      stop: () =>
+        invokeToolWithParsedInput(registeredTool(agentServer, "cancel_agent"), {
+          agentId: recipient.id,
+        }),
+      /** Who wrote each message of a provider prompt, in the order the recipient reads them. */
+      prompt: (index: number) =>
+        parseAgentMessages(session.prompts[index]!)?.map((message) => ({
+          from: message.source?.kind === "agent-message" ? message.source.agentId : "person",
+          text: message.text,
+        })),
+      senderId: sender.id,
+      cleanup: () => removeAgentStateDir(agentManager, storage, workdir),
+    };
+  }
+
+  it("an interrupt delivers the steer queued before it first, in the same turn", async () => {
+    const recipient = await setupRecipient();
+    try {
+      await recipient.agentSends("Go ahead and cut the release");
+      recipient.advance(10 * 60_000);
+      expect(recipient.session.prompts).toHaveLength(1);
+
+      await recipient.agentSends("Pause the release", "interrupt");
+
+      expect(recipient.prompt(1)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+        { from: recipient.senderId, text: "Pause the release" },
+      ]);
+      // The older steer is spent: the pause turn ending starts nothing.
+      recipient.session.finishTurn();
+      recipient.advance(10 * 60_000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(2);
+      expect(recipient.agentManager.getAgent(recipient.recipientId)?.lifecycle).toBe("idle");
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("a person's prompt takes the queued steer into its own turn", async () => {
+    const recipient = await setupRecipient();
+    try {
+      await recipient.agentSends("Go ahead and cut the release");
+      recipient.advance(2000);
+
+      await recipient.personSends("Pause the release");
+
+      expect(recipient.prompt(1)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+        { from: "person", text: "Pause the release" },
+      ]);
+      const rows = recipient.agentManager.getTimeline(recipient.recipientId);
+      expect(rows.flatMap((row) => (row.type === "user_message" ? [row.text] : []))).toEqual([
+        "Pause the release",
+      ]);
+      recipient.session.finishTurn();
+      recipient.advance(10 * 60_000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(2);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("Stop holds the queued steer for the recipient's next prompt", async () => {
+    const recipient = await setupRecipient();
+    try {
+      await recipient.agentSends("Go ahead and cut the release");
+      recipient.advance(2000);
+
+      await recipient.stop();
+
+      recipient.advance(10 * 60_000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(1);
+      expect(recipient.agentManager.getAgent(recipient.recipientId)?.lifecycle).toBe("idle");
+
+      await recipient.personSends("Carry on");
+      expect(recipient.prompt(1)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+        { from: "person", text: "Carry on" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("cancel_agent with no turn to stop holds nothing: a queued steer keeps its quiet window", async () => {
+    const recipient = await setupRecipient();
+    try {
+      recipient.session.finishTurn();
+      await vi.waitFor(() =>
+        expect(recipient.agentManager.getAgent(recipient.recipientId)?.lifecycle).toBe("idle"),
+      );
+      await recipient.agentSends("Go ahead and cut the release");
+
+      // Nothing is running, so there is no Stop: the tool reports that it canceled no run.
+      const result = await recipient.stop();
+      expect(result.structuredContent).toMatchObject({ success: false });
+
+      recipient.advance(2000);
+      await recipient.settled();
+      expect(recipient.prompt(1)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("prompts sent while the provider is still starting a turn reach it in the order sent", async () => {
+    const recipient = await setupRecipient();
+    try {
+      const acknowledgeStart = recipient.session.holdTurnStart();
+      const interrupt = recipient.agentSends("Check the logs", "interrupt");
+      await vi.waitFor(() => expect(recipient.session.prompts).toHaveLength(2));
+
+      // The provider has not acknowledged the interrupt's turn when these three arrive.
+      await recipient.agentSends("Go ahead and cut the release");
+      const person = recipient.personSends("Pause the release");
+      await vi.waitFor(() => expect(recipient.personPromptsAdmitted()).toBe(1));
+      await recipient.agentSends("Tests passed");
+      acknowledgeStart();
+      await Promise.all([interrupt, person]);
+
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+        { from: "person", text: "Pause the release" },
+      ]);
+      recipient.session.finishTurn();
+      recipient.advance(2000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(4);
+      expect(recipient.prompt(3)).toEqual([{ from: recipient.senderId, text: "Tests passed" }]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("Stop during a starting turn holds the interrupt that was waiting to replace it", async () => {
+    const recipient = await setupRecipient();
+    try {
+      recipient.session.holdTurnStart();
+      const person = recipient.personSends("Run the migration").catch(() => undefined);
+      await vi.waitFor(() => expect(recipient.session.prompts).toHaveLength(2));
+      // The interrupt waits for the starting turn before it can replace it.
+      await recipient.agentSends("Skip the backup", "interrupt", false);
+
+      await recipient.stop();
+      await person;
+
+      // The next prompt is sent after the interrupt's dispatch has ended, so a turn the
+      // interrupt started on its own would show up as a prompt between the two.
+      await recipient.personSends("Carry on");
+      expect(recipient.session.prompts).toHaveLength(3);
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Skip the backup" },
+        { from: "person", text: "Carry on" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("a steer sent while the provider is still stopping does not release the interrupt Stop held", async () => {
+    const recipient = await setupRecipient();
+    try {
+      recipient.session.holdTurnStart();
+      const person = recipient.personSends("Run the migration").catch(() => undefined);
+      await vi.waitFor(() => expect(recipient.session.prompts).toHaveLength(2));
+      await recipient.agentSends("Skip the backup", "interrupt", false);
+
+      const providerStops = recipient.session.holdInterrupt();
+      const stopping = recipient.stop();
+      await vi.waitFor(() => expect(recipient.queueIsHeld()).toBe(true));
+      await recipient.agentSends("Use the staging database");
+      providerStops();
+      await stopping;
+      await person;
+      expect(recipient.session.prompts).toHaveLength(2);
+
+      // The interrupt from before the Stop waits for the later steer's quiet window.
+      recipient.advance(2000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(3);
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Skip the backup" },
+        { from: recipient.senderId, text: "Use the staging database" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("the first interrupt after Stop takes the held messages along in one turn", async () => {
+    const recipient = await setupRecipient();
+    try {
+      recipient.session.holdTurnStart();
+      const person = recipient.personSends("Run the migration").catch(() => undefined);
+      await vi.waitFor(() => expect(recipient.session.prompts).toHaveLength(2));
+      // The interrupt waits for the starting turn, and the steer's closed window waits behind it.
+      await recipient.agentSends("Skip the backup", "interrupt", false);
+      await recipient.agentSends("Use the staging database");
+      recipient.advance(2000);
+
+      const providerStops = recipient.session.holdInterrupt();
+      const stopping = recipient.stop();
+      await vi.waitFor(() => expect(recipient.queueIsHeld()).toBe(true));
+      await recipient.agentSends("Stop after the schema step", "interrupt", false);
+      providerStops();
+      await stopping;
+      await person;
+      await recipient.settled();
+
+      expect(recipient.session.prompts).toHaveLength(3);
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Skip the backup" },
+        { from: recipient.senderId, text: "Use the staging database" },
+        { from: recipient.senderId, text: "Stop after the schema step" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("a queued steer returns to the queue when the provider rejects the person's turn", async () => {
+    const recipient = await setupRecipient();
+    try {
+      await recipient.agentSends("Go ahead and cut the release");
+      recipient.advance(2000);
+
+      recipient.session.rejectNextTurnStart(new Error("Provider is overloaded"));
+      await expect(recipient.personSends("Pause the release")).rejects.toThrow(
+        "Provider is overloaded",
+      );
+      expect(recipient.prompt(1)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+        { from: "person", text: "Pause the release" },
+      ]);
+
+      // The provider never took that prompt, so the steer is delivered on its own.
+      recipient.advance(2000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(3);
+      expect(recipient.prompt(2)).toEqual([
+        { from: recipient.senderId, text: "Go ahead and cut the release" },
+      ]);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+});
+
+describe("send_agent_prompt MCP tool to an OMP child", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function setupOmpChild(schedule?: (delayMs: number, callback: () => void) => () => void) {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const omp = new FakeOmp();
+    const agentManager = new AgentManager({
+      clients: {
+        claude: parentClient,
+        omp: new OmpAgentClient({
+          logger,
+          runtime: omp,
+          noTurnScheduler: { waitForSettle: async () => {} },
+          runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const child = await agentManager.createAgent(
+      { provider: "omp", cwd: existingCwd, title: "OMP child" },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer(
+      {
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      },
+      undefined,
+      schedule,
+    );
+    return {
+      agentManager,
+      storage,
+      workdir,
+      parentClient,
+      ompSession: omp.latestSession(),
+      childId: child.id,
+      tool: registeredTool(server, "send_agent_prompt"),
+    };
+  }
+
+  async function expectOneFinishNotification(
+    agentManager: AgentManager,
+    parentClient: HeldTurnAgentClient,
+    childId: string,
+  ) {
+    await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("idle"));
+    await vi.waitFor(() => {
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(
+        `Agent ${childId} (OMP child) finished.`,
+      );
+    });
+  }
+
+  it.each([
+    { command: "follow-up", streamingBehavior: "followUp" },
+    { command: "steer", streamingBehavior: "steer" },
+  ] as const)(
+    "delivers /$command to a running OMP child while ordinary messages in the same quiet window wait",
+    async ({ command, streamingBehavior }) => {
+      let flush!: () => void;
+      const { agentManager, storage, workdir, ompSession, childId, tool } = await setupOmpChild(
+        (_delay, callback) => {
+          flush = callback;
+          return () => {};
+        },
+      );
+      try {
+        ompSession.beginTurn();
+        ompSession.streamAssistantText("background job finished, working on it");
+        await vi.waitFor(() => {
+          expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
+        });
+        const activeTurnId = agentManager.getAgent(childId)?.activeTurnId;
+        const delivery = toolDeliveries.get(tool)!;
+        let ordinaryBeforeDispatch = 0;
+        const ordinary = delivery.enqueue({
+          recipientId: childId,
+          source: { kind: "agent-message", agentId: "parent" },
+          prompt: "ordinary follow-up",
+          beforeDispatch: () => {
+            ordinaryBeforeDispatch++;
+          },
+        });
+        const response = await invokeToolWithParsedInput(
+          tool,
+          {
+            agentId: childId,
+            prompt: `/${command} then summarize the logs`,
+          },
+          false,
+        );
+        flush();
+        await vi.waitFor(() => {
+          expect(ompSession.prompts).toEqual([
+            { message: "then summarize the logs", imageCount: 0, streamingBehavior },
+          ]);
+        });
+        expect(ordinaryBeforeDispatch).toBe(0);
+        expect(agentManager.getAgent(childId)?.activeTurnId).toBe(activeTurnId);
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          deliveryStatus: "queued",
+          status: "running",
+        });
+        expect(ompSession.abortRequested).toBe(false);
+        expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
+
+        ompSession.finishTurn();
+        await ordinary.dispatched;
+        expect(ordinaryBeforeDispatch).toBe(1);
+        expect(ompSession.prompts).toHaveLength(2);
+        expect(ompSession.prompts[1]!.message).toContain("ordinary follow-up");
+        ompSession.beginTurn();
+        ompSession.finishTurn();
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it.each(["before ack", "after ack"])(
+    "reports an idle follow-up rejected %s and notifies its parent",
+    async (order) => {
+      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+        await setupOmpChild();
+      try {
+        ompSession.promptAck = { requestId: "follow-up-rejected" };
+        const rejection = {
+          type: "prompt_result",
+          id: "follow-up-rejected",
+          agentInvoked: false,
+          status: "error",
+          sessionSettled: true,
+          error: { message: "Provider rejected the follow-up", retryable: false },
+        } as const;
+        const promptStarted = ompSession.nextPrompt();
+        const response = invokeToolWithParsedInput(tool, {
+          agentId: childId,
+          prompt: "/follow-up check the build",
+        });
+        await promptStarted;
+        if (order === "before ack") ompSession.emit(rejection);
+        await response;
+        if (order === "after ack") ompSession.emit(rejection);
+        await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("error"));
+        expect(agentManager.getAgent(childId)?.lastError).toContain(
+          "Provider rejected the follow-up",
+        );
+        await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+        expect(parentClient.sessions[0]!.prompts[0]).toContain(
+          `Agent ${childId} (OMP child) errored.`,
+        );
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it("lets an idle child start a run with the follow-up", async () => {
+    const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+      await setupOmpChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up check the build",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        deliveryStatus: "queued",
+        status: "idle",
+      });
+      await vi.waitFor(() => {
+        expect(ompSession.prompts).toEqual([
+          { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+
+      ompSession.beginTurn();
+      ompSession.streamAssistantText("Build is green");
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+      ompSession.finishTurn();
+      await expectOneFinishNotification(agentManager, parentClient, childId);
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
@@ -4543,7 +5142,7 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentMode).toHaveBeenCalledWith("agent-1", "full-access");
     expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
     expect(spies.agentManager.setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
-    expect(spies.agentManager.setAgentFeature).toHaveBeenCalledWith("agent-1", "fast_mode", true);
+    expect(spies.agentManager.setAgentOptions).toHaveBeenCalledWith("agent-1", { fast_mode: true });
     expect(spies.agentManager.updateAgentMetadata).toHaveBeenCalledWith("agent-1", {
       title: "Updated agent",
       labels: { role: "worker" },
@@ -4568,12 +5167,12 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentMode).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentThinkingOption).not.toHaveBeenCalled();
-    expect(spies.agentManager.setAgentFeature).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentOptions).not.toHaveBeenCalled();
   });
 
   it("does not update metadata when runtime settings fail", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.setAgentFeature.mockRejectedValue(new Error("unsupported feature"));
+    spies.agentManager.setAgentOptions.mockRejectedValue(new Error("unsupported feature"));
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -4891,7 +5490,7 @@ describe("create_schedule MCP tool", () => {
       config: {
         title: "Parent agent",
         model: "openai/gpt-5.5",
-        featureValues: { auto_accept: true },
+        providerOptions: { auto_accept: true },
       },
     } as ManagedAgent);
     const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
@@ -4919,7 +5518,7 @@ describe("create_schedule MCP tool", () => {
         cwd: REPO_CWD,
         modeId: "build",
         model: "openai/gpt-5.5",
-        featureValues: { auto_accept: true },
+        providerOptions: { auto_accept: true },
       },
     });
   });
@@ -5693,7 +6292,7 @@ describe("agent profile listing MCP tool", () => {
         model: "claude-test-model",
         modeId: "bypassPermissions",
         thinkingOptionId: "high",
-        featureValues: { fast_mode: true },
+        options: { fast_mode: true },
         notes: "Use for UI work: components, layout, design tokens. Not for backend.",
       },
     ];
@@ -5708,7 +6307,21 @@ describe("agent profile listing MCP tool", () => {
 
     const response = await tool.handler({});
 
-    expect(response.structuredContent).toEqual({ profiles });
+    // The config store holds profiles with `options` only; the tool reports them as stored.
+    expect(response.structuredContent).toEqual({
+      profiles: [
+        {
+          id: "ui-profile",
+          name: "UI work",
+          provider: "claude",
+          model: "claude-test-model",
+          modeId: "bypassPermissions",
+          thinkingOptionId: "high",
+          options: { fast_mode: true },
+          notes: "Use for UI work: components, layout, design tokens. Not for backend.",
+        },
+      ],
+    });
   });
 
   it("returns an empty array when no profiles are configured", async () => {
@@ -5760,14 +6373,10 @@ describe("provider MCP tools", () => {
 
   it("inspects provider features for a draft agent configuration", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.listDraftFeatures.mockResolvedValue([
-      {
-        type: "toggle",
-        id: "fast_mode",
-        label: "Fast mode",
-        value: false,
-      },
-    ]);
+    spies.agentManager.listDraftControls.mockResolvedValue({
+      controls: [{ type: "toggle", key: "fast_mode", label: "Fast mode" }],
+      options: { fast_mode: true },
+    });
     const provStub = createProviderSnapshotManagerStub();
     provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
     const codexEntry = buildSnapshotEntry({
@@ -5800,13 +6409,13 @@ describe("provider MCP tools", () => {
 
     const response = await tool.handler(input);
 
-    expect(spies.agentManager.listDraftFeatures).toHaveBeenCalledWith({
+    expect(spies.agentManager.listDraftControls).toHaveBeenCalledWith({
       provider: "codex",
       cwd: expect.stringContaining("repo"),
       modeId: "full-access",
       model: "gpt-5.4",
       thinkingOptionId: "high",
-      featureValues: { fast_mode: true },
+      providerOptions: { fast_mode: true },
     });
     expect(response.structuredContent).toEqual({
       provider: "codex",
@@ -5821,7 +6430,7 @@ describe("provider MCP tools", () => {
           type: "toggle",
           id: "fast_mode",
           label: "Fast mode",
-          value: false,
+          value: true,
         },
       ],
     });
@@ -5983,6 +6592,51 @@ describe("agent snapshot MCP serialization", () => {
     expect(structured.agents[0]).not.toHaveProperty("pendingPermissions");
   });
 
+  it.each(["loaded", "stored"])(
+    "reports background work for a %s agent from get_agent_status and list_agents",
+    async (source) => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      const agent = createManagedAgent({ id: "agent-with-shell", cwd: REPO_CWD });
+      if (source === "stored") {
+        const record = createStoredRecord({
+          id: agent.id,
+          cwd: agent.cwd,
+          archivedAt: null,
+          lastStatus: "idle",
+          updatedAt: new Date().toISOString(),
+        });
+        spies.agentStorage.get.mockResolvedValue(record);
+        spies.agentStorage.listActive.mockResolvedValue([record]);
+      } else {
+        spies.agentManager.getAgent.mockReturnValue(agent);
+        spies.agentManager.listAgents.mockReturnValue([agent]);
+      }
+      spies.agentManager.getAgentBackgroundWorkSummary.mockReturnValue({ count: 1 });
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        logger,
+      });
+      const status = await registeredTool(server, "get_agent_status").handler({
+        agentId: "agent-with-shell",
+      });
+      const list = await registeredTool(server, "list_agents").handler({});
+
+      expect(status.structuredContent).toEqual({
+        status: "idle",
+        snapshot: expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } }),
+      });
+      expect(list.structuredContent).toEqual({
+        agents: [expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } })],
+      });
+      expect(spies.agentManager.getAgentBackgroundWorkSummary).toHaveBeenCalledWith(
+        "agent-with-shell",
+      );
+    },
+  );
+
   it("returns archived agent snapshots from storage for get_agent_status", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const record = createStoredRecord({
@@ -6037,14 +6691,8 @@ describe("agent snapshot MCP serialization", () => {
             description: "Default coding mode",
           },
         ],
-        features: [
-          {
-            type: "toggle",
-            id: "web-search",
-            label: "Web search",
-            value: true,
-          },
-        ],
+        controls: [{ type: "toggle", key: "web-search", label: "Web search" }],
+        effectiveOptions: { "web-search": true },
         pendingPermissions: new Map(),
         persistence: {
           provider: "codex",
@@ -6160,7 +6808,7 @@ describe("agent snapshot MCP serialization", () => {
       createManagedAgent({ id: "in-child-cwd", cwd: "/tmp/workspace/packages/server" }),
       createManagedAgent({ id: "other-cwd", cwd: "/tmp/other" }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-in-cwd",
         cwd: "/tmp/workspace",
@@ -6219,7 +6867,7 @@ describe("agent snapshot MCP serialization", () => {
         updatedAt: new Date(old),
       }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({ id: "recent-archived", cwd: TARGET_CWD, archivedAt: recent }),
       createStoredRecord({ id: "old-archived", cwd: TARGET_CWD, archivedAt: old }),
       createStoredRecord({
@@ -6260,7 +6908,7 @@ describe("agent snapshot MCP serialization", () => {
         archivedAt: new Date(now - index * 60 * 1000).toISOString(),
       }),
     );
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       ...recentArchivedRecords,
       createStoredRecord({
         id: "old-archived",
@@ -6291,7 +6939,7 @@ describe("agent snapshot MCP serialization", () => {
   it("returns compact list items for stored archived agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-archived-compact",
         cwd: REPO_CWD,
@@ -6410,7 +7058,7 @@ describe("agent snapshot MCP serialization", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
     spies.agentManager.listAgents.mockReturnValue([createManagedAgent()]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-non-archived",
         updatedAt: now,
@@ -6598,5 +7246,164 @@ describe("agent snapshot MCP serialization", () => {
     expect(content).not.toContain("[User] u2");
     expect(content).not.toContain("second answer");
     expect(content).not.toContain("first answer");
+  });
+});
+
+it("rejects hidden agent-worktree placement and directs callers to workspace creation", async () => {
+  const { agentManager, agentStorage } = createTestDeps();
+  const server = await createAgentMcpServer({
+    agentManager,
+    agentStorage,
+    providerSnapshotManager: createOpenCodeManager().manager,
+    logger: createTestLogger(),
+  });
+  const tool = registeredTool(server, "create_agent");
+  await expect(
+    tool.handler({
+      provider: "codex/gpt-5.4",
+      title: "Worktree agent",
+      initialPrompt: "test",
+      relationship: { kind: "detached" },
+      workspace: {
+        kind: "create",
+        source: {
+          kind: "worktree",
+          cwd: process.cwd(),
+          target: { kind: "branch-off", worktreeSlug: "legacy" },
+        },
+      },
+    }),
+  ).rejects.toThrow("create_workspace");
+  await expect(
+    tool.handler({
+      provider: "codex/gpt-5.4",
+      title: "Worktree agent",
+      initialPrompt: "test",
+      cwd: process.cwd(),
+      worktreeName: "legacy",
+      baseBranch: "main",
+    }),
+  ).rejects.toThrow("create_workspace");
+});
+
+describe("local durable finish subscription MCP wiring", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+  it.each(["concurrent", "repeated"] as const)(
+    "reports %s permission requests and final completion",
+    async (sequence) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-local-permissions-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const parentClient = new HeldTurnAgentClient("claude", false);
+      const childClient = new HeldTurnAgentClient("codex", true);
+      const manager = new AgentManager({
+        clients: { claude: parentClient, codex: childClient },
+        registry: storage,
+        logger,
+      });
+      let mcp: Client | undefined;
+      try {
+        const parent = await manager.createAgent(
+          { provider: "claude", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        mcp = await connectInMemoryMcpClient(server);
+        await sendMcpAndAwaitDispatch(mcp, server, {
+          agentId: child.id,
+          prompt: "Permission work",
+        });
+        const prompts = () =>
+          parentClient.sessions[0]!.prompts.flatMap((prompt) => parseAgentMessages(prompt) ?? [])
+            .map((message) => message.text)
+            .join("\n");
+        const permissionIds = () =>
+          [...prompts().matchAll(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/g)].map(
+            (match) => JSON.parse(match[1]!).requestId,
+          );
+        const respond = async (requestId: string) => {
+          const result = await mcp!.callTool({
+            name: "respond_to_permission",
+            arguments: { agentId: child.id, requestId, response: { behavior: "allow" } },
+          });
+          expect(result.isError).not.toBe(true);
+        };
+        childClient.sessions[0]!.requestPermission("first");
+        if (sequence === "concurrent") {
+          childClient.sessions[0]!.requestPermission("second");
+          await vi.waitFor(() => expect(permissionIds()).toEqual(["first", "second"]));
+          await respond("first");
+          await respond("second");
+        } else {
+          await vi.waitFor(() => expect(permissionIds()).toEqual(["first"]));
+          await respond("first");
+          childClient.sessions[0]!.requestPermission("second");
+          await vi.waitFor(() => expect(permissionIds()).toEqual(["first", "second"]));
+          await respond("second");
+        }
+        expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
+        expect(prompts()).not.toContain("finished.");
+        childClient.sessions[0]!.finishTurn("Permission work complete");
+        await vi.waitFor(() => expect(prompts()).toContain("finished."));
+        expect(prompts()).toContain("Permission work complete");
+        expect(permissionIds()).toEqual(["first", "second"]);
+        await vi.waitFor(() => expect(serverSubscriptionRecords.get(server)!.size).toBe(0));
+      } finally {
+        await mcp?.close();
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
+  it("returns a tool error before sending a prompt when subscription storage cannot commit", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-registration-failure-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const subscriptions = createJsonFinishSubscriptionStore(workdir);
+    let mcp: Client | undefined;
+    try {
+      const parent = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      expect(await subscriptions.list()).toEqual([]);
+      await mkdir(join(workdir, "finish-subscriptions.json"));
+      const server = await createAgentMcpServer(
+        {
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        },
+        subscriptions,
+      );
+      mcp = await connectInMemoryMcpClient(server);
+      const result = await mcp.callTool({
+        name: "send_agent_prompt",
+        arguments: { agentId: child.id, prompt: "Must not dispatch" },
+      });
+      expect(result.isError).toBe(true);
+      expect(client.sessions[1]!.prompts).toEqual([]);
+      expect(await subscriptions.list()).toEqual([]);
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
   });
 });

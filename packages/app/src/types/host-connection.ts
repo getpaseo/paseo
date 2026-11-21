@@ -49,9 +49,22 @@ export interface RelayHostConnection {
   relayEndpoint: string;
   useTls?: boolean;
   daemonPublicKeyB64: string;
+  /**
+   * Pinned once this daemon identity has negotiated protected endpoint
+   * security, or when its pairing offer required it. Never cleared by a
+   * connection failure; a new daemon identity is a different connection.
+   */
+  minimumSecurityMode?: "protected";
+}
+
+export interface RoutedHostConnection {
+  id: string;
+  type: "routed";
+  originServerId: string;
 }
 
 export type HostConnection =
+  | RoutedHostConnection
   | DirectTcpHostConnection
   | DirectSocketHostConnection
   | DirectPipeHostConnection
@@ -128,6 +141,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return false;
   }
 
+  if (left.type === "routed" && right.type === "routed")
+    return left.originServerId === right.originServerId;
   if (left.type === "directTcp" && right.type === "directTcp") {
     return left.endpoint === right.endpoint && (left.useTls ?? false) === (right.useTls ?? false);
   }
@@ -183,7 +198,69 @@ function upsertHostConnectionById(
     replaced = true;
   }
   if (!replaced) next.push(connection);
-  return next;
+  // A pin is never lost: the replaced record counts as much as the incoming one.
+  return shareRelaySecurityPin(next, [...connections, connection]);
+}
+
+/**
+ * The security pin belongs to the daemon identity, not to one relay address.
+ * Once any relay route to a key is pinned, by a strict offer or a learned
+ * handshake, every route to that key is pinned.
+ */
+function shareRelaySecurityPin(
+  connections: HostConnection[],
+  pinSources: HostConnection[],
+): HostConnection[] {
+  const pinnedKeys = new Set<string>();
+  for (const connection of pinSources) {
+    if (connection.type === "relay" && connection.minimumSecurityMode === "protected") {
+      pinnedKeys.add(connection.daemonPublicKeyB64);
+    }
+  }
+  return connections.map((connection) =>
+    connection.type === "relay" &&
+    connection.minimumSecurityMode !== "protected" &&
+    pinnedKeys.has(connection.daemonPublicKeyB64)
+      ? { ...connection, minimumSecurityMode: "protected" as const }
+      : connection,
+  );
+}
+
+function relaySecurityPinEquals(left: HostConnection, right: HostConnection): boolean {
+  const pinOf = (connection: HostConnection) =>
+    connection.type === "relay" ? connection.minimumSecurityMode : undefined;
+  return pinOf(left) === pinOf(right);
+}
+
+/**
+ * Records that the relay daemon identity `daemonPublicKeyB64` negotiated
+ * protected endpoint security. Every relay route to that identity is pinned.
+ * Returns the same array when nothing changes.
+ */
+export function pinRelayProtectedSecurityInProfiles(input: {
+  profiles: HostProfile[];
+  serverId: string;
+  daemonPublicKeyB64: string;
+  now?: string;
+}): HostProfile[] {
+  const now = input.now ?? new Date().toISOString();
+  let changed = false;
+  const next = input.profiles.map((host) => {
+    if (host.serverId !== input.serverId) return host;
+    const connections = host.connections.map((connection) => {
+      if (
+        connection.type !== "relay" ||
+        connection.daemonPublicKeyB64 !== input.daemonPublicKeyB64 ||
+        connection.minimumSecurityMode === "protected"
+      ) {
+        return connection;
+      }
+      changed = true;
+      return { ...connection, minimumSecurityMode: "protected" as const };
+    });
+    return changed ? { ...host, connections, updatedAt: now } : host;
+  });
+  return changed ? next : input.profiles;
 }
 
 function hasProfileChanged(input: {
@@ -209,7 +286,10 @@ function hasProfileChanged(input: {
     connections.length !== previous.connections.length ||
     connections.some((candidate, index) => {
       const old = previous.connections[index];
-      return !old || !hostConnectionEquals(candidate, old);
+      // Identity equality decides profile matching; the pin is policy on top of it.
+      return (
+        !old || !hostConnectionEquals(candidate, old) || !relaySecurityPinEquals(candidate, old)
+      );
     })
   );
 }
@@ -236,9 +316,11 @@ export function upsertHostConnectionInProfiles(input: {
   const matchingIndexes = existing.reduce<number[]>((matches, daemon, index) => {
     if (
       daemon.serverId === serverId ||
-      daemon.connections.some((existingConnection) =>
-        hostConnectionEquals(existingConnection, normalizedConnection),
-      )
+      // A routed candidate names its origin; its destination belongs to the host profile.
+      (normalizedConnection.type !== "routed" &&
+        daemon.connections.some((existingConnection) =>
+          hostConnectionEquals(existingConnection, normalizedConnection),
+        ))
     ) {
       matches.push(index);
     }
@@ -366,6 +448,7 @@ export function relayConnectionFromOffer(offer: ConnectionOffer): RelayHostConne
     relayEndpoint,
     useTls,
     daemonPublicKeyB64: offer.daemonPublicKeyB64.trim(),
+    ...(offer.minimumSecurityMode ? { minimumSecurityMode: offer.minimumSecurityMode } : {}),
   };
 }
 
@@ -399,6 +482,7 @@ export function createRemoteSshHostConnection(input: {
 }
 
 const StoredHostConnectionSchema = z.discriminatedUnion("type", [
+  z.strictObject({ id: z.string(), type: z.literal("routed"), originServerId: z.string().min(1) }),
   z.strictObject({
     id: z.string().optional(),
     type: z.literal("directTcp"),
@@ -429,6 +513,7 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     relayEndpoint: z.string(),
     useTls: z.boolean().optional(),
     daemonPublicKeyB64: z.string(),
+    minimumSecurityMode: z.literal("protected").optional(),
   }),
 ]);
 const StoredHostProfileSchema = z.strictObject({
@@ -437,15 +522,16 @@ const StoredHostProfileSchema = z.strictObject({
   label: z.string().optional(),
   appearance: HostAppearanceSchema.optional(),
   lifecycle: z.strictObject({}).optional(),
-  connections: z.array(StoredHostConnectionSchema).min(1),
+  // Read one by one, so a connection kind another build wrote skips only that connection.
+  connections: z.array(z.unknown()).min(1),
   preferredConnectionId: z.string().nullable().optional(),
   createdAt: z.string().datetime({ offset: true }).optional(),
   updatedAt: z.string().datetime({ offset: true }).optional(),
 });
-export const StoredHostRegistrySchema = z.array(StoredHostProfileSchema);
 type StoredHostConnection = z.infer<typeof StoredHostConnectionSchema>;
 
 function normalizeStoredConnection(connection: StoredHostConnection): HostConnection | null {
+  if (connection.type === "routed") return connection;
   if (connection.type === "directTcp") {
     try {
       const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(connection.endpoint));
@@ -491,6 +577,9 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
         relayEndpoint,
         ...(useTls !== undefined ? { useTls } : {}),
         daemonPublicKeyB64,
+        ...(connection.minimumSecurityMode
+          ? { minimumSecurityMode: connection.minimumSecurityMode }
+          : {}),
       };
     } catch {
       return null;
@@ -501,20 +590,37 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
 }
 
 export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
+  return readStoredHost(entry)?.profile ?? null;
+}
+
+interface StoredHostRead {
+  profile: HostProfile;
+  unreadableConnections: unknown[];
+  movedConnectionPassword: boolean;
+}
+
+function readStoredHost(entry: unknown): StoredHostRead | null {
   const result = StoredHostProfileSchema.safeParse(entry);
   if (!result.success) {
     return null;
   }
   const record = result.data;
   const serverId = record.serverId;
+  const storedConnections: StoredHostConnection[] = [];
+  const unreadableConnections: unknown[] = [];
+  for (const stored of record.connections) {
+    const parsed = StoredHostConnectionSchema.safeParse(stored);
+    if (parsed.success) storedConnections.push(parsed.data);
+    else unreadableConnections.push(stored);
+  }
   // COMPAT(connectionPassword): added in v0.9.1, remove after 2027-03-24 once stored direct passwords have migrated.
-  const legacyPassword = record.connections.find(
+  const legacyPassword = storedConnections.find(
     (connection) => connection.type === "directTcp" && connection.password,
   );
   const password =
     record.password ?? (legacyPassword?.type === "directTcp" ? legacyPassword.password : undefined);
 
-  const connections = record.connections
+  const connections = storedConnections
     .map((connection) => normalizeStoredConnection(connection))
     .filter((connection): connection is HostConnection => connection !== null);
   if (connections.length === 0) {
@@ -531,16 +637,88 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
       : (connections[0]?.id ?? null);
 
   return {
-    serverId,
-    ...(password ? { password } : {}),
-    label,
-    appearance: record.appearance ?? defaultHostAppearance(),
-    lifecycle: defaultLifecycle(),
-    connections,
-    preferredConnectionId,
-    createdAt: record.createdAt ?? now,
-    updatedAt: record.updatedAt ?? now,
+    profile: {
+      serverId,
+      ...(password ? { password } : {}),
+      label,
+      appearance: record.appearance ?? defaultHostAppearance(),
+      lifecycle: defaultLifecycle(),
+      connections,
+      preferredConnectionId,
+      createdAt: record.createdAt ?? now,
+      updatedAt: record.updatedAt ?? now,
+    },
+    unreadableConnections,
+    movedConnectionPassword: legacyPassword !== undefined,
   };
+}
+
+/**
+ * Stored registry entries this build can't read, such as a connection kind added by a newer
+ * build. `writeHostRegistry` writes them back so that build still finds them.
+ */
+export interface UnreadableHostEntries {
+  hosts: unknown[];
+  connectionsByServerId: Map<string, unknown[]>;
+}
+
+export function readHostRegistry(stored: unknown[]): {
+  hosts: HostProfile[];
+  unreadable: UnreadableHostEntries;
+  // COMPAT(connectionPassword): added in v0.9.1, remove after 2027-03-24 with stored-password migration.
+  movedConnectionPassword: boolean;
+} {
+  const hosts: HostProfile[] = [];
+  const unreadable: UnreadableHostEntries = { hosts: [], connectionsByServerId: new Map() };
+  let movedConnectionPassword = false;
+  for (const entry of stored) {
+    const read = readStoredHost(entry);
+    if (!read) {
+      unreadable.hosts.push(entry);
+      continue;
+    }
+    hosts.push(read.profile);
+    if (read.unreadableConnections.length > 0) {
+      unreadable.connectionsByServerId.set(read.profile.serverId, read.unreadableConnections);
+    }
+    movedConnectionPassword ||= read.movedConnectionPassword;
+  }
+  return { hosts, unreadable, movedConnectionPassword };
+}
+
+export function writeHostRegistry(
+  hosts: HostProfile[],
+  unreadable: UnreadableHostEntries,
+): unknown[] {
+  const savedServerIds = new Set(hosts.map((host) => host.serverId));
+  const written: unknown[] = hosts.map((host) => {
+    const kept = unreadable.connectionsByServerId.get(host.serverId);
+    return kept ? { ...host, connections: [...host.connections, ...kept] } : host;
+  });
+  for (const entry of unreadable.hosts) {
+    // A host this build saved again replaces the entry it couldn't read.
+    const serverId = readStoredServerId(entry);
+    if (serverId === null || !savedServerIds.has(serverId)) written.push(entry);
+  }
+  return written;
+}
+
+/** Drops the entries this build couldn't read for a host you removed. */
+export function forgetUnreadableHost(
+  unreadable: UnreadableHostEntries,
+  serverId: string,
+): UnreadableHostEntries {
+  const connectionsByServerId = new Map(unreadable.connectionsByServerId);
+  connectionsByServerId.delete(serverId);
+  return {
+    hosts: unreadable.hosts.filter((entry) => readStoredServerId(entry) !== serverId),
+    connectionsByServerId,
+  };
+}
+
+function readStoredServerId(entry: unknown): string | null {
+  if (typeof entry !== "object" || entry === null || !("serverId" in entry)) return null;
+  return typeof entry.serverId === "string" ? entry.serverId.trim() : null;
 }
 
 export function hostHasConnection(host: HostProfile, connection: HostConnection): boolean {

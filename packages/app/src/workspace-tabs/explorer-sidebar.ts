@@ -1,6 +1,4 @@
-import { supportsDesktopPaneSplits } from "@/constants/layout";
 import { selectIsCompactFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
-import type { ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import {
   selectIsExplorerSidebarVisible,
   useWorkspaceLayoutStore,
@@ -8,7 +6,7 @@ import {
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export type ExplorerSidebarView = "changes" | "files" | "pr";
-export type ExplorerSidebarPresentation = "overlay" | "dock" | "pane";
+export type ExplorerSidebarPresentation = "overlay" | "dock";
 
 const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
   changes: { kind: "changes_tree" },
@@ -19,48 +17,24 @@ const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
 export interface ExplorerSidebarQuery {
   isCompact: boolean;
   workspaceKey: string | null;
-  supportsPaneSplits?: boolean;
-}
-
-export interface ExplorerSidebarInput extends ExplorerSidebarQuery {
-  checkout: ExplorerCheckoutContext | null;
 }
 
 export function resolveExplorerSidebarPresentation(
-  input: Pick<ExplorerSidebarQuery, "isCompact" | "supportsPaneSplits">,
+  input: Pick<ExplorerSidebarQuery, "isCompact">,
 ): ExplorerSidebarPresentation {
   if (input.isCompact) {
     return "overlay";
   }
-  return (input.supportsPaneSplits ?? supportsDesktopPaneSplits()) ? "pane" : "dock";
-}
-
-export function usesCompactExplorerSidebar(
-  input: Pick<ExplorerSidebarQuery, "isCompact" | "supportsPaneSplits">,
-): boolean {
-  return resolveExplorerSidebarPresentation(input) !== "pane";
-}
-
-function canUseExplorerSidebar(
-  input: Pick<ExplorerSidebarQuery, "isCompact" | "supportsPaneSplits">,
-): boolean {
-  return resolveExplorerSidebarPresentation(input) === "pane";
+  return "dock";
 }
 
 /** Reveals the Explorer sidebar and selects one of its navigation trees. */
 export function openExplorerSidebarView(
-  input: ExplorerSidebarInput & { view: ExplorerSidebarView },
+  input: ExplorerSidebarQuery & { view: ExplorerSidebarView },
 ): void {
-  if (usesCompactExplorerSidebar(input)) {
-    if (!input.checkout) return;
-    const panel = usePanelStore.getState();
-    panel.setExplorerTabForCheckout({ ...input.checkout, tab: input.view });
-    panel.openCompactFileExplorer(input.checkout);
-    return;
-  }
   if (!input.workspaceKey) return;
   const store = useWorkspaceLayoutStore.getState();
-  const paneId = store.showExplorerSidebar(input.workspaceKey);
+  const paneId = showExplorerSidebar(input);
   store.openTab({
     workspaceKey: input.workspaceKey,
     target: VIEW_TARGETS[input.view],
@@ -69,29 +43,33 @@ export function openExplorerSidebarView(
   });
 }
 
-export function showExplorerSidebar(input: ExplorerSidebarInput): void {
-  if (usesCompactExplorerSidebar(input)) {
-    if (input.checkout) usePanelStore.getState().openCompactFileExplorer(input.checkout);
-    return;
+export function showExplorerSidebar(input: ExplorerSidebarQuery): string | null {
+  if (input.isCompact) {
+    usePanelStore.getState().showMobileFileExplorer();
   }
-  if (input.workspaceKey && canUseExplorerSidebar(input)) {
-    useWorkspaceLayoutStore.getState().showExplorerSidebar(input.workspaceKey);
+  if (input.workspaceKey) {
+    const store = useWorkspaceLayoutStore.getState();
+    return input.isCompact
+      ? store.ensureExplorerSidebar(input.workspaceKey)
+      : store.showExplorerSidebar(input.workspaceKey);
   }
+  return null;
 }
 
-export function hideExplorerSidebar(input: ExplorerSidebarInput): void {
-  if (usesCompactExplorerSidebar(input)) {
+export function hideExplorerSidebar(input: ExplorerSidebarQuery): void {
+  if (input.isCompact) {
     usePanelStore.getState().showMobileAgent();
     return;
   }
-  if (input.workspaceKey && canUseExplorerSidebar(input)) {
+  if (input.workspaceKey) {
     useWorkspaceLayoutStore.getState().hideExplorerSidebar(input.workspaceKey);
   }
 }
 
-export function toggleExplorerSidebar(input: ExplorerSidebarInput): void {
-  if (usesCompactExplorerSidebar(input)) {
-    if (input.checkout) usePanelStore.getState().toggleCompactFileExplorer(input.checkout);
+export function toggleExplorerSidebar(input: ExplorerSidebarQuery): void {
+  if (input.isCompact) {
+    if (isExplorerSidebarOpen(input)) hideExplorerSidebar(input);
+    else showExplorerSidebar(input);
     return;
   }
   if (!input.workspaceKey) return;
@@ -105,20 +83,17 @@ export function toggleExplorerSidebar(input: ExplorerSidebarInput): void {
 export function useIsExplorerSidebarOpen(input: ExplorerSidebarQuery): boolean {
   const compactOpen = usePanelStore(selectIsCompactFileExplorerOpen);
   const paneOpen = useWorkspaceLayoutStore((state) =>
-    input.workspaceKey && canUseExplorerSidebar(input)
-      ? selectIsExplorerSidebarVisible(state, input.workspaceKey)
-      : false,
+    input.workspaceKey ? selectIsExplorerSidebarVisible(state, input.workspaceKey) : false,
   );
-  return usesCompactExplorerSidebar(input) ? compactOpen : paneOpen;
+  return input.isCompact ? compactOpen : paneOpen;
 }
 
 export function isExplorerSidebarOpen(input: ExplorerSidebarQuery): boolean {
-  if (usesCompactExplorerSidebar(input)) {
+  if (input.isCompact) {
     return selectIsCompactFileExplorerOpen(usePanelStore.getState());
   }
   return Boolean(
     input.workspaceKey &&
-    canUseExplorerSidebar(input) &&
     selectIsExplorerSidebarVisible(useWorkspaceLayoutStore.getState(), input.workspaceKey),
   );
 }

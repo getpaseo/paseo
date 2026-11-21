@@ -19,9 +19,8 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { ComboboxItem } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
-import { createControlGeometry, type FieldControlSize } from "@/components/ui/control-geometry";
+import { createControlGeometry, type ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
 import { useProviderIcon } from "@/components/provider-icons";
@@ -239,7 +238,7 @@ function OpenScheduleFormSheet({
   mode,
   schedule,
 }: ScheduleFormSheetProps & { onDismiss: () => void }): ReactElement {
-  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const controlSize: ControlSize = "md";
   const { projects } = useProjects();
   const hostProfiles = useHosts();
   const hosts = useStoreWithEqualityFn(
@@ -460,7 +459,7 @@ interface ScheduleFormFieldsProps {
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
-  controlSize: FieldControlSize;
+  controlSize: ControlSize;
   cadenceError: string | null;
   mutationServerId: string;
 }
@@ -557,7 +556,7 @@ interface ScheduleTargetFieldsProps {
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
-  controlSize: FieldControlSize;
+  controlSize: ControlSize;
   mutationServerId: string;
 }
 
@@ -819,27 +818,29 @@ function ScheduleIsolationField({
 }: {
   model: ScheduleFormModel;
   state: ScheduleFormState;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const options = useMemo<SelectFieldOption<"local" | "worktree">[]>(
     () => [
       {
         id: "local",
         value: "local",
-        label: "Local",
+        label: "Project directory",
         testID: "schedule-isolation-local",
       },
       {
         id: "worktree",
         value: "worktree",
-        label: "Worktree",
+        label: "New worktree",
         testID: "schedule-isolation-worktree",
       },
     ],
     [],
   );
   const selectedDisplay = useMemo<SelectFieldDisplay>(
-    () => ({ label: state.effectiveIsolation === "worktree" ? "Worktree" : "Local" }),
+    () => ({
+      label: state.effectiveIsolation === "worktree" ? "New worktree" : "Project directory",
+    }),
     [state.effectiveIsolation],
   );
   const triggerLeading = useMemo(
@@ -892,7 +893,7 @@ function ScheduleAgentTargetField({
   size,
 }: {
   label: string | null;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const fieldStyle = useMemo(
     () => [styles.readonlyField, size === "sm" ? styles.readonlyFieldSm : styles.readonlyFieldMd],

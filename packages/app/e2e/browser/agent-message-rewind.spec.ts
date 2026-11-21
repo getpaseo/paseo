@@ -2,9 +2,11 @@ import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { expectAgentIdle, expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import {
+  blurComposerInput,
   cancelAgent,
   fillComposerDraft,
   expectComposerDraft,
+  expectComposerNotFocused,
   expectComposerVisible,
   submitMessage,
 } from "../support/helpers/composer";
@@ -21,8 +23,10 @@ async function completeSubmittedTurn(
   const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
   await expect(userMessage).toBeVisible();
 
+  await expectAgentReadyToInterrupt(page);
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");
+  await expectAgentIdle(page);
   await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
   await expect(userMessage).toHaveAttribute("aria-busy", "false");
   return userMessage;
@@ -69,6 +73,7 @@ test.describe("Agent message rewind", () => {
         minDistanceFromBottom: 300,
       });
       await fillComposerDraft(page, preservedDraft);
+      await blurComposerInput(page);
       rewindCompletion.clearTimelineStreamCount();
 
       const rewind = rewindConversation(page, userMessage, rewoundPrompt);
@@ -82,6 +87,7 @@ test.describe("Agent message rewind", () => {
         0,
       );
       await expectComposerDraft(page, preservedDraft);
+      await expectComposerNotFocused(page);
       await expectNearBottom(page);
     } finally {
       await agent.cleanup();

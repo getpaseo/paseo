@@ -5,6 +5,7 @@ import {
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
+import { waitForTimelineGeometryToSettle } from "../support/helpers/timeline-pagination";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   expectReconnectingToastGone,
@@ -19,6 +20,10 @@ import {
 } from "../support/helpers/composer";
 
 import { openCommandCenter, closeCommandCenter } from "../support/helpers/command-center";
+import {
+  expectPromptsDrawnByPlugin,
+  withPromptTimelinePlugin,
+} from "../support/helpers/plugin-timeline";
 
 const MAC_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -33,9 +38,10 @@ const STREAMED_RESPONSE = [
 const RESPONSE =
   'İ😀hello **world**; hello *world*.\n\n[hello &amp; world](https://example.com/hidden-destination)\n\n```ts\nconst a = "a.b";\n```\n\n- first cell\n- second cell';
 
-// One message far taller than the viewport, so its first and last paragraph rows are
-// never in the virtualizer's window at the same time.
+// One message taller than the viewport, exercising navigation between distant
+// matches inside the same rendered row.
 const PARAGRAPH_PADDING = Array.from({ length: 40 }, (_, index) => `padding${index}`).join(" ");
+const VIRTUALIZED_TURN_COUNT = 60;
 const TALL_RESPONSE = Array.from({ length: 30 }, (_, index) => {
   if (index === 0) return `Opening paragraph with span-needle. ${PARAGRAPH_PADDING}`;
   if (index === 29) return `Closing paragraph with span-needle. ${PARAGRAPH_PADDING}`;
@@ -119,6 +125,49 @@ async function closeFind(page: Page) {
     .toEqual([]);
 }
 
+async function expectChatKeyboardScroll(page: Page, key: "PageUp" | "PageDown") {
+  // The scrolling surface has no accessible name; use its existing test id.
+  const viewport = page.getByTestId("agent-chat-scroll");
+  await waitForTimelineGeometryToSettle(page);
+  const before = await viewport.evaluate((element) => element.scrollTop);
+  await page.keyboard.press(key);
+  const direction = key === "PageUp" ? -1 : 1;
+  await expect
+    .poll(
+      async () => direction * ((await viewport.evaluate((element) => element.scrollTop)) - before),
+    )
+    .toBeGreaterThan(100);
+}
+
+test("keeps keyboard scrolling the chat after closing Find", async ({ page }, testInfo) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-scroll-focus-",
+    title: "Chat Find keyboard scrolling",
+    initialPrompt: "Render the response",
+    featureValues: { mockAssistantResponse: TALL_RESPONSE },
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await openAgentRoute(page, agent);
+    await expect(page.getByTestId("assistant-message").first()).toBeVisible();
+    await searchChat(page, "Closing paragraph");
+    await expectHighlight(page, "Closing paragraph");
+    await waitForTimelineGeometryToSettle(page);
+    await closeFind(page);
+    await expectChatKeyboardScroll(page, "PageUp");
+    await page.screenshot({ path: testInfo.outputPath("chat-after-find-page-up.png") });
+    await expectChatKeyboardScroll(page, "PageDown");
+    await searchChat(page, "Closing paragraph");
+    await expectHighlight(page, "Closing paragraph");
+    await waitForTimelineGeometryToSettle(page);
+    await page.getByRole("button", { name: "Close Find", exact: true }).click();
+    await expect(query(page)).toHaveCount(0);
+    await expectChatKeyboardScroll(page, "PageUp");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("loads older history through prompt navigation and finds repeated rendered Markdown", async ({
   page,
 }, testInfo) => {
@@ -173,7 +222,7 @@ async function highlightedMessage(page: Page) {
     const range = entry && Array.from(entry[1])[0];
     if (!(range instanceof Range)) return null;
     const message = range.startContainer.parentElement?.closest<HTMLElement>(
-      '[data-testid="user-message"], [data-testid="assistant-message"]',
+      '[data-testid="user-message"], [data-testid="plugin-prompt"], [data-testid="assistant-message"]',
     );
     return message?.dataset.testid ?? null;
   });
@@ -213,6 +262,34 @@ test("counts and steps through every match in the chat, not just the selected me
     await expectHighlight(page, "scope-needle");
     await expectHighlightedMessage(page, "assistant-message");
     await closeFind(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("finds text in a prompt a timeline plugin draws", async ({ page }, testInfo) => {
+  testInfo.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-plugin-prompt-",
+    title: "Chat Find plugin prompt",
+    initialPrompt: ACROSS_PROMPT,
+    featureValues: { mockAssistantResponse: ACROSS_RESPONSE },
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await withPromptTimelinePlugin(async () => {
+      await openAgentRoute(page, agent);
+      await expectPromptsDrawnByPlugin(page);
+      await openChatFind(page);
+      await query(page).fill("scope-needle");
+      await expect(status(page)).toHaveText("1 of 3");
+      await expectHighlight(page, "scope-needle");
+      await expectHighlightedMessage(page, "plugin-prompt");
+      await page.screenshot({ path: testInfo.outputPath("chat-find-plugin-prompt.png") });
+      await expectNextMatch(page, "2 of 3", "scope-needle");
+      await expectHighlightedMessage(page, "assistant-message");
+      await closeFind(page);
+    });
   } finally {
     await agent.cleanup();
   }
@@ -322,11 +399,11 @@ test("finds a hit in a message that streamed while the chat was open", async ({ 
   const chat = await openChatStreamingMultiBlockReply(page);
   try {
     await openChatFind(page);
-    // The only hit is in the first paragraph, which is no longer the row that grows.
+    // The first-paragraph hit must remain searchable while the same message grows.
     await expectFindStatus(page, "alpha-needle", "1 of 1");
     await chat.replyFinished();
     await expectFindStatus(page, "beta-needle", "1 of 1");
-    // One message, two Markdown blocks, one count across both.
+    // One message, two paragraphs, one count across both.
     await expectFindStatus(page, "pair-needle", "1 of 2");
     await expectNextMatch(page, "2 of 2", "pair-needle");
     await closeFind(page);
@@ -346,12 +423,14 @@ async function openChatWithVirtualizedTallMessage(page: Page): Promise<MockAgent
     featureValues: { mockAssistantResponse: TALL_RESPONSE },
   });
   try {
-    for (let index = 0; index < 6; index++) {
+    for (let index = 0; index < VIRTUALIZED_TURN_COUNT; index++) {
       await agent.client.sendAgentMessage(agent.agentId, `Prompt number ${index}`);
       await agent.client.waitForFinish(agent.agentId, 15_000);
     }
     await openAgentRoute(page, agent);
-    await expect(page.getByText("Prompt number 5", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(`Prompt number ${VIRTUALIZED_TURN_COUNT - 1}`, { exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
     return agent;
   } catch (error) {
@@ -360,9 +439,8 @@ async function openChatWithVirtualizedTallMessage(page: Page): Promise<MockAgent
   }
 }
 
-// Every block row of the selected message must be mounted for Find to see it, whatever
-// the virtualizer's scroll window holds. Otherwise a hit in a far paragraph is missing
-// from the count and Next walks off to the next message instead.
+// Find must count distant paragraphs in one source message as well as messages
+// outside the mounted history window. Next must not skip a same-message hit.
 test("counts every occurrence of a virtualized message and steps between them", async ({
   page,
 }) => {
@@ -370,9 +448,9 @@ test("counts every occurrence of a virtualized message and steps between them", 
   const chat = await openChatWithVirtualizedTallMessage(page);
   try {
     await openChatFind(page);
-    await expectFindStatus(page, "span-needle", "1 of 12");
+    await expectFindStatus(page, "span-needle", `1 of ${VIRTUALIZED_TURN_COUNT * 2}`);
     await expectHighlight(page, "span-needle");
-    await expectNextMatch(page, "2 of 12", "span-needle");
+    await expectNextMatch(page, `2 of ${VIRTUALIZED_TURN_COUNT * 2}`, "span-needle");
     await closeFind(page);
   } finally {
     await chat.cleanup();

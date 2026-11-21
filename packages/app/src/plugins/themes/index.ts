@@ -1,6 +1,8 @@
+import type { PluginMessage } from "@getpaseo/plugin/client";
+import { isPluginMessage } from "@getpaseo/plugin/client/host";
 import { useMemo } from "react";
 import { z } from "zod";
-import type { PluginThemeContribution } from "@getpaseo/plugin";
+import type { PluginThemeContribution } from "../types";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import {
   buildDarkSemanticColors,
@@ -11,6 +13,12 @@ import {
   lightTheme,
   type Theme,
 } from "@/styles/theme";
+import {
+  deriveNeutralFills,
+  deriveTertiaryText,
+  deriveSurfaceStates,
+  deriveSidebarStateText,
+} from "@/styles/derive-colors";
 import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
@@ -24,7 +32,7 @@ const hexColorSchema = z
 
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
-  name: z.string().trim().min(1).max(60),
+  name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
   appearance: z.enum(["light", "dark"]),
   colors: z.strictObject({
     background: hexColorSchema,
@@ -35,6 +43,12 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
     accent: hexColorSchema.optional(),
     mutedForeground: hexColorSchema,
     ring: hexColorSchema,
+    sidebar: hexColorSchema.optional(),
+    sidebarHover: hexColorSchema.optional(),
+    sidebarSelected: hexColorSchema.optional(),
+    surface3: hexColorSchema.optional(),
+    surface4: hexColorSchema.optional(),
+    foregroundExtraMuted: hexColorSchema.optional(),
   }),
 });
 
@@ -49,6 +63,7 @@ export interface PluginThemeOption {
 interface PluginThemeTarget {
   serverId: string;
   contribution: PluginThemeContribution;
+  plugin: InstalledPlugin;
 }
 
 export function parsePluginThemeContribution(value: unknown): PluginThemeContribution {
@@ -58,18 +73,31 @@ export function parsePluginThemeContribution(value: unknown): PluginThemeContrib
 function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
+  const fills = deriveNeutralFills(colors.background, colors.foreground, "dark");
+  const sidebar = colors.sidebar ?? colors.background;
+  const states = deriveSurfaceStates(sidebar, colors.foreground, "dark");
+  const hover = colors.sidebarHover ?? states.hover;
+  const selected = colors.sidebarSelected ?? states.selected;
+  const tertiary =
+    colors.foregroundExtraMuted ?? deriveTertiaryText(colors.mutedForeground, colors.background);
   return buildDarkTheme(
     buildDarkSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.background,
+      surface3: colors.surface3 ?? fills.surface3,
+      surface4: colors.surface4 ?? fills.surface4,
+      surfaceSidebar: sidebar,
+      surfaceSidebarHover: hover,
+      surfaceSidebarSelected: selected,
+      foregroundSidebarHover:
+        colors.foregroundExtraMuted ?? deriveSidebarStateText(tertiary, hover, colors.foreground),
+      foregroundSidebarSelected:
+        colors.foregroundExtraMuted ??
+        deriveSidebarStateText(tertiary, selected, colors.foreground),
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
+      foregroundExtraMuted: tertiary,
       border: colors.border,
       borderAccent: colors.border,
       accent,
@@ -86,18 +114,31 @@ function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
 function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
+  const fills = deriveNeutralFills(colors.background, colors.foreground, "light");
+  const sidebar = colors.sidebar ?? colors.control;
+  const states = deriveSurfaceStates(sidebar, colors.foreground, "light");
+  const hover = colors.sidebarHover ?? states.hover;
+  const selected = colors.sidebarSelected ?? states.selected;
+  const tertiary =
+    colors.foregroundExtraMuted ?? deriveTertiaryText(colors.mutedForeground, colors.background);
   return buildLightTheme(
     buildLightSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.control,
+      surface3: colors.surface3 ?? fills.surface3,
+      surface4: colors.surface4 ?? fills.surface4,
+      surfaceSidebar: sidebar,
+      surfaceSidebarHover: hover,
+      surfaceSidebarSelected: selected,
+      foregroundSidebarHover:
+        colors.foregroundExtraMuted ?? deriveSidebarStateText(tertiary, hover, colors.foreground),
+      foregroundSidebarSelected:
+        colors.foregroundExtraMuted ??
+        deriveSidebarStateText(tertiary, selected, colors.foreground),
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
+      foregroundExtraMuted: tertiary,
       border: colors.border,
       borderAccent: colors.border,
       accent,
@@ -113,7 +154,7 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   );
 }
 
-function buildPluginTheme(contribution: PluginThemeContribution): Theme {
+export function buildPluginTheme(contribution: PluginThemeContribution): Theme {
   return contribution.appearance === "light"
     ? buildLightPluginTheme(contribution)
     : buildDarkPluginTheme(contribution);
@@ -133,7 +174,7 @@ export function collectPluginThemes(
     if (!supportedHosts.has(plugin.serverId)) continue;
     for (const contribution of plugin.themes) {
       const id = `${plugin.id}/theme/${contribution.id}`;
-      const target = { serverId: plugin.serverId, contribution };
+      const target = { serverId: plugin.serverId, contribution, plugin };
       const targets = targetsById.get(id);
       if (targets) targets.push(target);
       else targetsById.set(id, [target]);
@@ -145,7 +186,7 @@ export function collectPluginThemes(
     return {
       id,
       serverId: target.serverId,
-      name: target.contribution.name,
+      name: target.plugin.i18n.resolve(target.contribution.name, target.plugin.locale),
       swatch: target.contribution.colors.background,
       theme: buildPluginTheme(target.contribution),
     };

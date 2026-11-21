@@ -91,22 +91,36 @@ export async function expectWorkspaceHeader(
   });
 }
 
+export async function setTabVisibility(
+  page: Page,
+  visibility: DocumentVisibilityState,
+): Promise<void> {
+  await page.evaluate((state) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => state === "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visibility);
+}
+
 export async function expectReconnectingToastVisible(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting to host" });
+  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting" });
   await expect(toast).toBeVisible({
     timeout: options?.timeout ?? 30_000,
   });
-  await expect(toast).toHaveText("Reconnecting to host");
+  await expect(toast).toHaveText("Reconnecting");
 }
 
 export async function expectReconnectingToastGone(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  await expect(page.getByRole("alert").filter({ hasText: "Reconnecting to host" })).toHaveCount(0, {
+  await expect(page.getByRole("alert").filter({ hasText: "Reconnecting" })).toHaveCount(0, {
     timeout: options?.timeout ?? 30_000,
   });
 }

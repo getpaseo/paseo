@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
+import { getTranslator } from "~/i18n";
 import {
   addedAgo,
   featuredPlugins,
@@ -9,6 +10,8 @@ import {
   mostInstalled,
   newestFirst,
   type Plugin,
+  pluginListing,
+  pluginOverview,
   readmeBody,
   recentlyUpdated,
   reportBugUrl,
@@ -16,7 +19,12 @@ import {
   updatedAgo,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
-import { handlePluginRegistryRequest, loadRegistryIndex, loadRegistryPlugin } from "./published";
+import {
+  handlePluginRegistryRequest,
+  loadPluginCount,
+  loadRegistryIndex,
+  loadRegistryPlugin,
+} from "./published";
 const plugin: Plugin = {
   id: "acme/example",
   name: "Example",
@@ -101,8 +109,10 @@ describe("plugin registry", () => {
       "acme/listed-first",
     ]);
     const now = "2026-10-03T12:00:00.000Z";
-    expect(addedAgo(listedLater, now)).toBe("3d ago");
-    expect(updatedAgo(listedFirst, now)).toBe("yesterday");
+    expect(addedAgo(listedLater, now, getTranslator("en"))).toBe("3d ago");
+    expect(updatedAgo(listedFirst, now, getTranslator("en"))).toBe("yesterday");
+    expect(addedAgo(listedLater, now, getTranslator("zh-CN"))).toBe("3 天前");
+    expect(updatedAgo(listedFirst, now, getTranslator("zh-CN"))).toBe("昨天");
   });
   it("lists only plugins updated after their first listing as recently updated, latest update first", () => {
     const bumped = {
@@ -248,12 +258,12 @@ describe("plugin registry", () => {
       author: { github: "zed" },
     };
     const plugins = [plugin, other];
-    expect(searchPlugins(plugins, "EXAMPLE").map((p) => p.id)).toEqual(["acme/example"]);
-    expect(searchPlugins(plugins, "unrelated").map((p) => p.id)).toEqual(["zed/other"]);
-    expect(searchPlugins(plugins, "zed/").map((p) => p.id)).toEqual(["zed/other"]);
-    expect(searchPlugins(plugins, "acme").map((p) => p.id)).toEqual(["acme/example"]);
-    expect(searchPlugins(plugins, "  ")).toEqual(plugins);
-    expect(searchPlugins(plugins, "nothing")).toEqual([]);
+    expect(searchPlugins(plugins, "EXAMPLE", "en").map((p) => p.id)).toEqual(["acme/example"]);
+    expect(searchPlugins(plugins, "unrelated", "en").map((p) => p.id)).toEqual(["zed/other"]);
+    expect(searchPlugins(plugins, "zed/", "en").map((p) => p.id)).toEqual(["zed/other"]);
+    expect(searchPlugins(plugins, "acme", "en").map((p) => p.id)).toEqual(["acme/example"]);
+    expect(searchPlugins(plugins, "  ", "en")).toEqual(plugins);
+    expect(searchPlugins(plugins, "nothing", "en")).toEqual([]);
   });
   it("ranks name, then author, then description matches, keeping the given order on ties", () => {
     const named = (id: string, name: string, description: string, github = "acme"): Plugin => ({
@@ -271,15 +281,75 @@ describe("plugin registry", () => {
       named("acme/history", "History", "Inspect raw composer records"),
       named("acme/omp", "OMP", "Paseo integration for OMP"),
     ];
-    expect(searchPlugins(plugins, "omp").map((p) => p.id)).toEqual([
+    expect(searchPlugins(plugins, "omp", "en").map((p) => p.id)).toEqual([
       "acme/omp",
       "acme/kit",
       "omp/tools",
       "acme/editor",
       "acme/history",
     ]);
-    expect(searchPlugins(plugins, "prompt").map((p) => p.id)).toEqual(["acme/kit"]);
-    expect(searchPlugins(plugins, "tools omp").map((p) => p.id)).toEqual(["omp/tools"]);
+    expect(searchPlugins(plugins, "prompt", "en").map((p) => p.id)).toEqual(["acme/kit"]);
+    expect(searchPlugins(plugins, "tools omp", "en").map((p) => p.id)).toEqual(["omp/tools"]);
+  });
+
+  it("shows each listing field in the reader's language, falling back to English per field", () => {
+    const translated: Plugin = {
+      ...plugin,
+      translations: { "zh-CN": { description: "一个示例" } },
+    };
+    expect(pluginListing(translated, "zh-CN")).toEqual({
+      name: "Example",
+      description: "一个示例",
+    });
+    expect(pluginListing(translated, "en")).toEqual({ name: "Example", description: "An example" });
+    expect(pluginListing(plugin, "zh-CN")).toEqual({ name: "Example", description: "An example" });
+  });
+
+  it("shows a translated overview whole, or the whole English README when there is none", () => {
+    const detail = { ...plugin, readme: "# Example\n\nEnglish body\n" };
+    expect(pluginOverview(detail, "zh-CN")).toEqual({ raw: detail.readme, locale: "en" });
+    const translated = { ...detail, overviewTranslations: { "zh-CN": "# 示例\n\n中文正文\n" } };
+    expect(pluginOverview(translated, "zh-CN")).toEqual({
+      raw: "# 示例\n\n中文正文\n",
+      locale: "zh-CN",
+    });
+    expect(pluginOverview(translated, "en")).toEqual({ raw: detail.readme, locale: "en" });
+  });
+
+  it("searches the reader's language and English, but not other languages", () => {
+    const theme: Plugin = {
+      ...plugin,
+      id: "acme/midnight",
+      name: "Midnight",
+      description: "A dark theme",
+      translations: { "zh-CN": { name: "午夜", description: "深色主题" } },
+    };
+    const plugins = [plugin, theme];
+    expect(searchPlugins(plugins, "午夜", "zh-CN").map((p) => p.id)).toEqual(["acme/midnight"]);
+    expect(searchPlugins(plugins, "深色", "zh-CN").map((p) => p.id)).toEqual(["acme/midnight"]);
+    expect(searchPlugins(plugins, "midnight", "zh-CN").map((p) => p.id)).toEqual(["acme/midnight"]);
+    expect(searchPlugins(plugins, "dark", "zh-CN").map((p) => p.id)).toEqual(["acme/midnight"]);
+    expect(searchPlugins(plugins, "午夜", "en")).toEqual([]);
+  });
+
+  it("lists every plugin page in each language with reciprocal alternates", async () => {
+    const response = await handlePluginRegistryRequest(
+      new Request("https://paseo.sh/sitemap-plugins.xml"),
+      { PLUGINS_REGISTRY_URL: "https://registry.example.test" },
+      { cache: seededIndex(), waitUntil: () => undefined },
+    );
+    const xml = (await response?.text()) ?? "";
+    const english = "https://paseo.sh/plugins/acme/example";
+    const chinese = "https://paseo.sh/zh-CN/plugins/acme/example";
+    for (const loc of [english, chinese]) {
+      expect(xml).toContain(
+        `<url><loc>${loc}</loc>` +
+          `<xhtml:link rel="alternate" hreflang="en" href="${english}"/>` +
+          `<xhtml:link rel="alternate" hreflang="zh-CN" href="${chinese}"/>` +
+          `<xhtml:link rel="alternate" hreflang="x-default" href="${english}"/></url>`,
+      );
+    }
+    expect(xml).toContain("<loc>https://paseo.sh/zh-CN/plugins/category/themes</loc>");
   });
 
   it("strips the README title and quoted description that the page already shows", () => {
@@ -307,7 +377,82 @@ describe("plugin registry", () => {
     expect(at("https://gitlab.com/acme/example")).toBeUndefined();
     expect(at("javascript:alert(1)")).toBeUndefined();
   });
+
+  it("reads the listed plugin count from the registry index and falls back to null on errors", async () => {
+    const context = { cache: seededIndex(), waitUntil: () => undefined };
+    expect(await loadPluginCount("https://registry.example.test", context)).toBe(1);
+
+    const server = createServer((_request, response) => {
+      response.statusCode = 503;
+      response.end("unavailable");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected numeric port");
+    try {
+      const count = await loadPluginCount(`http://127.0.0.1:${address.port}`, {
+        cache: memoryKv(),
+        waitUntil: () => undefined,
+      });
+      expect(count).toBeNull();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("returns a cold landing-page count before the registry responds and warms the shared index", async () => {
+    const index = {
+      schemaVersion: 1,
+      registry: { name: "Test", url: "https://registry.example.test" },
+      categories: [],
+      plugins: [plugin],
+      featured: [],
+      generatedAt: "2026-10-03",
+    };
+    const server = createServer();
+    const requested = new Promise<ServerResponse>((resolve) => {
+      server.once("request", (_request, response) => resolve(response));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected numeric port");
+    const base = `http://127.0.0.1:${address.port}`;
+    const pending: Promise<unknown>[] = [];
+    const context = {
+      cache: memoryKv(),
+      waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    };
+    const count = loadPluginCount(base, context);
+    try {
+      expect(await Promise.race([count, requested.then(() => "waiting on registry")])).toBeNull();
+      const response = await requested;
+      response.end(JSON.stringify(index));
+      await Promise.all(pending);
+      expect(await loadPluginCount(base, context)).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
+
+/** A cache holding a fresh registry index with `plugin`, so no request reaches the registry. */
+function seededIndex(): KVNamespace {
+  const cache = memoryKv();
+  const index = {
+    schemaVersion: 1,
+    registry: { name: "Test", url: "https://registry.example.test" },
+    categories: [],
+    plugins: [plugin],
+    featured: [],
+    generatedAt: "2026-10-03",
+  };
+  void cache.put(
+    "plugins:index:v1:https://registry.example.test",
+    JSON.stringify({ fetchedAt: Date.now(), value: index }),
+  );
+  return cache;
+}
 
 /** In-memory stand-in for the website KV namespace, covering the calls the counter makes. */
 function memoryKv(now = Date.now): KVNamespace & { values: Map<string, string> } {

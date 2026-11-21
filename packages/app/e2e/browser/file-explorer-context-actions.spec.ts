@@ -2,10 +2,15 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
-import { openFileExplorer } from "../support/helpers/file-explorer";
+import {
+  downloadFileFromExplorer,
+  downloadFileFromPreview,
+  openFileFromExplorer,
+  openFileExplorer,
+} from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 let workspace: SeededWorkspace;
@@ -294,10 +299,17 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
 
   await entry("renamed.txt").click({ button: "right" });
   const deleteAction = page.getByTestId(/file-explorer-row-\d+-delete$/);
-  const deleteLabelColor = await deleteAction
-    .getByText("Delete", { exact: true })
-    .evaluate((element) => getComputedStyle(element).color);
-  await expect(deleteAction.locator("svg")).toHaveCSS("stroke", deleteLabelColor);
+  await expect
+    .poll(async () => {
+      const labelColor = await deleteAction
+        .getByText("Delete", { exact: true })
+        .evaluate((element) => getComputedStyle(element).color);
+      const iconColor = await deleteAction
+        .locator("svg")
+        .evaluate((element) => getComputedStyle(element).stroke);
+      return labelColor !== "" && iconColor === labelColor;
+    })
+    .toBe(true);
   const cancelledConfirmation = new Promise<string>((resolve) => {
     page.once("dialog", async (dialog) => {
       const message = dialog.message();
@@ -443,4 +455,83 @@ test("hides unsupported file operations and revert actions", async ({ page }) =>
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-duplicate")).toHaveCount(0);
   await expect(page.getByTestId("diff-file-0-revert")).toHaveCount(0);
+});
+
+test("downloads a file over direct TCP with its original filename and bytes", async ({
+  page,
+}, testInfo) => {
+  const fileName = "rapport données.bin";
+  const source = Buffer.from([0, 1, 2, 127, 128, 255, 10]);
+  await writeFile(path.join(workspace.workspaceDirectory, fileName), source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const daemonRequest = page.waitForRequest("**/api/files/download?*");
+  const downloaded = await downloadFileFromExplorer(page, fileName);
+  const requestUrl = new URL((await daemonRequest).url());
+  expect(requestUrl.port).toBe(getE2EDaemonPort());
+  expect(requestUrl.searchParams.get("token")).toBeTruthy();
+  expect(new URL(downloaded.url()).protocol).toBe("blob:");
+  expect(downloaded.suggestedFilename()).toBe(fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await downloaded.failure()).toBeNull();
+  expect(await readFile(savedFile)).toEqual(source);
+});
+
+test("keeps the app open and shows the error when the host rejects a download", async ({
+  page,
+}, testInfo) => {
+  const fileName = "removed-during-download.bin";
+  const filePath = path.join(workspace.workspaceDirectory, fileName);
+  const source = Buffer.from([0, 1, 2, 255]);
+  await writeFile(filePath, source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  const workspaceUrl = page.url();
+
+  // The file disappears after the token is issued, so the real daemon answers 404.
+  await page.route(
+    "**/api/files/download?*",
+    async (route) => {
+      await rm(filePath);
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByText(fileName, { exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+
+  await expect(
+    page.getByText("Failed to download file (HTTP 404).", { exact: true }),
+  ).toBeVisible();
+  expect(page.url()).toBe(workspaceUrl);
+
+  await writeFile(filePath, source);
+  const downloaded = await downloadFileFromExplorer(page, fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await readFile(savedFile)).toEqual(source);
+  expect(page.url()).toBe(workspaceUrl);
+});
+
+test("downloads an unsupported binary from its preview with original filename and bytes", async ({
+  page,
+}, testInfo) => {
+  const fileName = "rapport données.bin";
+  const source = Buffer.from([0, 1, 2, 127, 128, 255, 10]);
+  await writeFile(path.join(workspace.workspaceDirectory, fileName), source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await openFileFromExplorer(page, fileName);
+
+  const downloaded = await downloadFileFromPreview(page);
+  expect(downloaded.suggestedFilename()).toBe(fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await downloaded.failure()).toBeNull();
+  expect(await readFile(savedFile)).toEqual(source);
 });

@@ -45,6 +45,21 @@
         }
       );
 
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          packages = self.packages.${system};
+          license = (builtins.fromJSON (builtins.readFile ./package.json)).license;
+        in
+        {
+          license-metadata =
+            assert packages.paseo.meta.license.spdxId == license;
+            assert packages.desktop.meta.license.spdxId == license;
+            pkgs.runCommand "paseo-license-metadata" { } "touch $out";
+        }
+      );
+
       nixosModules.default = self.nixosModules.paseo;
       nixosModules.paseo =
         { pkgs, lib, ... }:

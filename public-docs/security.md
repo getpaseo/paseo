@@ -86,7 +86,7 @@ Configure via `daemon.hostnames` in `config.json`:
 
 By default, anyone who can reach the daemon's listening address can connect. On localhost this is fine, only local processes have access. But if you bind to a network interface (e.g. your LAN IP or `0.0.0.0`), or if you don't fully trust your local network, you can require a password.
 
-When a password is configured, all HTTP requests must include an `Authorization: Bearer <password>` header and all WebSocket connections must authenticate via subprotocol. Unauthenticated requests receive a `401 Unauthorized` response. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
+When a password is configured, all HTTP requests must include an `Authorization: Bearer <password>` header, and every WebSocket client, including relay clients, must send the password when it connects. Relay clients send it inside the end-to-end encrypted channel, so the relay never sees it. Unauthenticated HTTP requests receive a `401 Unauthorized` response. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
 
 If you enable the [bundled web UI](/docs/web-ui), its static files are also served without the password so the login screen can render. This is by design, the API and WebSocket still require authentication before any agent data is returned or any command runs. Set a password before binding the daemon to a network so the data behind the page stays protected.
 
@@ -141,20 +141,22 @@ Paseo never stores or transmits provider API keys. Agents run in your user conte
 
 ## Hub identities and credentials
 
-Hub CLI login and daemon enrollment are separate identities. `paseo hub login [origin]` stores a durable organization-scoped human credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin. A stored credential is never sent to another origin. Protect `PASEO_HOME` as sensitive local state.
+Hub CLI login and daemon enrollment are separate identities. `paseo hub login [origin]` stores a durable organization-scoped credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin.
 
-Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; cleartext HTTP is accepted only for loopback development origins (`localhost`, `127.0.0.1`, and `[::1]`).
+A stored credential is never sent to another origin, so protect `PASEO_HOME` as sensitive local state. Hub CLI credentials are bearer secrets, and remote Hub origins must use HTTPS (cleartext HTTP is accepted only on `localhost`, `127.0.0.1`, and `[::1]`).
 
-`paseo hub connect [origin]` uses that credential, or an explicit API key, only to request a short-lived one-time enrollment token. The daemon exchanges the token and retains its own independently generated relationship credential. Logging out of the CLI does not silently remove daemon authority. Interactive logout completes any accepted same-origin daemon disconnection before deleting the login. In JSON and noninteractive use, `logout` never prompts or disconnects; pass `--disconnect-daemon` only when automation intends to remove both identities.
+`paseo hub connect [origin]` uses your CLI login or an API key only to request a short-lived one-time enrollment token. The daemon exchanges that token for its own independent relationship credential.
 
-`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
+Logging out of the CLI does not silently remove daemon authority. Interactive `logout` asks whether to disconnect a same-origin daemon before deleting the login, while JSON and non-interactive logouts require `--disconnect-daemon` to remove both identities.
+
+`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment variables or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
 
 ## Recommendations
 
 - **Use the relay** for mobile access, it's the simplest option and all traffic is end-to-end encrypted
-- **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon
+- **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon unless you also set a password
 - **Set a password** if you bind to a network address, it prevents unauthorized clients from controlling your agents
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
 - **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
-- **Protect the Hub configuration branch**, push access to the `.paseo` bundle controls what that project can reach, see [How Hub works](/docs/hub/concepts)
+- **Protect Hub trigger files and organization access**, push access to `.paseo/triggers/*.yml` controls what Hub can run on your daemons, see [How Hub works](/docs/hub/concepts)

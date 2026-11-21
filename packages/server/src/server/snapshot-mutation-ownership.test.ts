@@ -1,3 +1,6 @@
+import { DiffSubscriptions } from "./diff/index.js";
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -47,13 +50,13 @@ describe("snapshot mutation ownership boundary", () => {
 
       const applySnapshotSpy = vi.spyOn(daemonHandle.daemon.agentStorage, "applySnapshot");
 
-      await daemonHandle.daemon.agentManager.setAgentModel(snapshot.id, "gpt-5.4");
+      await daemonHandle.daemon.agentManager.setAgentModel(snapshot.id, "gpt-5.4-mini");
       await daemonHandle.daemon.agentManager.flush();
 
       expect(applySnapshotSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
 
       const persisted = await daemonHandle.daemon.agentStorage.get(snapshot.id);
-      expect(persisted?.config?.model).toBe("gpt-5.4");
+      expect(persisted?.config?.model).toBe("gpt-5.4-mini");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
       await daemonHandle.close();
@@ -103,7 +106,16 @@ describe("snapshot mutation ownership boundary", () => {
 
     const session = asInternals<SessionInternals>(
       new Session({
+        checkoutDiffManager: createStub<SessionOptions["checkoutDiffManager"]>({
+          streams: new DiffSubscriptions({
+            async requestWorkingTreeWatch() {
+              throw new Error("Unexpected diff observation");
+            },
+          }),
+        }),
+        workspaceRuntimeStore: createWorkspaceRuntimeStore(),
         messageReceipts: createMessageReceiptsStub(),
+        agentMessages: createAgentMessageDeliveryStub(),
         creationService: createTestCreationService(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,

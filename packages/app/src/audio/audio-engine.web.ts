@@ -1,6 +1,11 @@
 import { parsePcmSampleRate, resampleToPcm16 } from "./pcm";
 import { isElectronRuntime } from "@/desktop/host";
-import type { AudioEngine, AudioEngineCallbacks, AudioPlaybackSource } from "./audio-engine-types";
+import type {
+  AudioEngine,
+  AudioEngineCallbacks,
+  AudioEngineOptions,
+  AudioPlaybackSource,
+} from "./audio-engine-types";
 
 import { createPlaybackQueue } from "./playback";
 
@@ -46,7 +51,7 @@ async function decodeAudioData(context: AudioContext, buffer: ArrayBuffer): Prom
 
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
-  _options?: { traceLabel?: string },
+  _options?: AudioEngineOptions,
 ): AudioEngine {
   const refs: {
     playbackContext: AudioContext | null;
@@ -287,9 +292,7 @@ export function createAudioEngine(
         refs.gain = gain;
       } catch (error) {
         await stopCapture();
-        const wrapped = error instanceof Error ? error : new Error(String(error));
-        callbacks.onError?.(wrapped);
-        throw wrapped;
+        throw error;
       }
     },
 

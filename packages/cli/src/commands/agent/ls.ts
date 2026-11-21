@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { fetchAllAgents } from "../../utils/agent-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
@@ -14,7 +15,7 @@ export function addLsOptions(cmd: Command): Command {
     .description("List agents. By default excludes archived agents.")
     .option("-a, --all", "Include archived and background agents")
     .option("-g, --global", "List agents across all directories")
-    .option("--background", "Include background workspace agents")
+    .option("--background", "Include background agents and agents in background workspaces")
     .option(
       "--label <key=value>",
       "Filter by label (can be used multiple times)",
@@ -34,6 +35,9 @@ export interface AgentListItem {
   status: string;
   cwd: string;
   created: string;
+  background: boolean;
+  labels: Record<string, string>;
+  workspaceId: string | null;
 }
 
 /** Helper to get relative time string */
@@ -88,6 +92,15 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
   ],
 };
 
+/** Inclusive listings mark background agents so they read apart from visible ones. */
+const agentLsInclusiveSchema: OutputSchema<AgentListItem> = {
+  ...agentLsSchema,
+  columns: [
+    ...agentLsSchema.columns,
+    { header: "BACKGROUND", field: (item) => (item.background ? "yes" : "-"), width: 10 },
+  ],
+};
+
 /** Transform agent snapshot to AgentListItem */
 function toListItem(agent: AgentSnapshotPayload): AgentListItem {
   const model = normalizeModelId(agent.runtimeInfo?.model) ?? normalizeModelId(agent.model);
@@ -100,6 +113,9 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
     status: agent.status,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
+    background: agent.background === true,
+    labels: agent.labels,
+    workspaceId: agent.workspaceId ?? null,
   };
 }
 
@@ -165,6 +181,14 @@ export function buildAgentLsFetchOptions(
   return fetchOptions;
 }
 
+interface AgentLsClient {
+  fetchAgents(options?: FetchAgentsOptions): Promise<{
+    entries: { agent: AgentSnapshotPayload }[];
+    pageInfo: { nextCursor: string | null };
+  }>;
+  close(): Promise<void>;
+}
+
 /**
  * Agent ls command semantics:
  * - `paseo agent ls`    → active non-archived agents
@@ -176,7 +200,16 @@ export async function runLsCommand(
   options: AgentLsOptions,
   _command: Command,
 ): Promise<AgentLsResult> {
-  const client = await connectToDaemon({ target: options.daemonTarget });
+  return listAgents(options);
+}
+
+export async function listAgents(
+  options: AgentLsOptions,
+  connect: (
+    options: Parameters<typeof connectToDaemon>[0],
+  ) => Promise<AgentLsClient> = connectToDaemon,
+): Promise<AgentLsResult> {
+  const client = await connect({ target: options.daemonTarget });
 
   try {
     const normalizedThinkingOptionId = options.thinking?.trim();
@@ -189,8 +222,8 @@ export async function runLsCommand(
     }
 
     const labelFilters = parseLabelFilters(options.label);
-    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    const fetchOptions = buildAgentLsFetchOptions(options);
+    let agents = await fetchAllAgents(client, fetchOptions);
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
@@ -241,7 +274,7 @@ export async function runLsCommand(
     return {
       type: "list",
       data: items,
-      schema: agentLsSchema,
+      schema: options.all || options.background ? agentLsInclusiveSchema : agentLsSchema,
     };
   } catch (err) {
     await client.close().catch(() => {});

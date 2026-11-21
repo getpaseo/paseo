@@ -7,7 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useMenuContext } from "@/components/ui/menu";
 import { Button } from "@/components/ui/button";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { SPACING } from "@/styles/theme";
 import { FloatingActionButton } from "@/components/ui/floating-action-button";
@@ -64,7 +64,7 @@ function OpenReviewFeedbackAction({
         bottom:
           bottom +
           bottomOffset +
-          (isCompact ? 88 : buttonControlHeight.sm + SPACING[4] + SPACING[2]),
+          (isCompact ? 88 : controlHeightForLayout("md", isCompact) + SPACING[4] + SPACING[2]),
       },
     ],
     [bottom, bottomOffset, isCompact],
@@ -80,17 +80,6 @@ function OpenReviewFeedbackAction({
   let notice: ReactNode = unavailableNotice;
   if (state.phase.kind === "failed")
     notice = <Text style={styles.error}>{state.phase.message}</Text>;
-  else if (state.phase.kind === "sent")
-    notice = (
-      <>
-        <SentNotice
-          recipient={state.phase.recipient}
-          serverId={serverId}
-          workspaceId={workspaceId}
-        />
-        {unavailableNotice}
-      </>
-    );
   return (
     <>
       {state.commentCount > 0 ? (
@@ -156,7 +145,6 @@ function FeedbackTrigger({
         <Button
           ref={triggerRef}
           variant="default"
-          size="sm"
           leftIcon={Send}
           accessibilityLabel={label}
           disabled={disabled}
@@ -229,7 +217,7 @@ function RecipientRow({
   );
 }
 
-function SentNotice({
+export function FeedbackSentMessage({
   recipient,
   serverId,
   workspaceId,
@@ -241,7 +229,7 @@ function SentNotice({
   const { t } = useTranslation();
   const render = useCallback(
     (presentation: WorkspaceTabPresentation) => (
-      <Text style={styles.text}>
+      <Text style={styles.sentMessage}>
         {t("review.feedback.sent", { recipient: presentation.label })}
       </Text>
     ),
@@ -266,6 +254,10 @@ const styles = StyleSheet.create((theme) => ({
     right: theme.spacing[4],
     left: theme.spacing[4],
     alignItems: "flex-end",
+  },
+  sentMessage: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   text: {
     color: theme.colors.foreground,

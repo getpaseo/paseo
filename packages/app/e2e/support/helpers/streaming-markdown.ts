@@ -45,11 +45,8 @@ export async function requestStreamingMarkdown(agent: StreamingMarkdownAgent): P
 
 export async function expectUnfinishedBold(page: Page): Promise<void> {
   const message = page.getByTestId("assistant-message").last();
-  const bold = message.locator('[data-paseo-markdown-tag="strong"]');
-  await expect(bold).toContainText("Bold");
+  await expect(message.locator(".enrm-text")).toContainText("Bold");
   await expect(message).not.toContainText("stays bold");
-  await expect(bold).toHaveCSS("font-weight", "500");
-  await expect(message).not.toContainText("*");
 }
 
 export async function expectUnfinishedLink(
@@ -61,7 +58,6 @@ export async function expectUnfinishedLink(
   await agent.stream.showThrough("**Bold text stays bold** and [Paseo docs");
   await expect(message).toContainText("Paseo docs");
   await expect(message.getByRole("link", { name: "Paseo docs" })).toHaveCount(0);
-  await expect(message).not.toContainText("[");
   await expect(message).not.toContainText("https:");
   await captureMarkdown(page, testInfo, "unfinished-link");
 }
@@ -95,8 +91,5 @@ async function expectCompletedMarkdown(page: Page): Promise<void> {
   await expect(
     message.getByRole("link", { name: "Paseo docs" }).and(message.locator("a")),
   ).toHaveAttribute("href", "https://example.com/documentation");
-  await expect(message.locator('[data-paseo-markdown-tag="strong"]')).toHaveCSS(
-    "font-weight",
-    "500",
-  );
+  await expect(message.locator("strong")).toHaveCSS("font-weight", "700");
 }

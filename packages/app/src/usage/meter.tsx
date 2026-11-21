@@ -6,14 +6,12 @@ import type { UsageTone } from "./types";
 
 function fillToneStyle(tone: UsageTone) {
   switch (tone) {
-    case "ok":
-      return styles.fillOk;
     case "warning":
       return styles.fillWarning;
     case "danger":
       return styles.fillDanger;
     default:
-      return styles.fillDefault;
+      return styles.fillOk;
   }
 }
 
@@ -46,8 +44,8 @@ export function UsageMeter({
 
 const styles = StyleSheet.create((theme) => ({
   track: {
-    height: 4,
-    borderRadius: 2,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: theme.colors.surface3,
     overflow: "hidden",
   },
@@ -58,9 +56,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   fillQuiet: {
     backgroundColor: theme.colors.surface4,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
   },
   fillOk: {
     backgroundColor: theme.colors.statusSuccess,

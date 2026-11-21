@@ -104,6 +104,13 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           });
           if (selection) inputRef.current?.setSelection?.(selection.start, selection.end);
         },
+        setSelection: (selection) => {
+          if (inputRef.current?.setSelection) {
+            inputRef.current.setSelection(selection.start, selection.end);
+            return;
+          }
+          inputRef.current?.setNativeProps?.({ selection });
+        },
         reset: () => {
           textRef.current = "";
           const autoFocus = inputRef.current?.isFocused?.() ?? false;

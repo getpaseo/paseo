@@ -100,10 +100,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-latest
             electron_arch: arm64
             node_heap_mb: 4096
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             electron_arch: x64
             node_heap_mb: 8192
     permissions:
@@ -169,6 +169,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=${{ matrix.node_heap_mb }}
         run: |
           set -euo pipefail
+          export PASEO_REAL_XCRUN="$(command -v xcrun)"
+          xcrun_bin="$(mktemp -d)"
+          trap 'rm -rf "$xcrun_bin"' EXIT
+          cp scripts/macos-xcrun-retry.sh "$xcrun_bin/xcrun"
+          chmod +x "$xcrun_bin/xcrun"
+          export PATH="$xcrun_bin:$PATH"
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
@@ -474,6 +480,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p release-manifests
           cd release-manifests
           manifests_dir="$PWD/final"
           mkdir -p "$manifests_dir"

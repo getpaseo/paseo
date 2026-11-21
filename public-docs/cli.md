@@ -44,6 +44,8 @@ Copy the full report ID from the list into `inspect` to see reset times, balance
 
 Queries use the host's five-minute cache when available. Add `--refresh` to bypass it. Use `--host` or `--home` to [select a daemon](#select-one-daemon). Hosts without usage-source support return an update message.
 
+For OpenRouter, set `OPENROUTER_API_KEY` in the daemon’s environment to show what the key spent today, this week, and this month in UTC. Set `OPENROUTER_MANAGEMENT_KEY` to show the remaining account credits. Each variable adds its own report to the host’s Usage panel and `paseo usage`.
+
 ### Usage in scripts
 
 ```bash
@@ -64,6 +66,31 @@ Entries may also include `loginErrors`. Structured output preserves numeric valu
 
 A completed query exits with status `0`, including when individual reports are unavailable or failed. Connection or request failures, unsupported hosts, unknown report IDs, and conflicting selectors exit with status `1` and write the error to stderr. Human output says **No usage reports returned** for an empty result; this does not establish whether account discovery succeeded for every source.
 
+## Connected hosts
+
+`--host` selects the daemon whose saved connections you manage. Registrations use their
+`registrationId`, not their label.
+
+```sh
+paseo --host localhost:6767 host add 'ssh://deploy@build-box' --label build-box --meta team=infra
+paseo --host localhost:6767 host ls --json
+paseo --host localhost:6767 host inspect hst_123
+paseo --host localhost:6767 host update hst_123 --meta team=tools --remove-meta obsolete
+paseo --host localhost:6767 host update hst_123 --connection 'ssh://deploy@new-address'
+paseo --host localhost:6767 host disable hst_123
+paseo --host localhost:6767 host enable hst_123
+paseo --host localhost:6767 host rm hst_123
+```
+
+Add accepts TCP/host-and-port, `ws://`/`wss://`, local socket/pipe, SSH, and relay/pairing URLs.
+SSH connects to an already running daemon. Add `?password=...` to an SSH URI when that daemon requires a password (`&password=...` after `daemonPort`). Unreachable targets remain saved and retry automatically.
+`ls` includes disabled and failed hosts. `inspect` includes safe connection details and recovery guidance.
+JSON output never includes connection credentials.
+
+`update --meta` replaces supplied keys; `--remove-meta` removes keys. Replacing a connection retains
+the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
+destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
+
 ## Provider diagnostics
 
 Ask the daemon to inspect the provider environment it actually uses:
@@ -74,7 +101,7 @@ paseo provider diagnostic codex --json
 paseo --host devbox:6767 provider diagnostic opencode
 ```
 
-The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use the global `--host` option for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic**.
+The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use the global `--host` option for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic report**.
 
 ## Running agents
 
@@ -186,6 +213,8 @@ paseo workspace rename <workspace-id> --reset   # back to the branch or director
 paseo workspace archive <workspace-id>
 ```
 
+Inside an agent session, `PASEO_WORKSPACE_ID` holds the agent's own workspace ID, so an agent can run `paseo workspace rename "$PASEO_WORKSPACE_ID" "Auth rework"` or `paseo workspace archive "$PASEO_WORKSPACE_ID"` even when other workspaces share its directory.
+
 Add `--forge <name>` to PR checkout when Paseo cannot infer the forge from the source checkout. See [Git worktrees](/docs/worktrees) for setup hooks and services.
 
 ## Terminals
@@ -228,11 +257,12 @@ The output includes each script's lifecycle and supervised terminal ID. Services
 Create and manage trusted plugins on a daemon:
 
 ```bash
-paseo plugin init /absolute/path/to/plugin
-paseo plugin install /absolute/path/to/plugin
-paseo plugin add owner/repository
+paseo plugin init ./plugin
+paseo plugin install ./plugin
+paseo plugin add owner/slug
+paseo plugin add git:owner/repository
 paseo plugin add https://gitlab.com/group/repository.git --ref main
-paseo plugin add owner/monorepo:plugins/review
+paseo plugin add git:owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update my-plugin
 paseo plugin update --all
@@ -243,8 +273,17 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
-monorepo. `paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
+`paseo plugin reload <id>` reports the result of the reload itself: it waits while the daemon stops
+and starts the plugin, however long that takes, and it queues behind the daemon's other plugin work.
+Cancelling the command or losing the connection does not stop the daemon's work, and no listing or
+log entry settles what a cancelled reload did — the [Plugin reference](/docs/plugins/reference)
+covers those interim states. Running the reload again is what reports the result: it waits behind the
+outstanding one, then stops and starts the plugin once more.
+
+Bare `owner/slug` installs a reviewed registry listing. Use `git:owner/repository` for GitHub
+source, or `./plugin` for a local directory. Append `:<directory>` for a plugin in a monorepo.
+
+`paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
 plugin's recent daemon-side stdout and stderr. Add `--json` for structured entries, or run
 `paseo --host <target> plugin logs <id>` for another daemon. See the
 [Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
@@ -254,10 +293,10 @@ behavior.
 
 ```bash
 paseo ls                    # Non-archived agents in active workspaces
-paseo ls -a                 # Also include archived agents
+paseo ls -a                 # Also include archived and background agents, with a BACKGROUND column
 paseo ls -g                 # Non-archived agents across all workspaces
 paseo ls -a -g --json       # All agents, including archived, as JSON
-paseo ls --background       # Also include agents in background workspaces
+paseo ls --background       # Also include background agents and agents in background workspaces
 ```
 
 ## Streaming output
@@ -279,8 +318,11 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 ```bash
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
-paseo send <id> --no-wait "queue this task"
+paseo send <id> --no-wait "run this task"
+paseo send <id> --behavior interrupt "stop and do this instead"
 ```
+
+Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
 
 ## Viewing logs
 
@@ -405,21 +447,29 @@ paseo hub deploy -p <project>   # Deploy an existing legacy project bundle
 paseo hub logout               # Remove the active stored CLI login
 ```
 
-Run deploy from the repository root. By default it reads every direct `.paseo/triggers/*.yml` file in deterministic path order. It validates all triggers before installing them one at a time. If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` only validates; it does not create or activate revisions.
+Run `paseo hub deploy` from the repository root. By default, it reads every direct `.paseo/triggers/*.yml` file in deterministic path order and validates all triggers before installing them one at a time.
 
-Pass `-p, --project <slug>` for an existing legacy bundle: `.paseo/hub.yml`, direct `.paseo/workflows/*.yml` files, and referenced workflow partials. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
+If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` validates without creating or activating revisions. Pass `-p, --project <slug>` for an existing legacy project bundle.
 
-`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal it offers to connect this daemon, then separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to Hub's **Triggers** page and prints `paseo hub init` for setup as code. `--json` and non-TTY login remain login-only and never prompt. The stored login is separate from the daemon relationship created by `connect`.
+`paseo hub login` opens the Hub approval page and stores an organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal, it offers to connect this daemon (default yes) and separately asks whether to grant `hub.execute` (default no).
 
-`init` requires a TTY. It signs in and connects the daemon as needed, then lists the organization's app connections that can back a starter trigger. One usable connection is selected automatically; with several, you choose a **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
+`--json` and non-TTY logins never prompt. The stored CLI login stays separate from the daemon relationship created by `connect`.
 
-Setup asks which agent provider, model, and mode to run. Providers must be enabled and expose both a selectable model and an execution mode. Suggested model and mode entries are the daemon's defaults; a mode is still selected explicitly when there is no default. Hub validates the choice against the daemon before deploying, and accepts only Claude, Codex, and OpenCode for its unattended runs. `deploy` applies the same checks, so it needs the named daemon connected. Setup then asks for the identity allowed to trigger the bot: a GitHub username, Slack member ID, or Discord user ID. It validates the trigger, writes `.paseo/triggers/<provider>-help.yml`, and asks whether to deploy. Replacing that file requires confirmation; existing legacy bundles and other trigger files are preserved. See the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger).
+`paseo hub init` requires a TTY, signs in and connects the daemon as needed, and selects a ready integration (or sends you to **Hub → Apps** if none is ready). It then prompts for an enabled provider on your daemon that exposes both a selectable model and at least one execution mode.
 
-Interactive logout checks the same-origin daemon relationship and asks whether to disconnect before deleting the login. Declining removes only the login. JSON and noninteractive logout never prompt or disconnect implicitly; `--disconnect-daemon` is the explicit automation path, and `--force` applies to that daemon disconnection. If a requested disconnection fails, the login is preserved.
+Providers that report zero execution modes (such as Pi) are filtered out by `paseo hub init`, but can still be configured in the Hub dashboard or in `.paseo/triggers/*.yml` and deployed with `paseo hub deploy`.
 
-Every command resolves and normalizes its destination before Hub or daemon work. Origin precedence is an explicit command origin or `--hub`, then `PASEO_HUB_URL`, then the active stored login origin, then the hosted default `https://hub.paseo.sh`. The hosted default never overrides an active login. Credential precedence is `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login for the exact resolved origin. A stored credential is never sent to a different origin. API keys passed through flags or the environment are not stored.
+Setup next asks for the allowed sender identity (GitHub username, Slack member ID, or Discord user ID), validates the trigger against the connected daemon, writes `.paseo/triggers/<provider>-help.yml`, and asks whether to deploy. Replacing an existing starter file requires confirmation while preserving other trigger files. See the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger).
 
-Human output reports the resolved destination before each action. JSON output keeps stdout machine-readable and includes the normalized Hub origin. Bundle diagnostics identify paths without printing configuration contents or credentials.
+Interactive `paseo hub logout` checks for a daemon connected to the same Hub and asks whether to disconnect it before deleting the login. JSON and non-interactive logouts never prompt or disconnect unless you pass `--disconnect-daemon` (with optional `--force`). If disconnection fails, the login stays intact.
+
+Every Hub command resolves its destination and credentials in order:
+
+- Origin precedence: explicit `[url]` or `--hub`, then `PASEO_HUB_URL`, then the active stored login, then `https://hub.paseo.sh`.
+- Credential precedence: `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login matching the exact resolved origin.
+- API keys passed via flags or environment variables are never written to disk, and stored credentials are never sent to another origin.
+
+Human output prints the resolved destination before each action, while `--json` writes machine-readable output including the normalized Hub origin. Diagnostics name file paths without printing contents or credentials.
 
 See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
 

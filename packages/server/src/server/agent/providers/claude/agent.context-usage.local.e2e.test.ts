@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
 import { expect, test } from "vitest";
@@ -13,12 +13,18 @@ test.each([
   { placement: "delta", cacheTokens: 0 },
   { placement: "start", cacheTokens: 1_000 },
   { placement: "delta", cacheTokens: 1_000 },
+  { placement: "start", cacheTokens: 0, model: "glm-5.2[1m]" },
+  { placement: "start", cacheTokens: 0, model: "sonnet", resolvedModel: "glm-5.2[1m]" },
 ])(
-  "counts $placement input and $cacheTokens cached tokens through Claude Code",
-  async ({ placement, cacheTokens }) => {
+  "counts $placement input and $cacheTokens cached tokens through Claude Code ($model)",
+  async ({ placement, cacheTokens, model = "claude-sonnet-4-6", resolvedModel = model }) => {
     const cwd = await mkdtemp(path.resolve(".claude-context-usage-"));
     const configDir = path.join(cwd, "config");
     await mkdir(configDir);
+    await writeFile(
+      path.join(configDir, "settings.json"),
+      JSON.stringify({ env: { ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedModel } }),
+    );
     let requestCount = 0;
     const server = createServer(async (request, response) => {
       for await (const chunk of request) {
@@ -45,7 +51,7 @@ test.each([
           id: `msg_context_usage_${requestCount}`,
           type: "message",
           role: "assistant",
-          model: "claude-sonnet-4-6",
+          model: resolvedModel,
           content: [],
           stop_reason: null,
           stop_sequence: null,
@@ -86,11 +92,9 @@ test.each([
         },
       },
     });
-    const session = await client.createSession(
-      { provider: "claude", cwd, model: "claude-sonnet-4-6" },
-      undefined,
-      { persistSession: false },
-    );
+    const session = await client.createSession({ provider: "claude", cwd, model }, undefined, {
+      persistSession: false,
+    });
     try {
       for (let turn = 0; turn < 2; turn++) {
         const events = await collectSessionTurnEvents(session, "say hello", {
@@ -111,7 +115,10 @@ test.each([
         expect(events).toContainEqual(
           expect.objectContaining({
             type: "usage_updated",
-            usage: expect.objectContaining({ contextWindowUsedTokens: expectedTokens }),
+            usage: expect.objectContaining({
+              contextWindowUsedTokens: expectedTokens,
+              contextWindowMaxTokens: resolvedModel.endsWith("[1m]") ? 1_000_000 : 200_000,
+            }),
           }),
         );
       }

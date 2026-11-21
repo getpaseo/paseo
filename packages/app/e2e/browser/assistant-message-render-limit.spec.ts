@@ -2,7 +2,9 @@ import { expect, test } from "../support/fixtures";
 import { getUtf8ByteLength } from "../../src/components/assistant-message-render-limit";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
-test("caps a newline-heavy assistant message before rendering markdown", async ({ page }) => {
+test("caps a newline-heavy assistant message on web before rendering markdown", async ({
+  page,
+}) => {
   const hiddenTail = "HIDDEN_OVERSIZED_MESSAGE_TAIL";
   const response = `${"x\n".repeat(16_000)}${hiddenTail}`;
   const agent = await seedMockAgentWorkspace({

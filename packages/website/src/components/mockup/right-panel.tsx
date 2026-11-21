@@ -1,5 +1,6 @@
 import {
   CircleCheck,
+  CircleX,
   ChevronDown,
   ExternalLink,
   FileDiff,
@@ -10,14 +11,30 @@ import {
   RefreshCw,
   Rows3,
 } from "lucide-react";
+import type { TFunction } from "i18next";
 import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { ChangesBranchRow, ChangesCommitsRow, ChangesScopeRow, ExplorerChangesTree } from "./diff";
-import { RIGHT_PANEL_W, TABBAR_H, TITLEBAR_H } from "./geometry";
-import type { MockupStateId } from "./states";
+import { RIGHT_PANEL_W, RIGHT_PANEL_WIDE_W, TABBAR_H, TITLEBAR_H } from "./geometry";
+import { AnimatePresence, motion } from "framer-motion";
+import { useSceneClock } from "./player";
+import { failingCheckListed } from "./plugin-build";
 
 const TABBAR_STYLE = { height: TITLEBAR_H };
 const SUBHEADER_STYLE = { height: TABBAR_H };
-const PANEL_STYLE = { width: RIGHT_PANEL_W };
+
+export type PanelId = "changes" | "ship" | "plugin";
+
+/** How wide the docked panel is for what it shows. Only the file tree fits the narrow width. */
+export function panelWidth(panel: PanelId): number {
+  return panel === "changes" ? RIGHT_PANEL_W : RIGHT_PANEL_WIDE_W;
+}
+
+const PANEL_STYLES: Record<PanelId, { width: number }> = {
+  changes: { width: panelWidth("changes") },
+  ship: { width: panelWidth("ship") },
+  plugin: { width: panelWidth("plugin") },
+};
 
 interface PanelTab {
   label: string;
@@ -50,10 +67,12 @@ function PanelTabs({ tabs, active }: { tabs: PanelTab[]; active: number }) {
 }
 
 function PanelShell({
+  panel,
   tabs,
   active,
   children,
 }: {
+  panel: PanelId;
   tabs: PanelTab[];
   active: number;
   children: React.ReactNode;
@@ -61,7 +80,7 @@ function PanelShell({
   return (
     <div
       className="flex h-full shrink-0 flex-col overflow-hidden bg-mock-sidebar"
-      style={PANEL_STYLE}
+      style={PANEL_STYLES[panel]}
     >
       <PanelTabs tabs={tabs} active={active} />
       {children}
@@ -75,15 +94,18 @@ const FILES_TAB_GLYPH = <Files size={12} />;
 
 // --- Changes ---------------------------------------------------------------
 
-const CHANGES_TABS: PanelTab[] = [
-  { label: "Files", icon: FILES_TAB_GLYPH },
-  { label: "Changes", icon: CHANGES_TAB_GLYPH },
-  { label: "3981", icon: PR_TAB_GLYPH },
-];
+function changesTabs(t: TFunction): PanelTab[] {
+  return [
+    { label: t("landing.mockup.app.files"), icon: FILES_TAB_GLYPH },
+    { label: t("landing.mockup.app.changes"), icon: CHANGES_TAB_GLYPH },
+    { label: "3981", icon: PR_TAB_GLYPH },
+  ];
+}
 
 function ChangesPanel({ selectedFile }: { selectedFile?: string }) {
+  const { t } = useTranslation();
   return (
-    <PanelShell tabs={CHANGES_TABS} active={1}>
+    <PanelShell panel="changes" tabs={changesTabs(t)} active={1}>
       <ChangesBranchRow />
       <ChangesScopeRow />
       <ExplorerChangesTree selectedFile={selectedFile} />
@@ -93,8 +115,6 @@ function ChangesPanel({ selectedFile }: { selectedFile?: string }) {
 }
 
 // --- Ship (GitHub PR checks) ------------------------------------------------
-
-const SHIP_TABS: PanelTab[] = CHANGES_TABS;
 
 const CHECKS: { name: string; context: string; time: string }[] = [
   { name: "changes", context: "CI", time: "11s" },
@@ -113,15 +133,16 @@ function CheckGlyph() {
 }
 
 function ShipPanel() {
+  const { t } = useTranslation();
   return (
-    <PanelShell tabs={SHIP_TABS} active={2}>
+    <PanelShell panel="ship" tabs={changesTabs(t)} active={2}>
       <div
         className="flex shrink-0 items-center border-b border-mock-border px-[16px]"
         style={SUBHEADER_STYLE}
       >
         <span className="flex items-center gap-[6px] text-[12px] text-mock-fg-muted">
           <ExternalLink size={13} />
-          View
+          {t("landing.mockup.app.viewPr")}
         </span>
         <span className="flex-1" />
         <RefreshCw size={13} className="text-mock-fg-muted" />
@@ -135,7 +156,7 @@ function ShipPanel() {
         <div className="flex items-center gap-[7px] pt-[6px] text-[11.5px]">
           <span className="flex items-center gap-[5px] text-mock-success">
             <GitPullRequest size={12} />
-            Open
+            {t("landing.mockup.app.prOpen")}
           </span>
           <span className="text-mock-fg-muted">getpaseo/paseo</span>
         </div>
@@ -144,9 +165,11 @@ function ShipPanel() {
       <div className="flex items-center gap-[11px] bg-mock-surface1 px-[16px] py-[11px]">
         <CheckGlyph />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium text-mock-fg">All checks have passed</span>
+          <span className="block text-[13px] font-medium text-mock-fg">
+            {t("landing.mockup.app.checksPassed")}
+          </span>
           <span className="block text-[11px] text-mock-fg-muted">
-            9 successful, 13 skipped checks
+            {t("landing.mockup.app.checksDetail", { successful: 9, skipped: 13 })}
           </span>
         </span>
         <ChevronDown size={14} className="text-mock-fg-muted" />
@@ -154,7 +177,7 @@ function ShipPanel() {
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="flex items-center gap-[6px] px-[16px] pt-[11px] pb-[4px] text-[11.5px] text-mock-fg-muted">
-          9 successful checks
+          {t("landing.mockup.app.successfulChecks", { count: 9 })}
           <ChevronDown size={12} />
         </div>
         {CHECKS.map((check) => (
@@ -170,9 +193,11 @@ function ShipPanel() {
         ))}
         <div className="flex items-center gap-[6px] px-[16px] pt-[13px] pb-[4px] text-[11.5px] text-mock-fg-muted">
           <ChevronDown size={12} />
-          Activity
+          {t("landing.mockup.app.activity")}
         </div>
-        <div className="px-[16px] pt-[2px] text-[12px] text-mock-fg-muted">No activity yet</div>
+        <div className="px-[16px] pt-[2px] text-[12px] text-mock-fg-muted">
+          {t("landing.mockup.app.noActivity")}
+        </div>
       </div>
     </PanelShell>
   );
@@ -181,16 +206,19 @@ function ShipPanel() {
 // --- Plugins (invented custom dashboard) ------------------------------------
 // No real reference exists; this reads as a user-built native surface plugin.
 
-const PLUGIN_TABS: PanelTab[] = [
-  ...CHANGES_TABS,
-  { label: "Release Radar", icon: <Puzzle size={12} /> },
-];
+const PLUGIN_TAB: PanelTab = { label: "Release Radar", icon: <Puzzle size={12} /> };
 
-const TILES: { label: string; value: string; tile: string }[] = [
-  { label: "Merged · 7d", value: "12", tile: "text-mock-tile-teal" },
-  { label: "In review", value: "4", tile: "text-mock-tile-amber" },
-  { label: "Failing", value: "1", tile: "text-mock-tile-red" },
-];
+function pluginTabs(t: TFunction): PanelTab[] {
+  return [...changesTabs(t), PLUGIN_TAB];
+}
+
+function tiles(t: TFunction): { label: string; value: string; tile: string }[] {
+  return [
+    { label: t("landing.mockup.app.mergedWeek"), value: "12", tile: "text-mock-tile-teal" },
+    { label: t("landing.mockup.app.inReview"), value: "4", tile: "text-mock-tile-amber" },
+    { label: t("landing.mockup.app.failing"), value: "1", tile: "text-mock-tile-red" },
+  ];
+}
 
 // Weekly merge counts — a small bar chart the plugin author drew. Heights and
 // their style objects are precomputed so the render loop allocates nothing.
@@ -204,41 +232,72 @@ const BARS: { id: string; style: { height: string } }[] = [
   { id: "sun", style: { height: "62px" } },
 ];
 
-const RECENT: { title: string; meta: string; tone: string }[] = [
-  {
-    title: "Connect to remote daemons over SSH",
-    meta: "#3989 · 20m ago",
-    tone: "bg-mock-dot-success",
-  },
-  {
-    title: "Keep restored workspaces out of loops",
-    meta: "#3987 · 1h ago",
-    tone: "bg-mock-dot-success",
-  },
-  {
-    title: "Honor configured commit signing",
-    meta: "#3976 · reviewing",
-    tone: "bg-mock-dot-warning",
-  },
-];
+function recentlyMerged(t: TFunction): { title: string; meta: string; tone: string }[] {
+  return [
+    {
+      title: "Connect to remote daemons over SSH",
+      meta: `#3989 · ${t("landing.mockup.app.minutesAgo", { count: 20 })}`,
+      tone: "bg-mock-dot-success",
+    },
+    {
+      title: "Keep restored workspaces out of loops",
+      meta: `#3987 · ${t("landing.mockup.app.hoursAgo", { count: 1 })}`,
+      tone: "bg-mock-dot-success",
+    },
+    {
+      title: "Honor configured commit signing",
+      meta: `#3976 · ${t("landing.mockup.app.reviewing")}`,
+      tone: "bg-mock-dot-warning",
+    },
+  ];
+}
+
+const SECTION_CLOSED = { height: 0, opacity: 0 };
+const SECTION_OPEN = { height: "auto", opacity: 1 };
+
+/** The section the user asks for after the panel is live: which check is failing. */
+function FailingCheck() {
+  const { t } = useTranslation();
+  return (
+    <motion.div initial={SECTION_CLOSED} animate={SECTION_OPEN} className="overflow-hidden">
+      <div className="pt-[16px] text-[11px] text-mock-fg-muted">
+        {t("landing.mockup.app.failing")}
+      </div>
+      <div className="mt-[7px] flex items-center gap-[10px] rounded-[10px] border border-mock-border-accent bg-mock-surface1 px-[12px] py-[9px]">
+        <CircleX size={15} className="shrink-0 text-mock-tile-red" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12px] leading-[16px] text-mock-fg">
+            app-tests (macos)
+          </span>
+          <span className="block truncate text-[10.5px] leading-[13px] text-mock-fg-muted">
+            #3976 · Honor configured commit signing
+          </span>
+        </span>
+        <span className="shrink-0 text-[11px] tabular-nums text-mock-fg-muted">5m 02s</span>
+      </div>
+    </motion.div>
+  );
+}
 
 function PluginDashboard() {
+  const { t } = useTranslation();
+  const listsFailingCheck = useSceneClock("extend", failingCheckListed);
   return (
-    <PanelShell tabs={PLUGIN_TABS} active={3}>
+    <PanelShell panel="plugin" tabs={pluginTabs(t)} active={3}>
       <div
         className="flex shrink-0 items-center gap-[8px] border-b border-mock-border px-[16px]"
         style={SUBHEADER_STYLE}
       >
         <Puzzle size={14} className="text-mock-accent-bright" />
         <span className="text-[13px] font-medium text-mock-fg">Release Radar</span>
-        <span className="text-[11px] text-mock-fg-muted">plugin</span>
+        <span className="text-[11px] text-mock-fg-muted">{t("landing.mockup.app.plugin")}</span>
         <span className="flex-1" />
         <RefreshCw size={13} className="text-mock-fg-muted" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden px-[16px] pt-[14px]">
         <div className="flex gap-[9px]">
-          {TILES.map((tile) => (
+          {tiles(t).map((tile) => (
             <div
               key={tile.label}
               className="flex-1 rounded-[10px] border border-mock-border-accent bg-mock-surface1 px-[12px] py-[11px]"
@@ -251,9 +310,13 @@ function PluginDashboard() {
           ))}
         </div>
 
+        <AnimatePresence initial={false}>
+          {listsFailingCheck ? <FailingCheck key="failing-check" /> : null}
+        </AnimatePresence>
+
         <div className="mt-[16px] rounded-[10px] border border-mock-border-accent bg-mock-surface1 px-[14px] pt-[12px] pb-[13px]">
           <div className="flex items-center justify-between text-[11px] text-mock-fg-muted">
-            <span>Merges · last 7 days</span>
+            <span>{t("landing.mockup.app.mergesWeek")}</span>
             <span className="flex items-center gap-[5px] text-mock-tile-teal">
               <Rows3 size={11} />
               +18%
@@ -270,9 +333,11 @@ function PluginDashboard() {
           </div>
         </div>
 
-        <div className="mt-[16px] text-[11px] text-mock-fg-muted">Recently merged</div>
+        <div className="mt-[16px] text-[11px] text-mock-fg-muted">
+          {t("landing.mockup.app.recentlyMerged")}
+        </div>
         <div className="pt-[6px]">
-          {RECENT.map((item) => (
+          {recentlyMerged(t).map((item) => (
             <div key={item.title} className="flex items-center gap-[10px] py-[7px]">
               <span className={`size-[7px] shrink-0 rounded-full ${item.tone}`} />
               <span className="min-w-0 flex-1">
@@ -291,8 +356,8 @@ function PluginDashboard() {
   );
 }
 
-export function RightPanel({ state }: { state: MockupStateId }) {
-  if (state === "ship") return <ShipPanel />;
-  if (state === "extend") return <PluginDashboard />;
+export function RightPanel({ panel }: { panel: PanelId }) {
+  if (panel === "ship") return <ShipPanel />;
+  if (panel === "plugin") return <PluginDashboard />;
   return <ChangesPanel />;
 }

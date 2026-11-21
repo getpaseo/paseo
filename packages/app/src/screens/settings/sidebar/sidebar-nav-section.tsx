@@ -1,4 +1,5 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { SidebarViewPicker } from "@/plugins/sidebar-view";
+import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -26,7 +27,7 @@ import {
   type SidebarNavItem,
   type SidebarSection,
 } from "@/sidebar-nav/model";
-import { resolvePluginIcon } from "@/plugins/icons";
+import { pluginIconComponent } from "@/plugins/icons";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -50,15 +51,17 @@ const BUILTIN_ICONS: Record<BuiltinSidebarItemId, LucideIcon> = {
 /** Plugin items register no icon, so they share this one; a legacy `addSidebarItem` keeps its own. */
 const PLUGIN_ICON = Blocks;
 
-function NavIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
+type NavIconComponent = ComponentType<{ size: number; color: string }>;
+
+function NavIcon({ Icon, color = "" }: { Icon: NavIconComponent; color?: string }) {
   return <Icon size={ICON_SIZE.md} color={color} />;
 }
 
 const ThemedNavIcon = withUnistyles(NavIcon);
 
-function navItemIcon(item: SidebarNavItem): LucideIcon {
+function navItemIcon(item: SidebarNavItem): NavIconComponent {
   if (item.kind === "builtin") return BUILTIN_ICONS[item.id];
-  return item.group.kind === "legacy" ? resolvePluginIcon(item.group.icon) : PLUGIN_ICON;
+  return item.group.kind === "legacy" ? pluginIconComponent(item.group.icon) : PLUGIN_ICON;
 }
 
 function navItemLabel(t: TFunction, item: SidebarNavItem): string {
@@ -115,7 +118,6 @@ function SidebarNavRow({
       <View style={styles.rowActions}>
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={moveUpIcon}
           onPress={handleMoveUp}
           disabled={isFirst}
@@ -124,7 +126,6 @@ function SidebarNavRow({
         />
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={moveDownIcon}
           onPress={handleMoveDown}
           disabled={isLast}
@@ -183,6 +184,7 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
 export function SidebarNavSection(): ReactElement {
   return (
     <>
+      <SidebarViewPicker />
       <SidebarItemsCard section="header" />
       <SidebarItemsCard section="footer" />
     </>

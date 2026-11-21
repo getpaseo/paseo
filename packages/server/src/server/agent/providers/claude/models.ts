@@ -48,6 +48,15 @@ export function findClaudeModel(
   return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
+export function getClaudeContextWindowMaxTokens(
+  modelId: string | null | undefined,
+): number | undefined {
+  if (modelId?.trim().toLowerCase().endsWith("[1m]")) {
+    return 1_000_000;
+  }
+  return findClaudeModel(modelId)?.contextWindowMaxTokens;
+}
+
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir: string,
@@ -74,7 +83,7 @@ export async function getClaudeModelsWithSettings(
     const manifestModel = getClaudeModels(claudeCodeVersion).find(
       (candidate) => candidate.id === model.id,
     );
-    models.push({ ...manifestModel, ...model });
+    models.push(resolveConfiguredClaudeModel({ ...manifestModel, ...model }));
   }
 
   return models;

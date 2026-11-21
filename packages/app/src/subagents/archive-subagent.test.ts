@@ -203,3 +203,39 @@ describe("requestArchiveSubagent", () => {
     expect(env.recordedErrors).toEqual([error]);
   });
 });
+
+it("warns before archiving an idle subagent with live background work", async () => {
+  const env = createFakeEnv({
+    initialSubagents: [
+      {
+        id: "child",
+        snapshot: { title: "Review branch", status: "idle", backgroundWork: { count: 1 } },
+      },
+    ],
+  });
+  await requestArchiveSubagent({ serverId: "server-1", subagentId: "child" }, env.deps);
+  expect(env.recordedConfirmInputs[0]).toMatchObject({
+    title: "Archive running subagent?",
+    message: expect.stringContaining("will stop"),
+  });
+});
+
+it("warns that archiving an idle subagent stops its passive background work", async () => {
+  const env = createFakeEnv({
+    initialSubagents: [
+      {
+        id: "child",
+        snapshot: {
+          title: "Check relay",
+          status: "idle",
+          backgroundWork: { count: 1, runningCount: 0 },
+        },
+      },
+    ],
+  });
+  await requestArchiveSubagent({ serverId: "server-1", subagentId: "child" }, env.deps);
+  expect(env.recordedConfirmInputs[0]).toMatchObject({
+    title: "Archive subagent?",
+    message: "Archiving Check relay will stop its background work and remove it from the track.",
+  });
+});

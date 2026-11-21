@@ -1,0 +1,22 @@
+// After Expo prebuild, run from packages/app/android:
+// ./gradlew --init-script ../scripts/verify-android-ndk.gradle verifyAndroidNdk
+gradle.projectsEvaluated {
+    rootProject.tasks.register('verifyAndroidNdk') {
+        doLast {
+            def expected = rootProject.ext.ndkVersion
+            def nativeProjects = rootProject.subprojects.findAll { subproject ->
+                def android = subproject.extensions.findByName('android')
+                android != null && (android.externalNativeBuild.cmake.path != null ||
+                    android.externalNativeBuild.ndkBuild.path != null)
+            }
+            assert !nativeProjects.empty : 'No native Android modules found'
+            println "Project NDK: ${expected}"
+            def mismatches = nativeProjects.findAll { subproject ->
+                def actual = subproject.android.ndkVersion
+                println "${subproject.path} NDK: ${actual}"
+                actual != expected
+            }
+            assert mismatches.empty : "Native Android modules must use project NDK ${expected}: ${mismatches*.path}"
+        }
+    }
+}

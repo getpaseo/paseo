@@ -957,9 +957,16 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
         });
 
       // No system error messages should leak into the timeline
-      const hasSystemError = assistantTexts.some((text) => text.includes("[System Error]"));
-      expect(hasSystemError).toBe(false);
-      expect(postSendAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(timeline.entries.some(({ item }) => item.type === "error")).toBe(false);
+      expect(
+        postSendMessages.some(
+          (message) =>
+            message.type === "agent_stream" &&
+            message.payload.agentId === agent.id &&
+            message.payload.event.type === "timeline" &&
+            message.payload.event.item.type === "error",
+        ),
+      ).toBe(false);
 
       const responded = assistantTexts.some((text) =>
         text.toUpperCase().includes("INTERRUPT_RECEIVED"),

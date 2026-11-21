@@ -2,10 +2,11 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import {
   createCodeClipboardContent,
-  createMarkdownClipboardContent,
+  createSelectionClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
+  MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
@@ -14,6 +15,7 @@ import {
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
+  MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
 } from "./markup";
@@ -22,43 +24,101 @@ const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
 const MESSAGE_ROW_SELECTOR = "[data-message-id]";
 const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
 const messageRowSelector = (messageId: string) => `[data-message-id="${CSS.escape(messageId)}"]`;
-const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
-const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
-const IMAGE_FRAME_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
+const CODE_BLOCK_SELECTOR = `pre, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
+const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, code, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
+const IMAGE_FRAME_SELECTOR = `img, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
 
-const turndown = new TurndownService({
-  bulletListMarker: "-",
-  codeBlockStyle: "fenced",
-  emDelimiter: "_",
-  strongDelimiter: "**",
-});
-turndown.use(gfm);
-turndown.addRule("escapedGfmTableCell", {
-  filter: ["th", "td"],
-  replacement: (content, node) => {
-    const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
-    const prefix = index === 0 ? "| " : " ";
-    return `${prefix}${content.replace(/\|/g, "\\|")} |`;
-  },
-});
-turndown.addRule("gfmStrikethrough", {
-  filter: ["del", "s"],
-  replacement: (content) => `~~${content}~~`,
-});
-turndown.addRule("compactListItem", {
-  filter: "li",
-  replacement: (content, node, options) => {
-    const item = content
-      .replace(/^\n+/, "")
-      .replace(/\n+$/, "\n")
-      .replace(/\n(?=\S)/g, "\n    ");
-    const parent = node.parentElement;
-    if (parent?.nodeName !== "OL") {
-      return `${options.bulletListMarker} ${item}\n`;
-    }
-    return `${node.getAttribute("value")}. ${item}\n`;
-  },
-});
+const SEMANTIC_TAGS =
+  "p,blockquote,br,code,pre,h1,h2,h3,h4,h5,h6,hr,img,li,ol,ul,strong,em,s,del,table,thead,tbody,tr,th,td";
+function semanticTag(element: Element): string | null {
+  return (
+    element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) ??
+    (element.matches(SEMANTIC_TAGS) ? element.tagName.toLowerCase() : null)
+  );
+}
+function copySemanticAttributes(original: Element, copy: Element): void {
+  const tag = semanticTag(original);
+  if (!tag || original.hasAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE)) return;
+  copy.setAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE, tag);
+  if (tag === "ol")
+    copy.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, original.getAttribute("start") ?? "1");
+  if (tag === "img") {
+    const url = original.getAttribute("src") ?? "";
+    const encodedSources = original
+      .closest(`[${MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE}]`)
+      ?.getAttribute(MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE);
+    const sources: Record<string, string> = encodedSources ? JSON.parse(encodedSources) : {};
+    copy.setAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE, sources[url] ?? url);
+    copy.setAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE, original.getAttribute("alt") ?? "");
+  }
+  if (tag === "td" || tag === "th") {
+    const align = (original as HTMLElement).style.textAlign;
+    if (align) copy.setAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE, align);
+  }
+}
+
+function createTurndown(flavor: "markdown" | "plain"): TurndownService {
+  const turndown = new TurndownService({
+    bulletListMarker: "-",
+    codeBlockStyle: "fenced",
+    emDelimiter: "_",
+    strongDelimiter: "**",
+  });
+  turndown.use(gfm);
+  // text/plain still carries tables as GFM syntax, so a cell's pipe stays escaped there.
+  turndown.addRule("escapedGfmTableCell", {
+    filter: ["th", "td"],
+    replacement: (content, node) => {
+      const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
+      const prefix = index === 0 ? "| " : " ";
+      return `${prefix}${content.replace(/\|/g, "\\|")} |`;
+    },
+  });
+  // A link Paseo recognized pastes as the text the reply showed. Rich paste keeps it as a
+  // link when it points to a web page, such as a forge reference.
+  turndown.addRule("recognizedLink", {
+    filter: (node) =>
+      node.nodeName === "A" &&
+      node.hasAttribute(MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE) &&
+      (flavor === "plain" || !isWebUrl(node.getAttribute("href") ?? "")),
+    replacement: (content) => content,
+  });
+  if (flavor === "markdown") {
+    // Turndown leaves `<` unescaped, so displayed text such as `<http://localhost>`
+    // would render back into text/html as an autolink.
+    const escapeMarkdown = turndown.escape.bind(turndown);
+    turndown.escape = (text) => escapeMarkdown(text).replace(/</g, "\\<");
+  } else {
+    turndown.escape = (text) => text;
+  }
+  turndown.addRule("gfmStrikethrough", {
+    filter: ["del", "s"],
+    replacement: (content) => `~~${content}~~`,
+  });
+  turndown.addRule("compactListItem", {
+    filter: "li",
+    replacement: (content, node, options) => {
+      const item = content
+        .replace(/^\n+/, "")
+        .replace(/\n+$/, "\n")
+        // Every non-empty line, so indented code lines stay inside the item.
+        .replace(/\n(?=[^\n])/g, "\n    ");
+      const parent = node.parentElement;
+      if (parent?.nodeName !== "OL") {
+        return `${options.bulletListMarker} ${item}\n`;
+      }
+      return `${node.getAttribute("value")}. ${item}\n`;
+    },
+  });
+  return turndown;
+}
+
+function isWebUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
+const markdownTurndown = createTurndown("markdown");
+const plainTurndown = createTurndown("plain");
 
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,
@@ -86,11 +146,15 @@ export function createAssistantSelectionClipboardContent(
   }
   restoreMarkdownElements(container);
 
-  const markdown = turndown.turndown(container.innerHTML).trim();
+  const markdown = markdownTurndown.turndown(container).trim();
   if (!markdown) {
     return null;
   }
-  const content = createMarkdownClipboardContent(markdown);
+  // text/plain carries unescaped Markdown: a plain target shows backslashes literally.
+  // text/html is rendered from escaped Markdown, so literal Markdown characters stay
+  // literal in a rich target.
+  const plainText = plainTurndown.turndown(container).trim();
+  const content = createSelectionClipboardContent(markdown, plainText);
   return { ...content, html: flattenClipboardListMarkup(content.html) };
 }
 
@@ -247,6 +311,7 @@ function cloneMarkdownSelection(range: Range, message: Element): Node {
   while (ancestor && ancestor !== message) {
     if (shouldPreserveSemanticElement(range, ancestor)) {
       const wrapper = ancestor.cloneNode(false) as Element;
+      copySemanticAttributes(ancestor, wrapper);
       normalizeOrderedListStart(wrapper, ancestor, range);
       wrapper.append(selected);
       selected = wrapper;
@@ -294,25 +359,26 @@ function nodeAtPath(root: Node, path: number[]): Node {
 }
 
 function removeUnselectedSemantics(range: Range, source: Element, clone: Element): void {
-  const selector = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}], a`;
+  const selector = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}], a, ${SEMANTIC_TAGS}`;
   const originals = Array.from(source.querySelectorAll(selector));
   const copies = Array.from(clone.querySelectorAll(selector));
 
   originals.forEach((original, index) => {
     const copy = copies[index];
+    if (copy) copySemanticAttributes(original, copy);
     if (!copy || shouldPreserveSemanticElement(range, original)) {
       if (copy) {
         normalizeOrderedListStart(copy, original, range);
       }
       return;
     }
-    const tag = original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
+    const tag = semanticTag(original);
     if (tag && isBlockBoundary(tag)) {
       copy.setAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE, "p");
       return;
     }
     copy.removeAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-    if (copy.tagName === "A") {
+    if (copy.matches(SEMANTIC_TAGS) || copy.tagName === "A") {
       copy.setAttribute(MARKDOWN_COPY_UNWRAP_ATTRIBUTE, "true");
     }
   });
@@ -322,9 +388,12 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (!range.intersectsNode(element)) {
     return false;
   }
-  const tag = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
+  const tag = semanticTag(element);
   // An image has no part to select, so touching it selects all of it.
   if (tag === "p" || tag === "img" || isTableStructure(tag)) {
+    return true;
+  }
+  if (isCrossBoundaryCodeElement(range, element, tag)) {
     return true;
   }
   const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
@@ -340,10 +409,23 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
       (item) => hasSelectedListMarker(range, item) || hasSelectedAllContents(range, item, true),
     );
   }
-  if (tag === "li" && hasSelectedListMarker(range, element)) {
-    return true;
+  if (tag === "li") {
+    if (hasSelectedListMarker(range, element)) return true;
+    // CSS list markers are outside text nodes. Starting inside a semantic item
+    // excludes its marker even when all of the label's characters are selected.
+    if (
+      element.tagName === "LI" &&
+      range.startContainer !== element &&
+      element.contains(range.startContainer)
+    )
+      return false;
   }
   return hasSelectedAllContents(range, element, tag === "li");
+}
+
+function isCrossBoundaryCodeElement(range: Range, element: Element, tag: string | null): boolean {
+  const isCode = tag === "pre" || (tag === "code" && Boolean(element.closest(CODE_BLOCK_SELECTOR)));
+  return isCode && !selectionStaysInsideElement(range, element);
 }
 
 function selectionStaysInsideElement(range: Range, element: Element): boolean {
@@ -358,7 +440,7 @@ function selectionStaysInsideElement(range: Range, element: Element): boolean {
 function selectedListItems(list: Element, range: Range): Element[] {
   return Array.from(list.children).filter(
     (child) =>
-      child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li" &&
+      semanticTag(child) === "li" &&
       (child.contains(range.startContainer) ||
         child.contains(range.endContainer) ||
         hasSelectedAllContents(range, child, true)),
@@ -368,7 +450,7 @@ function selectedListItems(list: Element, range: Range): Element[] {
 function hasSelectedListMarker(range: Range, item: Element): boolean {
   const marker = item.querySelector(`:scope > [${MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE}]`);
   if (!marker) {
-    return false;
+    return item.tagName === "LI" && range.startContainer === item && range.startOffset === 0;
   }
 
   const markerContents = document.createRange();
@@ -391,18 +473,20 @@ function hasSelectedListMarker(range: Range, item: Element): boolean {
 }
 
 function normalizeOrderedListStart(copy: Element, original: Element, range: Range): void {
-  if (original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) !== "ol") {
+  if (semanticTag(original) !== "ol") {
     return;
   }
   const firstSelectedItem = selectedListItems(original, range)[0];
   if (!firstSelectedItem) {
     return;
   }
-  const items = Array.from(original.children).filter(
-    (child) => child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li",
-  );
+  const items = Array.from(original.children).filter((child) => semanticTag(child) === "li");
   const omittedItems = items.indexOf(firstSelectedItem);
-  const originalStart = Number(original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ?? 1);
+  const originalStart = Number(
+    original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ??
+      original.getAttribute("start") ??
+      1,
+  );
   copy.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, String(originalStart + omittedItems));
 }
 
@@ -600,13 +684,15 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+  // Turndown escapes line-start Markdown per text node, so text split by an unwrapped
+  // element, such as `#` and ` for`, has to be one node to keep `# for` literal.
+  container.normalize();
 }
 
 /**
- * Each item carries its number before Turndown re-parses the HTML. Until then every
- * child of the list is one item, including a partly selected item demoted to a `p`.
- * The parser splits a `p` that holds a code block into several siblings, so counting
- * siblings afterwards numbers the next item too high.
+ * Assign item numbers before passing the DOM to Turndown. A partly selected item
+ * still takes its original list position when copied as a paragraph, so the following
+ * items keep their numbers.
  */
 function numberOrderedListItems(list: Element, start: number): void {
   Array.from(list.children).forEach((child, index) => {

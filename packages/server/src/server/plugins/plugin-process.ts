@@ -1,3 +1,4 @@
+import { PluginAgentTools } from "./agent-tools.js";
 import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
@@ -6,8 +7,25 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
-import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
-import type { PluginHandlerContext, PluginServerContribution } from "@getpaseo/plugin/server";
+import type {
+  SettingsDefinition,
+  PluginRpcContract,
+  PluginSubscriptionContract,
+} from "@getpaseo/plugin";
+import type {
+  PluginHandlerContext,
+  PluginServerContext,
+  PluginServerContribution,
+  PluginWorktreeCreateInput,
+  PluginWorktreeRemoveRequest,
+  PluginWorktreeRestoreRequest,
+  WorktreeManagerRegistration,
+} from "@getpaseo/plugin/server";
+import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
+import {
+  PluginSubscriptionHandlers,
+  type PluginSubscriptionHandler,
+} from "./subscription-handlers.js";
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
@@ -15,6 +33,10 @@ import {
   type ProviderConnection,
   type ProviderRegistration,
   ProviderStatusSchema,
+  ProviderInspectionSchema,
+  ProviderUpdateCheckSchema,
+  ProviderUpdateReportSchema,
+  ProviderUpdateResultSchema,
 } from "@getpaseo/plugin/server/provider";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -23,8 +45,38 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
+import { initializeEnvironmentProxy } from "../network/index.js";
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function validateProviderInstallation(
+  id: string,
+  installation: ProviderRegistration["installation"],
+): void {
+  if (installation === undefined) return;
+  for (const url of [installation.installUrl, installation.updateUrl]) {
+    if (url !== undefined && (typeof url !== "string" || !isHttpUrl(url)))
+      throw new Error(`Plugin provider ${id} installation links must be http(s) URLs`);
+  }
+  if (installation.inspect !== undefined && typeof installation.inspect !== "function")
+    throw new Error(`Invalid installation inspect callback for plugin provider ${id}`);
+  if (
+    installation.checkForUpdates !== undefined &&
+    typeof installation.checkForUpdates !== "function"
+  )
+    throw new Error(`Invalid installation checkForUpdates callback for plugin provider ${id}`);
+  if (installation.update !== undefined && typeof installation.update !== "function")
+    throw new Error(`Invalid installation update callback for plugin provider ${id}`);
 }
 
 export interface PluginWorkerChannel {
@@ -59,17 +111,22 @@ export function createPluginWorker(options: {
     handler: RpcHandler;
   }
 
+  const agentTools = new PluginAgentTools();
   const hooks = new PluginHookHandlers(() => {
     send({ type: "hooks.changed", hooks: hooks.catalog() });
-  });
+  }, agentTools);
   const handlers = new Map<string, RegisteredRpc>();
+  const subscriptions = new PluginSubscriptionHandlers({ send, sendAndWait });
   const providers = new Map<string, ProviderRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
+  let worktreeManager: WorktreeManagerRegistration | null = null;
+  const worktreeRequests = new Map<string, AbortController>();
   const providerConnections = new Map<
     string,
     { connection: ProviderConnection; unsubscribe: () => void; closing?: Promise<void> }
   >();
   const pendingProviderConnections = new Map<string, { tombstoned: boolean }>();
+  const installationRequests = new Map<string, AbortController>();
   let cleanup: (() => void | Promise<void>) | null = null;
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
@@ -95,11 +152,35 @@ export function createPluginWorker(options: {
     if (!/^[a-z][a-z0-9._-]*$/.test(normalized)) {
       throw new Error(`Invalid plugin RPC method: ${method}`);
     }
-    if (handlers.has(normalized)) {
+    if (handlers.has(normalized) || subscriptions.has(normalized)) {
       throw new Error(`Duplicate plugin RPC method: ${normalized}`);
     }
     return normalized;
   }
+
+  function registerSubscription(
+    contract: PluginSubscriptionContract,
+    handler: PluginSubscriptionHandler,
+  ): void {
+    if (typeof handler !== "function") {
+      throw new Error(`Plugin subscription ${contract.name} must provide a handler`);
+    }
+    const method = validateMethod(contract.name);
+    subscriptions.register({ ...contract, name: method }, handler);
+  }
+
+  // One name serves either an RPC or a subscription; the contract says which.
+  const handle = ((
+    contract: PluginRpcContract | PluginSubscriptionContract,
+    handler: (input: unknown, context: never) => unknown,
+  ) => {
+    if ("event" in contract) {
+      // The subscription handlers parse the input once and pass the result here.
+      registerSubscription(contract, handler as PluginSubscriptionHandler);
+      return;
+    }
+    register(contract, (input, context) => handler(input, context as never));
+  }) as PluginServerContext["handle"];
 
   function register(contract: PluginRpcContract, handler: RpcHandler): void {
     if (typeof handler !== "function") {
@@ -126,6 +207,7 @@ export function createPluginWorker(options: {
     }
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
+    validateProviderInstallation(id, provider.installation);
     if (
       provider.command !== undefined &&
       (provider.command.length === 0 ||
@@ -152,16 +234,120 @@ export function createPluginWorker(options: {
     usageSources.set(id, { ...source, id });
   }
 
+  function worktreeManagerCapabilities() {
+    if (!worktreeManager) return null;
+    return {
+      hasRemove: worktreeManager.remove !== undefined,
+      hasRestore: worktreeManager.restore !== undefined,
+    };
+  }
+
+  function registerWorktreeManager(manager: WorktreeManagerRegistration): () => void {
+    if (!manager || typeof manager.create !== "function") {
+      throw new Error("Plugin worktree manager must implement create()");
+    }
+    if (manager.remove !== undefined && typeof manager.remove !== "function") {
+      throw new Error("Invalid remove callback for plugin worktree manager");
+    }
+    if (manager.restore !== undefined && typeof manager.restore !== "function") {
+      throw new Error("Invalid restore callback for plugin worktree manager");
+    }
+    if (worktreeManager !== null) {
+      throw new Error("Plugin already registered a worktree manager");
+    }
+    worktreeManager = manager;
+    send({ type: "worktree_manager.changed", worktreeManager: worktreeManagerCapabilities() });
+    return () => {
+      if (worktreeManager !== manager) return;
+      worktreeManager = null;
+      send({ type: "worktree_manager.changed", worktreeManager: null });
+    };
+  }
+
   function providerMetadata(provider: ProviderRegistration) {
     return {
       id: provider.id,
       label: provider.label,
       description: provider.description,
       iconPath: provider.icon,
+      requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
+      installation: provider.installation
+        ? {
+            installUrl: provider.installation.installUrl,
+            updateUrl: provider.installation.updateUrl,
+            hasInspect: provider.installation.inspect !== undefined,
+            hasCheckForUpdates: provider.installation.checkForUpdates !== undefined,
+            hasUpdate: provider.installation.update !== undefined,
+          }
+        : undefined,
       command: provider.command,
     };
+  }
+
+  /** Handles installation requests; returns false for any other message. */
+  function handleInstallationMessage(message: PluginProcessRequest): boolean {
+    if (message.type === "provider.installation.cancel") {
+      installationRequests
+        .get(message.requestId)
+        ?.abort(new Error("Installation request canceled"));
+      return true;
+    }
+    if (
+      message.type !== "provider.installation.inspect" &&
+      message.type !== "provider.installation.check_updates" &&
+      message.type !== "provider.installation.update"
+    )
+      return false;
+    const controller = new AbortController();
+    installationRequests.set(message.requestId, controller);
+    const context = { launch: message.request.launch, signal: controller.signal };
+    const installedVersion =
+      message.type === "provider.installation.check_updates"
+        ? message.request.installedVersion
+        : undefined;
+    void (async () => {
+      const installation = providers.get(message.providerId)?.installation;
+      if (message.type === "provider.installation.update") {
+        if (!installation?.update)
+          throw new Error(`Provider has no update capability: ${message.providerId}`);
+        let settled = false;
+        const report = (event: unknown) => {
+          const parsed = ProviderUpdateReportSchema.safeParse(event);
+          if (settled || !parsed.success) return;
+          send({
+            type: "provider.installation.report",
+            requestId: message.requestId,
+            report: parsed.data,
+          });
+        };
+        try {
+          return ProviderUpdateResultSchema.parse(
+            await installation.update({ ...context, report }),
+          );
+        } finally {
+          settled = true;
+        }
+      }
+      if (message.type === "provider.installation.inspect") {
+        if (!installation?.inspect)
+          throw new Error(`Provider has no inspect capability: ${message.providerId}`);
+        return ProviderInspectionSchema.parse(await installation.inspect(context));
+      }
+      if (!installation?.checkForUpdates)
+        throw new Error(`Provider has no checkForUpdates capability: ${message.providerId}`);
+      return ProviderUpdateCheckSchema.parse(
+        await installation.checkForUpdates({ ...context, installedVersion }),
+      );
+    })()
+      .then(
+        (output) => send({ type: "result", requestId: message.requestId, output }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      )
+      .finally(() => installationRequests.delete(message.requestId));
+    return true;
   }
 
   async function connectProvider(
@@ -280,11 +466,12 @@ export function createPluginWorker(options: {
         )
       : null;
     const contributedCleanup = contribute({
-      handle: (contract, handler) =>
-        register(contract, (input, context) => handler(contract.input.parse(input), context)),
+      handle,
       registerProvider,
       registerUsageSource,
+      registerWorktreeManager,
       registerSettings,
+      addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
     });
@@ -298,6 +485,7 @@ export function createPluginWorker(options: {
         .map(async (source) => ({
           id: source.id,
           label: source.label,
+          provider: source.provider,
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,
@@ -306,7 +494,9 @@ export function createPluginWorker(options: {
     send({
       type: "ready",
       methods: [...handlers.keys()].sort(),
+      subscriptions: subscriptions.catalog(),
       hooks: hooks.catalog(),
+      worktreeManager: worktreeManagerCapabilities(),
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
@@ -321,7 +511,13 @@ export function createPluginWorker(options: {
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
     hooks.close();
+    agentTools.close();
+    subscriptions.releaseAll();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
+    for (const request of installationRequests.values())
+      request.abort(new Error("Plugin is stopping"));
+    for (const request of worktreeRequests.values()) request.abort(new Error("Plugin is stopping"));
+    worktreeManager = null;
     const currentCleanup = cleanup;
     cleanup = null;
     try {
@@ -357,9 +553,16 @@ export function createPluginWorker(options: {
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
       message.type === "provider.status" ||
+      message.type === "provider.installation.inspect" ||
+      message.type === "provider.installation.check_updates" ||
+      message.type === "provider.installation.update" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
-      message.type === "usage.discover"
+      message.type === "usage.discover" ||
+      message.type === "worktree.create" ||
+      message.type === "worktree.remove" ||
+      message.type === "worktree.restore" ||
+      message.type === "subscribe"
     ) {
       send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
     } else if (message.type === "provider.connect") {
@@ -378,6 +581,91 @@ export function createPluginWorker(options: {
     } else if (message.type === "provider.close") {
       send({ type: "provider.closed", connectionId: message.connectionId });
     }
+  }
+
+  function handleToolMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "tool.call" | "tool.cancel" | "tools.detach" }
+  > {
+    if (message.type === "tools.detach") {
+      agentTools.detach(message.agentId);
+      return true;
+    }
+    if (message.type === "tool.cancel") {
+      agentTools.cancel(message.requestId);
+      return true;
+    }
+    if (message.type === "tool.call") {
+      if (!paseo) {
+        send({ type: "error", requestId: message.requestId, error: "Plugin API unavailable" });
+        return true;
+      }
+      void agentTools
+        .call(message.requestId, message.agent, message.name, message.input, paseo)
+        .then((output) =>
+          send({
+            type: "result",
+            requestId: message.requestId,
+            output: jsonTransportValue(output),
+          }),
+        )
+        .catch((error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        );
+      return true;
+    }
+    return false;
+  }
+
+  function handleSubscriptionMessage(
+    message: Extract<PluginProcessRequest, { type: "subscribe" | "unsubscribe" }>,
+  ): void {
+    if (message.type === "unsubscribe") subscriptions.release(message.subscriptionId);
+    else if (paseo) subscriptions.start(message, paseo);
+    else send({ type: "error", requestId: message.requestId, error: "Plugin API unavailable" });
+  }
+
+  /** Handles a provider's status, catalogue key and installation requests; false for others. */
+  function handleProviderQueryMessage(message: PluginProcessRequest): message is Extract<
+    PluginProcessRequest,
+    {
+      type:
+        | "provider.status"
+        | "provider.catalog_key"
+        | "provider.installation.inspect"
+        | "provider.installation.check_updates"
+        | "provider.installation.update"
+        | "provider.installation.cancel";
+    }
+  > {
+    if (message.type === "provider.status") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider || !provider.status)
+          throw new Error(`Provider has no status capability: ${message.providerId}`);
+        const output = ProviderStatusSchema.parse(await provider.status(message.request));
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "provider.catalog_key") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+        const output = await provider.getCatalogCacheKey?.(message.options);
+        if (output !== undefined && typeof output !== "string")
+          throw new Error("Invalid catalogue key");
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    return handleInstallationMessage(message);
   }
 
   function handleMessage(rawMessage: unknown): void {
@@ -421,31 +709,8 @@ export function createPluginWorker(options: {
       rejectWhileStopping(message);
       return;
     }
-    if (message.type === "provider.status") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider || !provider.status)
-          throw new Error(`Provider has no status capability: ${message.providerId}`);
-        const output = ProviderStatusSchema.parse(await provider.status(message.request));
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
-    if (message.type === "provider.catalog_key") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
-        const output = await provider.getCatalogCacheKey?.(message.options);
-        if (output !== undefined && typeof output !== "string")
-          throw new Error("Invalid catalogue key");
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
+    if (handleToolMessage(message)) return;
+    if (handleProviderQueryMessage(message)) return;
     if (message.type === "usage.fetch" || message.type === "usage.discover") {
       handleUsageRequest(message);
       return;
@@ -482,6 +747,15 @@ export function createPluginWorker(options: {
       handleHookMessage(message);
       return;
     }
+    if (isWorktreeMessage(message)) {
+      handleWorktreeMessage(message);
+      return;
+    }
+    if (message.type === "invoke") invoke(message);
+    else handleSubscriptionMessage(message);
+  }
+
+  function invoke(message: Extract<PluginProcessRequest, { type: "invoke" }>): void {
     const registered = handlers.get(message.method);
     if (!registered) {
       send({
@@ -497,7 +771,10 @@ export function createPluginWorker(options: {
         if (!paseo) throw new Error("Plugin Paseo API is unavailable");
         return registered.handler(input, { paseo });
       })
-      .then((output) => registered.contract.output.parseAsync(output))
+      .then((output: unknown) => {
+        assertPluginWireValue(output, "output");
+        return output;
+      })
       .then(
         (output) => send({ type: "result", requestId: message.requestId, output }),
         (error) =>
@@ -522,7 +799,7 @@ export function createPluginWorker(options: {
         });
         return;
       }
-      void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
+      void hooks.invoke(message.requestId, message.name, message.input, paseo).then(
         (output) => {
           return send({ type: "result", requestId: message.requestId, output });
         },
@@ -538,6 +815,88 @@ export function createPluginWorker(options: {
     message: PluginProcessRequest,
   ): message is Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }> {
     return message.type === "hook" || message.type === "hook.cancel";
+  }
+
+  function isWorktreeMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "worktree.create" | "worktree.remove" | "worktree.restore" | "worktree.cancel" }
+  > {
+    return (
+      message.type === "worktree.create" ||
+      message.type === "worktree.remove" ||
+      message.type === "worktree.restore" ||
+      message.type === "worktree.cancel"
+    );
+  }
+
+  function handleWorktreeMessage(
+    message: Extract<
+      PluginProcessRequest,
+      { type: "worktree.create" | "worktree.remove" | "worktree.restore" | "worktree.cancel" }
+    >,
+  ): void {
+    if (message.type === "worktree.cancel") {
+      worktreeRequests.get(message.requestId)?.abort(new Error("Worktree request canceled"));
+      return;
+    }
+    if (!paseo) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        error: "Plugin Paseo API is unavailable",
+      });
+      return;
+    }
+    const manager = worktreeManager;
+    if (!manager) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        error: "Plugin has no registered worktree manager",
+      });
+      return;
+    }
+    const controller = new AbortController();
+    worktreeRequests.set(message.requestId, controller);
+    const context = { paseo, signal: controller.signal };
+    void (async () => {
+      if (message.type === "worktree.create") {
+        return (
+          (await manager.create(
+            structuredClone(message.request) as PluginWorktreeCreateInput,
+            context,
+          )) ?? null
+        );
+      }
+      if (message.type === "worktree.remove") {
+        if (!manager.remove) {
+          throw new Error("Plugin worktree manager does not implement remove");
+        }
+        return (
+          (await manager.remove(
+            structuredClone(message.request) as PluginWorktreeRemoveRequest,
+            context,
+          )) ?? null
+        );
+      }
+      if (!manager.restore) {
+        throw new Error("Plugin worktree manager does not implement restore");
+      }
+      return (
+        (await manager.restore(
+          structuredClone(message.request) as PluginWorktreeRestoreRequest,
+          context,
+        )) ?? null
+      );
+    })()
+      .then(
+        (output) => send({ type: "result", requestId: message.requestId, output }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      )
+      .finally(() => worktreeRequests.delete(message.requestId));
   }
   return { shutdown };
 }
@@ -564,6 +923,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
     if (!worker && parsed.success && parsed.data.type === "initialize") {
       try {
+        initializeEnvironmentProxy();
         worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
       } catch (error) {
         channel.send({ type: "fatal", error: describeError(error) });

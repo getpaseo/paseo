@@ -22,7 +22,7 @@ Choose one implementation path:
 
 The examples are:
 
-- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, settings, prompts, persistence, child sessions, and a provider-owned timeline renderer;
+- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, option controls, prompts, persistence, child sessions, and a provider-owned timeline renderer;
 - [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer): an ACP command template with a Zod-validated vendor edit transformer. Replace `example-acp --stdio` with an installed ACP agent before loading it;
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking): a renderer-only plugin that does not implement a provider.
 
@@ -138,7 +138,7 @@ later through `session.config`.
 ## Open a session
 
 `session.open` contains the complete launch configuration: working directory, environment, system
-prompt, MCP servers, tool policy, model, mode, settings, opaque provider options, and persistence
+prompt, MCP servers, tool policy, model, mode, `providerOptions`, and persistence
 preference.
 
 For persisted host-scoped plugin settings, use the handle returned by `server.registerSettings()`.
@@ -177,7 +177,8 @@ emit({
     models,
     modes,
     thinkingOptions,
-    settings: [],
+    controls: [],
+    providerOptions: {},
   },
 });
 emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
@@ -229,10 +230,16 @@ terminal `completed`, `failed`, or `canceled` event.
 At this point the provider is usable: users can select a model, open a session, send a message, and
 see the response.
 
-## Add session-specific composer controls
+## Add composer controls for provider options
 
-Add `session.configure` only when the native agent has settings users should change after opening a
-session. Publish them in `session.config` as toggle or select controls:
+`providerOptions` is the provider's own configuration: one record of JSON values that Paseo
+stores per agent and hands to `session.open`. It includes the defaults a user set in `config.json`
+for your provider. Validate every key you read.
+
+Add `controls` only when users should see and change some of those options in the composer. A
+control draws one top-level key of `providerOptions` as a toggle or a select. It holds no value:
+Paseo reads the value from `providerOptions`. Publish the controls and the values you run with in
+`session.config`:
 
 ```ts
 emit({
@@ -243,35 +250,48 @@ emit({
     models: [{ id: "agent-large", label: "Agent Large" }],
     modes: [],
     thinkingOptions: [],
-    settings: [
-      {
-        type: "toggle",
-        id: "fast",
-        label: "Fast mode",
-        value: nativeSession.fast,
-      },
+    controls: [
+      { type: "toggle", key: "fast", label: "Fast mode", icon: "Zap", defaultValue: false },
       {
         type: "select",
-        id: "approval",
+        key: "approval",
         label: "Approvals",
-        value: nativeSession.approval,
-        options: [
-          { label: "Ask", value: "ask" },
-          { label: "Auto accept", value: "auto" },
+        icon: "Shield",
+        defaultValue: "ask",
+        choices: [
+          { value: "ask", label: "Ask" },
+          { value: "auto", label: "Auto accept" },
         ],
       },
     ],
+    providerOptions: { fast: nativeSession.fast, approval: nativeSession.approval },
   },
 });
 ```
 
-Paseo renders these controls in the composer. A user change arrives as `session.configure`; apply it
-and publish the committed `session.config` before `request.completed`. The provider may change the
-available controls at runtime, including after a model change.
+`icon` is a Lucide icon name. `defaultValue` is what a control shows for a key that has no value.
+Paseo stores every value you report when a session opens or a change is applied, including values
+at the default and values nobody set. The same controls appear in the New workspace screen, in draft
+tabs, and on running agents. Offer a control only for a key you can change on a running session.
+The provider may change its controls at runtime, including after a model change.
 
-`settings` are user-facing controls. `providerOptions` is opaque JSON supplied at session creation
-for provider-specific configuration that Paseo does not render. A provider-specific token budget
-belongs in one of those two places; it is not a dedicated prompt field.
+A change arrives as `session.configure` with `changes.providerOptions` holding only the keys
+that changed, whether or not they have a control. Apply every key and publish the committed
+`session.config` before `request.completed`. Fail the request with `request.failed` and leave
+every key as it was when you cannot apply one, for example a key you read only when a session
+opens. A
+value of `null` returns that key to the provider's default. Publish what the session ended up
+with, not a copy of the request: Paseo stores your published values so the stored options match
+what runs.
+
+If the provider changes an option on its own, for example a model switch turns Fast off, publish
+a new `session.config` with the new values. Paseo stores them and does not set the old ones
+back.
+
+Not every option needs a control. A provider-specific token budget, for example, belongs in
+`providerOptions` and is not a dedicated prompt field. It is delivered in `session.open`, a caller
+can change it on a running agent, and your `session.configure` handler decides whether it can
+apply it live. Report it in `providerOptions` so Paseo stores what runs.
 
 ## Add persistence and replay
 
@@ -286,6 +306,11 @@ When `history` is `"replay"`, publish the native session's existing `timeline.it
 Paseo refreshes an agent by closing its current provider session and opening it again with current
 configuration and persistence. Re-read credentials, environment, global configuration, and MCP
 servers during `session.open`. There is no separate reload operation.
+
+Conversation and combined rewind require a core-restored session with persistence. After a
+successful rewind, Paseo closes the session and reopens its latest persistence value with
+`history: "replay"`. Publish the retained native branch before `session.ready`, including its
+children. File-only rewind keeps the current session and conversation history.
 
 Use `restoration: "core"` when Paseo can reopen a session from persistence. A provider-owned child
 uses `restoration: "parent"`; emit it as another `session.opened` event with `parentSessionId` and
@@ -305,6 +330,52 @@ turn or finish as a side effect with a `completed` prompt result.
 
 Advertise only capabilities you implement. If steering is unsupported, omit `prompt.steer`; Paseo
 can replace the active turn instead.
+
+## Permit idle runtime cleanup
+
+Paseo can release an idle resumable session after one hour when its daemon baseline allows cleanup.
+Add a provider-owned veto by advertising `session.can_stop_runtime` on the connection and the
+session's `session.opened` capabilities. Without this capability, the same baseline and one-hour
+idle period apply, and the plugin receives no safety request.
+
+Handle the safety query in your existing `send(input)` handler. It addresses the provider's own
+session ID, including when one connection serves several sessions:
+
+```ts
+case "session.can_stop_runtime": {
+  try {
+    const session = sessions.get(input.sessionId);
+    if (!session) throw new Error("Session not found");
+    emit({
+      type: "session.can_stop_runtime",
+      requestId: input.requestId,
+      sessionId: input.sessionId,
+      canStop: await session.canStopRuntime(),
+    });
+  } catch (error) {
+    emit({
+      type: "request.failed",
+      requestId: input.requestId,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+  return;
+}
+```
+
+`canStopRuntime(): Promise<boolean>` belongs to your provider's session implementation. Return
+`true` only when releasing the runtime loses no background shells, monitors, native children,
+queued completion reports, or pending autonomous replies. This query must not stop or mutate the
+session. Return `false` while work remains. A rejected query, invalid response, or timeout also
+keeps the runtime alive. Never respond with `request.completed` for this query.
+
+Paseo always checks foreground work, permissions, queued deliveries, lifecycle operations,
+working managed/native descendants, and outstanding local or remote finish subscriptions for the
+caller. Subscription protection lasts through registration, recovery and notification dispatch
+acknowledgment. A positive provider response never overrides these blockers. Paseo rechecks
+activity before the existing `session.close` operation. After protected work finishes, a fresh
+one-hour idle period starts. The saved provider persistence must resume the same conversation.
+The host setting `agents.idleRuntimeCleanup: false` disables collection for every provider.
 
 ## Publish timeline items
 
@@ -356,6 +427,127 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report installation and updates
+
+Add `installation` to your registration and the provider's settings show an **Installation**
+section. Users see whether your CLI is installed and which version, whether an update is
+available, and an **Update** button that runs your updater and shows its output. Every member is
+optional, so declare only what your CLI supports:
+
+| Member            | Users see                                                               | Declare it when                                        |
+| ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| `installUrl`      | **Install instructions**, and **Install** while not installed           | Users install a CLI                                    |
+| `updateUrl`       | **Update instructions** while installed, when you declare no `update`   | Your docs say how to update                            |
+| `inspect`         | **Version**, or **Not installed**                                       | The CLI reports its version                            |
+| `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
+| `update`          | **Update** while installed, then the updater's output                   | The CLI updates itself with a command                  |
+
+This `example-agent` prints its version, asks `self-update --check --json` for the release its
+updater installs, and updates with `self-update`:
+
+```ts
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import type {
+  ProviderInstallation,
+  ProviderInstallationLaunch,
+} from "@getpaseo/plugin/server/provider";
+
+async function run(launch: ProviderInstallationLaunch, args: string[], signal: AbortSignal) {
+  const { stdout } = await execCommand(launch.command, [...launch.args, ...args], {
+    env: launch.env,
+    timeout: 20_000,
+    signal,
+  });
+  return stdout.trim();
+}
+
+export const installation: ProviderInstallation = {
+  installUrl: "https://example.com/docs/install",
+  updateUrl: "https://example.com/docs/update",
+
+  async inspect({ launch, signal }) {
+    if (!launch?.resolved) return { status: "not_installed" };
+    // `example-agent --version` prints `1.4.2`.
+    return { status: "installed", version: await run(launch, ["--version"], signal) };
+  },
+
+  async checkForUpdates({ launch, installedVersion, signal }) {
+    if (!launch) return { status: "unknown" };
+    // Prints `{"latest":"1.5.0"}`; `self-update` installs any release that differs.
+    const { latest } = JSON.parse(
+      await run(launch, ["self-update", "--check", "--json"], signal),
+    ) as { latest: string };
+    return latest === installedVersion
+      ? { status: "current" }
+      : { status: "available", versions: [latest] };
+  },
+
+  async update({ launch, signal, report }) {
+    if (!launch?.resolved) return { status: "failed", message: "example-agent is not installed" };
+    const child = spawnProcess(launch.command, [...launch.args, "self-update"], {
+      env: launch.env,
+      stdio: "pipe",
+    });
+    child.stdin.end();
+    child.stdout.on("data", (chunk: Buffer) => report({ type: "stdout", text: chunk.toString() }));
+    child.stderr.on("data", (chunk: Buffer) => report({ type: "stderr", text: chunk.toString() }));
+    const stop = () => void terminateProcess(child);
+    signal.addEventListener("abort", stop, { once: true });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => signal.removeEventListener("abort", stop));
+    if (code !== 0) return { status: "failed", message: `self-update exited with code ${code}` };
+    return { status: "succeeded", message: "New sessions use the new version." };
+  },
+};
+```
+
+Add it to the registration next to `command`:
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    installation,
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+Each callback receives the launch a session would use. When `launch.resolved` is `false`, Paseo did
+not find the executable and `command` is the configured name, so report `not_installed` without
+running it. `launch` is absent when the registration declares no `command`. `checkForUpdates` runs
+only after `inspect` reports the CLI installed, and receives the `version` it reported as
+`installedVersion`, so compare that instead of reading the version again. For an ACP provider,
+spread `runAcpProvider()` into the registration and add `installation` beside it. Run version and
+update probes with the launch's arguments before your session subcommand, such as `hoplite
+--version` for a provider that runs `hoplite acp`.
+
+Paseo treats versions as text. It shows `version` and `versions` as written and never parses
+them, so your check decides what counts as newer. Ask the source your CLI's own updater asks, and
+leave `checkForUpdates` out when you cannot. A check that returns `unknown`, throws, or misses its
+deadline shows **Couldn't check for updates** with your message and never shows **Up to date**.
+
+`update` runs only when a user selects **Update**, and Paseo runs one update per provider at a
+time. Pass the updater's output to `report` unchanged; Paseo keeps the last 65,536 characters. Paseo adds no
+verification of its own, so the update does what your command does in a terminal. Return
+`succeeded` with a message that says when the new version takes effect, or `failed` with the reason.
+A failed update shows until the user refreshes the provider. Without `update`, **Update instructions** opens `updateUrl` instead.
+
+**Update** and **Update instructions** appear whenever `inspect` reports the CLI installed. The
+check only says what it knows beside them, so declare `update` even when you cannot check.
+
+Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It keeps a
+`current` or `available` answer from `checkForUpdates` for an hour while `inspect` reports the same
+version, so a CLI updated outside Paseo is checked again once the inspection expires. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
+`update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
+See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
+
 ## Adapt an ACP agent
 
 Use the ACP shim when the agent already speaks ACP:
@@ -380,7 +572,12 @@ export default function contribute(server: PluginServerContext) {
 The shim owns the ACP process, capability mapping, session lifecycle, prompts, permissions, and
 timeline conversion. Do not copy that machinery into the plugin.
 
-Use `transformers` only for vendor differences ACP cannot describe. Validate vendor payloads with
+Use `transformers` for vendor differences ACP cannot describe. The
+[goose model transformer](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+uses `context.request` to read the agent's model inventory and `config` to prefix session model IDs
+with the active provider. See the [ACP adapter reference](/docs/plugins/reference#providers).
+
+Validate vendor payloads with
 Zod and leave malformed or unrelated values unchanged:
 
 ```ts
@@ -411,12 +608,35 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
+Set `detail` on the returned tool call to supply a Paseo tool card when the ACP kind does not
+describe the operation. For example, an agent can report a new file as an ACP edit, while the
+plugin returns a `write` detail with the file path and contents.
+
+Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
+The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
+Return `metadata` to add fields to the session request's `_meta`.
+If your plugin previously saved a different persistence format, return its native `sessionId`.
+Paseo gives its own saved session ID precedence and writes the ACP persistence format after opening.
+
+A `configure` transformer can inspect the agent's current choices with `catalog()` and pass a
+translated change to `apply(change)`. Applying a change this way uses the shared ACP configuration
+mapping and skips the transformers for that change.
+
+Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after its `session/load`
+response. Paseo waits for that interval without session updates before it publishes the session as
+ready. The wait is bounded at five times the interval.
+
+Set `acpOptions.autoAcceptMode` to offer an unattended mode backed by a specific native mode.
+The adapter selects an unambiguous ACP `allow_once` action without opening a Paseo approval.
+Set `default: true` to make this the default for new sessions. The adapter requires an idle
+session without pending approvals before it switches to or from this mode.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:
 
 1. install the plugin as a directory source;
-2. confirm its SVG, models, modes, and settings appear;
+2. confirm its SVG, models, modes, and option controls appear;
 3. create a session and complete a real prompt;
 4. exercise permissions, steering, cancellation, persistence, and replay when supported;
 5. render every custom timeline item on desktop and mobile-width layouts;

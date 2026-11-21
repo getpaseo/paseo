@@ -1,10 +1,11 @@
+import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
-import type { ClaudeQueryInput } from "./query.js";
+import { claudeQuery, type ClaudeQueryInput } from "./query.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -29,6 +30,55 @@ function createQueryMock(events: unknown[]): Query {
 }
 
 describe("Claude SDK env", () => {
+  test.each(
+    ["node", "bun", process.execPath].flatMap((command) =>
+      [undefined, "Paseo", "custom-client"].map((entrypoint) => ({ command, entrypoint })),
+    ),
+  )(
+    "preserves explicit launch identity $entrypoint in $command while clearing inherited session env",
+    async ({ command, entrypoint }) => {
+      let output = "";
+      let exited = Promise.resolve<unknown[]>([]);
+      const query = claudeQuery(
+        { prompt: "", options: {} },
+        {
+          runtimeSettings: { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" } },
+          launchEnv: entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: entrypoint },
+          queryFactory: ({ options }) => {
+            if (!options.spawnClaudeCodeProcess) {
+              throw new Error("Missing Claude process launcher");
+            }
+            const child = options.spawnClaudeCodeProcess({
+              command,
+              args: [
+                "-e",
+                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null }))",
+              ],
+              cwd: process.cwd(),
+              env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts", CLAUDECODE: "1" },
+              signal: new AbortController().signal,
+            });
+            child.stdout.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+            });
+            exited = once(child, "close");
+            return createQueryMock([]);
+          },
+        },
+      );
+
+      try {
+        expect(await exited).toEqual([0, null]);
+        expect(JSON.parse(output)).toEqual({
+          ...(entrypoint === undefined ? {} : { entrypoint }),
+          parentSession: null,
+        });
+      } finally {
+        query.close();
+      }
+    },
+  );
+
   test("forwards launch-context env through Claude process env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     let capturedPerTaskStopAffordance: boolean | undefined;
@@ -100,6 +150,56 @@ describe("Claude SDK env", () => {
     } finally {
       await session.close();
       expect(session.usageSession?.()).toBeNull();
+    }
+  });
+
+  test("resume uses current plugin instructions and excludes them from persistence", async () => {
+    const prompts: unknown[] = [];
+    const queryFactory = ({ options }: ClaudeQueryInput) => {
+      prompts.push(options.systemPrompt);
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "persisted-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        { type: "assistant", message: { content: "done" } },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]);
+    };
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const first = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      pluginAppendSystemPrompt: ["Plugin instructions"],
+    });
+    await first.run("first");
+    const handle = first.describePersistence()!;
+    expect(handle.metadata).not.toHaveProperty("pluginAppendSystemPrompt");
+    await first.close();
+    const resumed = await client.resumeSession(handle, {
+      cwd: process.cwd(),
+      pluginAppendSystemPrompt: undefined,
+    });
+    try {
+      await resumed.run("after disable");
+      expect(prompts).toEqual([
+        { type: "preset", preset: "claude_code", append: "Plugin instructions" },
+        { type: "preset", preset: "claude_code", append: "" },
+      ]);
+    } finally {
+      await resumed.close();
     }
   });
 

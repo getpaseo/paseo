@@ -21,6 +21,8 @@ export interface ReadFileParams {
 
 export interface WriteFileParams extends ReadFileParams {
   content: string;
+  /** `base64` writes the decoded bytes, so binary files can be written too. */
+  contentEncoding?: "utf-8" | "base64";
   expectedModifiedAt: string;
   expectedRevision?: string;
 }
@@ -33,6 +35,8 @@ export type ExplorerFileVersion =
       size: number;
       modifiedAt: string;
       revision: string;
+      kind?: ExplorerFileKind;
+      mimeType?: string;
     }
   | { status: "missing"; cwd: string; path: string }
   | { status: "error"; cwd: string; path: string; error: string };
@@ -90,6 +94,15 @@ export interface FileExplorerFileStream {
 
 const TEXT_MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
+};
+
+const BINARY_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".gz": "application/gzip",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".woff2": "font/woff2",
 };
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
@@ -266,13 +279,13 @@ export async function readExplorerFileBytes({
       };
     }
 
-    if (isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
+    if (ext in BINARY_MIME_TYPES || isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
       return {
         ...basePayload,
         kind: "binary",
         encoding: "binary",
         bytes: buffer,
-        mimeType: "application/octet-stream",
+        mimeType: BINARY_MIME_TYPES[ext] ?? "application/octet-stream",
       };
     }
 
@@ -305,7 +318,8 @@ export async function streamExplorerFile(
     const advertisedRevision = fileRevision(stats);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
+    const isBinary =
+      isImage || ext in BINARY_MIME_TYPES || (await isFileHandleBinary(handle, advertisedSize));
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -313,7 +327,7 @@ export async function streamExplorerFile(
       mimeType = IMAGE_MIME_TYPES[ext];
     } else if (isBinary) {
       kind = "binary";
-      mimeType = "application/octet-stream";
+      mimeType = BINARY_MIME_TYPES[ext] ?? "application/octet-stream";
     }
 
     await consume({
@@ -398,18 +412,26 @@ export async function getExplorerFileVersion({
   const cwd = expandUserPath(root);
   try {
     const filePath = await resolveScopedPath({ root, relativePath });
-    const stats = await fs.stat(filePath.resolvedPath, { bigint: true });
-    if (!stats.isFile()) {
-      return { status: "error", cwd, path: relativePath, error: "Requested path is not a file" };
+    const handle = await openFileForRead(filePath.resolvedPath);
+    try {
+      const stats = await handle.stat({ bigint: true });
+      if (!stats.isFile()) {
+        return { status: "error", cwd, path: relativePath, error: "Requested path is not a file" };
+      }
+      const type = await sniffFileType(handle, path.extname(filePath.resolvedPath).toLowerCase());
+      return {
+        status: "ready",
+        cwd,
+        path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+        size: Number(stats.size),
+        modifiedAt: stats.mtime.toISOString(),
+        revision: fileRevision(stats),
+        kind: type.kind,
+        mimeType: type.mimeType,
+      };
+    } finally {
+      await handle.close();
     }
-    return {
-      status: "ready",
-      cwd,
-      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-      size: Number(stats.size),
-      modifiedAt: stats.mtime.toISOString(),
-      revision: fileRevision(stats),
-    };
   } catch (error) {
     if (isMissingEntryError(error)) {
       return { status: "missing", cwd, path: relativePath };
@@ -434,10 +456,11 @@ export async function writeExplorerFile({
   root,
   relativePath,
   content,
+  contentEncoding = "utf-8",
   expectedModifiedAt,
   expectedRevision,
 }: WriteFileParams): Promise<ExplorerFileWriteResult> {
-  const encoded = Buffer.from(content, "utf8");
+  const encoded = Buffer.from(content, contentEncoding === "base64" ? "base64" : "utf8");
   if (encoded.byteLength > MAX_EDITABLE_FILE_BYTES) {
     return { status: "error", error: "File is too large to edit" };
   }
@@ -455,9 +478,11 @@ export async function writeExplorerFile({
       if (stats.size > BigInt(MAX_EDITABLE_FILE_BYTES)) {
         return { status: "error", error: "File is too large to edit" };
       }
-      const current = await handle.readFile();
-      if (isLikelyBinary(current) || !isValidUtf8(current)) {
-        return { status: "error", error: "Binary files cannot be edited" };
+      if (contentEncoding === "utf-8") {
+        const current = await handle.readFile();
+        if (isLikelyBinary(current) || !isValidUtf8(current)) {
+          return { status: "error", error: "Binary files cannot be edited" };
+        }
       }
       currentMode = Number(stats.mode);
       const modifiedAt = stats.mtime.toISOString();
@@ -548,18 +573,10 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
       throw new Error("Requested path is not a file");
     }
 
-    const ext = path.extname(filePath.resolvedPath).toLowerCase();
-    let mimeType = "application/octet-stream";
-    if (ext in IMAGE_MIME_TYPES) {
-      mimeType = IMAGE_MIME_TYPES[ext];
-    } else {
-      const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
-      const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
-      const chunk = bytesRead < sample.length ? sample.subarray(0, bytesRead) : sample;
-      if (!isLikelyBinary(chunk)) {
-        mimeType = textMimeTypeForExtension(ext);
-      }
-    }
+    const { mimeType } = await sniffFileType(
+      handle,
+      path.extname(filePath.resolvedPath).toLowerCase(),
+    );
 
     return {
       path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
@@ -669,6 +686,7 @@ export async function duplicateExplorerEntry({
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
+      verbatimSymlinks: true,
     });
     return { status: "ok", path: normalizeRelativePath({ root, targetPath }) };
   } catch (error) {
@@ -897,6 +915,34 @@ function isLikelyBinary(buffer: Buffer): boolean {
   }
 
   return suspicious / buffer.length > 0.3;
+}
+
+/** Classifies a file from its extension and first bytes, without reading the rest of it. */
+async function sniffFileType(
+  handle: FileHandle,
+  ext: string,
+): Promise<{ kind: ExplorerFileKind; mimeType: string }> {
+  if (ext in IMAGE_MIME_TYPES) return { kind: "image", mimeType: IMAGE_MIME_TYPES[ext] };
+  const binary = {
+    kind: "binary" as const,
+    mimeType: BINARY_MIME_TYPES[ext] ?? "application/octet-stream",
+  };
+  if (ext in BINARY_MIME_TYPES) return binary;
+  const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
+  const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
+  const chunk = sample.subarray(0, bytesRead);
+  if (isLikelyBinary(chunk) || !isValidUtf8Prefix(chunk)) return binary;
+  return { kind: "text", mimeType: textMimeTypeForExtension(ext) };
+}
+
+/** A sample can end inside a multi-byte character, so only a complete invalid sequence fails. */
+function isValidUtf8Prefix(buffer: Buffer): boolean {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer, { stream: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isValidUtf8(buffer: Buffer): boolean {
