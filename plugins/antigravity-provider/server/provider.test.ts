@@ -304,15 +304,21 @@ const completedToolCalls = [
   },
   {
     toolCallId: "paseo",
-    name: "mcp_paseo_get_agent_activity",
+    name: "mcp_paseo_send_agent_prompt",
     kind: "other",
-    rawInput: { agentId: "agent-1", limit: 30, toolSummary: "Get agent activity" },
+    rawInput: { agentId: "agent-1", prompt: "Hello", toolSummary: "Send message" },
   },
   {
     toolCallId: "mcp",
     name: "mcp_local_tools_echo_message",
     kind: "other",
     rawInput: { message: "hello", toolSummary: "Echo message hello" },
+  },
+  {
+    toolCallId: "ambiguous",
+    name: "mcp_paseo_get_agent_status",
+    kind: "other",
+    rawInput: { agentId: "agent-1", toolSummary: "Get agent status" },
   },
 ];
 
@@ -373,7 +379,7 @@ it.each(["live", "replay"] as const)(
           cwd: directory,
           env: {},
           mcpServers: {
-            local: { type: "stdio", command: "local" },
+            paseo_get: { type: "stdio", command: "other-server" },
             local_tools: { type: "stdio", command: "echo-mcp" },
           },
           settings: {},
@@ -437,8 +443,8 @@ it.each(["live", "replay"] as const)(
         query: "IANA example domains",
       });
       expect(completed.paseo).toMatchObject({
-        name: "paseo.get_agent_activity",
-        detail: { type: "unknown", input: { agentId: "agent-1", limit: 30 }, output: null },
+        name: "paseo.send_agent_prompt",
+        detail: { type: "unknown", input: { agentId: "agent-1", prompt: "Hello" }, output: null },
       });
       expect(completed.paseo.detail).not.toHaveProperty("input.toolSummary");
       expect(completed.mcp).toMatchObject({
@@ -446,6 +452,10 @@ it.each(["live", "replay"] as const)(
         detail: { type: "unknown", input: { message: "hello" }, output: null },
       });
       expect(completed.mcp.detail).not.toHaveProperty("input.toolSummary");
+      expect(completed.ambiguous).toMatchObject({
+        name: "mcp_paseo_get_agent_status",
+        detail: { type: "unknown", input: { agentId: "agent-1" }, output: null },
+      });
       if (source === "live") {
         expect(calls()).toContainEqual(
           expect.objectContaining({

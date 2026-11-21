@@ -69,11 +69,10 @@ function mapMcpCall(
   const qualifiedName = wireName.slice("mcp_".length);
   // The wire uses the same separator inside names and between the server and tool.
   // Paseo's own server can also appear when replaying with MCP disabled.
-  const server = [...serverNames, "paseo"].reduce(
-    (match, name) =>
-      name.length > match.length && qualifiedName.startsWith(`${name}_`) ? name : match,
-    "",
+  const matchingServers = [...new Set([...serverNames, "paseo"])].filter((name) =>
+    qualifiedName.startsWith(`${name}_`),
   );
+  const server = matchingServers.length === 1 ? matchingServers[0] : undefined;
   let input = call.input;
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
     const { toolSummary: _summary, ...args } = input;
