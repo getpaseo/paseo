@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavigationContainerRefWithCurrent } from "expo-router/react-navigation";
 import {
+  navigateToHostLeaf,
   navigateToHostWorkspaceRoute,
   registerWorkspaceRouteNavigationRef,
+  type HostLeafTarget,
 } from "./workspace-route-navigation";
 
 function createNavigationRef(rootState: unknown, options: { ready?: boolean } = {}) {
@@ -213,5 +215,82 @@ describe("navigateToHostWorkspaceRoute", () => {
     registerWorkspaceRouteNavigationRef(replacement.navigationRef);
 
     expect(dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
+  });
+});
+
+describe("navigateToHostLeaf", () => {
+  const leaf: HostLeafTarget = {
+    route: "/h/server-1/plugin/deploys/surface/history",
+    serverId: "server-1",
+    screen: "plugin/[pluginId]/[contributionKind]/[contributionId]",
+    params: { pluginId: "deploys", contributionKind: "surface", contributionId: "history" },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    registerWorkspaceRouteNavigationRef(createNavigationRef({}).navigationRef)();
+  });
+
+  it("pops to the host route that History covers instead of pushing a second one", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      index: 1,
+      routes: [
+        { key: "host-server-1", name: "h/[serverId]", params: { serverId: "server-1" } },
+        { key: "sessions", name: "sessions" },
+      ],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const push = vi.fn();
+
+    navigateToHostLeaf(leaf, { push });
+
+    expect(push).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "POP_TO",
+      target: "root-stack",
+      payload: {
+        name: "h/[serverId]",
+        params: {
+          serverId: "server-1",
+          screen: "plugin/[pluginId]/[contributionKind]/[contributionId]",
+          params: {
+            serverId: "server-1",
+            pluginId: "deploys",
+            contributionKind: "surface",
+            contributionId: "history",
+          },
+        },
+      },
+    });
+  });
+
+  it("pushes inside the host route when it is already focused", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      index: 0,
+      routes: [{ key: "host-server-1", name: "h/[serverId]", params: { serverId: "server-1" } }],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const push = vi.fn();
+
+    navigateToHostLeaf(leaf, { push });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith(leaf.route);
+  });
+
+  it("pushes the URL when no host route is mounted", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      routes: [{ key: "sessions", name: "sessions" }],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const push = vi.fn();
+
+    navigateToHostLeaf(leaf, { push });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith(leaf.route);
   });
 });

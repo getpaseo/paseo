@@ -65,8 +65,9 @@ retained route replays that request when appearance changes remount its content.
 The flow provider and sheet host stay outside appearance keys so open drafts survive.
 
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
-into a host workspace, use `navigateToWorkspace()`. Do not make the caller
-branch on its current route.
+into a host workspace, use `navigateToWorkspace()`. To open any other host leaf,
+such as a plugin screen, use `navigateToHostLeaf()`. Do not call `router.push()`
+with an `/h/...` URL, and do not make the caller branch on its current route.
 
 Pass only `serverId` and `workspaceId` to restore the workspace’s selected tab.
 When the action names a specific tab, pass it as `target`; that explicit choice
@@ -74,18 +75,22 @@ is authoritative. Callers should not choose between separate route and tab
 navigation APIs.
 
 The root stack owns `h/[serverId]`; the host stack owns
-`workspace/[workspaceId]/index`. Repeated global-route hops must `POP_TO` the
-root host route and pass the nested workspace screen when a host route is
-already mounted, or Expo Router can append extra hidden workspace deck entries.
-The workspace navigation helper inspects the mounted navigation state to make
-that decision; if no host route is mounted yet, it falls back to ordinary route
+`workspace/[workspaceId]/index` and the other host leaves. Repeated global-route
+hops must `POP_TO` the root host route and pass the nested screen when a host
+route is already mounted, or Expo Router appends a second host route over the
+first. Workspace hops pass the `pop` hint so the host stack returns to the
+workspace; leaf hops omit it so the leaf is pushed and Back returns to the
+workspace. Both helpers inspect the mounted navigation state to make that
+decision; if no host route is mounted yet, they fall back to ordinary route
 navigation. Both paths wait for the root navigation container to be ready. The
 workspace navigation owner keeps the latest pending intent across ref
 re-registration and applies it on the container's `ready` event; routes must not
 add their own readiness retries.
 
-Those hidden entries are not harmless: composer floating panels can measure
-against the wrong deck and disappear offscreen. Follow the
+A covered host route stays mounted and reads the same pathname, so it renders
+the workspace a second time. Composer floating panels can measure against the
+hidden copy and disappear offscreen, and a plugin button opens its popover in
+both copies, the hidden one anchored at the window corner. Follow the
 [retained panel measurement rules](coding-standards.md#retained-panel-measurements)
 for components that intentionally remain mounted while hidden.
 
@@ -207,6 +212,8 @@ Before landing route changes:
 - [ ] Did you touch remembered workspace restore? Keep root on `/h/[serverId]`.
 - [ ] Did a route return to a workspace? Use `navigateToWorkspace()` and pass a
       `target` when the action names a specific tab.
+- [ ] Did a route open a plugin screen or another host leaf? Use
+      `navigateToHostLeaf()`, not `router.push()`.
 - [ ] Did you add a route? Register it in the layout that directly owns it.
 - [ ] Did `useLocalSearchParams()` lose a required param? Fix the route tree.
 - [ ] Did native show a blank screen without a crash? Suspect route ownership
