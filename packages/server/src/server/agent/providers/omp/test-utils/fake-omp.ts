@@ -10,6 +10,8 @@ import type {
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
   OmpAgentMessage,
+  OmpGoalRpcOperation,
+  OmpGoalRpcResult,
   OmpModel,
   OmpPromptAck,
   OmpRpcSlashCommand,
@@ -139,6 +141,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
     imageCount: number;
     streamingBehavior?: "steer" | "followUp";
   }> = [];
+  readonly goalRequests: Array<{
+    op: OmpGoalRpcOperation;
+    objective?: string;
+    tokenBudget?: number;
+  }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakeOmpSubagentSubscriptionLevel[] = [];
@@ -172,6 +179,13 @@ export class FakeOmpSession implements OmpRuntimeSession {
   subagents: FakeOmpSubagentSnapshot[] = [];
   readonly subagentSubscriptionErrors = new Map<FakeOmpSubagentSubscriptionLevel, Error>();
   compactError: Error | null = null;
+  goalError: Error | null = null;
+  goalResult: OmpGoalRpcResult = {
+    goal: null,
+    state: { enabled: true, mode: "inactive", goal: null },
+  };
+  readonly goalResults: OmpGoalRpcResult[] = [];
+  emitCompactEnd = true;
   getStateError: Error | null = null;
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
@@ -247,6 +261,36 @@ export class FakeOmpSession implements OmpRuntimeSession {
       }
     }
     return this.promptAck;
+  }
+
+  async getGoal(): Promise<OmpGoalRpcResult> {
+    return this.requestGoal({ op: "get" });
+  }
+
+  async createGoal(objective: string, tokenBudget?: number): Promise<OmpGoalRpcResult> {
+    return this.requestGoal({ op: "create", objective, tokenBudget });
+  }
+
+  async pauseGoal(): Promise<OmpGoalRpcResult> {
+    return this.requestGoal({ op: "pause" });
+  }
+
+  async resumeGoal(): Promise<OmpGoalRpcResult> {
+    return this.requestGoal({ op: "resume" });
+  }
+
+  async dropGoal(): Promise<OmpGoalRpcResult> {
+    return this.requestGoal({ op: "drop" });
+  }
+
+  private async requestGoal(request: {
+    op: OmpGoalRpcOperation;
+    objective?: string;
+    tokenBudget?: number;
+  }): Promise<OmpGoalRpcResult> {
+    this.goalRequests.push(request);
+    if (this.goalError) throw this.goalError;
+    return this.goalResults.shift() ?? this.goalResult;
   }
 
   nextPrompt(): Promise<void> {

@@ -23,6 +23,7 @@ import {
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
   OmpHostToolsResultSchema,
+  OmpGoalRpcResultSchema,
   OmpMessagesResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
@@ -33,6 +34,7 @@ import {
   OmpSessionStatsSchema,
   type OmpThinkingLevel,
   type OmpAgentMessage,
+  type OmpGoalRpcResult,
   type OmpModel,
   type OmpPromptAck,
   type OmpRpcCommand,
@@ -152,6 +154,38 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
+  }
+
+  async getGoal(): Promise<OmpGoalRpcResult> {
+    return OmpGoalRpcResultSchema.parse(await this.request({ type: "goal", op: "get" }));
+  }
+
+  async createGoal(objective: string, tokenBudget?: number): Promise<OmpGoalRpcResult> {
+    const normalizedObjective = objective.trim();
+    if (!normalizedObjective) throw new Error("OMP Goal objective cannot be empty");
+    if (tokenBudget !== undefined && (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0)) {
+      throw new Error("OMP Goal token budget must be a positive safe integer");
+    }
+    return OmpGoalRpcResultSchema.parse(
+      await this.request({
+        type: "goal",
+        op: "create",
+        objective: normalizedObjective,
+        ...(tokenBudget === undefined ? {} : { token_budget: tokenBudget }),
+      }),
+    );
+  }
+
+  async pauseGoal(): Promise<OmpGoalRpcResult> {
+    return OmpGoalRpcResultSchema.parse(await this.request({ type: "goal", op: "pause" }));
+  }
+
+  async resumeGoal(): Promise<OmpGoalRpcResult> {
+    return OmpGoalRpcResultSchema.parse(await this.request({ type: "goal", op: "resume" }));
+  }
+
+  async dropGoal(): Promise<OmpGoalRpcResult> {
+    return OmpGoalRpcResultSchema.parse(await this.request({ type: "goal", op: "drop" }));
   }
 
   async compact(customInstructions?: string): Promise<void> {

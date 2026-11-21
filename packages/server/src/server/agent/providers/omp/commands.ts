@@ -4,6 +4,12 @@ import { OmpAvailableCommandsUpdateEventSchema, type OmpAvailableCommand } from 
 
 export const OMP_HANDLED_BUILTIN_SLASH_COMMANDS: readonly AgentSlashCommand[] = [
   {
+    name: "goal",
+    description: "Manage an OMP native Goal",
+    argumentHint: "[--token-budget n] <objective>|status|pause|resume|clear",
+    kind: "command",
+  },
+  {
     name: "compact",
     description: "Manually compact the session context",
     argumentHint: "[instructions]",

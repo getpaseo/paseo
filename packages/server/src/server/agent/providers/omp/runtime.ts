@@ -1,5 +1,6 @@
 import type {
   OmpAgentMessage,
+  OmpGoalRpcResult,
   OmpModel,
   OmpPromptAck,
   OmpRpcHostToolDefinition,
@@ -54,6 +55,11 @@ export interface OmpRuntimeSession {
   // With streamingBehavior, a busy OMP queues the message instead of rejecting it, and an
   // idle OMP starts a run with it.
   prompt(input: OmpPromptInput): Promise<OmpPromptAck>;
+  getGoal(): Promise<OmpGoalRpcResult>;
+  createGoal(objective: string, tokenBudget?: number): Promise<OmpGoalRpcResult>;
+  pauseGoal(): Promise<OmpGoalRpcResult>;
+  resumeGoal(): Promise<OmpGoalRpcResult>;
+  dropGoal(): Promise<OmpGoalRpcResult>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
