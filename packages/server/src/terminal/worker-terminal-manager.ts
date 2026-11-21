@@ -61,6 +61,17 @@ import type {
 
 const REQUEST_TIMEOUT_MS = 10000;
 
+export class TerminalWorkerRenameUnsupportedError extends Error {
+  readonly code = "terminal_worker_rename_unsupported";
+  readonly protocolVersion: number;
+
+  constructor(protocolVersion: number) {
+    super("This terminal was started by an older Paseo worker. Open a new terminal to rename it.");
+    this.name = "TerminalWorkerRenameUnsupportedError";
+    this.protocolVersion = protocolVersion;
+  }
+}
+
 type RequiredWorkerTerminalInfo = WorkerTerminalInfo & { workspaceId: string };
 
 function requiredWorkspaceId(workspaceId: string | undefined): string {
@@ -365,17 +376,8 @@ export function createWorkerTerminalManager(
         return record.info.title;
       },
       setTitle(nextTitle: string): void {
-        const manualTitle = nextTitle.trim();
-        if (!manualTitle) {
-          return;
-        }
-        record.info = { ...record.info, title: manualTitle };
-        for (const listener of Array.from(record.titleChangeListeners)) {
-          listener(manualTitle);
-        }
-        emitTerminalsChanged({
-          cwd: record.info.cwd,
-          terminals: listTerminalItemsForCwd(record.info.cwd),
+        void setTerminalTitle(record.info.id, nextTitle).catch(() => {
+          // The synchronous session method is best-effort; RPC callers await the manager method.
         });
       },
       getExitInfo(): TerminalExitInfo | null {
@@ -722,6 +724,19 @@ export function createWorkerTerminalManager(
     });
   }
 
+  async function setTerminalTitle(id: string, title: string): Promise<boolean> {
+    if (!recordsById.has(id)) return false;
+    const manualTitle = title.trim();
+    if (!manualTitle) return true;
+    // COMPAT(terminal-worker-title): added in protocol 7; remove once protocol 6 no longer drains.
+    // A v6 worker cannot retain manual titles or answer this request. Its other operations stay usable.
+    if (!(worker.protocolVersion >= 7)) {
+      throw new TerminalWorkerRenameUnsupportedError(worker.protocolVersion);
+    }
+    const renamed = await sendRequest({ type: "setTitle", terminalId: id, title: manualTitle });
+    return renamed === true;
+  }
+
   function clearRecords(): void {
     for (const terminalId of Array.from(recordsById.keys())) {
       removeRecord(terminalId);
@@ -885,14 +900,7 @@ export function createWorkerTerminalManager(
       return metadata;
     },
 
-    setTerminalTitle(id: string, title: string): boolean {
-      const session = recordsById.get(id)?.session;
-      if (!session) {
-        return false;
-      }
-      session.setTitle(title);
-      return true;
-    },
+    setTerminalTitle,
 
     async setTerminalActivity(id: string, state: TerminalActivityState): Promise<boolean> {
       const record = recordsById.get(id);

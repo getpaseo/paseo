@@ -27,7 +27,8 @@ describe("classifyTerminalWorkerProtocol", () => {
   });
 });
 
-it("drains v5 terminals while v6 supplies creation timestamps", () => {
-  expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(6);
-  expect(classifyTerminalWorkerProtocol(5)).toBe("previous");
+it("drains v6 terminals while v7 retains manual titles and retires v5", () => {
+  expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(7);
+  expect(classifyTerminalWorkerProtocol(6)).toBe("previous");
+  expect(classifyTerminalWorkerProtocol(5)).toBe("obsolete");
 });

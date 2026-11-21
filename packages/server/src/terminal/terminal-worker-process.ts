@@ -549,6 +549,17 @@ function runWorker(argv: string[]): void {
         return;
       }
 
+      case "setTitle": {
+        const renamed = await manager.setTerminalTitle(message.terminalId, message.title);
+        sendToController({
+          type: "response",
+          requestId: message.requestId,
+          ok: true,
+          result: renamed,
+        });
+        return;
+      }
+
       case "clearAttention": {
         await manager.clearTerminalAttention(message.terminalId);
         sendToController({ type: "response", requestId: message.requestId, ok: true });
