@@ -36,6 +36,8 @@ Slack 过滤器使用 ID，而不是显示名称或 Hub 连接的 slug。`from_u
 
 回复会发布在触发它的子区中。根消息会开启一个子区；子区中的消息则留在原子区。`slack.reply` 授予 `hub.reply`，但不会在提示词中添加回复说明。
 
+在提示词中写入 `${{ paseo.context }}` 的步骤会获得 `slack.trigger_message`，即提及 bot 的那条消息：包含它的 `ts`、`channel.id`、`thread.ts` 和 `attachments`。提及位于频道根消息时，`thread` 为 `null`。`attachments` 列出随该提及一起发布的文件，以 Hub 下载 URL 形式提供，仅在该次执行中有效。
+
 提及之后紧跟的是已声明的输入：
 
 ```text
