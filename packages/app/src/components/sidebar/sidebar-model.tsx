@@ -24,6 +24,14 @@ import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
 } from "@/workspace-labels";
+import { useNestedSubagentWorkspaces } from "@/components/sidebar/workspace-tabs/use-nested-workspaces";
+import {
+  childTimesByParent,
+  orderWorkspaceKeys,
+  type WorkspaceSortClock,
+} from "@/components/sidebar/workspace-tabs/nested-sort";
+import { useWorkspaceSortClocks } from "@/components/sidebar/workspace-tabs/sort-clocks";
+import type { WorkspaceSort } from "@/projects/workspace-structure";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -47,6 +55,41 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
+const NO_CHILD_TIMES: ReadonlyMap<string, number> = new Map();
+
+function zeroSortTime(): number {
+  return 0;
+}
+
+function orderNestedProjectWorkspaces(input: {
+  project: SidebarProjectEntry;
+  nestedKeys: ReadonlySet<string>;
+  sort: WorkspaceSort | undefined;
+  timeOf: (workspaceKey: string) => number;
+  childTimeByParent: ReadonlyMap<string, number>;
+}): SidebarProjectEntry {
+  const { project, nestedKeys, sort, timeOf, childTimeByParent } = input;
+  const keys = project.workspaces.map((workspace) => workspace.workspaceKey);
+  const ordered = orderWorkspaceKeys(keys, nestedKeys, sort, timeOf, childTimeByParent);
+  if (ordered === keys) return project;
+  const byKey = new Map(project.workspaces.map((workspace) => [workspace.workspaceKey, workspace]));
+  const workspaces: SidebarProjectEntry["workspaces"] = [];
+  for (const key of ordered) {
+    const workspace = byKey.get(key);
+    if (workspace) workspaces.push(workspace);
+  }
+  return { ...project, workspaces };
+}
+
+function clockTime(
+  clocks: ReadonlyMap<string, WorkspaceSortClock>,
+  workspaceKey: string,
+  sort: "created" | "lastPrompt",
+): number | null {
+  const clock = clocks.get(workspaceKey);
+  if (!clock) return null;
+  return sort === "lastPrompt" ? clock.lastPromptAt : clock.createdAt;
+}
 
 export function SidebarModelProvider({
   active,
@@ -61,7 +104,15 @@ export function SidebarModelProvider({
   const modelActive = active !== false || keyboardNavigationActive;
   const list = useSidebarWorkspacesList({ enabled: modelActive });
   const showBackground = useSidebarViewStore((state) => state.showBackground);
+  // Workspaces that only hold subagents are listed under their parent's tab instead.
+  const nestedWorkspaces = useNestedSubagentWorkspaces();
+  const workspaceClocks = useWorkspaceSortClocks();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
+  const activeSort =
+    groupMode === "project" && (workspaceSort === "manual" || list.workspaceSortSupported)
+      ? workspaceSort
+      : undefined;
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
@@ -113,15 +164,47 @@ export function SidebarModelProvider({
       projectFilters: resolvedProjectFilters,
     });
     const filtered = filterWorkspacesByLabels({
-      workspaces: byProject.filter((workspace) => showBackground || !workspace.background),
+      workspaces: byProject.filter(
+        (workspace) =>
+          (showBackground || !workspace.background) &&
+          !nestedWorkspaces.keys.has(workspace.workspaceKey),
+      ),
       ...labelFilter,
     });
     return new Map(filtered.map((workspace) => [workspace.workspaceKey, workspace]));
-  }, [showBackground, labelFilter, resolvedProjectFilters, workspaceEntriesByKey]);
+  }, [
+    showBackground,
+    labelFilter,
+    nestedWorkspaces.keys,
+    resolvedProjectFilters,
+    workspaceEntriesByKey,
+  ]);
   const visibleWorkspaceKeys = useMemo(
     () => new Set(filteredWorkspaceEntriesByKey.keys()),
     [filteredWorkspaceEntriesByKey],
   );
+  // A nested workspace leaves the list, so its created time and last prompt move to the parent.
+  // Manual order, and name order when no sort is active, only lose the hidden keys.
+  const childSortTimeByParent = useMemo(() => {
+    if (activeSort !== "created" && activeSort !== "lastPrompt") return NO_CHILD_TIMES;
+    if (nestedWorkspaces.parentsByKey.size === 0) return NO_CHILD_TIMES;
+    return childTimesByParent(nestedWorkspaces.parentsByKey, (workspaceKey) =>
+      clockTime(workspaceClocks, workspaceKey, activeSort),
+    );
+  }, [activeSort, nestedWorkspaces.parentsByKey, workspaceClocks]);
+  const sortTimeOf = useMemo(() => {
+    if (activeSort !== "created" && activeSort !== "lastPrompt") return zeroSortTime;
+    return (workspaceKey: string) => clockTime(workspaceClocks, workspaceKey, activeSort) ?? 0;
+  }, [activeSort, workspaceClocks]);
+  // Status groups keep each row in its own bucket. A nested workspace's status time only lifts
+  // the parent inside that bucket; the row still shows its own timestamp.
+  const childStatusEnteredAtByParent = useMemo(() => {
+    if (groupMode !== "status" || nestedWorkspaces.parentsByKey.size === 0) return NO_CHILD_TIMES;
+    return childTimesByParent(
+      nestedWorkspaces.parentsByKey,
+      (workspaceKey) => workspaceClocks.get(workspaceKey)?.statusEnteredAt ?? null,
+    );
+  }, [groupMode, nestedWorkspaces.parentsByKey, workspaceClocks]);
   // The two filters prune differently on purpose. The project filter is a membership test on the
   // project itself, so a project you filtered TO survives even with no workspaces — it still owns
   // a header row you can create your first workspace under. The label filter can only ask about
@@ -131,6 +214,19 @@ export function SidebarModelProvider({
     if (hasActiveProjectFilter) {
       const included = new Set(resolvedProjectFilters);
       projects = projects.filter((project) => included.has(project.viewKey));
+    }
+    if (nestedWorkspaces.keys.size > 0) {
+      // Placements carry the key, so this narrows project mode without hydrating entries. A
+      // project left with only nested workspaces keeps its header, like an empty project.
+      projects = projects.map((project) =>
+        orderNestedProjectWorkspaces({
+          project,
+          nestedKeys: nestedWorkspaces.keys,
+          sort: activeSort,
+          timeOf: sortTimeOf,
+          childTimeByParent: childSortTimeByParent,
+        }),
+      );
     }
     if (hasActiveLabelFilter || !showBackground) {
       projects = projects.flatMap((project) => {
@@ -147,8 +243,12 @@ export function SidebarModelProvider({
     showBackground,
     hasActiveLabelFilter,
     hasActiveProjectFilter,
+    activeSort,
+    childSortTimeByParent,
+    nestedWorkspaces.keys,
     resolvedProjectFilters,
     list.projects,
+    sortTimeOf,
     visibleWorkspaceKeys,
   ]);
   const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
@@ -163,9 +263,11 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      childStatusEnteredAtByParent,
       t,
     }),
     [
+      childStatusEnteredAtByParent,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,

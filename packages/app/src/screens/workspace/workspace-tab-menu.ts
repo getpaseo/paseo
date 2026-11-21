@@ -49,6 +49,8 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "unlink"
+        | "archive"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -67,23 +69,13 @@ export type WorkspaceTabMenuEntry =
       key: string;
     };
 
-interface BuildWorkspaceTabMenuEntriesInput {
+interface BuildWorkspaceTabMenuEntriesInput extends WorkspaceTabItemActionsInput {
   surface: WorkspaceTabMenuSurface;
-  tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
-  menuTestIDBase: string;
-  onCopyResumeCommand: (agentId: string) => Promise<void> | void;
-  onCopyAgentId: (agentId: string) => Promise<void> | void;
-  onCopyTerminalId: (terminalId: string) => Promise<void> | void;
-  onCopyFilePath: (path: string) => Promise<void> | void;
-  onReloadAgent: (agentId: string) => Promise<void> | void;
-  onRenameTab: (tab: WorkspaceTabDescriptor) => void;
-  onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  labels?: WorkspaceTabMenuLabels;
 }
 
 interface BuildWorkspaceDesktopTabActionsInput {
@@ -168,30 +160,26 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
-export function buildWorkspaceTabMenuEntries(
-  input: BuildWorkspaceTabMenuEntriesInput,
+interface WorkspaceTabItemActionsInput {
+  tab: WorkspaceTabDescriptor;
+  menuTestIDBase: string;
+  onCopyResumeCommand: (agentId: string) => Promise<void> | void;
+  onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onCopyTerminalId: (terminalId: string) => Promise<void> | void;
+  onCopyFilePath: (path: string) => Promise<void> | void;
+  onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onCloseTab: (tabId: string) => Promise<void> | void;
+  labels?: WorkspaceTabMenuLabels;
+}
+
+/** The copy, "Open with…" and rename rows a tab offers, in menu order. */
+function buildTabDetailEntries(
+  input: WorkspaceTabItemActionsInput,
+  labels: WorkspaceTabMenuLabels,
 ): WorkspaceTabMenuEntry[] {
-  const {
-    surface,
-    tab,
-    index,
-    tabCount,
-    menuTestIDBase,
-    onCopyResumeCommand,
-    onCopyAgentId,
-    onCopyTerminalId,
-    onCopyFilePath,
-    onReloadAgent,
-    onRenameTab,
-    onCloseTab,
-    onCloseTabsBefore,
-    onCloseTabsAfter,
-    onCloseOtherTabs,
-  } = input;
-  const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
-  const isFirstTab = index === 0;
-  const isLastTab = index === tabCount - 1;
-  const isOnlyTab = tabCount <= 1;
+  const { tab, menuTestIDBase, onCopyResumeCommand, onCopyAgentId, onCopyTerminalId } = input;
+  const { onCopyFilePath, onRenameTab } = input;
   const entries: WorkspaceTabMenuEntry[] = [];
 
   if (tab.target.kind === "agent") {
@@ -260,6 +248,86 @@ export function buildWorkspaceTabMenuEntries(
         onRenameTab(tab);
       },
     });
+  }
+
+  return entries;
+}
+
+function buildReloadAgentEntry(
+  input: WorkspaceTabItemActionsInput,
+  labels: WorkspaceTabMenuLabels,
+): WorkspaceTabMenuEntry | null {
+  if (input.tab.target.kind !== "agent") return null;
+  const { agentId } = input.tab.target;
+  return {
+    kind: "item",
+    key: "reload-agent",
+    label: labels.reloadAgent,
+    icon: "rotate-cw",
+    tooltip: labels.reloadAgentTooltip,
+    testID: `${input.menuTestIDBase}-reload-agent`,
+    onSelect: () => {
+      void input.onReloadAgent(agentId);
+    },
+  };
+}
+
+function buildCloseEntry(
+  input: WorkspaceTabItemActionsInput,
+  labels: WorkspaceTabMenuLabels,
+): WorkspaceTabMenuEntry {
+  return {
+    kind: "item",
+    key: "close",
+    label: labels.close,
+    icon: "x",
+    testID: `${input.menuTestIDBase}-close`,
+    onSelect: () => {
+      void input.onCloseTab(input.tab.tabId);
+    },
+  };
+}
+
+/**
+ * A tab's own actions and Close, without the rows that close its neighbours, for a surface that
+ * lists tabs outside their strip, such as the sidebar: "above", "below" and "others" only read
+ * against the strip the tab sits in.
+ */
+export function buildWorkspaceTabActionEntries(
+  input: WorkspaceTabItemActionsInput,
+): WorkspaceTabMenuEntry[] {
+  const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
+  const entries = buildTabDetailEntries(input, labels);
+  const reload = buildReloadAgentEntry(input, labels);
+  if (reload) {
+    if (entries.length > 0) entries.push({ kind: "separator", key: "reload-separator" });
+    entries.push(reload);
+  }
+  if (entries.length > 0) entries.push({ kind: "separator", key: "close-separator" });
+  entries.push(buildCloseEntry(input, labels));
+  return entries;
+}
+
+export function buildWorkspaceTabMenuEntries(
+  input: BuildWorkspaceTabMenuEntriesInput,
+): WorkspaceTabMenuEntry[] {
+  const {
+    surface,
+    tab,
+    index,
+    tabCount,
+    menuTestIDBase,
+    onCloseTabsBefore,
+    onCloseTabsAfter,
+    onCloseOtherTabs,
+  } = input;
+  const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
+  const isFirstTab = index === 0;
+  const isLastTab = index === tabCount - 1;
+  const isOnlyTab = tabCount <= 1;
+  const entries = buildTabDetailEntries(input, labels);
+
+  if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
     entries.push({
       kind: "separator",
       key: "rename-separator",
@@ -299,30 +367,9 @@ export function buildWorkspaceTabMenuEntries(
       void onCloseOtherTabs(tab.tabId);
     },
   });
-  if (tab.target.kind === "agent") {
-    const { agentId } = tab.target;
-    entries.push({
-      kind: "item",
-      key: "reload-agent",
-      label: labels.reloadAgent,
-      icon: "rotate-cw",
-      tooltip: labels.reloadAgentTooltip,
-      testID: `${menuTestIDBase}-reload-agent`,
-      onSelect: () => {
-        void onReloadAgent(agentId);
-      },
-    });
-  }
-  entries.push({
-    kind: "item",
-    key: "close",
-    label: labels.close,
-    icon: "x",
-    testID: `${menuTestIDBase}-close`,
-    onSelect: () => {
-      void onCloseTab(tab.tabId);
-    },
-  });
+  const reload = buildReloadAgentEntry(input, labels);
+  if (reload) entries.push(reload);
+  entries.push(buildCloseEntry(input, labels));
 
   return entries;
 }

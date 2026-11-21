@@ -1219,6 +1219,7 @@ export const ar: TranslationResources = {
     },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",
+      nestSubagentWorkspaces: "تضمين مساحات عمل الوكلاء الفرعيين",
       trigger: "تفضيلات العرض",
       heading: "العرض",
       sort: {
@@ -1366,6 +1367,10 @@ export const ar: TranslationResources = {
         unpin: "إلغاء التثبيت",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
+        showTabs: "إظهار علامات التبويب",
+        hideTabs: "إخفاء علامات التبويب",
+        showSubagents: "إظهار الوكلاء الفرعيين",
+        hideSubagents: "إخفاء الوكلاء الفرعيين",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         archiving: "أرشفة...",
         hiding: "إخفاء...",
