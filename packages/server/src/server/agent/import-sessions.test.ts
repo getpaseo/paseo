@@ -10,7 +10,8 @@ import type {
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentSession, AgentTimelineItem } from "./agent-sdk-types.js";
+import { importSessionFromPersistence } from "./provider-session-import.js";
 import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -145,6 +146,63 @@ function makeRequest(
     ...overrides,
   };
 }
+
+test("a failed provider history import does not close a shared session by default", async () => {
+  let closed = false;
+  const session: AgentSession = {
+    provider: "opencode",
+    id: "shared-session",
+    capabilities: TEST_CAPABILITIES,
+    async run() {
+      throw new Error("not used");
+    },
+    async startTurn() {
+      throw new Error("not used");
+    },
+    subscribe() {
+      return () => {};
+    },
+    async *streamHistory() {
+      yield* [];
+      throw new Error("history unavailable");
+    },
+    async getRuntimeInfo() {
+      throw new Error("not used");
+    },
+    async getAvailableModes() {
+      return [];
+    },
+    async getCurrentMode() {
+      return null;
+    },
+    async setMode() {},
+    getPendingPermissions() {
+      return [];
+    },
+    async respondToPermission() {
+      throw new Error("not used");
+    },
+    describePersistence() {
+      return null;
+    },
+    async interrupt() {},
+    async close() {
+      closed = true;
+    },
+  };
+  const config = { provider: "opencode", cwd: "/tmp/project" };
+
+  await expect(
+    importSessionFromPersistence({
+      provider: "opencode",
+      request: { providerHandleId: "shared-session", cwd: config.cwd },
+      context: { config, storedConfig: config },
+      resumeSession: async () => session,
+    }),
+  ).rejects.toThrow("history unavailable");
+
+  expect(closed).toBe(false);
+});
 
 test("listImportableProviderSessions filters, sorts, limits, and projects importable sessions", async () => {
   const cwd = "/tmp/project";

@@ -17,6 +17,9 @@ export async function importSessionFromPersistence(input: {
   resumeSession: AgentClient["resumeSession"];
   config?: Partial<AgentSessionConfig>;
   persistence?: AgentPersistenceHandle;
+  // A provider opts in only when close releases its runtime without stopping
+  // a native session that another client may be using.
+  closeOnHistoryFailure?: boolean;
 }): Promise<ImportedProviderSession> {
   const config = {
     ...input.context.config,
@@ -33,7 +36,13 @@ export async function importSessionFromPersistence(input: {
   const persistence =
     input.persistence ?? buildImportPersistenceHandle(input.provider, input.request, storedConfig);
   const session = await input.resumeSession(persistence, config, input.context.launchContext);
-  const history = await collectImportedHistory(session.streamHistory());
+  let history: Awaited<ReturnType<typeof collectImportedHistory>>;
+  try {
+    history = await collectImportedHistory(session.streamHistory());
+  } catch (error) {
+    if (input.closeOnHistoryFailure) await session.close().catch(() => undefined);
+    throw error;
+  }
 
   return {
     session,
