@@ -21,6 +21,7 @@ export class Children {
     private readonly parentId: string,
     private readonly cwd: string,
     private readonly emit: (event: ProviderEvent) => void,
+    private readonly subsessions: boolean,
   ) {}
 
   async update(item: WireItem): Promise<void> {
@@ -34,6 +35,10 @@ export class Children {
       )
     )
       return;
+    // Emitting a child session.opened with parentSessionId is only valid when the
+    // parent session negotiated the session.subsession capability; the daemon
+    // fails the provider connection otherwise.
+    if (!this.subsessions) return;
     const id = item.childSessionId;
     if (!this.children.has(id)) {
       const { session } = await this.host.request(
