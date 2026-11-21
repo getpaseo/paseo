@@ -47,6 +47,9 @@ The component renders state and dispatches intent. That is all it does.
 4. **Resolution is explicit model state, per host** (`idle | pending |
 complete`), keyed off the opened snapshot's serverId. Waiting for data is a
    state you can render, not an effect race.
+   Create-agent model preferences are shared across hosts, so resolve remembered
+   models against the selected host's ready catalog before applying them. Keep
+   explicit initial values and user selections intact.
 5. **Displays are owned state.** The selected option's label is captured at
    selection/seed time (`setProject(value, display)`), never re-derived from a
    live options list — list churn must not flicker or blank a selection.
