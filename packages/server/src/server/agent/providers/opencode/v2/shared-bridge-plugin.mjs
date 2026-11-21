@@ -11,7 +11,8 @@ export function isRefused(error) {
 // live, per-session bindings over the authenticated OpenCode RPC channel.
 export async function registerSharedBridge(context) {
   const state = await import(new URL("./state.mjs", import.meta.url).href);
-  const { bindings, definitions } = state.stateFor(context.location);
+  const locationState = state.stateFor(context.location);
+  const { bindings, definitions } = locationState;
   const registrations = new Map();
   let updating = Promise.resolve();
   async function request(binding, pathname, body, allowMissing = false, signal) {
@@ -49,18 +50,34 @@ export async function registerSharedBridge(context) {
       binding,
       `/tools?sessionID=${encodeURIComponent(binding.sessionID)}`,
     );
-    for (const definition of manifest.tools) await installDefinition(definition);
+    await reconcileManifest(manifest.tools);
+  }
+  // Compare the whole manifest against the last installed one. A drifted
+  // manifest means the owning daemon was upgraded or reconfigured: replace the
+  // entire tool set so removed tools disappear and changed ones are refreshed,
+  // rather than letting the first per-tool difference fail the bind.
+  async function reconcileManifest(tools) {
+    const serialized = JSON.stringify(tools);
+    if (locationState.manifest === serialized) return;
+    await Promise.all(
+      [...registrations.values()].map(({ registration }) => registration.dispose()),
+    );
+    registrations.clear();
+    definitions.clear();
+    for (const definition of tools) await installDefinition(definition);
+    locationState.manifest = serialized;
   }
   async function installDefinition(definition) {
     const signature = JSON.stringify(definition);
     const known = definitions.get(definition.name);
-    if (known && JSON.stringify(known) !== signature)
-      throw new Error(`Conflicting Paseo tool definition: ${definition.name}`);
     const old = registrations.get(definition.name);
+    if (known && old && JSON.stringify(known) === signature) return;
     if (old) {
-      if (old.signature !== signature)
-        throw new Error(`Conflicting Paseo tool definition: ${definition.name}`);
-      return;
+      // The Paseo daemon ships a changed tool definition: replace the stale
+      // registration instead of throwing. A signature mismatch here means the
+      // bridge upgraded, not a genuine conflict between two live bridges.
+      await old.registration.dispose();
+      registrations.delete(definition.name);
     }
     const registration = await context.tool.transform((editor) => {
       editor.add({
@@ -95,6 +112,7 @@ export async function registerSharedBridge(context) {
     );
     registrations.clear();
     definitions.clear();
+    locationState.manifest = null;
   }
   // Reinstall live tools before this plugin generation is made visible.
   // Definitions are kept in memory, so unavailable owners cannot delay reload.

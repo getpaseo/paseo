@@ -5,7 +5,7 @@ const locations = new Map();
 export function stateFor(location) {
   const key = JSON.stringify([location.directory, location.workspaceID ?? null]);
   if (!locations.has(key)) {
-    locations.set(key, { bindings: new Map(), definitions: new Map() });
+    locations.set(key, { bindings: new Map(), definitions: new Map(), manifest: null });
   }
   return locations.get(key);
 }

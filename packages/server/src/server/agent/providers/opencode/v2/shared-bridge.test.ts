@@ -232,6 +232,198 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
   }
 });
 
+test("a changed tool definition replaces the stale registration instead of failing the bind", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-upgrade-"));
+  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  const v1 = { name: "echo", description: "echo v1", inputSchema: { value: z.string() } };
+  const v2 = { name: "echo", description: "echo v2", inputSchema: { value: z.string() } };
+  const toolsV1 = new Map([[v1.name, v1]]);
+  const toolsV2 = new Map([[v2.name, v2]]);
+  bridge.setManifestCatalog({ tools: new Map() });
+  await bridge.start();
+  const makeBinding = (tools: Map<string, unknown>) => ({
+    tools,
+    getTool: (name: string) => tools.get(name),
+    executeTool: async (_name: unknown, input: unknown) => ({
+      content: [{ type: "text", text: String((input as { value: string }).value) }],
+    }),
+  });
+  const unbindV1 = bridge.bindSession({ sessionId: "paseo", env: {}, tools: makeBinding(toolsV1) });
+  const unbindV2 = bridge.bindSession({
+    sessionId: "paseo-2",
+    env: {},
+    tools: makeBinding(toolsV2),
+  });
+  try {
+    const plugin = {
+      package: await bridge.materializeV2Plugin(),
+      options: bridge.sharedV2Connection(),
+    };
+    const module = await import(
+      pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
+    );
+    const installed = new Map<string, TestTool & { description?: string }>();
+    const disposed: string[] = [];
+    let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+    const context = {
+      options: {},
+      location: { directory: home },
+      provider: { reload: async () => {} },
+      model: { reload: async () => {} },
+      agent: { reload: async () => {} },
+      command: { reload: async () => {} },
+      skill: { reload: async () => {} },
+      rpc: {
+        register: async (_definition: unknown, handlers: typeof rpc) => {
+          rpc = handlers;
+          return { dispose: async () => {} };
+        },
+      },
+      tool: {
+        transform: async (
+          fn: (editor: { add(item: TestTool & { description?: string }): void }) => void,
+        ) => {
+          const added: string[] = [];
+          fn({
+            add: (item) => {
+              added.push(item.name);
+              installed.set(item.name, item);
+            },
+          });
+          return {
+            dispose: async () => {
+              for (const name of added) {
+                disposed.push(name);
+                installed.delete(name);
+              }
+            },
+          };
+        },
+      },
+      session: {
+        context: async () => [],
+        get: async () => ({ parentID: "" }),
+        hook: async () => ({ dispose: async () => {} }),
+      },
+    };
+    const dispose = await module.default.setup(context);
+    try {
+      await rpc.bind({ sessionID: "paseo", ...plugin.options });
+      expect(installed.get("paseo_echo")?.description).toBe("echo v1");
+      // The owning daemon ships a changed definition for the same tool. The
+      // bind must succeed and the registered tool must reflect the new schema.
+      await rpc.bind({ sessionID: "paseo-2", ...plugin.options });
+      expect(installed.get("paseo_echo")?.description).toBe("echo v2");
+      // The stale registration was disposed, not left alongside the new one.
+      expect(disposed).toContain("paseo_echo");
+    } finally {
+      await dispose();
+    }
+  } finally {
+    unbindV1();
+    unbindV2();
+    await bridge.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a manifest drift drops tools the new manifest no longer ships", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-drift-"));
+  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  const echo = { name: "echo", description: "echo", inputSchema: { value: z.string() } };
+  const extra = { name: "extra", description: "extra", inputSchema: { value: z.string() } };
+  const toolsBoth = new Map([
+    [echo.name, echo],
+    [extra.name, extra],
+  ]);
+  const toolsEcho = new Map([[echo.name, echo]]);
+  bridge.setManifestCatalog({ tools: new Map() });
+  await bridge.start();
+  const makeBinding = (tools: Map<string, unknown>) => ({
+    tools,
+    getTool: (name: string) => tools.get(name),
+    executeTool: async (_name: unknown, input: unknown) => ({
+      content: [{ type: "text", text: String((input as { value: string }).value) }],
+    }),
+  });
+  const unbindBoth = bridge.bindSession({
+    sessionId: "paseo",
+    env: {},
+    tools: makeBinding(toolsBoth),
+  });
+  const unbindEcho = bridge.bindSession({
+    sessionId: "paseo-2",
+    env: {},
+    tools: makeBinding(toolsEcho),
+  });
+  try {
+    const plugin = {
+      package: await bridge.materializeV2Plugin(),
+      options: bridge.sharedV2Connection(),
+    };
+    const module = await import(
+      pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
+    );
+    const installed = new Map<string, TestTool>();
+    let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+    const context = {
+      options: {},
+      location: { directory: home },
+      provider: { reload: async () => {} },
+      model: { reload: async () => {} },
+      agent: { reload: async () => {} },
+      command: { reload: async () => {} },
+      skill: { reload: async () => {} },
+      rpc: {
+        register: async (_definition: unknown, handlers: typeof rpc) => {
+          rpc = handlers;
+          return { dispose: async () => {} };
+        },
+      },
+      tool: {
+        transform: async (fn: (editor: { add(item: TestTool): void }) => void) => {
+          const added: string[] = [];
+          fn({
+            add: (item) => {
+              if (!item.name.startsWith("paseo_")) return;
+              added.push(item.name);
+              installed.set(item.name, item);
+            },
+          });
+          return {
+            dispose: async () => {
+              for (const name of added) installed.delete(name);
+            },
+          };
+        },
+      },
+      session: {
+        context: async () => [],
+        get: async () => ({ parentID: "" }),
+        hook: async () => ({ dispose: async () => {} }),
+      },
+    };
+    const dispose = await module.default.setup(context);
+    try {
+      await rpc.bind({ sessionID: "paseo", ...plugin.options });
+      const paseoTools = () =>
+        [...installed.keys()].filter((name) => name !== "paseo_structured_output").sort();
+      expect(paseoTools()).toEqual(["paseo_echo", "paseo_extra"]);
+      // The daemon's new manifest no longer ships "extra": the next bind must
+      // drop it from the tool registry.
+      await rpc.bind({ sessionID: "paseo-2", ...plugin.options });
+      expect(paseoTools()).toEqual(["paseo_echo"]);
+    } finally {
+      await dispose();
+    }
+  } finally {
+    unbindBoth();
+    unbindEcho();
+    await bridge.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("a refused connection is the only probe failure that clears a binding", async () => {
   const source = new URL("./shared-bridge-plugin.mjs", import.meta.url).href;
   const { isRefused } = (await import(source)) as { isRefused: (error: unknown) => boolean };
