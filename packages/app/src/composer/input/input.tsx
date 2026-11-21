@@ -87,7 +87,8 @@ import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
-import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import type { ComposerInputMode } from "@/composer/input-mode";
+import { useComposerPresentation } from "@/composer/controls-scope";
 import { pasteLinkedClipboardText } from "@/composer/pasted-text";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
@@ -1338,7 +1339,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       submitLabel,
     } = resolveMessageInputProps(props);
     const { isPaneFocused } = useComposerKeyboardScope();
-    const mode = resolveComposerInputMode(inputMode);
+    const mode = useComposerPresentation(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
     const { height: windowHeight } = useWindowDimensions();

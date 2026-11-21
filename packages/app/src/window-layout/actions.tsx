@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Portal, PortalHost } from "@gorhom/portal";
+import { PortalHost } from "@gorhom/portal";
+import { Portal } from "@/components/ui/portal";
 import { StyleSheet, View } from "react-native";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";

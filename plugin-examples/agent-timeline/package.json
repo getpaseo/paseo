@@ -1,0 +1,28 @@
+{
+  "name": "@getpaseo/plugin-example-agent-timeline",
+  "version": "0.1.0",
+  "description": "Paseo plugin example: an agent list beside an embedded agent timeline",
+  "homepage": "https://paseo.sh/docs/plugins",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getpaseo/paseo.git",
+    "directory": "plugin-examples/agent-timeline"
+  },
+  "files": [
+    "paseo-plugin.json",
+    "index.client.tsx",
+    "client/",
+    "LICENSE"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "peerDependencies": {
+    "@getpaseo/plugin": ">=0.16.0",
+    "react": ">=19",
+    "react-native": ">=0.81"
+  }
+}

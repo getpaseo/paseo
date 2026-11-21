@@ -25,6 +25,8 @@ import {
   type AttachSheetContentDrag,
   type SheetContentDragGesture,
 } from "@/components/ui/bottom-sheet-scope";
+import { FocusOwnerScope, useFocusOwner } from "@/components/ui/focus-owner";
+import { StyleSheet } from "react-native";
 import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
@@ -109,6 +111,9 @@ export const IsolatedBottomSheetModal = forwardRef<
     simultaneousHandlers,
     ...bottomSheetProps
   } = props;
+  // Gorhom portals the sheet to its host, away from the call site's React tree; re-open the
+  // focus owner there so a press in the sheet still belongs to whoever opened it.
+  const focusOwner = useFocusOwner();
   // State, not a ref the child fills in: Gorhom builds its pan once per `waitFor`, and RNGH reads
   // the ref's handler tag only then. Registering hands Gorhom a new `waitFor`, so a drag that
   // mounts after the sheet (content still loading) still gets the relation.
@@ -151,12 +156,19 @@ export const IsolatedBottomSheetModal = forwardRef<
       simultaneousHandlers={contentDragHandlers.simultaneousHandlers}
     >
       <BottomSheetScope attachContentDrag={attachContentDrag}>
-        {contextBridge ? contextBridge(children) : children}
+        <FocusOwnerScope owner={focusOwner} style={styles.content}>
+          {contextBridge ? contextBridge(children) : children}
+        </FocusOwnerScope>
       </BottomSheetScope>
     </GorhomBottomSheetModal>
   );
 
   return modal;
+});
+
+const styles = StyleSheet.create({
+  // Grows into the sheet's content area and still sizes to dynamic content.
+  content: { flexGrow: 1, flexShrink: 1 },
 });
 
 export function useIsolatedBottomSheetVisibility({

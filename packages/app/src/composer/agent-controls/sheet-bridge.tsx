@@ -10,11 +10,13 @@ import {
 } from "@/composer/session";
 import { ComposerModelProvider, useComposerModel } from "@/composer/model";
 import { ToastApiProvider, useToast } from "@/contexts/toast-api-context";
+import { ComposerControlsScopeProvider, useComposerControlsScope } from "@/composer/controls-scope";
 
 /**
  * A phone's overflow draws in a sheet whose content lands at the app root, away from the
  * composer. This carries across what a control in it reads from the composer: the agent, model and input
- * a plugin's `useComposer()` sits on, the layout, and the toast and query client the controls use.
+ * a plugin's `useComposer()` sits on, the controls scope that decides which items show, the layout,
+ * and the toast and query client the controls use.
  * Call it from inside the composer, outside any sheet.
  */
 export function useComposerSheetBridge(): ContextBridge {
@@ -24,24 +26,27 @@ export function useComposerSheetBridge(): ContextBridge {
   const model = useComposerModel();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const scope = useComposerControlsScope();
   return useCallback<ContextBridge>(
     (content) => (
       <QueryClientProvider client={queryClient}>
         <ToastApiProvider api={toast}>
-          <ComposerControlLayoutProvider value={layout}>
-            <ComposerAgentProvider value={agent}>
-              <ComposerModelProvider value={model}>
-                {input ? (
-                  <ComposerInputProvider value={input}>{content}</ComposerInputProvider>
-                ) : (
-                  content
-                )}
-              </ComposerModelProvider>
-            </ComposerAgentProvider>
-          </ComposerControlLayoutProvider>
+          <ComposerControlsScopeProvider value={scope}>
+            <ComposerControlLayoutProvider value={layout}>
+              <ComposerAgentProvider value={agent}>
+                <ComposerModelProvider value={model}>
+                  {input ? (
+                    <ComposerInputProvider value={input}>{content}</ComposerInputProvider>
+                  ) : (
+                    content
+                  )}
+                </ComposerModelProvider>
+              </ComposerAgentProvider>
+            </ComposerControlLayoutProvider>
+          </ComposerControlsScopeProvider>
         </ToastApiProvider>
       </QueryClientProvider>
     ),
-    [agent, input, layout, model, queryClient, toast],
+    [agent, input, layout, model, queryClient, scope, toast],
   );
 }

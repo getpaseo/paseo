@@ -30,3 +30,4 @@ export { useToast } from "./toast";
 export { StreamedText } from "./streamed-text";
 
 export { Markdown } from "./markdown";
+export { AgentTimeline } from "./agent-timeline";

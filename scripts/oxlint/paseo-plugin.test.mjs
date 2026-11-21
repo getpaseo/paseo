@@ -59,6 +59,24 @@ test("press primitives and pressable types are allowed", () => {
   assert.equal(result.failed, false, result.output);
 });
 
+test("gorhom's Portal is reported", () => {
+  const result = lint(
+    'import { Portal as P, PortalHost } from "@gorhom/portal";\nexport { P, PortalHost };\n',
+    "paseo/no-raw-portal",
+  );
+  assert.equal(result.failed, true);
+  assert.match(result.output, /no-raw-portal/);
+});
+
+test("gorhom's PortalHost and PortalProvider are allowed", () => {
+  const result = lint(
+    'import { PortalHost, PortalProvider } from "@gorhom/portal";\n' +
+      "export { PortalHost, PortalProvider };\n",
+    "paseo/no-raw-portal",
+  );
+  assert.equal(result.failed, false, result.output);
+});
+
 for (const source of [
   'import { readFileSync as read } from "node:fs"; export { read };',
   'import { execSync } from "child_process"; export { execSync };',
