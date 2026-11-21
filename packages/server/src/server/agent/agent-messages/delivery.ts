@@ -30,7 +30,10 @@ interface Receipt {
   dispatched: Promise<PromptDispatchDisposition>;
 }
 interface Admitted extends Message {
+  /** claimed: a dispatch has it. It leaves the queue when the provider admits the prompt. */
   state: "queued" | "claimed" | "withdrawn" | "rejected";
+  /** An interrupt that was not released yet. After a Stop it waits like any other message. */
+  urgent: boolean;
   outOfBandDeclined: boolean;
   receipt: Receipt;
   resolve(disposition: PromptDispatchDisposition): void;
@@ -38,10 +41,13 @@ interface Admitted extends Message {
 }
 /**
  * A recipient's queue. A dispatch in flight for the recipient is its entry in `releasing`:
- * collecting → waiting → releasing, and Stop moves either of the first two to held.
+ * collecting → waiting → releasing, and Stop moves the queue to held.
  */
 interface Inbox {
-  /** Admission order. A message leaves when a dispatch claims it or it is withdrawn. */
+  /**
+   * Admission order. A message stays, in its place, until the provider admits the prompt that
+   * carries it, so a Stop or a later prompt always finds it here.
+   */
   messages: Admitted[];
   phase:
     | "collecting" // The quiet window is open.
@@ -50,7 +56,7 @@ interface Inbox {
   /** The quiet window while collecting, the busy retry while waiting. */
   cancelTimer(): void;
   cancelCap(): void;
-  /** An advance is already in line behind the recipient's current operation. */
+  /** A queue step is already in line behind the recipient's current operation. */
   advancing: boolean;
 }
 interface DispatchRequest {
@@ -59,7 +65,10 @@ interface DispatchRequest {
   prompt: AgentPromptInput;
   activeTurnBehavior: "steer" | "interrupt";
   idleOnly: boolean;
-  /** Claim this exact prompt at provider admission. A withdrawn message invalidates the batch. */
+  /**
+   * Claim this exact prompt at provider admission. A withdrawn message or a Stop that reached
+   * the recipient first invalidates it.
+   */
   admit(): boolean;
   sessionMode?: string;
   clearPendingPermissions: boolean;
@@ -90,7 +99,10 @@ interface Dependencies {
   /** Notify before a recipient's turn is stopped with no prompt replacing it. */
   onStop?: (listener: (recipientId: string) => void) => () => void;
   tryRunOutOfBand?(request: DispatchRequest, onAccepted: () => void): Promise<boolean>;
+  /** Hand a batch to the recipient. Resolves once the provider admitted it. */
   dispatch(request: DispatchRequest): Promise<PromptDispatchDisposition>;
+  /** Bound the wait for the provider to admit a direct prompt. Unbounded when absent. */
+  awaitStart?(recipientId: string, started: Promise<void>): Promise<void>;
   onError(error: unknown, request: DispatchRequest): void;
   /** Return a cancellation function. Production uses the daemon's event loop. */
   schedule?: (delayMs: number, callback: () => void) => () => void;
@@ -99,8 +111,9 @@ export interface AgentMessageDelivery {
   /** Admit a message that waits its turn. An interrupt releases at once, with everything queued. */
   enqueue(message: Message): Receipt;
   /**
-   * Send a prompt that does not wait its turn. Every queued message goes ahead of it in the
-   * same provider prompt, so none starts a turn of its own afterwards. A command travels alone.
+   * Send a prompt that does not wait its turn. The messages admitted before it go ahead of it
+   * in the same provider prompt, so none starts a turn of its own afterwards. Its place is
+   * decided by this call, whenever the recipient gets to it. A command travels alone.
    */
   sendDirect<Result extends PromptDispatchResult>(
     direct: DirectPrompt,
@@ -118,12 +131,19 @@ export interface AgentMessageDelivery {
 
 const isQueued = (message: Admitted): boolean => message.state === "queued";
 const isWithdrawn = (message: Admitted): boolean => message.state === "withdrawn";
+const isUrgent = (message: Admitted): boolean => isQueued(message) && message.urgent;
+const isOfferable = (message: Admitted): boolean =>
+  isQueued(message) && !message.outOfBandDeclined && message.sessionMode === undefined;
 
-/** Providers parse a command from the raw text at the start of the prompt. */
+/**
+ * Providers read a command from the raw start of the prompt: a slash and a name with no
+ * second slash in it. A path such as `/tmp/build.log` is plain text.
+ */
 function isCommand(prompt: AgentPromptInput): boolean {
   const first = typeof prompt === "string" ? prompt : prompt[0];
-  if (typeof first === "string") return first.trimStart().startsWith("/");
-  return first?.type === "text" && first.text.trimStart().startsWith("/");
+  if (typeof first !== "string" && first?.type !== "text") return false;
+  const text = typeof first === "string" ? first : first.text;
+  return /^\/[^\s/]+(\s|$)/.test(text.trim());
 }
 
 function combine(prompts: AgentPromptInput[]): AgentPromptInput {
@@ -159,6 +179,10 @@ function modeGroups(messages: Admitted[]): Admitted[][] {
 /**
  * Owns the order in which prompts reach a recipient. Delivery order equals admission order:
  * only a prefix of the queue is ever dispatched, except a command a provider runs out of band.
+ *
+ * Every prompt for a recipient takes its place when it is admitted, and one operation at a
+ * time acts on the queue. A message stays in the queue until the provider admits the prompt
+ * that carries it, so agent messages, a person's prompts, and Stop all decide over the same list.
  */
 export function createAgentMessageDelivery(dependencies: Dependencies): AgentMessageDelivery {
   const schedule =
@@ -169,12 +193,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     });
   const inboxes = new Map<string, Inbox>();
   const releasing = new Map<string, Promise<void>>();
-  const admitted = new Map<string, Set<Admitted>>();
   let closed = false;
   let closing: Promise<void> | undefined;
 
   const isRunning = (recipientId: string): boolean =>
     Boolean(dependencies.isRunning?.(recipientId));
+  const isHeld = (recipientId: string): boolean => inboxes.get(recipientId)?.phase === "held";
 
   function requestFor(
     recipientId: string,
@@ -185,15 +209,13 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       recipientId,
       idleOnly,
       admit() {
-        if (messages.some(isWithdrawn)) return false;
+        if (messages.some(isWithdrawn) || isHeld(recipientId)) return false;
         for (const message of messages) message.state = "claimed";
         return true;
       },
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt: combine(messages.map(envelope)),
-      activeTurnBehavior: messages.some((message) => message.activeTurnBehavior === "interrupt")
-        ? "interrupt"
-        : "steer",
+      activeTurnBehavior: messages.some((message) => message.urgent) ? "interrupt" : "steer",
       // An interrupt may follow a message that asked for another mode; the latest choice wins.
       sessionMode: messages.findLast((message) => message.sessionMode)?.sessionMode,
       clearPendingPermissions: messages.some((message) => message.clearPendingPermissions),
@@ -201,19 +223,20 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     };
   }
 
-  function leave(message: Admitted): void {
-    const messages = inboxes.get(message.recipientId)?.messages;
-    const index = messages?.indexOf(message) ?? -1;
-    if (index >= 0) messages!.splice(index, 1);
+  function retire(recipientId: string, inbox: Inbox): void {
+    inbox.cancelTimer();
+    inbox.cancelCap();
+    if (inboxes.get(recipientId) === inbox) inboxes.delete(recipientId);
   }
 
-  /** The message reached its end: dispatched, failed, or withdrawn. */
+  /** The message reached its end: delivered, failed, or withdrawn. */
   function settle(message: Admitted, state: "claimed" | "rejected" | "withdrawn"): void {
     message.state = state;
-    leave(message);
-    const owned = admitted.get(message.recipientId);
-    owned?.delete(message);
-    if (!owned?.size) admitted.delete(message.recipientId);
+    const inbox = inboxes.get(message.recipientId);
+    const index = inbox?.messages.indexOf(message) ?? -1;
+    if (!inbox || index < 0) return;
+    inbox.messages.splice(index, 1);
+    if (!inbox.messages.length) retire(message.recipientId, inbox);
   }
 
   function claim(
@@ -230,7 +253,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     message.resolve(disposition);
   }
 
-  /** A dispatch that did not happen returns the messages it had claimed to the queue. */
+  /** A dispatch that did not happen leaves its messages queued, each still in its place. */
   function handBack(messages: Admitted[]): void {
     for (const message of messages) if (message.state === "claimed") message.state = "queued";
   }
@@ -241,48 +264,32 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   /** One operation per recipient at a time, whether the queue or a person started it. */
-  function serialize<Result>(
-    recipientId: string,
-    operation: () => Promise<Result>,
-  ): Promise<Result> {
-    const previous = releasing.get(recipientId) ?? Promise.resolve();
-    const result = previous
-      .catch(() => undefined)
-      .then(operation)
-      .finally(() => rest(recipientId));
-    const tracked = result.then(() => undefined);
-    releasing.set(recipientId, tracked);
-    void tracked
-      .finally(() => {
-        if (releasing.get(recipientId) === tracked) releasing.delete(recipientId);
-      })
-      .catch(() => undefined);
-    return result;
-  }
-
   function run(recipientId: string, operation: () => Promise<void>): void {
-    void serialize(recipientId, operation).catch(() => undefined);
+    const previous = releasing.get(recipientId) ?? Promise.resolve();
+    const tracked = previous
+      .then(operation)
+      .catch(() => undefined)
+      .then(() => rest(recipientId));
+    releasing.set(recipientId, tracked);
+    void tracked.then(() => {
+      if (releasing.get(recipientId) === tracked) releasing.delete(recipientId);
+      return undefined;
+    });
   }
 
-  /** After an operation: retire an empty inbox, and keep a waiting one polling. */
+  /** After an operation: an interrupt not yet covered goes next, a waiting queue keeps polling. */
   function rest(recipientId: string): void {
     const inbox = inboxes.get(recipientId);
-    if (!inbox) return;
-    if (!inbox.messages.length) {
-      retire(recipientId, inbox);
-    } else if (inbox.phase === "waiting" && !inbox.advancing) {
+    if (!inbox || inbox.advancing) return;
+    if (inbox.messages.some(isUrgent)) {
+      nudge(recipientId, inbox);
+    } else if (inbox.phase === "waiting") {
       inbox.cancelTimer();
       inbox.cancelTimer = schedule(QUIET_MS, () => attempt(recipientId));
     }
   }
 
-  function retire(recipientId: string, inbox: Inbox): void {
-    inbox.cancelTimer();
-    inbox.cancelCap();
-    if (inboxes.get(recipientId) === inbox) inboxes.delete(recipientId);
-  }
-
-  /** Dispatch one batch. An idle-only batch that finds the recipient busy stays queued. */
+  /** Dispatch one batch. A batch that finds the recipient stopped, or busy when idle-only, stays queued. */
   async function deliver(recipientId: string, batch: Admitted[], idleOnly: boolean): Promise<void> {
     for (;;) {
       const messages = batch.filter(isQueued);
@@ -307,7 +314,8 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           handBack(messages);
           continue;
         }
-        if (error instanceof AgentTurnBusyError && request.idleOnly) {
+        // A Stop reached the recipient before the provider admitted the prompt.
+        if (isHeld(recipientId) || (error instanceof AgentTurnBusyError && request.idleOnly)) {
           handBack(messages);
           return;
         }
@@ -318,38 +326,66 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     }
   }
 
-  const isOfferable = (message: Admitted): boolean =>
-    isQueued(message) && !message.outOfBandDeclined && message.sessionMode === undefined;
-
-  /** A provider may run a waiting command without ending the turn. Each message is offered once. */
-  async function offerOutOfBand(recipientId: string, inbox: Inbox): Promise<void> {
-    for (const message of inbox.messages.filter(isOfferable)) {
-      if (closed || inbox.phase !== "waiting" || !isRunning(recipientId)) return;
+  /** A provider may run a command beside the turn. Each message is offered once, alone. */
+  async function offerOutOfBand(
+    recipientId: string,
+    candidates: Admitted[],
+    stillDue: () => boolean,
+  ): Promise<void> {
+    const tryRunOutOfBand = dependencies.tryRunOutOfBand;
+    if (!tryRunOutOfBand) return;
+    for (const message of candidates) {
+      if (closed || !stillDue()) return;
       if (!isOfferable(message)) continue;
       const request = requestFor(recipientId, [message], true);
       try {
-        const accepted = await dependencies.tryRunOutOfBand!(request, () => {
+        const accepted = await tryRunOutOfBand(request, () => {
           if (!request.admit()) throw new Error("Queued agent message was withdrawn");
           message.beforeDispatch?.();
         });
         if (accepted) claim(message, "out_of_band", request);
         else message.outOfBandDeclined = true;
       } catch (error) {
-        if (isWithdrawn(message)) continue;
+        if (!isQueued(message)) continue;
         fail(message, error);
         dependencies.onError(error, request);
       }
     }
   }
 
-  /** Move a waiting queue forward: commands while the turn runs, the queue once it has ended. */
-  async function advance(recipientId: string, inbox: Inbox): Promise<void> {
+  /**
+   * Move the queue forward: an interrupt takes it now, a closed window once the turn has ended.
+   * `ahead` is what was admitted before this step got in line; it leaves later messages alone.
+   */
+  async function advance(recipientId: string, inbox: Inbox, ahead: Admitted[]): Promise<void> {
+    const interrupts = ahead.filter(isUrgent);
+    if (interrupts.length) {
+      // A command the provider runs beside the turn replaces nothing, so it takes nothing along.
+      await offerOutOfBand(recipientId, interrupts, () => inbox.phase !== "held");
+      const last = ahead.findLastIndex(isUrgent);
+      if (last >= 0) {
+        // An interrupt does not jump the queue: everything admitted before it goes first.
+        await deliver(recipientId, ahead.slice(0, last + 1), false);
+        return;
+      }
+    }
     if (inbox.phase !== "waiting") return;
-    if (dependencies.tryRunOutOfBand && isRunning(recipientId))
-      await offerOutOfBand(recipientId, inbox);
+    const running = (): boolean => inbox.phase === "waiting" && isRunning(recipientId);
+    if (running()) await offerOutOfBand(recipientId, ahead, running);
     // Later mode groups stay queued for the turn ends that follow.
     if (inbox.phase === "waiting" && !isRunning(recipientId))
-      await deliver(recipientId, modeGroups(inbox.messages)[0] ?? [], true);
+      await deliver(recipientId, modeGroups(ahead.filter(isQueued))[0] ?? [], true);
+  }
+
+  /** Line up one step behind the recipient's current operation, for what is queued now. */
+  function nudge(recipientId: string, inbox: Inbox): void {
+    if (inbox.advancing) return;
+    inbox.advancing = true;
+    const ahead = [...inbox.messages];
+    run(recipientId, () => {
+      inbox.advancing = false;
+      return advance(recipientId, inbox, ahead);
+    });
   }
 
   /** The quiet window closed, a retry came due, or the recipient settled. */
@@ -362,19 +398,15 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     const running = isRunning(recipientId);
     if (running) inbox.cancelTimer = schedule(QUIET_MS, () => attempt(recipientId));
     const nothingToOffer = !dependencies.tryRunOutOfBand || !inbox.messages.some(isOfferable);
-    if (inbox.advancing || (running && nothingToOffer)) return;
-    inbox.advancing = true;
-    run(recipientId, () => {
-      inbox.advancing = false;
-      return advance(recipientId, inbox);
-    });
+    if (running && nothingToOffer) return;
+    nudge(recipientId, inbox);
   }
 
-  function collect(item: Admitted): void {
+  function admit(item: Admitted): void {
     const existing = inboxes.get(item.recipientId);
     const inbox = existing ?? {
       messages: [],
-      phase: "collecting",
+      phase: "waiting",
       cancelTimer: () => {},
       cancelCap: () => {},
       advancing: false,
@@ -382,19 +414,18 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     inboxes.set(item.recipientId, inbox);
     inbox.messages.push(item);
     inbox.cancelTimer();
+    if (item.urgent) {
+      // An interrupt does not wait: it closes the window and takes the queue along.
+      inbox.cancelCap();
+      inbox.phase = "waiting";
+      nudge(item.recipientId, inbox);
+      return;
+    }
     inbox.cancelTimer = schedule(QUIET_MS, () => attempt(item.recipientId));
-    if (existing?.phase === "collecting") return;
+    if (inbox.phase === "collecting") return;
     // A new window. It closes after a quiet spell, and no later than the cap.
     inbox.phase = "collecting";
     inbox.cancelCap = schedule(MAX_COLLECTING_MS, () => attempt(item.recipientId));
-  }
-
-  /** Everything the recipient's queue holds, leaving it empty. */
-  function take(recipientId: string): Admitted[] {
-    const inbox = inboxes.get(recipientId);
-    if (!inbox) return [];
-    retire(recipientId, inbox);
-    return inbox.messages.splice(0);
   }
 
   function join(queued: Admitted[], direct: DirectPrompt): JoinedPrompt {
@@ -420,20 +451,24 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     };
   }
 
-  /** Receipts of messages that rode a direct prompt follow that prompt's start. */
-  function followStart(queued: Admitted[], result: PromptDispatchResult): void {
-    if (!queued.length) return;
-    const request = requestFor(queued[0]!.recipientId, queued, false);
-    const started = result.disposition === "turn_started" ? result.started : Promise.resolve();
-    void started.then(
-      () => {
-        for (const message of queued) claim(message, result.disposition, request);
-        return undefined;
-      },
-      (error: unknown) => {
-        for (const message of queued) fail(message, error);
-      },
-    );
+  /**
+   * Messages that rode a direct prompt are delivered when the provider admits that prompt.
+   * Until it answers, nothing later may pass them.
+   */
+  async function ride(riders: Admitted[], result: PromptDispatchResult): Promise<void> {
+    if (!riders.length) return;
+    const { recipientId } = riders[0]!;
+    if (result.disposition === "turn_started") {
+      try {
+        await (dependencies.awaitStart?.(recipientId, result.started) ?? result.started);
+      } catch {
+        // The provider rejected the prompt that carried them. They go again, in their place.
+        handBack(riders);
+        return;
+      }
+    }
+    const request = requestFor(recipientId, riders, false);
+    for (const message of riders) claim(message, result.disposition, request);
   }
 
   const unsubscribe = dependencies.subscribe?.((recipientId) => {
@@ -443,29 +478,28 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   const unsubscribeStop = dependencies.onStop?.((recipientId) => {
     const inbox = inboxes.get(recipientId);
     if (!inbox) return;
-    // The stopped recipient stays stopped. Its queue goes with whatever prompts it next.
+    // The stopped recipient stays stopped. Its queue, interrupts included, goes with whatever
+    // prompts it next.
     inbox.cancelTimer();
     inbox.cancelCap();
     inbox.phase = "held";
+    for (const message of inbox.messages) message.urgent = false;
   });
 
   return {
     withdrawPending(recipientId, matches) {
-      let removed = 0;
-      for (const message of admitted.get(recipientId) ?? []) {
-        if (!isQueued(message) || !matches(message.source)) continue;
+      const withdrawn = (inboxes.get(recipientId)?.messages ?? []).filter(
+        (message) => isQueued(message) && matches(message.source),
+      );
+      for (const message of withdrawn) {
         settle(message, "withdrawn");
         message.reject(new DOMException("Agent message withdrawn", "AbortError"));
-        removed++;
       }
-      const inbox = inboxes.get(recipientId);
-      if (inbox && !inbox.messages.length) retire(recipientId, inbox);
-      return removed;
+      return withdrawn.length;
     },
     hasPending(recipientId) {
       const inbox = inboxes.get(recipientId);
-      const held = inbox?.phase === "held" ? inbox.messages : [];
-      return [...(admitted.get(recipientId) ?? [])].some((message) => !held.includes(message));
+      return inbox !== undefined && inbox.phase !== "held";
     },
     enqueue(message) {
       if (closed) throw new Error("Agent message delivery is closed");
@@ -481,51 +515,47 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         messageId: message.messageId ?? randomUUID(),
         dispatched,
       };
-      const item: Admitted = {
+      admit({
         ...message,
         receipt,
         resolve,
         reject,
         state: "queued",
+        urgent: message.activeTurnBehavior === "interrupt",
         outOfBandDeclined: false,
-      };
-      const owned = admitted.get(message.recipientId) ?? new Set<Admitted>();
-      owned.add(item);
-      admitted.set(message.recipientId, owned);
-      if (item.activeTurnBehavior === "interrupt") {
-        // An interrupt does not wait and does not jump the queue: it takes the queue along.
-        const batch = [...take(item.recipientId), item];
-        run(item.recipientId, () => deliver(item.recipientId, batch, false));
-      } else {
-        collect(item);
-      }
+      });
       return receipt;
     },
-    async sendDirect(direct, send) {
-      const outcome = await serialize(direct.recipientId, async () => {
-        const queued =
-          closed || isCommand(direct.prompt)
-            ? []
-            : (inboxes.get(direct.recipientId)?.messages.filter(isQueued) ?? []);
-        // This send owns them until it settles; a failure hands them back to the queue.
-        for (const message of queued) message.state = "claimed";
-        try {
-          for (const message of queued) message.beforeDispatch?.();
-          const result = await send(join(queued, direct));
-          for (const message of queued) leave(message);
-          followStart(queued, result);
-          return { result };
-        } catch (error) {
-          handBack(queued);
-          return { error };
-        }
+    sendDirect<Result extends PromptDispatchResult>(
+      direct: DirectPrompt,
+      send: (joined: JoinedPrompt) => Promise<Result>,
+    ): Promise<Result> {
+      // Its place in line is decided now: what is queued goes with it, what comes later follows.
+      const ahead =
+        closed || isCommand(direct.prompt)
+          ? []
+          : [...(inboxes.get(direct.recipientId)?.messages ?? [])];
+      return new Promise<Result>((resolve, reject) => {
+        run(direct.recipientId, async () => {
+          const riders = ahead.filter(isQueued);
+          for (const message of riders) message.state = "claimed";
+          let result: Result;
+          try {
+            for (const message of riders) message.beforeDispatch?.();
+            result = await send(join(riders, direct));
+          } catch (error) {
+            handBack(riders);
+            reject(error);
+            return;
+          }
+          resolve(result);
+          await ride(riders, result);
+        });
       });
-      if ("error" in outcome) throw outcome.error;
-      return outcome.result;
     },
     async waitForDispatch(recipientId, signal) {
       signal.throwIfAborted();
-      const waiting = Array.from(admitted.get(recipientId) ?? [], (message) =>
+      const waiting = Array.from(inboxes.get(recipientId)?.messages ?? [], (message) =>
         message.receipt.dispatched.catch((error) => {
           if (message.state !== "withdrawn") throw error;
           return undefined;
@@ -534,11 +564,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       let unsubscribeCheckpoint: (() => void) | undefined;
       const checkpoint = new Promise<void>((resolve) => {
         const check = () => {
-          if (
-            dependencies.hasPendingPermission?.(recipientId) ||
-            inboxes.get(recipientId)?.phase === "held"
-          )
-            resolve();
+          if (dependencies.hasPendingPermission?.(recipientId) || isHeld(recipientId)) resolve();
         };
         unsubscribeCheckpoint = dependencies.subscribe?.((agentId) => {
           if (agentId === recipientId) check();
@@ -566,16 +592,18 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       closed = true;
       unsubscribe?.();
       unsubscribeStop?.();
-      for (const recipientId of inboxes.keys()) {
-        for (const group of modeGroups(take(recipientId)))
+      const receipts: Promise<unknown>[] = [];
+      for (const [recipientId, inbox] of inboxes) {
+        inbox.cancelTimer();
+        inbox.cancelCap();
+        // Shutdown delivers held messages too: nothing in memory survives it.
+        inbox.phase = "waiting";
+        receipts.push(...inbox.messages.map((message) => message.receipt.dispatched));
+        for (const group of modeGroups(inbox.messages.filter(isQueued)))
           run(recipientId, () => deliver(recipientId, group, false));
       }
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
-      closing = Promise.allSettled(
-        [...admitted.values()].flatMap((owned) =>
-          [...owned].map((message) => message.receipt.dispatched),
-        ),
-      ).then(() => undefined);
+      closing = Promise.allSettled(receipts).then(() => undefined);
       return closing;
     },
   };
