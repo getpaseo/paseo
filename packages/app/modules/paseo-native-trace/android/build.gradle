@@ -15,5 +15,6 @@ android {
 }
 
 dependencies {
+  implementation 'com.facebook.react:react-android'
   testImplementation "junit:junit:4.13.2"
 }
