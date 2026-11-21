@@ -499,7 +499,7 @@ test("a gap absorbed by a running tail is recovered after the tail completes", a
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
-test("a gap parked behind a running tail resumes after the rows that tail applied", async () => {
+test("a parked gap pages forward from the coverage established by the running tail", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
@@ -518,7 +518,13 @@ test("a gap parked behind a running tail resumes after the rows that tail applie
     projection: "projected",
     wholeTurns: true,
   });
-  recovery.respond({ hasNewer: false, seq: 7 });
+  recovery.respond({ hasNewer: true, seq: 47 });
+  const followUp = await world.nextFetch("agent-a");
+  expect(followUp.request).toMatchObject({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 47 },
+  });
+  followUp.respond({ hasNewer: false, seq: 55 });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
   world.sync.dispose();
 });

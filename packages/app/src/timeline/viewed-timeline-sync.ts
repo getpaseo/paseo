@@ -551,7 +551,7 @@ type CatchUpStatus = "running" | "complete" | "error";
 
 interface CatchUpRequest {
   page: ProjectedTimelineForwardFetchPlan;
-  overflow: "latest-tail" | "continue";
+  kind: "resume" | "gap";
 }
 
 interface CatchUpState {
@@ -564,12 +564,8 @@ function planCatchUpRequest(
   request: CatchUpRequest | undefined,
   applied: { epoch: string; endSeq: number } | undefined,
 ): CatchUpRequest {
-  if (!request) return { page: planTimelineResumeFetch(applied), overflow: "latest-tail" };
-  // A live gap with no local coverage uses the same bounded policy as a resume.
-  return {
-    page: planTimelineCatchUpPastApplied(request.page, applied),
-    overflow: applied ? request.overflow : "latest-tail",
-  };
+  if (!request) return { page: planTimelineResumeFetch(applied), kind: "resume" };
+  return { ...request, page: planTimelineCatchUpPastApplied(request.page, applied) };
 }
 
 function isSameCatchUpRequest(
@@ -745,6 +741,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     agentId: string,
     generation: number,
     request: CatchUpRequest,
+    fallbackToLatestTailOnOverflow: boolean,
   ): Promise<void> => {
     if (!ownsCatchUp(agentId, generation)) return;
 
@@ -752,20 +749,25 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       const page = await ports.fetchPage(agentId, request.page);
       if (!ownsCatchUp(agentId, generation)) return;
       if (page.hasNewer && page.endCursor) {
-        if (request.page.direction === "after" && request.overflow === "latest-tail") {
+        if (request.page.direction === "after" && fallbackToLatestTailOnOverflow) {
           await ports.fetchLatestTail(agentId);
           if (!ownsCatchUp(agentId, generation)) return;
           catchUps.set(agentId, { generation, status: "complete" });
           setVisibilityCatchUpReady(agentId);
           return;
         }
-        await fetchUntilCurrent(agentId, generation, {
-          page: planTimelineCatchUpPastApplied(
-            planTimelineCatchUpAfter(page.endCursor),
-            ports.readCursor(agentId),
-          ),
-          overflow: "continue",
-        });
+        await fetchUntilCurrent(
+          agentId,
+          generation,
+          {
+            ...request,
+            page: planTimelineCatchUpPastApplied(
+              planTimelineCatchUpAfter(page.endCursor),
+              ports.readCursor(agentId),
+            ),
+          },
+          false,
+        );
         return;
       }
       if (page.hasNewer) {
@@ -842,7 +844,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       ensureCacheLoaded(agentId);
       return;
     }
-    const nextRequest = planCatchUpRequest(request, ports.readCursor(agentId));
+    const applied = ports.readCursor(agentId);
+    const nextRequest = planCatchUpRequest(request, applied);
     const current = catchUps.get(agentId);
     const decision = decideCatchUp({ current, request: nextRequest.page, supersede });
     if (decision === "keep-and-park") {
@@ -867,7 +870,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       markCatchUpOwed(agentId);
       notifyListeners();
     }
-    void fetchUntilCurrent(agentId, generation, nextRequest).finally(() => {
+    // A queued gap uses the coverage available when its fetch starts.
+    void fetchUntilCurrent(
+      agentId,
+      generation,
+      nextRequest,
+      nextRequest.kind === "resume" || !applied,
+    ).finally(() => {
       inFlightCatchUps.delete(attempt);
       startAcknowledgedCatchUps();
     });
@@ -1170,7 +1179,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       startCatchUp(agentId, {
         request: {
           page: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq }),
-          overflow: "continue",
+          kind: "gap",
         },
         supersede: true,
       });
