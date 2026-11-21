@@ -8,6 +8,8 @@ import {
   openAddProjectFlow,
   openDirectorySearchPage,
   openGithubLocationPage,
+  openGithubNamePage,
+  setGithubFolderName,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
   setAddProjectActiveIndex,
@@ -84,6 +86,58 @@ describe("Add Project navigation", () => {
       parentPath: "~/dev",
       name: "command-center",
     });
+  });
+
+  it("defaults the clone folder and preserves an edit when changing parents", () => {
+    const repository = {
+      id: "repo-1",
+      nameWithOwner: "acme/api",
+      cloneUrl: "https://github.com/acme/api.git",
+      description: null,
+      updatedAt: null,
+    };
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = openGithubLocationPage(state, HOST.serverId, repository);
+    state = openGithubNamePage(state, "~/code");
+    expect(currentAddProjectPage(state)).toMatchObject({
+      kind: "github-name",
+      name: "api",
+      parentPath: "~/code",
+    });
+    state = setGithubFolderName(state, "acme-api");
+    state = backAddProjectPage(state)!;
+    state = openGithubNamePage(state, "~/projects");
+    expect(currentAddProjectPage(state)).toMatchObject({
+      kind: "github-name",
+      name: "acme-api",
+      parentPath: "~/projects",
+    });
+  });
+
+  it("defaults shorthand clones ending in .git to the repository name for both protocols", () => {
+    const choices = buildManualGithubRepositoryChoices("acme/api.git");
+    expect(
+      choices.map(({ nameWithOwner, cloneUrl, cloneProtocol }) => ({
+        nameWithOwner,
+        cloneUrl,
+        cloneProtocol,
+      })),
+    ).toEqual([
+      { nameWithOwner: "acme/api", cloneUrl: "acme/api", cloneProtocol: "https" },
+      { nameWithOwner: "acme/api", cloneUrl: "acme/api", cloneProtocol: "ssh" },
+    ]);
+    for (const repository of choices) {
+      let state = openAddProjectFlow({ hosts: [HOST] });
+      state = openGithubLocationPage(state, HOST.serverId, repository);
+      state = openGithubNamePage(state, "~/code");
+      expect(currentAddProjectPage(state)).toMatchObject({
+        kind: "github-name",
+        name: "api",
+        parentPath: "~/code",
+      });
+      state = setGithubFolderName(state, "custom.git");
+      expect(currentAddProjectPage(state)).toMatchObject({ name: "custom.git" });
+    }
   });
 
   it("restores the GitHub destination query and active parent when reopening a repository", () => {

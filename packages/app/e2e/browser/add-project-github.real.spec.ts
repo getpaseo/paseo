@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { shortenPath } from "../../src/utils/shorten-path";
 import { expect, test } from "../support/fixtures";
 import {
   addProjectFlow,
@@ -53,7 +54,9 @@ test.describe("Add Project GitHub flow", () => {
       await expectAddProjectPage(page, "github-location");
 
       await addProjectFlowInput(page).fill(parentDirectory);
-      await expect(addProjectFlow(page)).toContainText(checkoutPath, { timeout: 30_000 });
+      await expect(addProjectFlow(page)).toContainText(shortenPath(checkoutPath), {
+        timeout: 30_000,
+      });
 
       await addProjectFlowBack(page).click();
       await expectAddProjectPage(page, "github-search");
@@ -61,6 +64,10 @@ test.describe("Add Project GitHub flow", () => {
       await repositoryRow.click();
       await expectAddProjectPage(page, "github-location");
       await expect(addProjectFlowInput(page)).toHaveValue(parentDirectory);
+
+      await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "github-name");
+      await expect(addProjectFlowInput(page)).toHaveValue(repository.name);
 
       await mkdir(checkoutPath);
       await page.keyboard.press("Enter");

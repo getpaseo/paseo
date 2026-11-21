@@ -6,6 +6,7 @@ export type AddProjectFlowPage =
   | "directory-search"
   | "github-search"
   | "github-location"
+  | "github-name"
   | "new-directory-parent"
   | "new-directory-name";
 

@@ -482,6 +482,18 @@ describe("workspace message schemas", () => {
     expect(response.payload.project?.projectId).toBe("project-b");
   });
 
+  test("preserves an optional custom clone folder name", () => {
+    const request = {
+      type: "project.github.clone.request",
+      repo: "acme/api",
+      cloneProtocol: "https",
+      targetDirectory: "~/code",
+      folderName: "acme-api",
+      requestId: "custom-folder",
+    };
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+  });
+
   test("rejects invalid project GitHub clone protocols", () => {
     const request = SessionInboundMessageSchema.safeParse({
       type: "project.github.clone.request",

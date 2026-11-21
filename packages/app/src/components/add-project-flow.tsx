@@ -41,6 +41,9 @@ import {
   openAddProjectFlow,
   openDirectorySearchPage,
   openGithubLocationPage,
+  openGithubNamePage,
+  getGithubFolderName,
+  setGithubFolderName,
   openGithubSearchPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
@@ -61,13 +64,15 @@ import {
   buildSuggestedParentDirectories,
   filterAddProjectHosts,
   joinDirectoryPath,
-  pathBaseName,
   type AddProjectMethodId,
 } from "@/add-project-flow/options";
 import {
   buildProjectPickerOptions,
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
+import { Button } from "@/components/ui/button";
+import { Field, FormTextInput } from "@/components/ui/form-field";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useRevealActiveItem } from "@/components/ui/scroll-reveal";
 import { useHardwareKeyboardPresent } from "@/keyboard";
@@ -107,7 +112,7 @@ interface FlowRowOption {
   select: () => void;
 }
 
-type GithubLocationPage = Extract<AddProjectPage, { kind: "github-location" }>;
+type GithubNamePage = Extract<AddProjectPage, { kind: "github-name" }>;
 
 interface FlowIconProps {
   icon: ComponentType<{ size?: number; color?: string }>;
@@ -170,7 +175,7 @@ function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string)
 }
 
 function progressText(page: AddProjectPage): string {
-  if (page.kind === "github-location") return "Cloning project...";
+  if (page.kind === "github-name") return "Cloning project...";
   if (page.kind === "new-directory-name") return "Creating directory...";
   return "Adding project...";
 }
@@ -214,6 +219,8 @@ function pageTitle(page: AddProjectPage): string {
       return "Clone from GitHub";
     case "github-location":
       return "Choose destination";
+    case "github-name":
+      return "Name checkout folder";
     case "new-directory-parent":
       return "Choose parent directory";
     case "new-directory-name":
@@ -234,13 +241,15 @@ function pagePlaceholder(page: AddProjectInputPage): string {
     case "github-location":
     case "new-directory-parent":
       return "Search parent directories or enter a path...";
+    case "github-name":
+      return "Folder name";
     case "new-directory-name":
       return "Directory name";
   }
 }
 
 function pageInput(page: AddProjectInputPage): string {
-  return page.kind === "new-directory-name" ? page.name : page.query;
+  return page.kind === "new-directory-name" || page.kind === "github-name" ? page.name : page.query;
 }
 
 function pathTestId(path: string): string {
@@ -325,6 +334,7 @@ function setPageStatus(
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const addHost = useAddHost();
   const hosts = useHosts();
+  const isCompact = useIsCompactFormFactor();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
   const projectAddByHost = useHostFeatureMap(hostIds, "projectAdd");
@@ -332,6 +342,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const stableProjectIdentityByHost = useHostFeatureMap(hostIds, "stableProjectIdentity");
   // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
   const githubCloneByHost = useHostFeatureMap(hostIds, "projectGithubClone");
+  // COMPAT(projectGithubCloneFolderName): added in v0.14.1, remove gate after 2027-04-29.
+  const cloneFolderNameByHost = useHostFeatureMap(hostIds, "projectGithubCloneFolderName");
   // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
   const githubSearchByHost = useHostFeatureMap(hostIds, "workspaceGithubRepositorySearch");
   // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
@@ -375,6 +387,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
   const page = currentAddProjectPage(state);
   const hostId = pageHostId(page);
+  const canChooseCloneFolderName = cloneFolderNameByHost.get(hostId ?? "") === true;
   const host = hostId ? state.hosts.find((candidate) => candidate.serverId === hostId) : null;
   const client = useHostRuntimeClient(hostId ?? "");
   const isLocalDaemon = useIsLocalDaemon(hostId ?? "");
@@ -395,7 +408,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const resultsRef = useRef<ScrollView>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
-  const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
+  const query =
+    page.kind === "new-directory-name" || page.kind === "github-name" || page.kind === "method"
+      ? ""
+      : page.query;
   const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
@@ -556,32 +572,62 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [directoryPaths, query, recommendedPaths],
   );
   const cloneRepository = useCallback(
-    async (locationPage: GithubLocationPage, parentPath: string) => {
+    async (locationPage: GithubNamePage) => {
+      const parentPath = locationPage.parentPath;
+      const name = locationPage.name;
+      if (
+        !name.trim() ||
+        name !== name.trim() ||
+        name === "." ||
+        name === ".." ||
+        /[\\/]/.test(name) ||
+        name.includes("\0") ||
+        /^[A-Za-z]:/.test(name)
+      ) {
+        setState((current) =>
+          setPageStatus(current, "github-name", {
+            error: "Enter a single folder name without path separators or surrounding whitespace",
+          }),
+        );
+        return;
+      }
+      if (
+        !canChooseCloneFolderName &&
+        name !== locationPage.repository.nameWithOwner.split("/").at(-1)
+      ) {
+        setState((current) =>
+          setPageStatus(current, "github-name", {
+            error: "Update the host to choose a folder name.",
+          }),
+        );
+        return;
+      }
       if (submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
-        setPageStatus(current, "github-location", { isSubmitting: true, error: null }),
+        setPageStatus(current, "github-name", { isSubmitting: true, error: null }),
       );
       try {
-        const result = await cloneGithubProject(
-          locationPage.repository.cloneUrl,
-          parentPath,
-          locationPage.repository.cloneProtocol,
-        );
+        const result = await cloneGithubProject({
+          repo: locationPage.repository.cloneUrl,
+          targetDirectory: parentPath,
+          cloneProtocol: locationPage.repository.cloneProtocol,
+          folderName: canChooseCloneFolderName ? name : undefined,
+        });
         if (result.ok) {
           lastCloneParentByHost.set(locationPage.hostId, parentPath);
           openNewWorkspaceForProject(locationPage.hostId, result.project);
           return;
         }
         setState((current) =>
-          setPageStatus(current, "github-location", {
+          setPageStatus(current, "github-name", {
             isSubmitting: false,
             error: result.error ?? "Unable to clone repository",
           }),
         );
       } catch (error) {
         setState((current) =>
-          setPageStatus(current, "github-location", {
+          setPageStatus(current, "github-name", {
             isSubmitting: false,
             error: error instanceof Error ? error.message : "Unable to clone repository",
           }),
@@ -590,7 +636,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submissionInFlightRef.current = false;
       }
     },
-    [cloneGithubProject, openNewWorkspaceForProject],
+    [canChooseCloneFolderName, cloneGithubProject, openNewWorkspaceForProject],
   );
   const rows = useMemo<FlowRowOption[]>(() => {
     if (page.kind === "host") {
@@ -671,7 +717,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }));
     }
     if (page.kind === "github-location") {
-      const repositoryName = pathBaseName(page.repository.nameWithOwner);
+      const repositoryName = getGithubFolderName(state, page);
       const lastParent = lastCloneParentByHost.get(page.hostId);
       const parents = buildSuggestedParentDirectories(recommendedPaths);
       const orderedParents = lastParent
@@ -689,11 +735,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }).map((option) => ({
         id: option.id,
         title: shortenPath(option.displayPath),
-        subtitle: option.secondaryText,
+        subtitle: `Parent directory: ${option.path}`,
         icon: HardDrive,
-        disabled: option.disabled,
         testID: pathTestId(option.displayPath),
-        select: () => void cloneRepository(page, option.path),
+        select: () => setState((current) => openGithubNamePage(current, option.path)),
       }));
     }
     if (page.kind === "new-directory-parent") {
@@ -709,7 +754,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     return [];
   }, [
-    cloneRepository,
     directoryPaths,
     githubQuery.data,
     host,
@@ -720,7 +764,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     pathOptions,
     recommendedPaths,
     selectMethod,
-    state.hosts,
+    state,
   ]);
 
   const activeIndex = rows.length === 0 ? 0 : Math.min(page.activeIndex, rows.length - 1);
@@ -779,13 +823,17 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [client, openNewWorkspaceForProject, page, setHasHydratedWorkspaces, upsertProject]);
 
   const submitActive = useCallback(() => {
+    if (page.kind === "github-name") {
+      void cloneRepository(page);
+      return;
+    }
     if (page.kind === "new-directory-name") {
       void createDirectory();
       return;
     }
     const option = rows[activeIndex];
     if (option && !option.disabled) option.select();
-  }, [activeIndex, createDirectory, page.kind, rows]);
+  }, [activeIndex, cloneRepository, createDirectory, page, rows]);
 
   const handleKey = useCallback(
     (key: string): boolean => {
@@ -826,11 +874,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   });
 
   const handleInputChange = useCallback((value: string) => {
-    setState((current) =>
-      currentAddProjectPage(current).kind === "new-directory-name"
-        ? setNewDirectoryName(current, value)
-        : setAddProjectPageInput(current, value),
-    );
+    setState((current) => {
+      const kind = currentAddProjectPage(current).kind;
+      if (kind === "github-name") return setGithubFolderName(current, value);
+      if (kind === "new-directory-name") return setNewDirectoryName(current, value);
+      return setAddProjectPageInput(current, value);
+    });
   }, []);
   const isSubmitting = "isSubmitting" in page && page.isSubmitting;
   const currentGithubSearch =
@@ -850,7 +899,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     githubError: currentGithubSearch?.error ?? null,
   });
   const preview =
-    page.kind === "new-directory-name" && page.name.trim()
+    (page.kind === "new-directory-name" || page.kind === "github-name") && page.name.trim()
       ? joinDirectoryPath(page.parentPath, page.name.trim())
       : null;
 
@@ -878,7 +927,27 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 ) : null}
               </View>
             </View>
-            {page.kind !== "method" ? (
+            {page.kind === "github-name" && canChooseCloneFolderName ? (
+              <Field label="Folder name">
+                <FormTextInput
+                  ref={inputRef}
+                  initialValue={page.name}
+                  onChangeText={handleInputChange}
+                  onSubmitEditing={isWeb ? undefined : submitActive}
+                  accessibilityLabel="Folder name"
+                  size={isCompact ? "md" : "sm"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!isSubmitting}
+                  returnKeyType="go"
+                  testID="add-project-flow-input"
+                />
+              </Field>
+            ) : null}
+            {page.kind === "github-name" && !canChooseCloneFolderName ? (
+              <Text style={styles.stateText}>Update the host to choose a folder name.</Text>
+            ) : null}
+            {page.kind !== "method" && page.kind !== "github-name" ? (
               <ThemedTextInput
                 ref={inputRef}
                 initialValue={pageInput(page)}
@@ -947,16 +1016,35 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               !loading &&
               !queryError &&
               rows.length === 0 &&
-              page.kind !== "new-directory-name" ? (
+              page.kind !== "new-directory-name" &&
+              page.kind !== "github-name" ? (
                 <Text style={styles.stateText} testID="add-project-flow-empty">
                   {emptyText(page, host ?? null)}
                 </Text>
               ) : null}
             </View>
           </ScrollView>
+          {page.kind === "github-name" ? (
+            <View style={styles.cloneAction}>
+              <Button
+                onPress={submitActive}
+                disabled={isSubmitting}
+                loading={isSubmitting}
+                size={isCompact ? "md" : "sm"}
+                testID="add-project-flow-clone"
+              >
+                Clone
+              </Button>
+            </View>
+          ) : null}
           <View style={styles.footer} testID="add-project-flow-footer">
-            <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
-            <FlowHint keys={SELECT_HINT_KEYS} action="Select" />
+            {page.kind !== "github-name" ? (
+              <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
+            ) : null}
+            <FlowHint
+              keys={SELECT_HINT_KEYS}
+              action={page.kind === "github-name" ? "Clone" : "Select"}
+            />
             <FlowHint keys={ESCAPE_HINT_KEYS} action={state.pages.length > 1 ? "Back" : "Close"} />
           </View>
         </View>
@@ -989,6 +1077,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     ...theme.shadow.lg,
   },
+  cloneAction: { paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[3] },
   header: {
     flexShrink: 0,
     paddingHorizontal: theme.spacing[4],

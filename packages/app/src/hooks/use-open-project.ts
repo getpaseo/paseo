@@ -6,7 +6,7 @@ import {
   cloneGithubProjectDirectly,
   openProjectDirectly,
   type OpenProjectResult,
-  type ProjectGithubCloneProtocol,
+  type CloneGithubProjectDirectlyInput,
 } from "@/hooks/open-project";
 
 export function useOpenProject(
@@ -56,13 +56,14 @@ export function useOpenProject(
   );
 }
 
+type CloneGithubProjectInput = Pick<
+  CloneGithubProjectDirectlyInput,
+  "repo" | "targetDirectory" | "cloneProtocol" | "folderName"
+>;
+
 export function useCloneGithubProject(
   serverId: string | null,
-): (
-  repo: string,
-  targetDirectory: string,
-  cloneProtocol?: ProjectGithubCloneProtocol,
-) => Promise<OpenProjectResult> {
+): (input: CloneGithubProjectInput) => Promise<OpenProjectResult> {
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
@@ -78,12 +79,10 @@ export function useCloneGithubProject(
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
-    async (repo: string, targetDirectory: string, cloneProtocol?: ProjectGithubCloneProtocol) => {
+    async (input: CloneGithubProjectInput) => {
       return cloneGithubProjectDirectly({
+        ...input,
         serverId: normalizedServerId,
-        repo,
-        targetDirectory,
-        ...(cloneProtocol ? { cloneProtocol } : {}),
         isConnected,
         client,
         upsertProject,
