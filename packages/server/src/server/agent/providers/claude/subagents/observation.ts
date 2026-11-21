@@ -23,6 +23,8 @@ export type SubagentObservation =
       title?: string;
       /** The task this child was given. What actually distinguishes it from its siblings. */
       description?: string;
+      /** The full instructions the parent wrote for this child, for the parent's Task card. */
+      prompt?: string;
       toolCallId?: string;
       /** Provider subagent that launched this one. Absent means a direct child of the agent. */
       parentSubagentId?: string;

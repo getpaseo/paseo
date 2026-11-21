@@ -352,6 +352,7 @@ describe("background Claude subagents", () => {
         type: "sub_agent",
         subAgentType: "general-purpose",
         description: "Reply with banana",
+        prompt: "Reply with just the word: banana",
       },
     });
   });
@@ -473,6 +474,7 @@ describe("background Claude subagents", () => {
         type: "sub_agent",
         subAgentType: "general-purpose",
         description: "Count files here",
+        prompt: "Run ls and reply with the number of entries.",
         log: "",
       },
     });
@@ -612,6 +614,7 @@ describe("background Claude subagents", () => {
           type: "sub_agent",
           subAgentType: "general-purpose",
           description: "Count files here",
+          prompt: "Run ls and reply with the number of entries.",
           log: "",
         },
       });
