@@ -54,7 +54,7 @@ export class SherpaSileroTurnDetectionProvider implements TurnDetectionProvider 
     });
   }
 
-  createSession(params: { logger: Logger }): TurnDetectionSession {
+  createSession(params: { logger: Logger; confirmMs?: number }): TurnDetectionSession {
     this.logger.debug(
       { sampleRate: this.config.sampleRate, modelPath: this.config.modelPath },
       "Creating Silero VAD turn-detection session",
@@ -64,7 +64,10 @@ export class SherpaSileroTurnDetectionProvider implements TurnDetectionProvider 
         provider: "local",
         component: "silero-vad-session",
       }),
-      config: this.config,
+      config:
+        params.confirmMs === undefined
+          ? this.config
+          : { ...this.config, confirmMs: params.confirmMs },
     });
   }
 }

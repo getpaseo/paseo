@@ -443,6 +443,11 @@ export class TTSManager {
     this.logger.debug({ audioId, textLength: text.length }, "Audio playback confirmed");
   }
 
+  /** Whether any sent segment is still waiting for the client's playback confirmation. */
+  public hasPendingPlayback(): boolean {
+    return this.pendingPlaybacks.size > 0;
+  }
+
   /**
    * Called when client confirms audio playback completed
    * Resolves the corresponding promise

@@ -640,7 +640,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubVoiceInputState = client.on("voice_input_state", (message) => {
       if (message.type !== "voice_input_state") return;
-      voiceRuntime?.onServerSpeechStateChanged(serverId, message.payload.isSpeaking);
+      voiceRuntime?.onServerSpeechStateChanged(
+        serverId,
+        message.payload.isSpeaking,
+        message.payload.playback,
+      );
     });
 
     const unsubTerminalAttention = onFeed("terminal_attention_required", (message) => {

@@ -1149,6 +1149,7 @@ test("advertises client capabilities in hello", async () => {
       workspace_setup_observation: true,
       hello_rejection: true,
       background_agents: true,
+      voice_deferred_barge_in: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",
