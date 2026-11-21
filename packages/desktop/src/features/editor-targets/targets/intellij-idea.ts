@@ -4,12 +4,12 @@ const COMMANDS = ["idea", "idea64"] as const;
 
 export const intellijIdeaTarget: EditorTarget = {
   id: "intellij-idea",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "IntelliJ IDEA",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("intellij-idea.png"),
     };
   },
   async isInstalled(runtime) {

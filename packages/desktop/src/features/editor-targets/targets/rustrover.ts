@@ -4,12 +4,12 @@ const COMMANDS = ["rustrover", "rustrover64"] as const;
 
 export const rustroverTarget: EditorTarget = {
   id: "rustrover",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "RustRover",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("rustrover.png"),
     };
   },
   async isInstalled(runtime) {
