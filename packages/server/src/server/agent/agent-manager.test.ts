@@ -15913,6 +15913,49 @@ test("fork opens the provider's branch as a new agent with the source's settings
   expect(manager.getAgent(source.id)?.cwd).toBe(workdir);
 });
 
+test("fork names the branch after the source's current title with a (fork) suffix", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-title-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let branches = 0;
+
+  class ForkingSession extends TestAgentSession {
+    override readonly capabilities = { ...TEST_CAPABILITIES, supportsNativeFork: true };
+
+    async forkConversation(input: { messageId: string; cwd: string }) {
+      branches += 1;
+      return {
+        provider: this.provider,
+        sessionId: `branch-${branches}`,
+        metadata: { provider: this.provider, cwd: input.cwd },
+      };
+    }
+  }
+
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ForkingSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ForkingSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const source = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await manager.setTitle(source.id, "Fix login bug");
+
+  const branch = await manager.fork(source.id, { messageId: "assistant-1" });
+  const branchOfBranch = await manager.fork(branch.id, { messageId: "assistant-2" });
+
+  expect((await storage.get(branch.id))?.title).toBe("Fix login bug (fork)");
+  expect((await storage.get(branchOfBranch.id))?.title).toBe("Fix login bug (fork) (fork)");
+});
+
 test("fork rejects a provider that cannot branch its session", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-unsupported-"));
   const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });

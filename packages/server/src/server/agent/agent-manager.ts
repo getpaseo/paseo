@@ -4110,8 +4110,11 @@ export class AgentManager {
       throw new Error(`Provider '${agent.provider}' cannot branch its session`);
     }
     const cwd = input.cwd ?? agent.cwd;
+    const sourceTitle = (await this.registry?.get(agentId))?.title ?? agent.config.title;
     const handle = await agent.session.forkConversation({ messageId: input.messageId, cwd });
-    return this.resumeAgentFromPersistence(handle, { ...agent.config, cwd }, undefined, {
+    // Named like Claude Code's own forks: every branch appends " (fork)".
+    const title = sourceTitle ? `${sourceTitle} (fork)` : undefined;
+    return this.resumeAgentFromPersistence(handle, { ...agent.config, cwd, title }, undefined, {
       workspaceId: input.workspaceId ?? agent.workspaceId,
     });
   }
