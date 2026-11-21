@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { userEvent } from "vitest/browser";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
@@ -115,9 +116,30 @@ function mountTimeline(
       scrollContainer.scrollTop = top;
     },
     // A wheel listener runs before the browser applies the scroll the wheel causes.
-    wheelUpTo: (top: number) => {
-      scrollContainer.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1000 }));
+    wheelUpTo: (top: number, deltaX = 0) => {
+      scrollContainer.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, deltaX, deltaY: -1000 }),
+      );
       scrollContainer.scrollTop = top;
+    },
+    shiftWheelUp: () =>
+      act(async () => {
+        await userEvent.keyboard("{Shift>}");
+        try {
+          await userEvent.wheel(scrollContainer, { delta: { y: -120 } });
+        } finally {
+          await userEvent.keyboard("{/Shift}");
+        }
+      }),
+    wheelSidewaysOverRow: async (rowId: string) => {
+      const scroller = document.createElement("div");
+      scroller.style.cssText = "width: 100px; height: 18px; overflow-x: auto";
+      const wideContent = document.createElement("div");
+      wideContent.style.cssText = "width: 800px; height: 16px";
+      scroller.append(wideContent);
+      act(() => rowElement(rowId).append(scroller));
+      await act(async () => userEvent.wheel(scroller, { delta: { x: 120, y: -1 } }));
+      await expect.poll(() => scroller.scrollLeft).toBeGreaterThan(0);
     },
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
@@ -277,6 +299,54 @@ describe("web disclosure hold", () => {
     await timeline.settle();
 
     timeline.render({ liveHead: [row(8)] });
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("web output following", () => {
+  it.each([0, 1])(
+    "keeps the reading position when stream output grows before the wheel scroll event (horizontal delta %s)",
+    async (deltaX) => {
+      const history = Array.from({ length: 20 }, (_, index) => row(index));
+      const timeline = mountTimeline(history);
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+      const readingOffset = timeline.scrollTop() - 400;
+      timeline.wheelUpTo(readingOffset, deltaX);
+      // Stream output can commit before the browser delivers the scroll event.
+      timeline.render({ historyMounted: [...history, row(20)] });
+      await timeline.settle();
+      expect(timeline.scrollTop()).toBe(readingOffset);
+    },
+  );
+
+  it("keeps following output after horizontal Shift+wheel", async () => {
+    const history = Array.from({ length: 20 }, (_, index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    await timeline.shiftWheelUp();
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    timeline.render({ historyMounted: [...history, row(20)] });
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps following when diagonal wheel input scrolls a nested row sideways", async () => {
+    const history = Array.from({ length: 20 }, (_, index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    await timeline.wheelSidewaysOverRow("message-19");
+    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+    timeline.render({ historyMounted: [...history, row(20)] });
     await timeline.settle();
     expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
   });
