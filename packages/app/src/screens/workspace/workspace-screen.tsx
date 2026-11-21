@@ -70,6 +70,10 @@ import { WorkspaceScriptsButton, useWorkspaceScriptActions } from "@/screens/wor
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import type { WorkspaceTabFileReveal } from "@/screens/workspace/workspace-tab-menu";
 import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/outside-folder";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
@@ -1034,6 +1038,42 @@ function DesktopCenterColumnChrome({
       <View style={styles.centerColumn}>{children}</View>
     </WindowChromeRegion>
   );
+}
+
+function useTabFileReveal(
+  serverId: string,
+  workspaceDirectory: string | null,
+): WorkspaceTabFileReveal | undefined {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const { targets } = useDesktopOpenTargets({
+    isLocalExecution: isLocalDaemon,
+    workspacePath: workspaceDirectory ?? undefined,
+  });
+  const fileManagerTarget = targets.find((target) => target.kind === "file-manager");
+  return useMemo(() => {
+    if (!fileManagerTarget || !workspaceDirectory) return undefined;
+    return {
+      targetName: fileManagerTarget.label,
+      onReveal: (path: string) => {
+        openDesktopTarget({
+          editorId: fileManagerTarget.id,
+          workspacePath: workspaceDirectory,
+          filePath: buildAbsoluteExplorerPath({
+            workspaceRoot: workspaceDirectory,
+            entryPath: path,
+          }),
+        }).catch((cause: unknown) => {
+          toast.error(
+            cause instanceof Error
+              ? cause.message
+              : t("workspace.fileExplorer.errors.revealFailed"),
+          );
+        });
+      },
+    };
+  }, [fileManagerTarget, workspaceDirectory, toast, t]);
 }
 
 function WorkspaceScreenContent({
@@ -2146,6 +2186,8 @@ function WorkspaceScreenContent({
     },
     [toast, t],
   );
+
+  const fileReveal = useTabFileReveal(normalizedServerId, workspaceDirectory);
 
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
@@ -3373,6 +3415,7 @@ function WorkspaceScreenContent({
           onCopyAgentId={handleCopyAgentId}
           onCopyTerminalId={handleCopyTerminalId}
           onCopyFilePath={handleCopyFilePath}
+          fileReveal={fileReveal}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
           onCloseTab={handleCloseTabById}
@@ -3393,6 +3436,7 @@ function WorkspaceScreenContent({
       handleCopyAgentId,
       handleCopyTerminalId,
       handleCopyFilePath,
+      fileReveal,
       handleReloadAgent,
       handleRenameTab,
       handleCloseTabById,
@@ -3509,6 +3553,7 @@ function WorkspaceScreenContent({
         onCopyAgentId={handleCopyAgentId}
         onCopyTerminalId={handleCopyTerminalId}
         onCopyFilePath={handleCopyFilePath}
+        fileReveal={fileReveal}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
@@ -3545,6 +3590,7 @@ function WorkspaceScreenContent({
     handleCopyAgentId,
     handleCopyTerminalId,
     handleCopyFilePath,
+    fileReveal,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
@@ -3631,6 +3677,7 @@ function WorkspaceScreenContent({
                 onCopyAgentId={handleCopyAgentId}
                 onCopyTerminalId={handleCopyTerminalId}
                 onCopyFilePath={handleCopyFilePath}
+                fileReveal={fileReveal}
                 onReloadAgent={handleReloadAgent}
                 onRenameTab={handleRenameTab}
                 onCloseTabsToLeft={handleCloseTabsToLeft}
@@ -3673,6 +3720,7 @@ function WorkspaceScreenContent({
         onCopyAgentId={handleCopyAgentId}
         onCopyTerminalId={handleCopyTerminalId}
         onCopyFilePath={handleCopyFilePath}
+        fileReveal={fileReveal}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
@@ -3714,6 +3762,7 @@ function WorkspaceScreenContent({
     handleCopyAgentId,
     handleCopyTerminalId,
     handleCopyFilePath,
+    fileReveal,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,

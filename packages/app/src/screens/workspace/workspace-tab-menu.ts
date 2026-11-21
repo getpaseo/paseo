@@ -37,6 +37,11 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   close: i18n.t("workspace.tabs.menu.close"),
 };
 
+export interface WorkspaceTabFileReveal {
+  targetName: string;
+  onReveal: (path: string) => void;
+}
+
 export type WorkspaceTabMenuEntry =
   | {
       kind: "item";
@@ -48,6 +53,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-left-to-line"
         | "arrow-right-to-line"
         | "copy-x"
+        | "folder-open"
         | "pencil"
         | "x";
       hint?: string;
@@ -77,6 +83,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  fileReveal?: WorkspaceTabFileReveal;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -94,6 +101,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  fileReveal?: WorkspaceTabFileReveal;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -181,6 +189,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyAgentId,
     onCopyTerminalId,
     onCopyFilePath,
+    fileReveal,
     onReloadAgent,
     onRenameTab,
     onCloseTab,
@@ -246,6 +255,18 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyFilePath(filePath);
       },
     });
+    if (fileReveal) {
+      entries.push({
+        kind: "item",
+        key: "reveal-file",
+        label: i18n.t("workspace.fileActions.revealIn", { target: fileReveal.targetName }),
+        icon: "folder-open",
+        testID: `${menuTestIDBase}-reveal-file`,
+        onSelect: () => {
+          fileReveal.onReveal(filePath);
+        },
+      });
+    }
     entries.push({ kind: "file-panel-open-with", key: "file-panel-open-with" });
   }
 
@@ -343,6 +364,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyAgentId: input.onCopyAgentId,
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
+      fileReveal: input.fileReveal,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,

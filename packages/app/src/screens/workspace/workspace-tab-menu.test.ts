@@ -272,6 +272,34 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
     copyFilePathEntry.onSelect();
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
+    expect(entries.some((entry) => entry.key === "reveal-file")).toBe(false);
+
+    const onReveal = vi.fn();
+    const withReveal = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: fileTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath,
+      fileReveal: { targetName: "Finder", onReveal },
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+    const revealEntry = withReveal.find((entry) => entry.key === "reveal-file");
+    if (!revealEntry || revealEntry.kind !== "item") {
+      throw new Error("Reveal entry missing");
+    }
+    expect(revealEntry.label).toBe("Reveal in Finder");
+    revealEntry.onSelect();
+    expect(onReveal).toHaveBeenCalledWith("/some/path.ts");
     expect(entries[1]).toEqual({ kind: "file-panel-open-with", key: "file-panel-open-with" });
   });
 
