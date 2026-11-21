@@ -54,8 +54,11 @@ export const ACP_PROVIDER_ICON_NAMES = [
 
 export const TERMINAL_PROFILE_ICON_NAMES = ["agy"];
 
+export const CUSTOM_PROVIDER_ICON_NAMES = ["deepseek", "doubao", "seed"];
+
 export const KNOWN_PROVIDER_ICON_NAMES = [
   ...BUILTIN_PROVIDER_ICON_NAMES,
   ...ACP_PROVIDER_ICON_NAMES,
   ...TERMINAL_PROFILE_ICON_NAMES,
+  ...CUSTOM_PROVIDER_ICON_NAMES,
 ];

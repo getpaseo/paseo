@@ -17,6 +17,32 @@ function renderIcon(Component: ProviderIconComponent) {
 }
 
 describe("useProviderIcon", () => {
+  it.each([
+    ["claude", "#D97757"],
+    ["codex", "#10A37F"],
+    ["kimi", "#7C3AED"],
+    ["kiro", "#9046FF"],
+    ["agy", "#3186FF"],
+    ["traecli", "#2563EB"],
+  ])("uses the brand color for %s on native clients", (provider, brandColor) => {
+    const Icon = renderHook(() => useProviderIcon(provider)).result.current;
+    const rendered = renderIcon(Icon) as { props: { color?: string; fill?: string } };
+
+    expect(rendered.props.color ?? rendered.props.fill).toBe(brandColor);
+  });
+
+  it.each([
+    ["seed", "#A569FF"],
+    ["doubao", "#37E1BE"],
+    ["deepseek", "#4D6BFE"],
+  ])("renders branded artwork for %s without host metadata", (provider, fill) => {
+    const Icon = renderHook(() => useProviderIcon(provider)).result.current;
+
+    expect(renderIcon(Icon)).toMatchObject({
+      type: SvgXml,
+      props: { xml: expect.stringContaining(`fill="${fill}"`) },
+    });
+  });
   it.each(["devin", "hermes", "kiro", "antigravity"])(
     "#7087: %s has a provider mark before a host snapshot arrives",
     (provider) => {
