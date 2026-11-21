@@ -16,9 +16,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       onChangeText,
       onPasteImages: _,
       onPasteError: __,
-      variant: ___,
-      value: ____,
-      defaultValue: _____,
+      remeasureOnChange: ___,
+      variant: ____,
+      value: _____,
+      defaultValue: ______,
       ...props
     } = allProps as EditingTextInputProps & { value?: unknown; defaultValue?: unknown };
     const inputRef = useRef<TextInput | null>(null);
