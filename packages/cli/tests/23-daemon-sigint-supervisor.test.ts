@@ -89,8 +89,15 @@ async function startSupervisor() {
     reconnect: { enabled: false },
   });
   let output = "";
-  child.stdout.on("data", (chunk) => (output = (output + chunk.toString()).slice(-32000)));
-  child.stderr.on("data", (chunk) => (output = (output + chunk.toString()).slice(-32000)));
+  const startedWatchers = new Set<string>();
+  function captureOutput(chunk: Buffer) {
+    output = (output + chunk.toString()).slice(-32000);
+    for (const watcher of ["protocol", "client"]) {
+      if (output.includes(`[${watcher}]`)) startedWatchers.add(watcher);
+    }
+  }
+  child.stdout.on("data", captureOutput);
+  child.stderr.on("data", captureOutput);
   try {
     await Promise.race([
       waitFor(
@@ -106,6 +113,11 @@ async function startSupervisor() {
       }),
     ]);
     await client.connect();
+    if (watchDependencies) {
+      await waitFor(async () => {
+        if (startedWatchers.size === 2) return true;
+      }, "dev runner did not start both dependency watchers");
+    }
   } catch (error) {
     await client.close();
     child.kill("SIGTERM");
