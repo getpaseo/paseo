@@ -124,6 +124,16 @@ describe("findProjectIcon", () => {
     expect(result).toBe(join(tempDir, "assets", "logo.png"));
   });
 
+  it("finds icon in a browser extension's icons directory", async () => {
+    mkdirSync(join(tempDir, "icons"));
+    writeFileSync(join(tempDir, "icons", "icon-16.svg"), "small icon");
+    writeFileSync(join(tempDir, "icons", "icon-128.png"), "large icon");
+    writeFileSync(join(tempDir, "icons", "icon.svg"), "icon content");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, "icons", "icon.svg"));
+  });
+
   it("prioritizes favicon over logo", async () => {
     writeFileSync(join(tempDir, "favicon.png"), "favicon");
     writeFileSync(join(tempDir, "logo.png"), "logo");
