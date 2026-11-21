@@ -308,7 +308,8 @@ export interface PaseoAgentTimelineRefetchOptions {
   projection?: FetchAgentTimelineProjection;
   /**
    * Extends a `tail` or `before` page back to the start of the oldest turn it touches, so
-   * `{ direction: "tail", limit: 1, wholeTurns: true }` returns the latest turn.
+   * `{ direction: "tail", limit: 1, wholeTurns: true }` returns the latest turn. When the complete
+   * turns do not fit the message limit, the host returns an item page that can start mid-turn.
    */
   wholeTurns?: boolean;
   requestId?: string;

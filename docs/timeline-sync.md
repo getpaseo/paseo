@@ -65,9 +65,13 @@ Initialization timeouts guard lack of catch-up progress, not the full multi-page
 
 Opening or resuming an agent fetches the latest available turns with a soft target of 40
 projected items. Backward pages and prompt-jump windows also include whole turns, including
-all currently available rows of an active run. There is no per-turn cap: a large run can
-exceed the target. Local history mounting uses the same boundaries so revealing older rows
-does not change the collapse state of a turn already displayed.
+all currently available rows of an active run. A large run can exceed the target. For a paged
+request whose complete-turn reply cannot fit the wire message limit, the daemon falls back to
+item pages with continuation cursors so the rest remains reachable. A tail page starts at the first row of
+the source span it reaches. When one item's updates span the turn up to its last row and more than
+the limit, no smaller tail page exists and the request fails with an error. Local history mounting uses
+turn boundaries so revealing older rows does not change the collapse state of a turn already
+displayed.
 
 `wholeTurns` is a preference negotiated once at the client fetch boundary. Hosts advertising
 `features.wholeTurnTimeline` receive it; other hosts receive the existing item-based request.

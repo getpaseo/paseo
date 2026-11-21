@@ -5,6 +5,152 @@ import { describe, expect, it } from "vitest";
 import { selectReferenceProjectedTimelinePage } from "./test-utils/timeline-page-reference.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { selectTimelineResponseWithinFrameBudget } from "../session/timeline-frame-budget.js";
+
+describe("whole-turn byte budget", () => {
+  function fixture() {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    for (let index = 1; index <= 8; index++) {
+      store.append(
+        "agent",
+        { type: "assistant_message", messageId: `item-${index}`, text: "\u20ac".repeat(180) },
+        { turnId: "one-turn" },
+      );
+    }
+    return store;
+  }
+
+  function request(
+    store: ReturnType<typeof fixture>,
+    options: {
+      maxBytes: number;
+      limit: number;
+      direction?: "before" | "after";
+      cursor?: { epoch: string; seq: number };
+    },
+  ) {
+    return selectTimelineResponseWithinFrameBudget({
+      wholeTurns: true,
+      limit: options.limit,
+      maxBytes: options.maxBytes,
+      select: ({ wholeTurns, limit }) => {
+        const { rows, ...page } = store.fetch("agent", {
+          direction: options.direction ?? "tail",
+          cursor: options.cursor,
+          wholeTurns,
+          limit,
+        });
+        return { type: "fetch_agent_timeline_response", payload: { ...page, entries: rows } };
+      },
+    }).payload;
+  }
+
+  it("keeps complete turns whenever they fit, and leaves explicit full reads unchanged", () => {
+    const store = fixture();
+    expect(request(store, { maxBytes: 10000, limit: 2 }).entries.map((row) => row.seq)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    expect(request(store, { maxBytes: 500, limit: 0 }).entries).toHaveLength(8);
+  });
+
+  it("splits an oversized turn into adjacent older pages without losing any entries", () => {
+    const store = fixture();
+    let page = request(store, { maxBytes: 1300, limit: 2 });
+    expect(page).toMatchObject({ startSeq: 8, endSeq: 8, hasOlder: true });
+    const seen = page.entries.map((row) => row.seq);
+    for (let index = 7; index >= 1; index--) {
+      page = request(store, {
+        maxBytes: 1300,
+        limit: 2,
+        direction: "before",
+        cursor: { epoch: page.epoch, seq: page.startSeq! },
+      });
+      expect(page).toMatchObject({ startSeq: index, endSeq: index, hasOlder: index > 1 });
+      seen.unshift(...page.entries.map((row) => row.seq));
+    }
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("keeps the forward cursor on the oldest unsent part of an oversized turn", () => {
+    const store = fixture();
+    let seq = 1;
+    for (let expected = 2; expected <= 8; expected++) {
+      const page = request(store, {
+        maxBytes: 1300,
+        limit: 2,
+        direction: "after",
+        cursor: { epoch: "current", seq },
+      });
+      expect(page).toMatchObject({ startSeq: expected, endSeq: expected, hasNewer: expected < 8 });
+      seq = page.endSeq!;
+    }
+  });
+
+  it("reports when even a single row cannot fit", () => {
+    expect(() => request(fixture(), { maxBytes: 100, limit: 2 })).toThrow(
+      /timeline item exceeds the response size limit/i,
+    );
+  });
+
+  function spannedTurn(trailing: number) {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    const tool = (callId: string, status: "running" | "completed") =>
+      ({
+        type: "tool_call",
+        callId,
+        name: "shell",
+        status,
+        error: null,
+        detail: { type: "shell", command: "sleep 600" },
+      }) as AgentTimelineItem;
+    store.append("agent", tool("background", "running"), { turnId: "one-turn" });
+    for (let index = 1; index <= 8; index++) {
+      store.append(
+        "agent",
+        { type: "assistant_message", messageId: `item-${index}`, text: "€".repeat(180) },
+        { turnId: "one-turn" },
+      );
+    }
+    store.append("agent", tool("background", "completed"), { turnId: "one-turn" });
+    for (let index = 1; index <= trailing; index++) {
+      store.append("agent", tool(`after-${index}`, "completed"), { turnId: "one-turn" });
+    }
+    let selects = 0;
+    const tail = () =>
+      selectTimelineResponseWithinFrameBudget({
+        wholeTurns: true,
+        limit: 40,
+        maxBytes: 1300,
+        select: ({ wholeTurns, limit }) => {
+          selects++;
+          const { rows, ...page } = store.fetch("agent", { direction: "tail", wholeTurns, limit });
+          return { type: "fetch_agent_timeline_response", payload: { ...page, entries: rows } };
+        },
+      }).payload;
+    return { tail, selects: () => selects };
+  }
+
+  it("reports when one tool call spans the turn to its last row", () => {
+    const turn = spannedTurn(0);
+    expect(turn.tail).toThrow(/one item spans more than the response size limit/i);
+    expect(turn.selects()).toBe(5);
+  });
+
+  it("reaches the rows after a tool call that spans most of the turn", () => {
+    for (const trailing of [1, 3, 7]) {
+      const page = spannedTurn(trailing).tail();
+      expect(page.hasOlder).toBe(true);
+      expect(page.entries.length).toBeGreaterThan(0);
+      expect(
+        page.entries.every(
+          (row) => row.item.type === "tool_call" && row.item.callId.startsWith("after-"),
+        ),
+      ).toBe(true);
+    }
+  });
+});
 
 describe("InMemoryAgentTimelineStore", () => {
   it("resets stale forward cursors to complete available turns", () => {
