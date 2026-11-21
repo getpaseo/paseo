@@ -141,15 +141,42 @@ export function normalizeHostPort(input: string): string {
   return isIpv6 ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+type ParsedTcpUrl = Pick<
+  URL,
+  "protocol" | "hostname" | "port" | "username" | "password" | "searchParams"
+>;
+
+const TCP_URI_EXPLICIT_PORT = /^tcp:\/\/(?:[^@/?#]*@)?(?:\[[^\]]*\]|[^/:?#]*):(\d+)/i;
+
+// Some browsers (e.g. HuaweiBrowser on ArkWeb) still parse non-special schemes such as
+// `tcp:` as opaque paths, leaving `hostname` and `port` empty. Re-parse the authority through
+// `http:`, reading the port from the raw input because `http:` drops its default port 80.
+function parseTcpUrl(input: string): ParsedTcpUrl {
+  const parsed = new URL(input);
+  if (parsed.protocol !== "tcp:" || parsed.hostname) {
+    return parsed;
+  }
+
+  const reparsed = new URL(`http:${input.slice("tcp:".length)}`);
+  return {
+    protocol: "tcp:",
+    hostname: reparsed.hostname,
+    port: reparsed.port || (TCP_URI_EXPLICIT_PORT.exec(input)?.[1] ?? ""),
+    username: reparsed.username,
+    password: reparsed.password,
+    searchParams: reparsed.searchParams,
+  };
+}
+
 export function parseConnectionUri(input: string): ParsedConnectionUri {
   const trimmed = input.trim();
   if (!trimmed) {
     throw new Error("Connection URI is required");
   }
 
-  let parsed: URL;
+  let parsed: ParsedTcpUrl;
   try {
-    parsed = new URL(trimmed);
+    parsed = parseTcpUrl(trimmed);
   } catch {
     throw new Error("Invalid connection URI");
   }

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   buildDaemonWebSocketUrl,
@@ -79,6 +79,65 @@ describe("connection URI parsing", () => {
 
   test("rejects userinfo passwords", () => {
     expect(() => parseConnectionUri("tcp://:secret@localhost:6767?ssl=true")).toThrow(
+      "Connection URI userinfo is not supported",
+    );
+  });
+});
+
+describe("connection URI parsing with legacy non-special-scheme URL parsing", () => {
+  // Mirrors browsers such as HuaweiBrowser (ArkWeb) that parse `tcp:` URLs as opaque paths.
+  class OpaqueTcpUrl extends URL {
+    constructor(input: string | URL, base?: string | URL) {
+      super(input, base);
+      if (this.protocol === "tcp:") {
+        Object.defineProperty(this, "hostname", { value: "" });
+        Object.defineProperty(this, "port", { value: "" });
+      }
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("URL", OpaqueTcpUrl);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("parses a host, port, and password", () => {
+    expect(parseConnectionUri("tcp://100.66.69.36:6767?password=secret")).toEqual({
+      host: "100.66.69.36",
+      port: 6767,
+      isIpv6: false,
+      useTls: false,
+      password: "secret",
+    });
+  });
+
+  test("parses an IPv6 host with SSL", () => {
+    expect(parseConnectionUri("tcp://[::1]:6767?ssl=true")).toEqual({
+      host: "::1",
+      port: 6767,
+      isIpv6: true,
+      useTls: true,
+    });
+  });
+
+  test("keeps an explicit port 80", () => {
+    expect(parseConnectionUri("tcp://localhost:80")).toEqual({
+      host: "localhost",
+      port: 80,
+      isIpv6: false,
+      useTls: false,
+    });
+  });
+
+  test("rejects a missing port", () => {
+    expect(() => parseConnectionUri("tcp://localhost")).toThrow("Connection URI port is required");
+  });
+
+  test("rejects userinfo passwords", () => {
+    expect(() => parseConnectionUri("tcp://:secret@localhost:6767")).toThrow(
       "Connection URI userinfo is not supported",
     );
   });
