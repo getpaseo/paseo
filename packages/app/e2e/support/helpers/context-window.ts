@@ -41,6 +41,14 @@ export async function hoverContextWindowMeter(page: Page, name = METER_NAME): Pr
   return card;
 }
 
+/** Taps the meter on a touch screen and returns its details once they are on screen. */
+export async function tapContextWindowMeter(page: Page, name = METER_NAME): Promise<Locator> {
+  await page.getByRole("img", { name, exact: true }).tap({ timeout: 30_000 });
+  const card = contextWindowDetails(page);
+  await expect(card).toBeVisible();
+  return card;
+}
+
 /** Walks the pointer from the meter up onto its hover card, across the gap between them. */
 export async function moveOntoContextWindowDetails(page: Page, card: Locator): Promise<void> {
   const meter = await page.getByRole("img", { name: METER_NAME }).boundingBox();
