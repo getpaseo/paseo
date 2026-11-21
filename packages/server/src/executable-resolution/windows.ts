@@ -24,7 +24,7 @@ function enumerateLiteralPathCandidates(executablePath: string): string[] {
   return [executablePath, `${executablePath}.exe`, `${executablePath}.cmd`];
 }
 
-function enumerateWingetPackageCandidates(
+export function enumerateWingetPackageCandidates(
   name: string,
   localAppData: string | undefined,
 ): string[] {

@@ -3,13 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { executableExists, findExecutable } from "./executable-resolution.js";
+import {
+  executableExists,
+  findExecutable,
+  findExecutableWithoutProbing,
+} from "./executable-resolution.js";
 import { windowsExecutableResolution } from "./windows.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 const originalEnv = {
   PATH: process.env.PATH,
   PATHEXT: process.env.PATHEXT,
+  LOCALAPPDATA: process.env.LOCALAPPDATA,
 };
 const tempDirs: string[] = [];
 
@@ -45,8 +50,10 @@ function expectWindowsPathsEqual(actual: string | null, expected: string): void 
 }
 
 afterEach(() => {
-  process.env.PATH = originalEnv.PATH;
-  process.env.PATHEXT = originalEnv.PATHEXT;
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -175,6 +182,61 @@ describe("findExecutable", () => {
     ).resolves.toBeNull();
     expect(probeExecutable).not.toHaveBeenCalled();
   });
+});
+
+describe.runIf(isPlatform("win32"))("findExecutableWithoutProbing", () => {
+  test("prefers PATH over a WinGet portable executable", async () => {
+    const root = makeTempDir();
+    const packageDir = path.join(root, "Microsoft", "WinGet", "Packages", "Paseo.Profile");
+    const binDir = path.join(root, "bin");
+    mkdirSync(packageDir, { recursive: true });
+    mkdirSync(binDir);
+    const command = "paseo-qa-winget-precedence";
+    const pathCommand = writeExecutable(
+      path.join(binDir, `${command}.cmd`),
+      "@echo off\r\nexit /b 0\r\n",
+    );
+    writeFileSync(path.join(packageDir, `${command}.exe`), "not executed");
+    process.env.LOCALAPPDATA = root;
+    process.env.PATHEXT = ".CMD;.EXE";
+
+    expectWindowsPathsEqual(
+      await findExecutableWithoutProbing(command, { path: binDir, cwd: root }),
+      pathCommand,
+    );
+  });
+
+  test("ignores non-file WinGet candidates and keeps searching", async () => {
+    const root = makeTempDir();
+    const packages = path.join(root, "Microsoft", "WinGet", "Packages");
+    const command = "paseo-qa-winget-file";
+    mkdirSync(path.join(packages, "A.Directory", `${command}.exe`), { recursive: true });
+    mkdirSync(path.join(packages, "B.File"), { recursive: true });
+    const executable = path.join(packages, "B.File", `${command}.exe`);
+    writeFileSync(executable, "not executed");
+    process.env.LOCALAPPDATA = root;
+
+    expectWindowsPathsEqual(
+      await findExecutableWithoutProbing(command, { path: root, cwd: root }),
+      executable,
+    );
+  });
+
+  test.each(["./", ".\\"])(
+    "keeps a missing literal path out of WinGet fallback: %s",
+    async (prefix) => {
+      const root = makeTempDir();
+      const packageDir = path.join(root, "Microsoft", "WinGet", "Packages", "Paseo.Profile");
+      mkdirSync(packageDir, { recursive: true });
+      const command = "paseo-qa-winget-literal";
+      writeFileSync(path.join(packageDir, `${command}.exe`), "not executed");
+      process.env.LOCALAPPDATA = root;
+
+      await expect(
+        findExecutableWithoutProbing(`${prefix}${command}`, { path: root, cwd: root }),
+      ).resolves.toBeNull();
+    },
+  );
 });
 
 describe("executableExists", () => {
