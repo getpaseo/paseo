@@ -455,6 +455,7 @@ class AcpRuntime {
    */
   private replayWindow: "replay" | "skip" | null = null;
   private lastLoadHistoryAt = 0;
+  private lastPartialWireAt = 0;
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
@@ -484,6 +485,7 @@ class AcpRuntime {
       timeoutMs?: number;
     }) => Promise<void> = async () => {};
     let whenConnectorClosed: () => Promise<void> | null = () => null;
+    let onPartialWireRead: (() => void) | null = null;
     if (options.options.command) {
       // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
       // Standalone callers and older hosts do not send a daemon-resolved launch.
@@ -500,7 +502,10 @@ class AcpRuntime {
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);
       const output = Writable.toWeb(child.stdin) as unknown as Parameters<typeof ndJsonStream>[0];
-      const input = Readable.toWeb(child.stdout) as unknown as Parameters<typeof ndJsonStream>[1];
+      const rawInput = Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>;
+      const input = observePartialWireReads(rawInput, () => onPartialWireRead?.()) as Parameters<
+        typeof ndJsonStream
+      >[1];
       stream = ndJsonStream(output, input);
     } else {
       const owned = ownConnectorStream(await options.options.connector());
@@ -509,6 +514,7 @@ class AcpRuntime {
       whenConnectorClosed = owned.whenClosed;
     }
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
+    onPartialWireRead = () => runtime.notePartialWireRead();
     try {
       const initialize = withTimeout(
         runtime.call(
@@ -1953,6 +1959,10 @@ class AcpRuntime {
       });
   }
 
+  private notePartialWireRead(): void {
+    if (this.replayWindow) this.lastPartialWireAt = performance.now();
+  }
+
   // An agent that streams history after its session/load response sends no end marker,
   // so the history ends once a quiet period passes without a history update.
   private async waitForLoadReplay(
@@ -1961,8 +1971,8 @@ class AcpRuntime {
   ): Promise<void> {
     const start = performance.now();
     while (!this.closing && !this.processFailed && !isConnectionClosed()) {
-      const lastHistoryAt = Math.max(start, this.lastLoadHistoryAt);
-      const remaining = lastHistoryAt + quietPeriod - performance.now();
+      const lastActivityAt = Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt);
+      const remaining = lastActivityAt + quietPeriod - performance.now();
       // A stalled event loop reaches the quiet period with history still unread in the pipe.
       // setImmediate lets the loop read pending input once before the silence is trusted.
       await new Promise<void>((resolve) => {
@@ -1970,9 +1980,42 @@ class AcpRuntime {
         else setImmediate(resolve);
       });
       await this.notificationLane;
-      if (remaining <= 0 && Math.max(start, this.lastLoadHistoryAt) === lastHistoryAt) return;
+      if (
+        remaining <= 0 &&
+        Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt) === lastActivityAt
+      ) {
+        return;
+      }
     }
   }
+}
+
+function observePartialWireReads(
+  input: ReadableStream<Uint8Array>,
+  onPartialRead: () => void,
+): ReadableStream<Uint8Array> {
+  let incompleteLine = false;
+  return input.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        const wasIncomplete = incompleteLine;
+        incompleteLine = hasTrailingIncompleteLine(chunk, incompleteLine);
+        if (wasIncomplete || incompleteLine) onPartialRead();
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+function hasTrailingIncompleteLine(chunk: Uint8Array, incompleteLine: boolean): boolean {
+  const newline = chunk.lastIndexOf(0x0a);
+  const start = newline === -1 ? 0 : newline + 1;
+  if (newline !== -1) incompleteLine = false;
+  for (let index = start; index < chunk.length; index += 1) {
+    const byte = chunk[index];
+    if (byte !== 0x20 && byte !== 0x09 && byte !== 0x0d) return true;
+  }
+  return incompleteLine;
 }
 
 function isReplayHistoryUpdate(update: SessionUpdate): boolean {

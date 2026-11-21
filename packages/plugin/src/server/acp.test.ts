@@ -581,6 +581,100 @@ describe("runAcpProvider", () => {
     }
   });
 
+  it("keeps a multi-read tool result started during an event-loop stall past the quiet period", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-large-stall-replay-"));
+    const script = path.join(dir, "large-stall-agent.mjs");
+    const outputBytes = 256 * 1024;
+    await writeFile(
+      script,
+      `
+      import { createInterface } from "node:readline";
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+        } else if (msg.method === "session/load") {
+          const sid = msg.params.sessionId;
+          send({
+            method: "session/update",
+            params: {
+              sessionId: sid,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "m-before",
+                content: { type: "text", text: "before the stall" },
+              },
+            },
+          });
+          send({ id: msg.id, result: { configOptions: [] } });
+          setTimeout(() => {
+            send({
+              method: "session/update",
+              params: {
+                sessionId: sid,
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "shell-large",
+                  name: "run_command",
+                  title: "Large output",
+                  kind: "execute",
+                  status: "completed",
+                  rawInput: { CommandLine: "cat large.log" },
+                  rawOutput: { output: "x".repeat(${outputBytes}), exit_code: 0 },
+                },
+              },
+            });
+          }, 50);
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const connection = await runAcpProvider({
+      id: "large-stall",
+      label: "Large Stall",
+      command: [process.execPath, script],
+      acpOptions: { loadReplayQuietPeriodMs: 200 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    let stalled = false;
+    const stallEventLoop = () => {
+      const until = performance.now() + 350;
+      while (performance.now() < until);
+    };
+    const scheduleStall = () => setImmediate(stallEventLoop);
+    connection.onEvent((event) => {
+      events.push(event);
+      if (!stalled && event.type === "session.config") {
+        stalled = true;
+        // Stall after the timers phase so the overdue quiet timer runs before the next I/O poll;
+        // the 256 KiB tool result fills the pipe during the stall and spans multiple stdout reads.
+        setTimeout(scheduleStall, 20);
+      }
+    });
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "large-session" } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const items = events
+        .filter((event) => event.type === "timeline.item")
+        .map((event) => event.item);
+      expect(items).toEqual([
+        expect.objectContaining({ type: "assistant_message", text: "before the stall" }),
+        expect.objectContaining({ type: "tool_call", callId: "shell-large", status: "completed" }),
+      ]);
+    } finally {
+      await connection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("auto-accepts ordinary permissions only in the unattended mode and refuses to switch while busy", async () => {
     const modeConfig = {
       id: "mode",
