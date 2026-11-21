@@ -1,0 +1,3 @@
+- Use existing worktrees: Start a workspace in a worktree you already have, or create one from a branch or pull request. Plugins can manage worktree creation, removal, and restoration. When you branch off a fork PR or MR, choose Run setup to approve workspace automation.
+
+Full notes: https://paseo.sh/changelog
