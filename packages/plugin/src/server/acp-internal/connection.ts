@@ -334,7 +334,7 @@ async function openSession(
     onRetired: () => retireSession(state, input.sessionId),
   });
   try {
-    const capabilities = await runtime.open(input, state.capabilities);
+    const capabilities = await runtime.open(input, state.capabilities, state.isClosed);
     if (state.isClosed()) {
       await runtime.closeSession();
       return;
@@ -586,6 +586,7 @@ class AcpRuntime {
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
+    isConnectionClosed: () => boolean,
   ): Promise<readonly ProviderCapability[]> {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
@@ -661,7 +662,7 @@ class AcpRuntime {
     }
     const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
     if (this.replayWindow && quietPeriod && quietPeriod > 0) {
-      await this.waitForLoadReplay(quietPeriod);
+      await this.waitForLoadReplay(quietPeriod, isConnectionClosed);
       this.replayWindow = "skip";
     }
     return sessionCapabilities;
@@ -1940,9 +1941,12 @@ class AcpRuntime {
 
   // An agent that streams history after its session/load response sends no end marker,
   // so the history ends once a quiet period passes without a history update.
-  private async waitForLoadReplay(quietPeriod: number): Promise<void> {
+  private async waitForLoadReplay(
+    quietPeriod: number,
+    isConnectionClosed: () => boolean,
+  ): Promise<void> {
     const start = performance.now();
-    while (!this.closing && !this.processFailed) {
+    while (!this.closing && !this.processFailed && !isConnectionClosed()) {
       const lastHistoryAt = Math.max(start, this.lastLoadHistoryAt);
       const remaining = lastHistoryAt + quietPeriod - performance.now();
       // A stalled event loop reaches the quiet period with history still unread in the pipe.

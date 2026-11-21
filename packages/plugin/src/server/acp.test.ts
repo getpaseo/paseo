@@ -350,6 +350,52 @@ describe("runAcpProvider", () => {
     }
   });
 
+  it("closes without waiting for history that is still streaming after session/load", async () => {
+    const sessionId = "connector-session";
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        stream = setInterval(() => {
+          if (runtime.readsCanceled) return;
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "previous answer" },
+            },
+          });
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      await waitForEvent(events, (event) => event.type === "timeline.item");
+      const outcome = await Promise.race([
+        connection.close().then(() => "closed"),
+        new Promise((resolve) => setTimeout(() => resolve("still replaying"), 1_000)),
+      ]);
+      expect(outcome).toBe("closed");
+    } finally {
+      clearInterval(stream);
+    }
+  });
+
   it("keeps history left unread while the event loop stalled past the quiet period", async () => {
     const sessionId = "connector-session";
     const notifyAnswer = (runtime: ConnectorInstance, text: string) =>
