@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import {
@@ -52,13 +52,11 @@ export function ProviderModels({
   serverId,
   entry,
   discovered,
-  refresh,
 }: {
   serverId: string;
   entry: ProviderEntry;
   /** List the models the provider reports, with search. Only a running provider reports them. */
   discovered: boolean;
-  refresh: (providers?: AgentProvider[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const provider = entry.provider;
@@ -105,13 +103,11 @@ export function ProviderModels({
             additionalModels: additionalModels.filter((model) => model.id !== modelId),
           },
         },
-      })
-        .then(() => refresh([provider]))
-        .finally(() => {
-          setDeletingModelId((current) => (current === modelId ? null : current));
-        });
+      }).finally(() => {
+        setDeletingModelId((current) => (current === modelId ? null : current));
+      });
     },
-    [additionalModels, patchConfig, provider, refresh],
+    [additionalModels, patchConfig, provider],
   );
 
   const customTrailing = useMemo(
@@ -204,7 +200,6 @@ export function ProviderModels({
         additionalModels={additionalModels}
         visible={addSheetOpen}
         onClose={handleCloseAddSheet}
-        refresh={refresh}
       />
     </View>
   );
@@ -286,14 +281,12 @@ function AddCustomModelSheet({
   additionalModels,
   visible,
   onClose,
-  refresh,
 }: {
   serverId: string;
   provider: string;
   additionalModels: ProviderProfileModel[];
   visible: boolean;
   onClose: () => void;
-  refresh: (providers?: AgentProvider[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { patchConfig } = useDaemonConfig(serverId);
@@ -322,13 +315,12 @@ function AddCustomModelSheet({
         },
       },
     })
-      .then(() => refresh([provider]))
       .then(() => onClose())
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : t("settings.providers.models.failedToSave"));
       })
       .finally(() => setSaving(false));
-  }, [additionalModels, canAdd, onClose, patchConfig, provider, refresh, t, trimmed]);
+  }, [additionalModels, canAdd, onClose, patchConfig, provider, t, trimmed]);
 
   const header = useMemo<SheetHeader>(
     () => ({ title: t("settings.providers.models.addCustomTitle") }),

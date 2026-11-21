@@ -1,234 +1,241 @@
 #!/usr/bin/env npx tsx
 
-/**
- * Regression: a single SIGINT sent to the supervised supervisor entrypoint must allow
- * graceful daemon lifecycle shutdown to complete (no early forced exit path).
- */
-
-import assert from "node:assert";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { $ } from "zx";
+import { setTimeout as delay } from "node:timers/promises";
+import { WebSocket } from "ws";
+import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
+import { readDaemonInstance } from "@getpaseo/server/daemon-control";
+import { runLocalPaseo } from "./helpers/local-cli.ts";
 import { getAvailablePort } from "./helpers/network.ts";
 
-$.verbose = false;
-
-const pollIntervalMs = 100;
-const testEnv = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? "0",
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
+const paseoHome = await mkdtemp(join(tmpdir(), "paseo-sigint-supervisor-"));
+const cwd = join(paseoHome, "workspace");
+const eventsPath = join(paseoHome, "acp-events.jsonl");
+const resumePrompt = "Continue the interrupted test.";
+const watchDependencies = process.argv.includes("--dev-watch");
+const env = {
+  PASEO_HOME: paseoHome,
+  PASEO_NODE_INSPECT: "0",
+  PASEO_RELAY_ENABLED: "false",
+  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0",
+  PASEO_DICTATION_ENABLED: "0",
+  PASEO_VOICE_MODE_ENABLED: "0",
+  PASEO_LOG_FORMAT: "json",
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+type AcpEvent =
+  | { type: "session"; pid: number; sessionId: string }
+  | { type: "prompt"; sessionId: string; text: string }
+  | { type: "sigint"; pid: number };
 
-function isProcessRunning(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-
-  if (process.platform === "win32") {
-    try {
-      process.kill(pid, signal);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-interface DaemonStatus {
-  localDaemon: string | null;
-  pid: number | null;
-}
-
-async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
-  const result =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow();
-  if (result.exitCode !== 0) {
-    return { localDaemon: null, pid: null };
-  }
-
-  try {
-    const parsed = JSON.parse(result.stdout) as { localDaemon?: unknown; pid?: unknown };
-    const localDaemon = typeof parsed.localDaemon === "string" ? parsed.localDaemon : null;
-    const pid =
-      typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
-        ? parsed.pid
-        : null;
-    return { localDaemon, pid };
-  } catch {
-    return { localDaemon: null, pid: null };
-  }
-}
-
-async function waitFor(
-  check: () => Promise<boolean> | boolean,
-  timeoutMs: number,
-  message: string,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  async function poll(): Promise<void> {
-    if (await check()) return;
-    if (Date.now() >= deadline) throw new Error(message);
-    await sleep(pollIntervalMs);
-    return poll();
-  }
-
-  return poll();
-}
-
-interface ExitResult {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-}
-
-function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promise<ExitResult> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error("timed out waiting for process exit"));
-    }, timeoutMs);
-
-    processRef.once("exit", (code, signal) => {
-      clearTimeout(timeout);
-      resolve({ code, signal });
-    });
+async function readEvents(): Promise<AcpEvent[]> {
+  const contents = await readFile(eventsPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
   });
+  return contents
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as AcpEvent);
 }
 
-console.log("=== Daemon SIGINT (supervisor regression) ===\n");
+async function waitFor<T>(read: () => Promise<T | undefined>, message: string, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value !== undefined) return value;
+    await delay(50);
+  }
+  throw new Error(message);
+}
 
-const port = await getAvailablePort();
-const paseoHome = await mkdtemp(join(tmpdir(), "paseo-sigint-supervisor-"));
-const cliRoot = join(import.meta.dirname, "..");
-
-let supervisorProcess: ChildProcess | null = null;
-let recentSupervisorLogs = "";
-
-try {
-  console.log("Test 1: start supervisor-entrypoint in dev mode with isolated PASEO_HOME");
-
-  supervisorProcess = spawn(
-    process.execPath,
-    ["--import", "tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
+async function startSupervisor() {
+  const host = `127.0.0.1:${await getAvailablePort()}`;
+  const child = spawn(
+    watchDependencies ? "npm" : process.execPath,
+    watchDependencies
+      ? ["run", "dev:server:watch"]
+      : ["--import", "tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
     {
-      cwd: cliRoot,
+      cwd: join(import.meta.dirname, watchDependencies ? "../../.." : ".."),
       env: {
-        ...process.env,
-        ...testEnv,
-        PASEO_HOME: paseoHome,
-        PASEO_LISTEN: `127.0.0.1:${port}`,
-        PASEO_RELAY_ENABLED: "false",
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+        ),
+        HOME: paseoHome,
+        USERPROFILE: paseoHome,
+        ...env,
+        PASEO_LISTEN: host,
         CI: "true",
       },
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     },
   );
-
-  supervisorProcess.stdout?.on("data", (chunk) => {
-    recentSupervisorLogs = (recentSupervisorLogs + chunk.toString()).slice(-8000);
+  assert(child.pid, "supervisor should have a PID");
+  const exited = once(child, "close");
+  const client = new DaemonClient({
+    url: `ws://${host}/ws`,
+    clientId: "sigint-supervisor-test",
+    appVersion: "0.17.0-beta.1",
+    localCredential: async () =>
+      (await readFile(join(paseoHome, "local-credential"), "utf8")).trim(),
+    webSocketFactory: (url, options) => new WebSocket(url, options) as unknown as WebSocketLike,
+    reconnect: { enabled: false },
   });
-  supervisorProcess.stderr?.on("data", (chunk) => {
-    recentSupervisorLogs = (recentSupervisorLogs + chunk.toString()).slice(-8000);
-  });
-
-  await waitFor(
-    async () => {
-      const status = await readDaemonStatus(paseoHome);
-      return (
-        status.localDaemon === "running" && status.pid !== null && isProcessRunning(status.pid)
-      );
-    },
-    120000,
-    "daemon did not become running in time",
-  );
-
-  console.log("✓ supervised daemon started\n");
-
-  console.log("Test 2: single SIGINT should shutdown gracefully without forced exit");
-  const exitPromise = waitForProcessExit(supervisorProcess, 30000);
-  const signaledGroup = signalProcessGroup(supervisorProcess.pid ?? -1, "SIGINT");
-  if (!signaledGroup) {
-    supervisorProcess.kill("SIGINT");
-  }
-
-  const exit = await exitPromise;
-  assert.strictEqual(
-    exit.signal,
-    null,
-    `supervisor should exit cleanly, got signal=${exit.signal}`,
-  );
-  assert.strictEqual(exit.code, 0, `supervisor should exit with status 0, got code=${exit.code}`);
-
-  await waitFor(
-    async () => {
-      const status = await readDaemonStatus(paseoHome);
-      return status.localDaemon === "stopped";
-    },
-    15000,
-    "daemon status did not transition to stopped after SIGINT",
-  );
-
-  assert(
-    !recentSupervisorLogs.includes("Forcing exit..."),
-    `worker entered forced-exit path during single SIGINT:\n${recentSupervisorLogs}`,
-  );
-  assert(
-    !recentSupervisorLogs.includes("Forcing shutdown - HTTP server didn't close in time"),
-    `worker hit shutdown timeout during single SIGINT:\n${recentSupervisorLogs}`,
-  );
-
-  console.log("✓ single SIGINT completed graceful shutdown without forced exit\n");
-} finally {
-  if (supervisorProcess?.pid && isProcessRunning(supervisorProcess.pid)) {
-    const signaledGroup = signalProcessGroup(supervisorProcess.pid, "SIGTERM");
-    if (!signaledGroup) {
-      supervisorProcess.kill("SIGTERM");
+  let output = "";
+  const startedWatchers = new Set<string>();
+  function captureOutput(chunk: Buffer) {
+    output = (output + chunk.toString()).slice(-32000);
+    for (const watcher of ["protocol", "client"]) {
+      if (output.includes(`[${watcher}]`)) startedWatchers.add(watcher);
     }
-    await waitFor(
-      () => !isProcessRunning(supervisorProcess!.pid ?? -1),
-      5000,
-      "supervisor cleanup timed out",
-    ).catch(() => {
-      const killedGroup = signalProcessGroup(supervisorProcess!.pid ?? -1, "SIGKILL");
-      if (!killedGroup) {
-        supervisorProcess?.kill("SIGKILL");
-      }
-    });
   }
+  child.stdout.on("data", captureOutput);
+  child.stderr.on("data", captureOutput);
+  try {
+    await Promise.race([
+      waitFor(
+        async () => {
+          const instance = await readDaemonInstance(paseoHome);
+          if (instance?.listen === host) return instance;
+        },
+        "supervisor did not publish its owned endpoint",
+        120_000,
+      ),
+      exited.then((result) => {
+        throw new Error(`supervisor exited early: ${result}\n${output}`);
+      }),
+    ]);
+    await client.connect();
+    if (watchDependencies) {
+      await waitFor(async () => {
+        if (startedWatchers.size === 2) return true;
+      }, "dev runner did not start both dependency watchers");
+    }
+  } catch (error) {
+    await client.close();
+    child.kill("SIGTERM");
+    throw error;
+  }
+  return { child, client, exited, output: () => output };
+}
 
-  await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --force`.nothrow();
+function assertPidExited(pid: number) {
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, `process ${pid} survived shutdown`);
+}
+
+async function interruptForeground(daemon: Awaited<ReturnType<typeof startSupervisor>>) {
+  const pid = daemon.child.pid!;
+  await daemon.client.close();
+  process.kill(process.platform === "win32" ? pid : -pid, "SIGINT");
+  const exit = await Promise.race([daemon.exited, delay(30_000, "timed out", { ref: false })]);
+  // npm re-raises SIGINT when its shell exits on the same foreground signal.
+  if (!watchDependencies || !Array.isArray(exit) || exit[1] !== "SIGINT") {
+    assert.deepEqual(exit, [0, null], daemon.output());
+  }
+  await waitFor(async () => {
+    if (!(await readDaemonInstance(paseoHome))) return true;
+  }, "supervisor did not release its PID lock");
+  const log = await readFile(join(paseoHome, "daemon.log"), "utf8");
+  assert(!log.includes("Forcing shutdown - HTTP server didn't close in time"), log.slice(-4000));
+  return log;
+}
+
+let daemon: Awaited<ReturnType<typeof startSupervisor>> | undefined;
+try {
+  await mkdir(cwd);
+  const provider = join(import.meta.dirname, "helpers", "supervisor-acp.cjs");
+  await writeFile(
+    join(paseoHome, "config.json"),
+    JSON.stringify({
+      version: 1,
+      agents: {
+        resumeOnStartup: true,
+        resumePrompt,
+        providers: {
+          antigravity: { command: [process.execPath, provider, eventsPath] },
+        },
+      },
+    }),
+  );
+  daemon = await startSupervisor();
+
+  if (process.platform === "win32") {
+    await interruptForeground(daemon);
+  } else {
+    const idle = await daemon.client.createAgent({ provider: "antigravity", cwd });
+    const running = await daemon.client.createAgent({ provider: "antigravity", cwd });
+    const crashing = await daemon.client.createAgent({ provider: "antigravity", cwd });
+    const opened = (await readEvents()).filter((event) => event.type === "session");
+    const sessions = [idle, running, crashing].map((agent) => {
+      const handle = agent.persistence?.sessionId;
+      const session = opened.find((event) => handle?.includes(event.sessionId));
+      assert(session, `missing ACP process for agent ${agent.id}`);
+      return session;
+    });
+
+    // Exit just this provider while the host is up to prove failure reporting remains active.
+    process.kill(sessions[2].pid, "SIGTERM");
+    await waitFor(async () => {
+      const { agent } = (await daemon!.client.fetchAgent(crashing.id)) ?? {};
+      if (agent?.status === "error" && agent.attentionReason === "error") return agent;
+    }, "unexpected provider exit did not raise error attention");
+    const failure = await daemon.client.fetchAgentTimeline(crashing.id, { limit: 20 });
+    assert.match(JSON.stringify(failure.entries), /\[System Error\].*ACP process exited/);
+    console.log("Unexpected ACP exit raised error attention and added a timeline entry.");
+
+    await daemon.client.sendMessage(running.id, "Hold the turn open.");
+    await waitFor(async () => {
+      const { agent } = (await daemon!.client.fetchAgent(running.id)) ?? {};
+      if (agent?.status === "running") return agent;
+    }, "ACP turn did not start");
+    const workerPid = (await daemon.client.getDaemonStatus()).pid;
+    const log = await interruptForeground(daemon);
+
+    assert.deepEqual(
+      (await readEvents()).filter((event) => event.type === "sigint"),
+      [],
+      "the foreground interrupt reached an ACP process",
+    );
+    assert(!log.includes("worker_received_SIGINT"), "the foreground interrupt reached the worker");
+    assert.match(log, /supervisor_received_SIGINT/);
+    assertPidExited(workerPid);
+    for (const session of sessions) assertPidExited(session.pid);
+    console.log("Foreground SIGINT reached the supervisor. The worker and ACP processes exited.");
+
+    daemon = await startSupervisor();
+    const restoredIdle = (await daemon.client.fetchAgentTimeline(idle.id)).agent;
+    assert.equal(restoredIdle?.status, "idle");
+    assert.equal(restoredIdle?.requiresAttention, false);
+    await waitFor(async () => {
+      const { agent } = (await daemon!.client.fetchAgent(running.id)) ?? {};
+      if (agent?.status === "idle" && agent.attentionReason === "finished") return agent;
+    }, "interrupted agent did not finish the restart prompt");
+    assert.deepEqual(
+      (await readEvents()).filter((event) => event.type === "prompt"),
+      [
+        { type: "prompt", sessionId: sessions[1].sessionId, text: "Hold the turn open." },
+        { type: "prompt", sessionId: sessions[1].sessionId, text: resumePrompt },
+      ],
+    );
+    console.log(
+      "Idle ACP reopened without error attention. The interrupted ACP turn resumed once.",
+    );
+    await interruptForeground(daemon);
+  }
+} catch (error) {
+  console.error(daemon?.output());
+  throw error;
+} finally {
+  await daemon?.client.close();
+  if (await readDaemonInstance(paseoHome)) {
+    await runLocalPaseo(["daemon", "stop", "--home", paseoHome, "--force"], env);
+  }
   await rm(paseoHome, { recursive: true, force: true });
 }
-
-if (recentSupervisorLogs.trim().length === 0) {
-  console.log("(no supervisor logs captured)");
-}
-
-console.log("=== Supervisor SIGINT regression test passed ===");

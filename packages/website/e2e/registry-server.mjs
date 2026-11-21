@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import registry from "./registry.fixture.json" with { type: "json" };
+import hubPlans from "../src/hub-plans.fixture.json" with { type: "json" };
 
 import securityPlugin from "./overview.fixture.json" with { type: "json" };
 
@@ -13,6 +14,10 @@ securityPlugin.readme +=
 // Serve the published registry contract so SSR and browser navigation use the same data.
 createServer((request, response) => {
   response.setHeader("Content-Type", "application/json");
+  if (request.url === "/hub-plans") {
+    response.end(JSON.stringify(hubPlans));
+    return;
+  }
   if (request.url === "/index.json") {
     response.end(JSON.stringify(registry));
     return;

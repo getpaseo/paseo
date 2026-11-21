@@ -47,24 +47,24 @@ async function pathExists(path: string): Promise<boolean> {
 export async function validateWorktreePath(options: {
   candidate: string;
   repoPath: string;
+  /** The worktree manager already created the destination, so it is expected to exist. */
+  allowExistingPath?: boolean;
 }): Promise<string> {
-  const { candidate, repoPath } = options;
+  const { candidate, repoPath, allowExistingPath = false } = options;
   if (!isAbsolute(candidate)) {
-    throw new Error(
-      `Worktree hook returned a relative path '${candidate}'; it must be an absolute path`,
-    );
+    throw new Error(`The returned path is relative: ${candidate}. Use an absolute path.`);
   }
   const normalized = await normalizeCandidatePath(candidate);
   const normalizedRepoPath = await normalizeAbsolute(repoPath);
 
   if (normalized === parse(normalized).root) {
-    throw new Error("Worktree hook returned the filesystem root, which is not allowed");
+    throw new Error("The filesystem root cannot be a worktree destination");
   }
   if (normalized === (await normalizeAbsolute(homedir()))) {
-    throw new Error("Worktree hook returned the user's home directory, which is not allowed");
+    throw new Error("The user's home directory cannot be a worktree destination");
   }
   if (normalized === normalizedRepoPath) {
-    throw new Error("Worktree hook returned the repository root itself, which is not allowed");
+    throw new Error("The repository root cannot be a worktree destination");
   }
   if (
     [normalized, resolve(candidate)].some((path) =>
@@ -73,15 +73,15 @@ export async function validateWorktreePath(options: {
         .some((part) => (process.platform === "win32" ? part.toLowerCase() : part) === ".git"),
     )
   ) {
-    throw new Error(`Worktree hook returned a path inside a .git directory: ${normalized}`);
+    throw new Error(`The returned path is inside a .git directory: ${normalized}`);
   }
   const relativeToCandidate = getRelativePathInsideRoot(normalized, normalizedRepoPath);
   if (relativeToCandidate !== null && relativeToCandidate !== "") {
-    throw new Error(`Worktree hook returned an ancestor of the repository: ${normalized}`);
+    throw new Error(`The returned path is an ancestor of the repository: ${normalized}`);
   }
-  if ((await pathExists(normalized)) || (await pathExists(candidate))) {
+  if (!allowExistingPath && ((await pathExists(normalized)) || (await pathExists(candidate)))) {
     throw new Error(
-      `Worktree hook returned a path that already exists: ${normalized}. Paseo creates the returned path.`,
+      `The returned path already exists: ${normalized}. Paseo creates the returned path.`,
     );
   }
   return normalized;

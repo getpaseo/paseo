@@ -352,6 +352,9 @@ function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[
       </View>,
     );
   }
+  if (out.length === 0 && detail.query) {
+    return [<ScrollablePlainTextSection key="search-query" text={detail.query} ds={ds} />];
+  }
   return out;
 }
 

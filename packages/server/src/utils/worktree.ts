@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { constants as fsConstants, realpath } from "fs";
-import { copyFile, mkdir, rm, stat } from "fs/promises";
+import { constants as fsConstants, type Dirent, realpath } from "fs";
+import { copyFile, mkdir, readdir, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -41,12 +41,16 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import {
+  createRealpathAwarePathMatcher,
   expandTilde,
   getRealpathAwareRelativePath,
   getRelativePathInsideRoot,
   isPathInsideRoot,
+  normalizePathForIdentity,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import { validateWorktreePath } from "./worktree-path.js";
+import type { PluginWorktreeManagerRuntime } from "../server/plugins/runtime.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -62,6 +66,7 @@ export interface WorktreeConfig {
 
 export interface CreatedWorktree extends WorktreeConfig {
   comparisonBaseRef: string | null;
+  worktreeManagerPluginId?: string;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -228,10 +233,17 @@ export type WorktreeSource =
       trackOriginHead?: boolean;
     };
 
+export interface PreparedWorktreeBranchOff {
+  baseRef: string;
+  checkoutRef: string;
+  branchExists: boolean;
+}
+
 export interface CreateWorktreeOptions {
   cwd: string;
   worktreeSlug: string;
   source: WorktreeSource;
+  preparedBranchOff?: PreparedWorktreeBranchOff;
   paseoHome?: string;
   worktreesRoot?: string;
   worktreePath?: string;
@@ -1060,11 +1072,8 @@ async function resolveMetadataOwnedWorktree(
     const candidate = await normalizePathForOwnership(root);
     if (repoRoot !== undefined && candidate === (await normalizePathForOwnership(repoRoot)))
       return null;
-    const { stdout: listOutput } = await runGitCommand(["worktree", "list", "--porcelain"], {
-      cwd: candidate,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    for (const entry of parseWorktreeList(listOutput)) {
+    const { entries } = await readGitWorktreeEntries(candidate);
+    for (const entry of entries) {
       if ((await normalizePathForOwnership(entry.path)) === candidate) {
         return { worktreePath: candidate, worktreeRoot: dirname(candidate) };
       }
@@ -1082,20 +1091,51 @@ interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
   unusable?: true;
 }
 
-function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  return parseWorktreeEntries(output).map(({ unusable: _unusable, ...entry }) => entry);
+/**
+ * Single worktree-list reader shared by adoption snapshots, discovery, and marker ownership.
+ * Uses Git 2.36+'s NUL-delimited `-z` output (`exact: true`) to preserve paths containing
+ * line breaks or trailing whitespace, falling back to line-delimited `--porcelain`
+ * (`exact: false`) on Git 2.35 and earlier.
+ */
+async function readGitWorktreeEntries(
+  cwd: string,
+): Promise<{ entries: ParsedWorktreeEntry[]; exact: boolean }> {
+  const nulResult = await runGitCommand(["worktree", "list", "--porcelain", "-z"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 129],
+  });
+  if (nulResult.exitCode === 0) {
+    return {
+      entries: parseWorktreeEntriesTokens(nulResult.stdout.split("\0"), false),
+      exact: true,
+    };
+  }
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  return {
+    entries: parseWorktreeEntriesTokens(stdout.split("\n"), true),
+    exact: false,
+  };
 }
 
-function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
+function parseWorktreeEntriesTokens(
+  tokens: readonly string[],
+  lineDelimited: boolean,
+): ParsedWorktreeEntry[] {
   const entries: ParsedWorktreeEntry[] = [];
   let current: ParsedWorktreeEntry | null = null;
 
-  for (const line of output.split("\n")) {
-    if (line.startsWith("worktree ")) {
+  for (const rawToken of tokens) {
+    const token = lineDelimited ? rawToken.replace(/\r$/, "") : rawToken;
+    if (token.startsWith("worktree ")) {
       if (current?.path) {
         entries.push(current);
       }
-      current = { path: line.slice("worktree ".length).trim() };
+      // Preserve trailing spaces in worktree paths even on line-delimited output.
+      current = { path: token.slice("worktree ".length) };
       continue;
     }
 
@@ -1103,14 +1143,14 @@ function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
       continue;
     }
 
-    if (line.startsWith("branch ")) {
-      const ref = line.slice("branch ".length).trim();
+    if (token.startsWith("branch ")) {
+      const ref = token.slice("branch ".length).trim();
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
-    } else if (line.startsWith("HEAD ")) {
-      current.head = line.slice("HEAD ".length).trim();
-    } else if (line === "bare" || line.startsWith("prunable")) {
+    } else if (token.startsWith("HEAD ")) {
+      current.head = token.slice("HEAD ".length).trim();
+    } else if (token === "bare" || token.startsWith("prunable")) {
       current.unusable = true;
-    } else if (line.trim().length === 0) {
+    } else if ((lineDelimited ? token.trim() : token).length === 0) {
       if (current.path) {
         entries.push(current);
       }
@@ -1154,17 +1194,14 @@ export interface GitWorktree {
  * Unlike `listPaseoWorktrees`, ownership plays no part.
  */
 export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWorktree[]> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { entries } = await readGitWorktreeEntries(cwd);
   const { stdout: toplevel } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
   });
-  const cwdWorktree = await normalizePathForOwnership(toplevel.trim());
+  const cwdWorktree = await normalizePathForOwnership(toplevel.replace(/\r?\n$/, ""));
   const worktrees: GitWorktree[] = [];
-  for (const entry of parseWorktreeEntries(stdout)) {
+  for (const entry of entries) {
     if (entry.unusable) continue;
     // A locked worktree whose directory was deleted is neither prunable nor workable.
     if (!(await pathExists(entry.path))) continue;
@@ -1190,16 +1227,13 @@ export async function listPaseoWorktrees({
   worktreesRoot?: string;
 }): Promise<PaseoWorktreeInfo[]> {
   const projectWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { entries } = await readGitWorktreeEntries(cwd);
 
   const mainCheckoutPath = await resolveRepoRootFromGitCommonDir(await getGitCommonDir(cwd));
   const roots = await ownershipPathVariants(projectWorktreesRoot);
   const worktrees: PaseoWorktreeInfo[] = [];
   // Inspect foreign paths sequentially; a large worktree list must not consume the FS pool.
-  for (const entry of parseWorktreeList(stdout)) {
+  for (const { unusable: _unusable, ...entry } of entries) {
     const path = await normalizePathForOwnership(entry.path);
     if (
       !roots.some((root) => getRelativePathInsideRoot(root, path) !== null) &&
@@ -1209,6 +1243,21 @@ export async function listPaseoWorktrees({
     worktrees.push({ ...entry, path, createdAt: await resolveWorktreeCreatedAtIso(path) });
   }
   return worktrees;
+}
+
+/**
+ * Exact normalized paths of all currently registered worktrees for the repo containing `cwd`.
+ * Returns `null` on Git <= 2.35 where `--porcelain -z` is unavailable, so manager checkout
+ * falls back to built-in Git rather than trusting an inexact snapshot for adoption or rollback.
+ */
+async function listExactGitWorktreePaths(cwd: string): Promise<Set<string> | null> {
+  const { entries, exact } = await readGitWorktreeEntries(cwd);
+  if (!exact) return null;
+  const paths = new Set<string>();
+  for (const entry of entries) {
+    paths.add(normalizePathForIdentity(entry.path));
+  }
+  return paths;
 }
 
 export interface DeletePaseoWorktreeOptions {
@@ -1225,6 +1274,11 @@ export interface DeletePaseoWorktreeOptions {
   // gone, where the marker proof can no longer be verified. Only pass
   // this when the record was matched against the path by the caller.
   registryProven?: boolean;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  worktreeManagerPluginId?: string | null;
+  removeReason?: "archive" | "rollback";
+  untrusted?: boolean;
+  signal?: AbortSignal;
 }
 
 // Project scoping for delete: a proof for some other repo's worktree must
@@ -1280,6 +1334,11 @@ export async function deletePaseoWorktree({
   paseoHome,
   worktreesBaseRoot,
   registryProven,
+  worktreeManagers,
+  worktreeManagerPluginId,
+  removeReason = "archive",
+  untrusted = false,
+  signal,
 }: DeletePaseoWorktreeOptions): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
@@ -1320,17 +1379,19 @@ export async function deletePaseoWorktree({
   }
 
   if (await pathExists(resolvedWorktree)) {
-    for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
-      await runWorktreeTeardownCommands({
-        worktreePath: resolvedWorktree,
-        teardownCwd,
-      });
-    }
-    const commit = await readWorktreeHead(resolvedWorktree);
-    if (commit) {
-      await runGitCommand(["update-ref", `refs/paseo/kept-commits/${commit}`, commit], {
-        cwd: resolvedWorktree,
-      });
+    const removedByPlugin = await prepareAndTryPluginWorktreeRemove({
+      cwd,
+      resolvedWorktree,
+      teardownCwds,
+      worktreeManagers,
+      worktreeManagerPluginId,
+      removeReason,
+      untrusted,
+      signal,
+    });
+    if (removedByPlugin) {
+      await pruneWorktreesBestEffort(cwd);
+      return;
     }
   }
 
@@ -1349,14 +1410,122 @@ export async function deletePaseoWorktree({
   }
 
   await removeDirectoryWithRetries(resolvedWorktree);
+  await pruneWorktreesBestEffort(cwd);
+}
 
-  if (cwd) {
+async function assertNoNestedLinkedWorktrees(worktreePath: string): Promise<void> {
+  const pending = [worktreePath];
+  for (let directory = pending.pop(); directory !== undefined; directory = pending.pop()) {
+    let entries: Dirent[];
     try {
-      await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
-    } catch {
-      // not critical; git will prune lazily
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (
+      directory !== worktreePath &&
+      entries.some((entry) => entry.name === ".git" && !entry.isDirectory()) &&
+      (await isLinkedGitWorktree(directory))
+    ) {
+      throw new Error(
+        `Refusing to delete worktree ${worktreePath}: contains nested Git worktree ${directory}`,
+      );
+    }
+    for (const entry of entries) {
+      if (entry.name !== ".git" && entry.isDirectory()) {
+        pending.push(join(directory, entry.name));
+      }
     }
   }
+}
+
+async function isLinkedGitWorktree(directory: string): Promise<boolean> {
+  // A linked worktree's Git directory contains a commondir file pointing to the
+  // shared repository. A submodule or a clone with a separate Git directory
+  // uses its own Git directory as the common directory.
+  const result = await runGitCommand(
+    ["rev-parse", "--path-format=absolute", "--git-path", "commondir"],
+    { cwd: directory, envOverlay: READ_ONLY_GIT_ENV },
+  ).catch(() => null);
+  return result !== null && (await pathExists(result.stdout.replace(/\r?\n$/, "")));
+}
+
+async function pruneWorktreesBestEffort(cwd: string | null): Promise<void> {
+  if (!cwd) return;
+  try {
+    await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
+  } catch {
+    // not critical; git will prune lazily
+  }
+}
+
+async function prepareAndTryPluginWorktreeRemove(options: {
+  cwd: string | null;
+  resolvedWorktree: string;
+  teardownCwds?: string[];
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  worktreeManagerPluginId?: string | null;
+  removeReason: "archive" | "rollback";
+  untrusted: boolean;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  const {
+    cwd,
+    resolvedWorktree,
+    teardownCwds,
+    worktreeManagers,
+    worktreeManagerPluginId,
+    removeReason,
+    untrusted,
+    signal,
+  } = options;
+  for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
+    await runWorktreeTeardownCommands({
+      worktreePath: resolvedWorktree,
+      teardownCwd,
+    });
+  }
+  const effectiveManagerPluginId =
+    worktreeManagerPluginId !== undefined
+      ? worktreeManagerPluginId
+      : ((await readPaseoWorktreeMetadata(resolvedWorktree).catch(() => null))
+          ?.worktreeManagerPluginId ?? null);
+  if (effectiveManagerPluginId) {
+    await assertNoNestedLinkedWorktrees(resolvedWorktree);
+  }
+  const branch = effectiveManagerPluginId
+    ? await getCurrentBranch(resolvedWorktree).catch(() => null)
+    : null;
+  const commit = await readWorktreeHead(resolvedWorktree);
+  if (commit) {
+    await runGitCommand(["update-ref", `refs/paseo/kept-commits/${commit}`, commit], {
+      cwd: resolvedWorktree,
+    });
+  }
+  if (!effectiveManagerPluginId || !worktreeManagers) {
+    return false;
+  }
+  const removedByPlugin = await worktreeManagers.removeWorktree(
+    {
+      repoRoot: cwd,
+      path: resolvedWorktree,
+      branch,
+      reason: removeReason,
+      force: true,
+      untrusted,
+    },
+    { preferredPluginId: effectiveManagerPluginId, signal },
+  );
+  if (removedByPlugin === null) {
+    return false;
+  }
+  if (await pathExists(resolvedWorktree)) {
+    throw new Error(
+      `Plugin ${removedByPlugin.pluginId} worktree.remove reported removed, but the directory still exists: ${resolvedWorktree}`,
+    );
+  }
+  return true;
 }
 
 export async function rollbackCreatedPaseoWorktree(
@@ -1494,6 +1663,7 @@ export function createWorktree(
 export async function createWorktree({
   cwd,
   source,
+  preparedBranchOff,
   worktreeSlug,
   paseoHome,
   worktreesRoot,
@@ -1507,7 +1677,12 @@ export async function createWorktree({
     source.kind === "checkout-github-pr"
       ? await listLocalBranchNames(cwd)
       : new Set<string>();
-  const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const sourcePlan = await resolveWorktreeSourcePlan({
+    cwd,
+    source,
+    desiredSlug: worktreeSlug,
+    preparedBranchOff,
+  });
   const fetchedBranch = planCreatedLocalBranch(source, sourcePlan);
   const fetchedTip =
     fetchedBranch && !branchesBefore.has(fetchedBranch)
@@ -1526,19 +1701,8 @@ export async function createWorktree({
     });
     worktreePath = await normalizePathForOwnership(worktreePath);
 
-    if (sourcePlan.pushRemote && sourcePlan.branchName) {
-      await configureWorktreePushRemote({
-        cwd,
-        branchName: sourcePlan.branchName,
-        remote: sourcePlan.pushRemote,
-      });
-    }
-    if (sourcePlan.trackingRemote && sourcePlan.branchName) {
-      await configureWorktreeTrackingRemote({
-        cwd,
-        branchName: sourcePlan.branchName,
-        remote: sourcePlan.trackingRemote,
-      });
+    if (sourcePlan.branchName) {
+      await applyWorktreeRemotePlan(cwd, sourcePlan.branchName, sourcePlan);
     }
 
     await writePaseoWorktreeMetadata(worktreePath, {
@@ -1568,10 +1732,523 @@ export async function createWorktree({
   }
 }
 
+interface AdoptPluginWorktreeOptions {
+  cwd: string;
+  source: WorktreeSource;
+  worktreePath: string;
+  worktreeManagerPluginId: string;
+  /** Worktree paths that existed before creation; an overlap fails instead of hijacking user worktrees. */
+  existingWorktreePaths?: ReadonlySet<string>;
+  /** Remote head commit resolved before invoking the manager for change-request checkouts (`null` if unresolvable). */
+  expectedChangeRequestHeadSha?: string | null;
+}
+
+export interface RunPluginWorktreeManagerCheckoutOptions<
+  Source extends WorktreeSource = WorktreeSource,
+> {
+  cwd: string;
+  source: Source;
+  operation: "create" | "restore";
+  preferredPluginId?: string;
+  untrusted: boolean;
+  paseoHome?: string;
+  worktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "hasWorktreeManager" | "removeWorktree">;
+  run: (context: {
+    changeRequestHeadSha?: string;
+  }) => Promise<{ pluginId: string; path: string } | null>;
+  verifyValidatedPath?: (validatedPath: string, pluginId: string) => void;
+}
+
+/**
+ * Run a worktree manager plugin's `create` or `restore` callback with a single
+ * shared sequence: capability guard, pre-call snapshot, Git validation and
+ * adoption, and rollback of a checkout reported by the manager.
+ * Returns `null` without spawning Git when no eligible manager is registered
+ * or when the manager declines.
+ */
+export function runPluginWorktreeManagerCheckout(
+  options: RunPluginWorktreeManagerCheckoutOptions<
+    Exclude<WorktreeSource, { kind: "restore-commit" }>
+  >,
+): Promise<CreatedWorktree | null>;
+export function runPluginWorktreeManagerCheckout(
+  options: RunPluginWorktreeManagerCheckoutOptions,
+): Promise<(Omit<CreatedWorktree, "branchName"> & { branchName: string | null }) | null>;
+export async function runPluginWorktreeManagerCheckout(
+  options: RunPluginWorktreeManagerCheckoutOptions,
+): Promise<(Omit<CreatedWorktree, "branchName"> & { branchName: string | null }) | null> {
+  const {
+    cwd,
+    source,
+    operation,
+    preferredPluginId,
+    untrusted,
+    paseoHome,
+    worktreesBaseRoot,
+    worktreeManagers,
+    run,
+    verifyValidatedPath,
+  } = options;
+  if (!worktreeManagers?.hasWorktreeManager({ operation, preferredPluginId })) {
+    return null;
+  }
+  const existingWorktreePaths = await listExactGitWorktreePaths(cwd);
+  if (!existingWorktreePaths) {
+    return null;
+  }
+  const expectedChangeRequestHeadSha =
+    operation === "create" &&
+    (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr")
+      ? await fetchChangeRequestHeadSha(cwd, source)
+      : undefined;
+  const managed = await run(
+    expectedChangeRequestHeadSha ? { changeRequestHeadSha: expectedChangeRequestHeadSha } : {},
+  );
+  if (!managed) return null;
+  try {
+    const validatedPath = await validateWorktreePath({
+      candidate: managed.path,
+      repoPath: cwd,
+      allowExistingPath: true,
+    }).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Plugin ${managed.pluginId} worktree.${operation} failed: ${detail}`, {
+        cause: error,
+      });
+    });
+    verifyValidatedPath?.(validatedPath, managed.pluginId);
+    return await adoptPluginWorktree({
+      cwd,
+      source,
+      worktreePath: validatedPath,
+      worktreeManagerPluginId: managed.pluginId,
+      existingWorktreePaths,
+      expectedChangeRequestHeadSha,
+    });
+  } catch (error) {
+    return cleanupFailedPluginWorktree(
+      {
+        cwd,
+        candidatePath: managed.path,
+        existingWorktreePaths,
+        worktreeManagers,
+        worktreeManagerPluginId: managed.pluginId,
+        untrusted,
+        paseoHome,
+        worktreesBaseRoot,
+      },
+      error,
+    );
+  }
+}
+
+/**
+ * Roll back a newly created worktree that failed adoption or path verification.
+ * Only touches a directory that was absent from `existingWorktreePaths` and
+ * shares the source repository's Git common dir; preserves rollback failures
+ * alongside the adoption error via `rollbackCreatedPaseoWorktree`.
+ */
+async function cleanupFailedPluginWorktree(
+  options: {
+    cwd: string;
+    candidatePath: string;
+    existingWorktreePaths?: ReadonlySet<string>;
+    worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+    worktreeManagerPluginId: string;
+    untrusted?: boolean;
+    paseoHome?: string;
+    worktreesBaseRoot?: string;
+  },
+  cause: unknown,
+): Promise<never> {
+  const {
+    cwd,
+    candidatePath,
+    existingWorktreePaths,
+    worktreeManagers,
+    worktreeManagerPluginId,
+    untrusted,
+    paseoHome,
+    worktreesBaseRoot,
+  } = options;
+  let rootPath: string;
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: candidatePath,
+    });
+    rootPath = await normalizePathForOwnership(stdout.replace(/\r?\n$/, ""));
+  } catch {
+    throw cause;
+  }
+  const rootIdentity = normalizePathForIdentity(rootPath);
+  if (
+    !createRealpathAwarePathMatcher(rootPath)(candidatePath) ||
+    Array.from(existingWorktreePaths ?? []).some(
+      (existing) => existing === rootIdentity || isPathInsideRoot(rootIdentity, existing),
+    )
+  ) {
+    throw cause;
+  }
+  const [worktreeCommonDir, repoCommonDir] = await Promise.all([
+    getGitCommonDir(rootPath).catch(() => null),
+    getGitCommonDir(cwd).catch(() => null),
+  ]);
+  if (
+    !worktreeCommonDir ||
+    !repoCommonDir ||
+    !createRealpathAwarePathMatcher(worktreeCommonDir)(repoCommonDir)
+  ) {
+    throw cause;
+  }
+  return rollbackCreatedPaseoWorktree(
+    {
+      cwd,
+      worktreePath: rootPath,
+      teardownCwds: [],
+      paseoHome,
+      worktreesBaseRoot,
+      registryProven: true,
+      worktreeManagers,
+      worktreeManagerPluginId,
+      removeReason: "rollback",
+      untrusted,
+    },
+    cause,
+  );
+}
+
+async function assertNonOverlappingWorktreePath(input: {
+  worktreeManagerPluginId: string;
+  normalizedPath: string;
+  normalizedIdentity: string;
+  repoCommonDir: string;
+  existingWorktreePaths: ReadonlySet<string> | undefined;
+}): Promise<void> {
+  const {
+    worktreeManagerPluginId,
+    normalizedPath,
+    normalizedIdentity,
+    repoCommonDir,
+    existingWorktreePaths,
+  } = input;
+  if (!existingWorktreePaths) return;
+  const mainRepoRoot = await resolveRepoRootFromGitCommonDir(repoCommonDir).catch(() => undefined);
+  const mainRepoIdentity = mainRepoRoot ? normalizePathForIdentity(mainRepoRoot) : null;
+  for (const existing of existingWorktreePaths) {
+    if (isPathInsideRoot(normalizedIdentity, existing)) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} created a worktree enclosing an existing worktree (${existing}): ${normalizedPath}`,
+      );
+    }
+    if (existing !== mainRepoIdentity && isPathInsideRoot(existing, normalizedIdentity)) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} created a worktree nested inside an existing worktree (${existing}): ${normalizedPath}`,
+      );
+    }
+  }
+}
+
+/**
+ * Verify and adopt a worktree created or restored by a worktree manager plugin.
+ * Paseo validates Git worktree postconditions and writes `paseo/worktree.json`
+ * so diffs, PR/MR lookup hints, listing, ownership, and removal continue to work.
+ */
+async function adoptPluginWorktree(
+  options: AdoptPluginWorktreeOptions,
+): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }> {
+  const {
+    cwd,
+    source,
+    worktreePath,
+    worktreeManagerPluginId,
+    existingWorktreePaths,
+    expectedChangeRequestHeadSha,
+  } = options;
+  const normalizedPath = await normalizePathForOwnership(worktreePath);
+  const normalizedIdentity = normalizePathForIdentity(normalizedPath);
+  if (existingWorktreePaths?.has(normalizedIdentity)) {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} returned an already-existing worktree: ${normalizedPath}`,
+    );
+  }
+  const { stdout: rootStdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd: normalizedPath,
+  }).catch(() => {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} did not create a Git worktree at: ${normalizedPath}`,
+    );
+  });
+  if (!createRealpathAwarePathMatcher(rootStdout.replace(/\r?\n$/, ""))(normalizedPath)) {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} created a worktree whose root is not the returned path: ${normalizedPath}`,
+    );
+  }
+  const [worktreeCommonDir, repoCommonDir] = await Promise.all([
+    getGitCommonDir(normalizedPath),
+    getGitCommonDir(cwd),
+  ]);
+  if (!createRealpathAwarePathMatcher(worktreeCommonDir)(repoCommonDir)) {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} created a worktree outside the repository: ${normalizedPath}`,
+    );
+  }
+  await assertNonOverlappingWorktreePath({
+    worktreeManagerPluginId,
+    normalizedPath,
+    normalizedIdentity,
+    repoCommonDir,
+    existingWorktreePaths,
+  });
+  const { stdout: branchStdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: normalizedPath,
+  });
+  const rawBranch = branchStdout.trim();
+  const detached = !rawBranch || rawBranch === "HEAD";
+  if (detached && source.kind !== "restore-commit") {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} created a worktree with a detached HEAD: ${normalizedPath}`,
+    );
+  }
+  const branchName = detached ? null : rawBranch;
+
+  await verifyPluginCheckoutTarget({
+    cwd,
+    source,
+    worktreePath: normalizedPath,
+    branchName,
+    worktreeManagerPluginId,
+    expectedChangeRequestHeadSha,
+  });
+
+  if (
+    (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") &&
+    branchName
+  ) {
+    const remotePlan = await resolveChangeRequestRemotePlan(cwd, source, branchName);
+    await applyWorktreeRemotePlan(cwd, branchName, remotePlan);
+  }
+
+  const metadata = await resolveWorktreeMetadata({ cwd, source, branchName });
+  await writePaseoWorktreeMetadata(normalizedPath, {
+    baseRefName: metadata.metadataBaseRefName,
+    ...(metadata.metadataBaseRef ? { baseRef: metadata.metadataBaseRef } : {}),
+    ...(metadata.changeRequestLookupTarget
+      ? { changeRequestLookupTarget: metadata.changeRequestLookupTarget }
+      : {}),
+    worktreeManagerPluginId,
+  });
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: normalizedPath });
+
+  return {
+    branchName,
+    worktreePath: normalizedPath,
+    comparisonBaseRef: metadata.metadataBaseRef ?? metadata.metadataBaseRefName,
+    worktreeManagerPluginId,
+  };
+}
+
+/**
+ * Fetch the remote change-request head once into `refs/paseo/change-requests/<n>` so both the
+ * worktree manager (via `request.headSha`) and adoption verification agree on one commit.
+ */
+async function fetchChangeRequestHeadSha(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
+): Promise<string> {
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+  const destination = `refs/paseo/change-requests/${changeRequestNumber}`;
+  await fetchFirstAvailableRef({
+    cwd,
+    destination,
+    sources: source.checkoutRefs ?? [
+      { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+    ],
+  });
+  const { stdout } = await runGitCommand(["rev-parse", "--verify", `${destination}^{commit}`], {
+    cwd,
+  });
+  return stdout.trim();
+}
+
+async function verifyPluginChangeRequestHead(options: {
+  cwd: string;
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>;
+  worktreePath: string;
+  worktreeManagerPluginId: string;
+  expectedChangeRequestHeadSha?: string | null;
+}): Promise<void> {
+  const { cwd, source, worktreePath, worktreeManagerPluginId, expectedChangeRequestHeadSha } =
+    options;
+  const expectedHead =
+    expectedChangeRequestHeadSha ?? (await fetchChangeRequestHeadSha(cwd, source));
+  const { stdout: headStdout } = await runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], {
+    cwd: worktreePath,
+  });
+  const actualHead = headStdout.trim();
+  if (actualHead !== expectedHead) {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} checked out ${actualHead}, expected change request head ${expectedHead}`,
+    );
+  }
+}
+
+async function verifyPluginCheckoutTarget(options: {
+  cwd: string;
+  source: WorktreeSource;
+  worktreePath: string;
+  branchName: string | null;
+  worktreeManagerPluginId: string;
+  expectedChangeRequestHeadSha?: string | null;
+}): Promise<void> {
+  const {
+    cwd,
+    source,
+    worktreePath,
+    branchName,
+    worktreeManagerPluginId,
+    expectedChangeRequestHeadSha,
+  } = options;
+  if (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") {
+    return verifyPluginChangeRequestHead({
+      cwd,
+      source,
+      worktreePath,
+      worktreeManagerPluginId,
+      expectedChangeRequestHeadSha,
+    });
+  }
+  if (source.kind === "restore" || source.kind === "restore-from-base") {
+    if (branchName !== source.branchName) {
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} restored ${branchName ?? "detached HEAD"}, expected branch ${source.branchName}`,
+      );
+    }
+  }
+  if (source.kind === "restore-commit" || source.kind === "restore-from-base") {
+    const target =
+      source.kind === "restore-commit"
+        ? source.commit
+        : await resolveBaseBranchForWorktree(cwd, source.baseRef);
+    const [head, expected] = await Promise.all([
+      runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], { cwd: worktreePath }),
+      runGitCommand(["rev-parse", "--verify", `${target}^{commit}`], { cwd }),
+    ]);
+    if (
+      head.stdout.trim() !== expected.stdout.trim() ||
+      (source.kind === "restore-commit" && branchName !== null)
+    ) {
+      const description = source.kind === "restore-commit" ? "detached commit" : "base commit";
+      throw new Error(
+        `Plugin ${worktreeManagerPluginId} did not restore the expected ${description} ${expected.stdout.trim()}`,
+      );
+    }
+  }
+}
+
+async function tryResolveExactBaseRef(cwd: string, ref: string): Promise<string | undefined> {
+  try {
+    return await resolveBaseBranchForWorktree(cwd, ref);
+  } catch {
+    return undefined;
+  }
+}
+
+function branchChangeRequestHint(
+  branchName: string | null,
+): { changeRequestLookupTarget: PaseoWorktreeChangeRequestHint } | Record<string, never> {
+  if (!branchName) return {};
+  return {
+    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+      headRef: branchName,
+      localBranchName: branchName,
+    }),
+  };
+}
+
+interface ResolvedWorktreeMetadata {
+  metadataBaseRefName: string;
+  metadataBaseRef?: string;
+  changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
+}
+
+function resolveChangeRequestMetadata(
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
+  branchName: string | null,
+): ResolvedWorktreeMetadata {
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+  return {
+    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRefName),
+    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+      headRef: source.headRef,
+      ...(source.headRepositoryOwner ? { headRepositoryOwner: source.headRepositoryOwner } : {}),
+      changeRequestNumber,
+      ...(branchName ? { localBranchName: branchName } : {}),
+    }),
+  };
+}
+
+/**
+ * Single source of truth for worktree comparison-base and change-request metadata,
+ * shared between built-in Git checkout plans and plugin worktree adoption.
+ */
+async function resolveWorktreeMetadata(options: {
+  cwd: string;
+  source: WorktreeSource;
+  branchName: string | null;
+  resolvedBaseRef?: string;
+}): Promise<ResolvedWorktreeMetadata> {
+  const { cwd, source, branchName, resolvedBaseRef } = options;
+  if (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") {
+    return resolveChangeRequestMetadata(source, branchName);
+  }
+  if (source.kind === "checkout-branch") {
+    const resolvedBranch = branchName ?? source.branchName;
+    const metadataBaseRefName =
+      resolvedBaseRef ?? (await resolveCheckoutBranchBaseRef(cwd, resolvedBranch));
+    return { metadataBaseRefName, ...branchChangeRequestHint(resolvedBranch) };
+  }
+  if (source.kind === "branch-off") {
+    const metadataBaseRefName = normalizeRequiredBaseBranch(source.baseBranch);
+    const metadataBaseRef =
+      resolvedBaseRef ?? (await tryResolveExactBaseRef(cwd, source.baseBranch));
+    return {
+      metadataBaseRefName,
+      ...(metadataBaseRef ? { metadataBaseRef } : {}),
+      ...branchChangeRequestHint(branchName),
+    };
+  }
+  if (source.kind === "restore") {
+    const metadataBaseRefName = normalizeRequiredBaseBranch(
+      source.baseRef ?? branchName ?? source.branchName,
+    );
+    const metadataBaseRef =
+      resolvedBaseRef ??
+      (source.baseRef && isQualifiedRef(source.baseRef)
+        ? await tryResolveExactBaseRef(cwd, source.baseRef)
+        : undefined);
+    return {
+      metadataBaseRefName,
+      ...(metadataBaseRef ? { metadataBaseRef } : {}),
+      ...branchChangeRequestHint(branchName),
+    };
+  }
+  const metadataBaseRefName = normalizeRequiredBaseBranch(source.baseRef);
+  const metadataBaseRef =
+    resolvedBaseRef ??
+    (source.kind === "restore-from-base" || isQualifiedRef(source.baseRef)
+      ? await tryResolveExactBaseRef(cwd, source.baseRef)
+      : undefined);
+  return { metadataBaseRefName, ...(metadataBaseRef ? { metadataBaseRef } : {}) };
+}
+
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
   source: WorktreeSource;
   desiredSlug: string;
+  preparedBranchOff?: PreparedWorktreeBranchOff;
 }
 
 interface WorktreeSourcePlan {
@@ -1604,22 +2281,10 @@ async function resolveRestoredWorktreeSourcePlan(
   if (await isBranchCheckedOut(cwd, source.branchName)) {
     throw new BranchAlreadyCheckedOutError(source.branchName);
   }
-  let exactBase: string | undefined;
-  if (source.baseRef && isQualifiedRef(source.baseRef)) {
-    try {
-      exactBase = await resolveBaseBranchForWorktree(cwd, source.baseRef);
-    } catch {
-      // Restore the saved branch even when its comparison ref no longer exists.
-    }
-  }
+  const metadata = await resolveWorktreeMetadata({ cwd, source, branchName: source.branchName });
   return {
     branchName: source.branchName,
-    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef ?? source.branchName),
-    ...(exactBase ? { metadataBaseRef: exactBase } : {}),
-    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-      headRef: source.branchName,
-      localBranchName: source.branchName,
-    }),
+    ...metadata,
     addArguments: [source.branchName],
   };
 }
@@ -1628,18 +2293,10 @@ async function resolveRestoredCommitSourcePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "restore-commit" }>,
 ): Promise<WorktreeSourcePlan> {
-  let exactBase: string | undefined;
-  if (isQualifiedRef(source.baseRef)) {
-    try {
-      exactBase = await resolveBaseBranchForWorktree(cwd, source.baseRef);
-    } catch {
-      // Restore the saved commit even when its comparison ref no longer exists.
-    }
-  }
+  const metadata = await resolveWorktreeMetadata({ cwd, source, branchName: null });
   return {
     branchName: null,
-    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
-    ...(exactBase ? { metadataBaseRef: exactBase } : {}),
+    ...metadata,
     addArguments: ["--detach", source.commit],
   };
 }
@@ -1651,38 +2308,59 @@ async function resolveRestoredWorktreeFromBasePlan(
   await validateGitBranchName(cwd, source.branchName);
   const baseRef = await resolveBaseBranchForWorktree(cwd, source.baseRef);
   const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+  const metadata = await resolveWorktreeMetadata({
+    cwd,
+    source,
+    branchName,
+    resolvedBaseRef: baseRef,
+  });
   return {
     branchName,
-    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
-    metadataBaseRef: baseRef,
+    ...metadata,
     addArguments: ["-b", branchName, "--no-track", baseRef],
   };
+}
+
+export async function prepareWorktreeBranchOff(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "branch-off" }>,
+  previous?: PreparedWorktreeBranchOff,
+): Promise<PreparedWorktreeBranchOff> {
+  const baseRef = previous?.baseRef ?? (await resolveBaseBranchForWorktree(cwd, source.baseBranch));
+  const branchExists = await localBranchExists(cwd, source.branchName);
+  const checkoutRef = branchExists ? source.branchName : (source.startPoint ?? baseRef);
+  if (checkoutRef !== previous?.checkoutRef) {
+    await refreshRemoteTrackingBaseRef(cwd, checkoutRef);
+  }
+  return { baseRef, branchExists, checkoutRef };
 }
 
 async function resolveBranchOffWorktreeSourcePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "branch-off" }>,
   desiredSlug: string,
+  preparedBranchOff?: PreparedWorktreeBranchOff,
 ): Promise<WorktreeSourcePlan> {
   const branchName = source.branchName;
   await validateGitBranchName(cwd, branchName);
-  const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
-  const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
-  const branchExists = await localBranchExists(cwd, branchName);
-  const base = branchExists ? branchName : (source.startPoint ?? resolvedBaseBranch);
-  await refreshRemoteTrackingBaseRef(cwd, base);
+  const { baseRef, branchExists, checkoutRef } = await prepareWorktreeBranchOff(
+    cwd,
+    source,
+    preparedBranchOff,
+  );
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
+  const metadata = await resolveWorktreeMetadata({
+    cwd,
+    source,
+    branchName: newBranchName,
+    resolvedBaseRef: baseRef,
+  });
 
   return {
     branchName: newBranchName,
-    metadataBaseRefName: normalizedBaseBranch,
-    metadataBaseRef: resolvedBaseBranch,
-    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-      headRef: newBranchName,
-      localBranchName: newBranchName,
-    }),
-    addArguments: ["-b", newBranchName, "--no-track", base],
+    ...metadata,
+    addArguments: ["-b", newBranchName, "--no-track", checkoutRef],
   };
 }
 
@@ -1690,10 +2368,11 @@ async function resolveWorktreeSourcePlan({
   cwd,
   source,
   desiredSlug,
+  preparedBranchOff,
 }: ResolveWorktreeSourcePlanOptions): Promise<WorktreeSourcePlan> {
   switch (source.kind) {
     case "branch-off":
-      return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
+      return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug, preparedBranchOff);
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "restore-commit":
@@ -1706,24 +2385,28 @@ async function resolveWorktreeSourcePlan({
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+        const metadata = await resolveWorktreeMetadata({
+          cwd,
+          source,
+          branchName,
+          resolvedBaseRef: baseRef,
+        });
         return {
           branchName,
-          metadataBaseRefName: baseRef,
-          changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-            headRef: branchName,
-            localBranchName: branchName,
-          }),
+          ...metadata,
           addArguments: ["-b", branchName, "--no-track", source.branchName],
         };
       }
 
+      const metadata = await resolveWorktreeMetadata({
+        cwd,
+        source,
+        branchName: source.branchName,
+        resolvedBaseRef: baseRef,
+      });
       return {
         branchName: source.branchName,
-        metadataBaseRefName: baseRef,
-        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-          headRef: source.branchName,
-          localBranchName: source.branchName,
-        }),
+        ...metadata,
         addArguments: [source.branchName],
       };
     }
@@ -1732,7 +2415,6 @@ async function resolveWorktreeSourcePlan({
       const localBranchCandidate = source.localBranchName ?? source.headRef;
       await validateGitBranchName(cwd, localBranchCandidate);
       const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
-      const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
         source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
       await fetchFirstAvailableRef({
@@ -1742,53 +2424,81 @@ async function resolveWorktreeSourcePlan({
           { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
         ],
       });
-      const shouldTrackOriginHead = source.trackOriginHead === true;
-      const trackingRemote = shouldTrackOriginHead
-        ? await tryFetchWorktreeTrackingRemote({
-            cwd,
-            remoteName: "origin",
-            headRef: source.headRef,
-          })
-        : undefined;
-      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
-      if (source.pushRemoteUrl) {
-        const remoteName = `paseo-pr-${changeRequestNumber}`;
-        remotePlan.pushRemote = {
-          name: remoteName,
-          url: source.pushRemoteUrl,
-          headRef: source.headRef,
-          track: true,
-        };
-      } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
-        const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
-        if (originUrl) {
-          remotePlan.pushRemote = {
-            name: `paseo-pr-${changeRequestNumber}`,
-            url: originUrl,
-            headRef: source.headRef,
-            track: false,
-          };
-        }
-      }
-      if (trackingRemote) {
-        remotePlan.trackingRemote = trackingRemote;
-      }
+      const remotePlan = await resolveChangeRequestRemotePlan(cwd, source, localBranchName);
 
+      const metadata = await resolveWorktreeMetadata({
+        cwd,
+        source,
+        branchName: localBranchName,
+      });
       return {
         branchName: localBranchName,
-        metadataBaseRefName: normalizedBaseRefName,
-        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-          headRef: source.headRef,
-          ...(source.headRepositoryOwner
-            ? { headRepositoryOwner: source.headRepositoryOwner }
-            : {}),
-          changeRequestNumber,
-          localBranchName,
-        }),
+        ...metadata,
         addArguments: [localBranchName],
         ...remotePlan,
       };
     }
+  }
+}
+
+async function resolveChangeRequestRemotePlan(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
+  localBranchName: string,
+): Promise<Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote">> {
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+  const shouldTrackOriginHead = source.trackOriginHead === true;
+  const trackingRemote = shouldTrackOriginHead
+    ? await tryFetchWorktreeTrackingRemote({
+        cwd,
+        remoteName: "origin",
+        headRef: source.headRef,
+      })
+    : undefined;
+  const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
+  if (source.pushRemoteUrl) {
+    remotePlan.pushRemote = {
+      name: `paseo-pr-${changeRequestNumber}`,
+      url: source.pushRemoteUrl,
+      headRef: source.headRef,
+      track: true,
+    };
+  } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
+    const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
+    if (originUrl) {
+      remotePlan.pushRemote = {
+        name: `paseo-pr-${changeRequestNumber}`,
+        url: originUrl,
+        headRef: source.headRef,
+        track: false,
+      };
+    }
+  }
+  if (trackingRemote) {
+    remotePlan.trackingRemote = trackingRemote;
+  }
+  return remotePlan;
+}
+
+async function applyWorktreeRemotePlan(
+  cwd: string,
+  branchName: string,
+  remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote">,
+): Promise<void> {
+  if (remotePlan.pushRemote) {
+    await configureWorktreePushRemote({
+      cwd,
+      branchName,
+      remote: remotePlan.pushRemote,
+    });
+  }
+  if (remotePlan.trackingRemote) {
+    await configureWorktreeTrackingRemote({
+      cwd,
+      branchName,
+      remote: remotePlan.trackingRemote,
+    });
   }
 }
 
@@ -2140,9 +2850,6 @@ async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string
 }
 
 async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
-  return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
+  const { entries } = await readGitWorktreeEntries(cwd);
+  return entries.some((entry) => entry.branchName === branchName);
 }

@@ -2331,8 +2331,9 @@ export const ja: TranslationResources = {
       resetsIn: "{{duration}}後にリセット",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}} {{time}}",
-      runsOutNow: "まもなく上限に到達",
-      runsOutIn: "{{duration}}後に上限に到達",
+      limitReached: "上限に達しました",
+      mayHaveRunOut: "上限に達した可能性があります",
+      runsOutAt: "{{time}}に上限に到達",
       justNow: "たった今",
       daysAgo: "{{value}}日前",
       hoursAgo: "{{value}}時間前",
@@ -2887,7 +2888,7 @@ export const ja: TranslationResources = {
         updateTitle: "Paseoスキルを更新しますか？",
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
-          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+          "~/.agents、~/.claude、~/.codex、~/.gemini/configからすべてのPaseoオーケストレーションスキルを削除します。",
         choose: "スキルを選択",
         chooseAll: "すべてのスキル",
         chooseAllHint:
@@ -2896,7 +2897,7 @@ export const ja: TranslationResources = {
         chooseEmpty: "このビルドにはスキルが含まれていません。",
         removeTitle: "選択を外したスキルを削除しますか？",
         removeMessage:
-          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+          "{{skills}} を ~/.agents、~/.claude、~/.codex、~/.gemini/config から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
         saveFailed: "スキルの選択を保存できませんでした。",
         statusFailed: "オーケストレーションスキルのステータスを確認できません。",
         updateFailed: "オーケストレーションスキルを更新できません。",

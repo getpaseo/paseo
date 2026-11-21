@@ -205,7 +205,7 @@ server.addHook("worktree.create.before", async ({ request }) => ({
 
 Paseo 解析父目录中的符号链接并验证返回的路径。路径必须为绝对路径且不存在，不能是文件系统根目录、用户主目录、仓库根目录、`.git` 目录内的路径或仓库的祖先目录。目标已存在时创建失败，Paseo 不会为插件选择的路径添加后缀。插件应让 Paseo 创建目录。
 
-顺序：`worktree.create.before` → `git worktree add` → `worktree.create.after` → 注册工作区。恢复缺失的 worktree 时使用记录的原路径，不运行这两个创建钩子。
+顺序：`worktree.create.before` → worktree 管理器 `create`（或 `git worktree add`）→ `worktree.create.after` → 注册工作区。若要将 `git worktree add`、移除和恢复委托给 Worktrunk 等外部工具，请使用 `server.registerWorktreeManager()` 注册 [worktree 管理器](/docs/plugins/reference#worktree-managers)，而不是在 `worktree.create.before` 中创建目录。恢复缺失的 worktree 时使用记录的原路径，不运行创建钩子，并在对应管理器提供可选 `restore` 处理函数时委托给它。
 
 ## worktree.create.after {#worktreecreateafter}
 
@@ -677,12 +677,13 @@ Creation request
 
 ## 完整示例 {#complete-examples}
 
-| 插件                                                                                                   | 包含                                                      |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent、工作区和 worktree 钩子；隐去环境变量值的 JSON 日志 |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree    |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                          |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具        |
+| 插件                                                                                                   | 包含                                                              |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent、工作区和 worktree 钩子；隐去环境变量值的 JSON 日志         |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree            |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                                  |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具                |
+| [worktrunk](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)                     | worktree 管理器（`create`、`remove`、`restore`）与 Agent 活动标记 |
 
 用 `paseo plugin logs lifecycle-logger` 或主机的 `daemon.log` 读取 logger 的输出。
 

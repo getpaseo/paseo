@@ -471,6 +471,18 @@ Workspace records decide ownership, including explicit non-ownership after recov
 ownership checks prefer the marker-verified worktree root over the legacy
 path shape: a plugin can place a worktree several directories below the default worktrees root.
 
+A plugin can also take over worktree creation, removal, and restoration with
+`server.registerWorktreeManager({ create, remove?, restore? })`. It runs after
+`worktree.create.before` and before `worktree.create.after`, with a 120-second timeout matching Git
+worktree commands. Paseo snapshots existing worktree paths before calling `create` so a manager
+cannot adopt a pre-existing directory as Paseo-owned, verifies Git worktree postconditions, records
+`worktreeManagerPluginId` in `paseo/worktree.json` and on the workspace record,
+and skips first-agent branch auto-rename. Removal saves `refs/paseo/kept-commits/<sha>` before
+calling the owning plugin's `remove`, and `create`, `remove`, and `restore` carry `untrusted` for fork
+change requests; `remove` and `restore` fall back to built-in Git when the plugin declines or is disabled. See the
+[worktree managers reference](../public-docs/plugins/reference.md#worktree-managers) and
+`plugin-examples/worktrunk`.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
