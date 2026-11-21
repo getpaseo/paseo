@@ -184,7 +184,7 @@ export function FileActionsContextMenuContent({
             onSelect: onReveal,
           }
         : null,
-      availableFile && onDownload
+      fileExists && onDownload
         ? {
             key: "download",
             group: "reference",

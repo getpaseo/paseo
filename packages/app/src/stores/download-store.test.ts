@@ -8,6 +8,11 @@ import {
   type DownloadedBytes,
 } from "@/stores/download-store";
 import type {
+  LocalFileContents,
+  LocalFolder,
+  RemoteFolderEntry,
+} from "@/file-explorer/copy-folder";
+import type {
   DirectTcpHostConnection,
   HostProfile,
   RelayHostConnection,
@@ -314,5 +319,205 @@ describe("download store transport selection", () => {
       message: "File transfer incomplete: expected 6 bytes, received 0.",
     });
     expect(saver.savedFiles).toEqual([]);
+  });
+});
+
+/** Records every file written below it as `path -> text`. */
+function memoryFolder(written: Map<string, string>, prefix = ""): LocalFolder {
+  return {
+    folder: async (name) => memoryFolder(written, `${prefix}${name}/`),
+    writeFile: async (name: string, contents: LocalFileContents) => {
+      const bytes =
+        contents instanceof Uint8Array ? contents : await new Response(contents).arrayBuffer();
+      written.set(`${prefix}${name}`, new TextDecoder().decode(bytes));
+    },
+  };
+}
+
+const SMALL_FILE = new TextEncoder().encode("small");
+const LARGE_FILE_SIZE = 2 * 1024 * 1024;
+const FOLDER_ENTRIES: RemoteFolderEntry[] = [
+  { name: "small.txt", path: "out/small.txt", kind: "file", size: SMALL_FILE.byteLength },
+  { name: "large.bin", path: "out/large.bin", kind: "file", size: LARGE_FILE_SIZE },
+];
+
+interface FolderStartInput {
+  profile: HostProfile;
+  activeConnectionId: string | null;
+  readFile?: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
+  fetchFile?: typeof fetch;
+}
+
+async function startFolderDownload(input: FolderStartInput) {
+  const written = new Map<string, string>();
+  const sessionReads: string[] = [];
+  const tokenRequests: string[] = [];
+  const fetched: string[] = [];
+  await useDownloadStore.getState().startFolderDownload({
+    serverId: "srv_remote",
+    scopeId: "workspace-1",
+    folderName: "out",
+    path: "out",
+    destination: memoryFolder(written),
+    includeHidden: true,
+    daemonProfile: input.profile,
+    activeConnectionId: input.activeConnectionId,
+    listDirectory: async () => FOLDER_ENTRIES,
+    requestFileDownloadToken: async (path) => {
+      tokenRequests.push(path);
+      return { token: `tok-${path}`, fileName: null, mimeType: null, size: null, error: null };
+    },
+    readFile:
+      input.readFile ??
+      (async (path) => {
+        sessionReads.push(path);
+        const bytes = path === "out/small.txt" ? SMALL_FILE : new Uint8Array(LARGE_FILE_SIZE);
+        return { bytes, size: bytes.byteLength };
+      }),
+    fetchFile:
+      input.fetchFile ??
+      (async (url) => {
+        fetched.push(String(url));
+        return new Response("over http");
+      }),
+  });
+  const { activeDownloadId, downloads } = useDownloadStore.getState();
+  const download = activeDownloadId ? downloads.get(activeDownloadId) : undefined;
+  return { download, written, sessionReads, tokenRequests, fetched };
+}
+
+describe("folder downloads", () => {
+  beforeEach(() => {
+    useDownloadStore.setState({ downloads: new Map(), activeDownloadId: null });
+  });
+
+  it("reads every file over the session when the active connection is the relay", async () => {
+    const result = await startFolderDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+    });
+
+    expect(result.download).toMatchObject({
+      fileName: "out",
+      status: "complete",
+      files: { completed: 2, total: 2 },
+    });
+    expect(result.download?.cancel).toBeUndefined();
+    expect(result.sessionReads).toEqual(["out/small.txt", "out/large.bin"]);
+    expect(result.tokenRequests).toEqual([]);
+    expect([...result.written.keys()]).toEqual(["out/small.txt", "out/large.bin"]);
+  });
+
+  it("downloads every file over HTTP when the active connection is directTcp", async () => {
+    const result = await startFolderDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+    });
+
+    expect(result.download).toMatchObject({ status: "complete" });
+    expect(result.sessionReads).toEqual([]);
+    expect(result.tokenRequests).toEqual(["out/small.txt", "out/large.bin"]);
+    expect(result.fetched).toEqual([
+      "http://localhost:6767/api/files/download?token=tok-out%2Fsmall.txt",
+      "http://localhost:6767/api/files/download?token=tok-out%2Flarge.bin",
+    ]);
+    expect(result.written).toEqual(
+      new Map([
+        ["out/small.txt", "over http"],
+        ["out/large.bin", "over http"],
+      ]),
+    );
+  });
+
+  it("fails before copying when the direct connection has no usable URL", async () => {
+    const unusableConnection: DirectTcpHostConnection = {
+      id: "direct:unusable",
+      type: "directTcp",
+      endpoint: "not a host:port",
+    };
+    const result = await startFolderDownload({
+      profile: profileWith([unusableConnection]),
+      activeConnectionId: unusableConnection.id,
+    });
+
+    expect(result.download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.hostUnavailable"),
+    });
+    expect(result.written.size).toBe(0);
+    expect(result.sessionReads).toEqual([]);
+  });
+
+  it("applies the single-file session cap to each file over the relay", async () => {
+    const reads: string[] = [];
+    const written = new Map<string, string>();
+    await useDownloadStore.getState().startFolderDownload({
+      serverId: "srv_remote",
+      scopeId: "workspace-1",
+      folderName: "out",
+      path: "out",
+      destination: memoryFolder(written),
+      includeHidden: true,
+      daemonProfile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      listDirectory: async () => [
+        FOLDER_ENTRIES[0]!,
+        {
+          name: "huge.bin",
+          path: "out/huge.bin",
+          kind: "file",
+          size: MAX_SESSION_DOWNLOAD_BYTES + 1,
+        },
+      ],
+      requestFileDownloadToken: createTokenRequest().request,
+      readFile: async (path) => {
+        reads.push(path);
+        return { bytes: SMALL_FILE, size: SMALL_FILE.byteLength };
+      },
+    });
+    const { activeDownloadId, downloads } = useDownloadStore.getState();
+
+    expect(downloads.get(activeDownloadId!)).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.folderIncomplete", { failed: 1, count: 2 }),
+    });
+    expect(reads).toEqual(["out/small.txt"]);
+    expect([...written.keys()]).toEqual(["out/small.txt"]);
+  });
+
+  it("reports the files that could not be downloaded", async () => {
+    const result = await startFolderDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async (url) =>
+        String(url).includes("large.bin")
+          ? new Response("gone", { status: 404 })
+          : new Response("over http"),
+    });
+
+    expect(result.download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.folderIncomplete", { failed: 1, count: 2 }),
+    });
+    expect(result.download?.message).toBe("1 of 2 files could not be downloaded");
+    expect([...result.written.keys()]).toEqual(["out/small.txt"]);
+  });
+
+  it("stops and says so when the download is cancelled", async () => {
+    const result = await startFolderDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      readFile: async () => {
+        const { activeDownloadId, downloads } = useDownloadStore.getState();
+        downloads.get(activeDownloadId!)?.cancel?.();
+        return { bytes: SMALL_FILE, size: SMALL_FILE.byteLength };
+      },
+    });
+
+    expect(result.download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.cancelled"),
+    });
+    expect(result.download?.cancel).toBeUndefined();
   });
 });
