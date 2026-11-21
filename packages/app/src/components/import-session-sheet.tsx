@@ -217,13 +217,21 @@ function ProviderErrorBannerRow({
   const handleRetry = useCallback(() => onRetry(row.provider), [onRetry, row.provider]);
   return (
     <View style={styles.errorRow}>
-      <Text style={styles.errorText}>
-        {t("importSession.status.failedProvider", { provider: row.label })}
-      </Text>
+      <View style={styles.errorContent}>
+        <Text style={styles.errorText}>
+          {t("importSession.status.failedProvider", { provider: row.label })}
+        </Text>
+        {row.message ? (
+          <Text style={styles.errorDetail} selectable>
+            {row.message}
+          </Text>
+        ) : null}
+      </View>
       <Button
         variant="ghost"
         size="sm"
         onPress={handleRetry}
+        loading={row.retrying}
         testID={`import-session-retry-${row.provider}`}
       >
         {t("common.actions.retry")}
@@ -1071,11 +1079,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  errorContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
   },
   errorText: {
     flexShrink: 1,
     minWidth: 0,
     color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
+  },
+  errorDetail: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   emptyState: {
