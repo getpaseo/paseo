@@ -2126,6 +2126,8 @@ export const fr: TranslationResources = {
     detachTooltip: "Détacher le sous-agent",
     archiveAction: "Archiver {{label}}",
     archiveTooltip: "Archiver le sous-agent",
+    messagePlaceholder: "Envoyer un message à ce sous-agent",
+    messageSend: "Envoyer le message",
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },

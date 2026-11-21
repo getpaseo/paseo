@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Send } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import { AgentStreamView } from "@/agent-stream/view";
 import { useProviderIcon } from "@/components/provider-icons";
+import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import {
   resolveComposerTrackControlClearance,
   resolveComposerTrackTailClearance,
@@ -15,7 +20,7 @@ import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { usePaneContext } from "@/panels/pane-context";
 import { PaneSubtitle } from "@/panels/pane-subtitle";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
-import { useSessionStore } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import type { SheetTab } from "@/stores/workspace-layout-store";
 import { ParentAgentCallout } from "@/subagents/parent";
 import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
@@ -113,6 +118,100 @@ function useProviderSubagentDescriptor(
   };
 }
 
+const SUBMIT_ICON_SIZE = 16;
+
+/** Providers accept a message only while the child is live; a settled child has no one to reach. */
+function canMessageProviderSubagent(
+  parent: Pick<Agent, "capabilities"> | null,
+  descriptor: Pick<ProviderSubagentDescriptorPayload, "status"> | null,
+): boolean {
+  const supportsPrompt = parent?.capabilities.supportsProviderSubagentPrompt === true;
+  return supportsPrompt && descriptor?.status === "running";
+}
+
+const ThemedPromptInput = withUnistyles(EditingTextInput, (theme) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+}));
+
+/**
+ * A provider subagent has no Paseo session of its own, so the panel lends it the one thing a chat
+ * surface needs: somewhere to type. Sending reaches the provider's own subagent as its user, which
+ * steers the turn it is running; the reply arrives on the subagent's own timeline.
+ */
+function ProviderSubagentPromptBar({
+  client,
+  enabled,
+  parentAgentId,
+  subagentId,
+}: {
+  client: Pick<DaemonClient, "promptProviderSubagent"> | null;
+  enabled: boolean;
+  parentAgentId: string;
+  subagentId: string;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  const inputRef = useRef<EditingTextInputHandle | null>(null);
+  const [text, setText] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canSend = text.trim().length > 0 && !isSending;
+
+  const submit = useCallback(async () => {
+    const message = text.trim();
+    if (!client || !message || isSending) return;
+    setIsSending(true);
+    setError(null);
+    try {
+      await client.promptProviderSubagent({ parentAgentId, subagentId, message });
+      inputRef.current?.reset();
+      setText("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsSending(false);
+    }
+  }, [client, isSending, parentAgentId, subagentId, text]);
+
+  const handleSubmit = useCallback(() => {
+    void submit();
+  }, [submit]);
+
+  if (!client || !enabled) return null;
+
+  return (
+    <View style={styles.prompt}>
+      <View style={styles.promptRow}>
+        <ThemedPromptInput
+          ref={inputRef}
+          onChangeText={setText}
+          onSubmitEditing={handleSubmit}
+          placeholder={t("subagents.messagePlaceholder")}
+          returnKeyType="send"
+          blurOnSubmit={false}
+          editable={!isSending}
+          style={styles.promptInput}
+          testID="provider-subagent-prompt-input"
+        />
+        <ToolbarButton
+          label={t("subagents.messageSend")}
+          tooltip={t("subagents.messageSend")}
+          disabled={!canSend}
+          tooltipSide="top"
+          onPress={handleSubmit}
+          testID="provider-subagent-prompt-send"
+        >
+          <Send size={SUBMIT_ICON_SIZE} color={styles.promptSendIcon.color} />
+        </ToolbarButton>
+      </View>
+      {error ? (
+        <Text style={styles.promptError} testID="provider-subagent-prompt-error">
+          {error}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function ProviderSubagentPanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, tabId, target, openFileInWorkspace, openTab } = usePaneContext();
@@ -132,6 +231,7 @@ function ProviderSubagentPanel() {
       null,
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const canMessageSubagent = canMessageProviderSubagent(parent, descriptor);
   const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
   // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove after 2027-03-14.
   const supported = serverInfo?.features?.projectedSubagentTimeline === true;
@@ -275,6 +375,12 @@ function ProviderSubagentPanel() {
           sheetTabFor={sheetTabFor}
         />
       </View>
+      <ProviderSubagentPromptBar
+        client={client}
+        enabled={canMessageSubagent}
+        parentAgentId={target.parentAgentId}
+        subagentId={target.subagentId}
+      />
       <ParentAgentCallout serverId={serverId} parentAgentId={target.parentAgentId} />
     </View>
   );
@@ -283,6 +389,33 @@ function ProviderSubagentPanel() {
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0 },
   stream: { flex: 1, minHeight: 0 },
+  prompt: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  promptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    borderRadius: theme.borderRadius.md,
+    paddingLeft: 10,
+    paddingRight: 4,
+    minHeight: 38,
+  },
+  promptInput: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: 6,
+  },
+  promptSendIcon: { color: theme.colors.foregroundMuted },
+  promptError: { color: theme.colors.statusDanger, fontSize: theme.fontSize.sm },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));

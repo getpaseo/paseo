@@ -2127,6 +2127,8 @@ export const es: TranslationResources = {
     detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
+    messagePlaceholder: "Enviar un mensaje a este subagente",
+    messageSend: "Enviar mensaje",
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },

@@ -3217,6 +3217,8 @@ export class Session {
         return this.handleAgentBackgroundWorkStopRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
+      case "agent.provider_subagents.prompt.request":
+        return this.handleProviderSubagentPromptRequest(msg);
       case "session.events.set_subscription.request": {
         const owner = this.delivery.begin("events", undefined, async (id) => {
           this.eventSubscriptions.delete(id);
@@ -8938,6 +8940,37 @@ export class Session {
       return { error: `Agent is archived: ${agentId}` };
     }
     return { agent, record };
+  }
+
+  private async handleProviderSubagentPromptRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.prompt.request" }>,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      const message = msg.message.trim();
+      if (!message) throw new Error("A subagent message is required");
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      await this.agentManager.promptProviderSubagent({
+        parentAgentId: msg.parentAgentId,
+        subagentId: msg.subagentId,
+        message,
+      });
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type: "agent.provider_subagents.prompt.response",
+      payload: {
+        requestId: msg.requestId,
+        parentAgentId: msg.parentAgentId,
+        subagentId: msg.subagentId,
+        error,
+      },
+    });
   }
 
   private async handleProviderSubagentTimelineRequest(

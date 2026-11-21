@@ -2141,6 +2141,14 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+export const ProviderSubagentPromptRequestMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.prompt.request"),
+  parentAgentId: z.string(),
+  subagentId: z.string(),
+  message: z.string(),
+  requestId: z.string(),
+});
+
 // "current" means the daemon has this agent loaded, the epoch matches, and the cursor is at the head.
 // Anything else is "behind", including an agent the daemon has not loaded.
 export const TimelineFreshnessSchema = z.enum(["current", "behind"]);
@@ -3674,6 +3682,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentBackgroundWorkListRequestMessageSchema,
   AgentBackgroundWorkStopRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  ProviderSubagentPromptRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -5319,6 +5328,16 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
           .optional(),
       }),
     ),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ProviderSubagentPromptResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.prompt.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    subagentId: z.string(),
     error: z.string().nullable(),
   }),
 });
@@ -7731,6 +7750,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
+  ProviderSubagentPromptResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   AgentBackgroundWorkListResponseMessageSchema,
   AgentBackgroundWorkStopResponseMessageSchema,

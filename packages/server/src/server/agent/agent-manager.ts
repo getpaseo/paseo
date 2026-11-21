@@ -201,6 +201,12 @@ interface StopAgentBackgroundWorkOptions {
   canManageAutomation?: boolean;
 }
 
+interface PromptProviderSubagentOptions {
+  parentAgentId: string;
+  subagentId: string;
+  message: string;
+}
+
 async function resolveResumePurpose(
   record: StoredAgentRecord | null,
   requested: AgentResumePurpose | undefined,
@@ -1502,6 +1508,22 @@ export class AgentManager {
     return this.providerSubagents
       .listAll()
       .filter((subagent) => publicParentIds.has(subagent.parentAgentId));
+  }
+
+  /** Message a provider subagent as its user; providers without the capability reject it. */
+  async promptProviderSubagent({
+    parentAgentId,
+    subagentId,
+    message,
+  }: PromptProviderSubagentOptions): Promise<void> {
+    const { session } = this.requirePublicAgent(parentAgentId);
+    if (!this.providerSubagents.get(parentAgentId, subagentId)) {
+      throw new Error(`Unknown subagent '${subagentId}'`);
+    }
+    if (!session?.promptProviderSubagent) {
+      throw new Error("This provider cannot message subagents");
+    }
+    await session.promptProviderSubagent({ subagentId, message });
   }
 
   getProviderSubagent(

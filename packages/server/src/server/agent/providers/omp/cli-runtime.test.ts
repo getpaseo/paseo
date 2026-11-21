@@ -426,9 +426,11 @@ describe("OMP CLI runtime", () => {
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     await session.setSubagentSubscription("events");
+    await session.steerSubagent("OmpWorker", "Keep the direct path.");
 
     expect(commands.map(withoutRequestId)).toEqual([
       { type: "set_subagent_subscription", level: "events" },
+      { type: "steer_subagent", subagentId: "OmpWorker", message: "Keep the direct path." },
     ]);
   });
 

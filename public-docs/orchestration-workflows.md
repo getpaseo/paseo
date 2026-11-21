@@ -91,12 +91,12 @@ The agent resumes the task on that cadence. For a fresh agent on each run, [crea
 
 Open the **Subagents track** near the composer to inspect delegated work.
 
-|              | Paseo subagents                                | Native provider subagents                      |
-| ------------ | ---------------------------------------------- | ---------------------------------------------- |
-| Provider     | Any configured provider                        | Chosen within the parent provider's own system |
-| Workspace    | Current or explicitly selected workspace       | Managed by the provider                        |
-| Conversation | Full agent session you can talk to             | Read-only timeline                             |
-| Controls     | Follow up, change settings, archive, or detach | Lifecycle managed by the provider              |
+|              | Paseo subagents                                | Native provider subagents                                                                         |
+| ------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Provider     | Any configured provider                        | Chosen within the parent provider's own system                                                    |
+| Workspace    | Current or explicitly selected workspace       | Managed by the provider                                                                           |
+| Conversation | Full agent session you can talk to             | Provider timeline; the message bar works while the child is running when its provider supports it |
+| Controls     | Follow up, change settings, archive, or detach | Lifecycle managed by the provider; message only while running and supported                       |
 
 A Paseo subagent in another workspace still belongs to its parent's track. It also opens as a tab in its own workspace. To make it a top-level agent, detach it in the app or with [`paseo agent detach`](/docs/cli#agent-modes).
 

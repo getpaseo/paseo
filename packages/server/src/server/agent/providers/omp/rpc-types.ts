@@ -584,6 +584,12 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...OmpCommandBase,
+    type: z.literal("steer_subagent"),
+    subagentId: z.string(),
+    message: z.string(),
+  }),
+  z.object({
+    ...OmpCommandBase,
     type: z.literal("set_host_tools"),
     tools: z.array(OmpRpcHostToolDefinitionSchema),
   }),

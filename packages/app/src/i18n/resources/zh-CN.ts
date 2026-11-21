@@ -2055,6 +2055,8 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
+    messagePlaceholder: "给此子代理发送消息",
+    messageSend: "发送消息",
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },

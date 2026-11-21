@@ -2078,6 +2078,8 @@ export const ar: TranslationResources = {
     detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
+    messagePlaceholder: "أرسل رسالة إلى هذا الوكيل الفرعي",
+    messageSend: "إرسال الرسالة",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
   },

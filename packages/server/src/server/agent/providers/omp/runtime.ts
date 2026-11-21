@@ -66,6 +66,8 @@ export interface OmpRuntimeSession {
   getSessionStats(): Promise<OmpSessionStats>;
   getCommands(): Promise<OmpRpcSlashCommand[]>;
   setSubagentSubscription(level: OmpSubagentSubscriptionLevel): Promise<void>;
+  /** Deliver a message to one of this session's subagents, steering it or starting a turn. */
+  steerSubagent(subagentId: string, message: string): Promise<void>;
   setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]>;
   sendHostToolResult(result: OmpRpcHostToolResult): void;
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;

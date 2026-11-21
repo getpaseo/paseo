@@ -2089,6 +2089,8 @@ export const ko: TranslationResources = {
     detachTooltip: "하위 에이전트 분리",
     archiveAction: "{{label}} 보관",
     archiveTooltip: "서브에이전트 보관",
+    messagePlaceholder: "이 하위 에이전트에게 메시지 보내기",
+    messageSend: "메시지 보내기",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },

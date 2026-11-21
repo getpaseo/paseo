@@ -130,6 +130,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsProviderSubagentPrompt: true,
 };
 
 export interface OmpAgentClientOptions {
@@ -1326,6 +1327,10 @@ export class OmpAgentSession implements AgentSession {
     this.config.model = `${model.provider}/${model.id}`;
     await this.refreshState();
     return { model: modelToId(this.state.model) };
+  }
+
+  async promptProviderSubagent(input: { subagentId: string; message: string }): Promise<void> {
+    await this.runtimeSession.steerSubagent(input.subagentId, input.message);
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {

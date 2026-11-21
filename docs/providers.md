@@ -621,12 +621,15 @@ interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
+  promptProviderSubagent?(input: { subagentId: string; message: string }): Promise<void>;
   applyOptions?(options: ProviderOptions): Promise<void>;
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
 }
 ```
+
+`promptProviderSubagent` exists only for a provider that runs its own subagents and can address them: it delivers a user message to the subagent the provider announced, steering a running one and waking an idle one. Advertise `supportsProviderSubagentPrompt` in the session's capabilities so clients offer the message bar in that subagent's pane; the daemon rejects the request when the method is absent.
 
 `describePersistence()` returns a handle only once a new provider process could resume it. Reload, idle runtime collection and daemon restart resume whatever handle the agent stored; a stored agent without one starts a new session instead. When there is no handle, `AgentManager` stores `getRuntimeInfo().sessionId` as one, so that ID follows the same rule. Codex, for example, starts a thread when the agent is created but writes its rollout only at its first turn, and `thread/resume` fails for it until then, so its adapter reports neither ID before Codex announces that turn.
 

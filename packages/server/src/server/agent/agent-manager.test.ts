@@ -15845,3 +15845,70 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+class ProviderPromptSession extends TestAgentSession {
+  readonly promptCalls: Array<{ subagentId: string; message: string }> = [];
+
+  async promptProviderSubagent(input: { subagentId: string; message: string }): Promise<void> {
+    this.promptCalls.push(input);
+  }
+}
+
+async function createProviderSubagentManager(session: AgentSession): Promise<{
+  manager: AgentManager;
+  agentId: string;
+}> {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-prompt-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  (session as ProviderPromptSession).pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "child", title: "Child", status: "running" },
+  });
+  await vi.waitFor(() => expect(manager.listProviderSubagents(agent.id)).toHaveLength(1));
+  return { manager, agentId: agent.id };
+}
+
+test("promptProviderSubagent delivers the message to the provider session owning the child", async () => {
+  const session = new ProviderPromptSession({ provider: "codex", cwd: tmpdir() });
+  const { manager, agentId } = await createProviderSubagentManager(session);
+
+  await manager.promptProviderSubagent({
+    parentAgentId: agentId,
+    subagentId: "child",
+    message: "Keep the direct path.",
+  });
+
+  expect(session.promptCalls).toEqual([{ subagentId: "child", message: "Keep the direct path." }]);
+});
+
+test("promptProviderSubagent rejects children the provider never announced", async () => {
+  const session = new ProviderPromptSession({ provider: "codex", cwd: tmpdir() });
+  const { manager, agentId } = await createProviderSubagentManager(session);
+
+  await expect(
+    manager.promptProviderSubagent({
+      parentAgentId: agentId,
+      subagentId: "missing",
+      message: "hi",
+    }),
+  ).rejects.toThrow("Unknown subagent 'missing'");
+  expect(session.promptCalls).toEqual([]);
+});
+
+test("promptProviderSubagent rejects providers that cannot message their own subagents", async () => {
+  const session = new TestAgentSession({ provider: "codex", cwd: tmpdir() });
+  const { manager, agentId } = await createProviderSubagentManager(session);
+
+  await expect(
+    manager.promptProviderSubagent({ parentAgentId: agentId, subagentId: "child", message: "hi" }),
+  ).rejects.toThrow("This provider cannot message subagents");
+});

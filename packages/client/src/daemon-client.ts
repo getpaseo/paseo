@@ -773,6 +773,10 @@ export type ProviderSubagentTimelinePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.timeline.get.response" }
 >["payload"];
+export type ProviderSubagentPromptPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.prompt.response" }
+>["payload"];
 export interface FetchProviderSubagentTimelineOptions {
   direction?: ProviderSubagentTimelinePayload["direction"];
   cursor?: FetchAgentTimelineCursor;
@@ -4148,6 +4152,36 @@ export class DaemonClient {
     if (this.lastServerInfoMessage?.features?.agentBackgroundWork !== true) {
       throw new Error("Update the host to see an agent's background work.");
     }
+  }
+
+  /** Deliver a message to a provider subagent; rejects when the provider cannot message them. */
+  async promptProviderSubagent(
+    input: { parentAgentId: string; subagentId: string; message: string },
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<ProviderSubagentPromptPayload> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.prompt.request",
+      parentAgentId: input.parentAgentId,
+      subagentId: input.subagentId,
+      message: input.message,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.prompt.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
   }
 
   async fetchProviderSubagentTimeline(

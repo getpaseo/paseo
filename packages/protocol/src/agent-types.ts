@@ -187,6 +187,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /** The provider runs its own subagents and can deliver a user message to one. */
+  supportsProviderSubagentPrompt?: boolean;
 }
 
 export interface AgentPersistenceHandle {

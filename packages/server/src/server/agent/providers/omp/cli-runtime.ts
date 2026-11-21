@@ -240,6 +240,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "set_subagent_subscription", level });
   }
 
+  async steerSubagent(subagentId: string, message: string): Promise<void> {
+    await this.request({ type: "steer_subagent", subagentId, message });
+  }
+
   async setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]> {
     const data = OmpHostToolsResultSchema.parse(
       await this.request({ type: "set_host_tools", tools }),

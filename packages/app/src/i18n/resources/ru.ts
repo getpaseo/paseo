@@ -2113,6 +2113,8 @@ export const ru: TranslationResources = {
     detachTooltip: "Отсоединить субагента",
     archiveAction: "Архивировать {{label}}",
     archiveTooltip: "Архивировать субагента",
+    messagePlaceholder: "Отправить сообщение этому субагенту",
+    messageSend: "Отправить сообщение",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },

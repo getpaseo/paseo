@@ -2099,6 +2099,8 @@ export const ja: TranslationResources = {
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
+    messagePlaceholder: "このサブエージェントにメッセージを送信",
+    messageSend: "メッセージを送信",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },

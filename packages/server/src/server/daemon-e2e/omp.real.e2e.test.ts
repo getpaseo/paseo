@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import pino from "pino";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import {
@@ -577,6 +577,50 @@ describe("daemon E2E (real OMP)", () => {
           .map(toolResult)
           .join("\n");
         expect(childToolOutput).toContain("TRACK_CHILD_OK");
+      } finally {
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "messaging a running child reaches the provider subagent",
+    async () => {
+      const harness = await createHarness();
+      try {
+        const parent = await createAgent(harness, "subagent-prompt");
+        const run = harness.client.sendMessage(
+          parent.id,
+          "Use task to create exactly one child named PromptChild. It must run exactly this bash command: sleep 20; printf 'PROMPT_CHILD_READY\\n'. Do not wait for it.",
+        );
+        const child = await waitForProviderSubagent(harness.client, parent.id, "running");
+
+        await harness.client.promptProviderSubagent({
+          parentAgentId: parent.id,
+          subagentId: child.id,
+          message: "Run exactly this bash command: printf 'PROMPT_CHILD_FOLLOWUP\\n'",
+        });
+        await run;
+
+        const readChildOutput = async () => {
+          const childTimeline = await harness.client.fetchProviderSubagentTimeline(
+            parent.id,
+            child.id,
+            { direction: "tail", limit: 0 },
+          );
+          return childTimeline.rows
+            .map((row) => row.item)
+            .filter((item) => item.type === "tool_call")
+            .map(toolResult)
+            .join("\n");
+        };
+        await vi.waitFor(
+          async () => {
+            expect(await readChildOutput()).toContain("PROMPT_CHILD_FOLLOWUP");
+          },
+          { timeout: TIMEOUT_MS },
+        );
       } finally {
         await closeHarness(harness);
       }
