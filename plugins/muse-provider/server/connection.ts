@@ -1,7 +1,6 @@
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import { randomBytes } from "node:crypto";
-import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { MuseError, classifyExit } from "./errors.js";
@@ -14,6 +13,40 @@ export function commandId(): string {
   bytes[8] = 0x80 | (bytes[8]! & 0x3f);
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * Splits MSP output on "\n" only. `node:readline` also ends lines at U+2028 and U+2029, which JSON
+ * allows unescaped inside strings, so it cut frames quoting either character in two.
+ */
+function readLines(
+  input: NodeJS.ReadableStream,
+  onLine: (line: string) => void,
+): { close(): void } {
+  // Decoding in the stream keeps a multibyte character whole when it straddles two chunks.
+  input.setEncoding("utf8");
+  let partial = "";
+  const emit = (line: string) => onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+  const onData = (chunk: string) => {
+    let start = 0;
+    for (let end = chunk.indexOf("\n"); end !== -1; end = chunk.indexOf("\n", start)) {
+      emit(partial + chunk.slice(start, end));
+      partial = "";
+      start = end + 1;
+    }
+    partial += chunk.slice(start);
+  };
+  const onEnd = () => {
+    if (partial) emit(partial);
+  };
+  input.on("data", onData);
+  input.on("end", onEnd);
+  return {
+    close() {
+      input.off("data", onData);
+      input.off("end", onEnd);
+    },
+  };
 }
 
 interface PendingRequest {
@@ -61,8 +94,7 @@ export class MspConnection {
     this.child.stderr.on("data", (chunk: string) => {
       this.stderr = (this.stderr + chunk).slice(-8192);
     });
-    const lines = createInterface({ input: this.child.stdout });
-    lines.on("line", (line) => {
+    const lines = readLines(this.child.stdout, (line) => {
       try {
         this.receive(frameSchema.parse(JSON.parse(line)));
       } catch (error) {
