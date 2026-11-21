@@ -177,9 +177,19 @@ const StructuredGenerationProviderConfigSchema = z
   })
   .strict();
 
+const AgentMetadataGenerationPromptEntrySchema = z
+  .object({
+    instructions: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+    title: AgentMetadataGenerationPromptEntrySchema.optional(),
+    branchName: AgentMetadataGenerationPromptEntrySchema.optional(),
+    commitMessage: AgentMetadataGenerationPromptEntrySchema.optional(),
+    pullRequest: AgentMetadataGenerationPromptEntrySchema.optional(),
   })
   .strict();
 
