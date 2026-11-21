@@ -368,6 +368,9 @@ Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前
 在 `discover` 和 `configure` 中，调用 `context.request(method, params)` 发送 ACP 扩展请求。
 Promise 返回 JSON 值，或以 Agent 的 JSON-RPC 错误拒绝。
 
+在 `toolCall` 中，通过 `context.mcpServerNames` 识别 Paseo 打开 ACP 会话时提供的服务器。
+兼容旧版 SDK 或处理直接在 agent 中配置的服务器时，可以回退到空列表。
+
 使用 `config(state, context)` 返回 Paseo 显示的配置快照。
 Paseo 在会话就绪、收到配置通知或提交配置更改时调用此同步钩子。
 使用 `configure` 向 Agent 发送更改。

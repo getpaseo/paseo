@@ -142,7 +142,10 @@ export interface AcpTransformer {
     notification: { method: string; params: JsonValue },
     context: AcpContext,
   ): AcpVendorUpdate | readonly AcpVendorUpdate[] | null;
-  toolCall?(toolCall: AcpToolCallSnapshot, context: AcpContext): AcpToolCallSnapshot;
+  toolCall?(
+    toolCall: AcpToolCallSnapshot,
+    context: AcpContext & { mcpServerNames?: readonly string[] },
+  ): AcpToolCallSnapshot;
 }
 
 export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistration {
