@@ -54,6 +54,7 @@ import {
   WorkspaceMetaRow,
 } from "@/components/sidebar/workspace-meta-row";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
@@ -698,7 +699,11 @@ function SidebarSubagentRow({
               <SubagentFacts text={presentation.subtitle} />
             )}
             {ownWorkspace ? (
-              <SubagentWorkspaceMeta serverId={rowServerId} workspace={ownWorkspace} />
+              <SubagentWorkspaceMeta
+                serverId={rowServerId}
+                workspace={ownWorkspace}
+                backdrop={hovered ? "surfaceSidebarHover" : "surfaceSidebar"}
+              />
             ) : null}
           </View>
         </>
@@ -890,9 +895,11 @@ function normalizeBranch(branch: string | null | undefined): string | null {
 function SubagentWorkspaceMeta({
   serverId,
   workspace,
+  backdrop,
 }: {
   serverId: string;
   workspace: WorkspaceDescriptor;
+  backdrop: SidebarSurfaceBackdrop;
 }) {
   const prHint = useMemo(
     () => selectPrHintFromStatus(workspace.githubRuntime?.pullRequest, workspace.forge),
@@ -912,6 +919,7 @@ function SubagentWorkspaceMeta({
       prHint={prHint}
       serviceSummary={serviceSummary}
       labels={labels}
+      backdrop={backdrop}
     />
   );
 }
