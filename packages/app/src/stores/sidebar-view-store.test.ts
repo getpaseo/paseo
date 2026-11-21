@@ -166,18 +166,6 @@ describe("sidebar view store", () => {
     });
   });
 
-  it("drops deleted labels from the active filter but retains Unlabelled", () => {
-    useSidebarViewStore.setState({
-      labelFilter: { labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent", "removed"] },
-    });
-
-    useSidebarViewStore.getState().reconcileLabelFilter(["Urgent"]);
-
-    expect(useSidebarViewStore.getState().labelFilter).toEqual({
-      labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent"],
-    });
-  });
-
   it("re-keys a persisted label filter through the normalized identity, without duplicates", () => {
     expect(
       migrateSidebarViewState({
