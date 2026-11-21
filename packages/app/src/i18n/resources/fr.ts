@@ -2604,6 +2604,7 @@ export const fr: TranslationResources = {
         label: "Langue",
         description: "Langue de l’application",
         options: {
+          it: "Italiano",
           system: "Système",
           ar: "العربية",
           en: "English",
