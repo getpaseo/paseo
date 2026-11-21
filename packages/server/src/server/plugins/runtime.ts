@@ -1,7 +1,11 @@
 import { validateWorktreePath } from "../../utils/worktree-path.js";
 import type { PluginHookPayload } from "@getpaseo/plugin/server";
 import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
-import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
+import type {
+  SessionOpenWireRequest,
+  AttachedAgentTool,
+  ReattachedAgentTools,
+} from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
   ProviderInspectionSchema,
@@ -314,6 +318,8 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
 
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
+  /** Per agent, the plugin instance whose tool replay failed. That instance is not replayed again for the agent. */
+  private readonly failedToolReplays = new Map<string, Map<string, string>>();
   private readonly pendingEvents = new Set<Promise<void>>();
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
@@ -806,8 +812,61 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.instanceId === pluginInstanceId;
   }
 
-  detachTools(agentId: string): void {
+  // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
+  // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
+  // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
+  // The replay arrives as `refresh`, like the reopen the same restart causes for an idle agent.
+  // A plugin that is stopped, mid-restart, or fails the replay is left out of the result, so the caller keeps it
+  // eligible. A failed replay is not repeated for the same plugin instance: the next restart gets a new try.
+  async reattachTools(
+    request: SessionOpenWireRequest,
+    pluginIds: readonly string[],
+  ): Promise<ReattachedAgentTools[]> {
+    const input: SessionOpenWireRequest = {
+      ...request,
+      reason: "refresh",
+      tools: [],
+      mcpServers: {},
+    };
+    // Detaching the agent drops this record, so a replay that fails after its agent closed records nothing.
+    const failed = this.failedToolReplays.get(request.agentId) ?? new Map<string, string>();
+    this.failedToolReplays.set(request.agentId, failed);
+    const replayed: ReattachedAgentTools[] = [];
+    for (const pluginId of pluginIds) {
+      const loaded = this.plugins.get(pluginId);
+      if (!loaded || failed.get(pluginId) === loaded.instanceId) continue;
+      if (!loaded.child || !loaded.hooks.includes("agent.open.before")) {
+        replayed.push({ pluginId, tools: [] });
+        continue;
+      }
+      try {
+        const output = await this.request(loaded, {
+          type: "hook",
+          requestId: randomUUID(),
+          name: "agent.open.before",
+          input,
+        });
+        const opened = await validateBeforeResult("agent.open.before", input, output);
+        const tools: AttachedAgentTool[] = [];
+        this.collectAgentTools(tools, loaded, opened.tools);
+        replayed.push({ pluginId, tools });
+      } catch (error) {
+        // Left out like a stopped plugin. The next instance of this plugin is replayed again.
+        failed.set(pluginId, loaded.instanceId);
+        this.logger.warn(
+          { err: error, pluginId, agentId: request.agentId },
+          "Plugin tool reattach failed",
+        );
+      }
+    }
+    return replayed;
+  }
+
+  /** Drops an agent's tools inside the named plugins, or inside every plugin when none are named. */
+  detachTools(agentId: string, pluginIds?: readonly string[]): void {
+    if (!pluginIds) this.failedToolReplays.delete(agentId);
     for (const loaded of this.plugins.values()) {
+      if (pluginIds && !pluginIds.includes(loaded.id)) continue;
       if (loaded.child) void send(loaded.child, { type: "tools.detach", agentId }).catch(() => {});
     }
   }

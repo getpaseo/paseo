@@ -44,6 +44,7 @@ const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_ID
 interface PluginRuntimePort {
   subscribeSessionOpenChanges?: PluginRuntime["subscribeSessionOpenChanges"];
   isToolPluginAvailable?: PluginRuntime["isToolPluginAvailable"];
+  reattachTools?: PluginRuntime["reattachTools"];
   callTool?: PluginRuntime["callTool"];
   detachTools?: PluginRuntime["detachTools"];
   emit?: PluginLifecycle["emit"];
@@ -160,8 +161,12 @@ export class PluginService {
     return this.runtime.isToolPluginAvailable?.(pluginId, pluginInstanceId) ?? false;
   };
 
-  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId) => {
-    this.runtime.detachTools?.(agentId);
+  readonly reattachTools: PluginAgentToolsRuntime["reattachTools"] = async (request, pluginIds) => {
+    return (await this.runtime.reattachTools?.(request, pluginIds)) ?? [];
+  };
+
+  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId, pluginIds) => {
+    this.runtime.detachTools?.(agentId, pluginIds);
   };
 
   readonly callTool: PluginAgentToolsRuntime["callTool"] = async (
