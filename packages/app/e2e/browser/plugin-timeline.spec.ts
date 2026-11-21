@@ -6,6 +6,7 @@ import {
   requestPluginTimeline,
   interactWithStreamingCard,
   expectWholeCompletedCard,
+  expectCachedCatalogTimelineBeforeNetworkRefresh,
   expectBothConsecutiveTools,
   trackPluginChatRecovery,
   reconnectPluginChat,
@@ -54,4 +55,16 @@ test("inline-thinking example renders a streamed thought through host UI", async
   page,
 }, info) => {
   await viewInlineThinkingExample(page, info);
+});
+
+test("reopens transformed timeline from the cached catalog before network refresh", async ({
+  page,
+}, info) => {
+  const gate = await installDaemonWebSocketGate(page);
+  await withTimelinePlugin(page, info, "assistant", async (agent) => {
+    await requestPluginTimeline(agent);
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expectWholeCompletedCard(page);
+    await expectCachedCatalogTimelineBeforeNetworkRefresh(page, info, gate);
+  });
 });
