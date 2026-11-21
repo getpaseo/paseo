@@ -1,1 +1,0 @@
-{"t_ms": 291, "stream": "stdin", "data": {"event": "user", "message": {"content": "Use define_subagent to define a small subagent named phase0-counter that answers arithmetic only, then invoke_subagent to ask it 2+2. Report its answer. Do not use shell."}}}

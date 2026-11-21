@@ -185,13 +185,15 @@ function onLogin(report: UsageReportEntry, login: string): UsageReportEntry {
 }
 
 export function expiredLogin(report: UsageReportEntry): UsageReportEntry {
+  const fetchedAt = Date.now();
   return {
     ...report,
+    fetchedAt: new Date(fetchedAt).toISOString(),
     report: {
       status: "unavailable",
       problem: {
         kind: "expired",
-        expiresAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+        expiresAt: new Date(fetchedAt - 2 * 60 * 60_000).toISOString(),
         refreshedBy: "claude",
       },
     },

@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { CornerUpLeft } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { StatusIcon } from "@/components/status-icon";
 import { Button } from "@/components/ui/button";
 import { FOOTER_HEIGHT } from "@/constants/layout";
@@ -37,7 +38,7 @@ export function ParentAgentCallout({
   const parent = useParentAgent(serverId, parentAgentId);
 
   return (
-    <View style={styles.rail}>
+    <View style={styles.rail} dataSet={CHAT_COLUMN_RAIL_DATASET}>
       <View style={styles.callout} testID="parent-agent-callout">
         <StatusIcon statusBucket={parent.statusBucket} size={ICON_SIZE} backdrop="surface1">
           <ThemedParentIcon icon={parent.icon} size={ICON_SIZE} uniProps={foregroundColorMapping} />

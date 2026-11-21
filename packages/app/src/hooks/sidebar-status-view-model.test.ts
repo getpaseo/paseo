@@ -99,6 +99,36 @@ describe("buildStatusGroups", () => {
     expect(groups[0]?.rows.map((r) => r.workspaceKey)).toEqual(["srv:new", "srv:mid", "srv:old"]);
   });
 
+  it("lifts a parent within its bucket by a nested workspace's newer status time", () => {
+    const parentEnteredAt = d("2026-01-01T00:00:00Z");
+    const workspaces = [
+      ws({
+        workspaceKey: "srv:other",
+        statusBucket: "done",
+        statusEnteredAt: d("2026-06-01T00:00:00Z"),
+        name: "other",
+      }),
+      ws({
+        workspaceKey: "srv:parent",
+        statusBucket: "done",
+        statusEnteredAt: parentEnteredAt,
+        name: "parent",
+      }),
+    ];
+
+    const groups = buildStatusGroups(
+      workspaces,
+      emptyProjectNames,
+      i18n.t,
+      new Map([["srv:parent", d("2026-11-01T00:00:00Z").getTime()]]),
+    );
+
+    expect(groups.map((group) => group.bucket)).toEqual(["done"]);
+    expect(groups[0]?.rows.map((row) => row.workspaceKey)).toEqual(["srv:parent", "srv:other"]);
+    expect(groups[0]?.rows[0]?.statusBucket).toBe("done");
+    expect(groups[0]?.rows[0]?.statusEnteredAt).toBe(parentEnteredAt);
+  });
+
   it("sorts null timestamps last within a bucket", () => {
     const workspaces = [
       ws({ workspaceKey: "srv:null-a", statusBucket: "done", statusEnteredAt: null }),

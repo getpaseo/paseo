@@ -82,16 +82,22 @@ describe("ComposerControls", () => {
     expect(trigger.textContent).not.toContain("Large");
   });
 
-  it("flips a toggle on press in the toolbar", () => {
+  it("keeps the toolbar toggle name and flips it on press", () => {
     const onChange = vi.fn();
     renderControls([{ ...base, type: "toggle", value: true, onChange }]);
-    fireEvent.click(screen.getByRole("button", { name: "Context" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Context$/ }));
     expect(onChange).toHaveBeenCalledWith(false);
   });
 
   it("lists a toggle as On or Off in the sheet", () => {
     renderControls([{ ...base, type: "toggle", value: true, onChange: () => undefined }], "sheet");
     expect(screen.getByRole("button", { name: "Context" }).textContent).toContain("On");
+  });
+
+  it("keeps the provider's tooltip for a toolbar toggle", () => {
+    const tooltip = "Fast is enabled but does not apply to this model.";
+    renderControls([{ ...base, type: "toggle", value: true, tooltip, onChange: () => undefined }]);
+    expect(screen.getByRole("button", { name: tooltip })).toBeDefined();
   });
 
   it("gives a sheet row's value the row's width, so a short value is not truncated", () => {
@@ -157,6 +163,8 @@ describe("ComposerControls", () => {
 });
 
 const FAST_ON = { fast_mode: true };
+const ULTRACODE_ON = { ultracode: true };
+const ignoreOption = () => undefined;
 
 describe("provider option controls", () => {
   const fastMode: AgentOptionControl = {
@@ -173,7 +181,11 @@ describe("provider option controls", () => {
     onSetOption: (key: string, value: unknown) => void;
   }) {
     const optionControls = React.useMemo(
-      () => ({ controls: [fastMode], options, onSetOption }),
+      () => ({
+        controls: [fastMode, { key: "ultracode", label: "Ultracode", type: "toggle" as const }],
+        options,
+        onSetOption,
+      }),
       [onSetOption, options],
     );
     const items = useAgentControlItems({
@@ -196,5 +208,10 @@ describe("provider option controls", () => {
     render(<OptionControls options={FAST_ON} onSetOption={onSetOption} />);
     fireEvent.click(screen.getByTestId("agent-feature-fast_mode"));
     expect(writes).toEqual([["fast_mode", false]]);
+  });
+
+  it("announces the state of a provider toggle with no custom tooltip", () => {
+    render(<OptionControls options={ULTRACODE_ON} onSetOption={ignoreOption} />);
+    expect(screen.getByRole("button", { name: "Ultracode: On" })).toBeDefined();
   });
 });

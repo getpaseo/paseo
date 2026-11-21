@@ -179,6 +179,19 @@ export declare const SidebarRow: ComponentType<SidebarRowProps>;
 /** A line between groups of rows. Render it from a sidebar item's `Component`. */
 export declare const SidebarSeparator: ComponentType;
 
+export type WorkspaceRowBadgeTone = "muted" | "success" | "warning" | "danger" | "info";
+export interface WorkspaceRowBadgeProps {
+  /** A Lucide icon name, inline SVG, or a component. */
+  icon?: SidebarIcon;
+  label?: string;
+  /** Default "muted". */
+  tone?: WorkspaceRowBadgeTone;
+  /** Defaults to `label`, then the item's `title`. */
+  accessibilityLabel?: string;
+}
+/** One item on a sidebar workspace row's meta line. Render it from a workspace row badge item's `Component`. */
+export declare const WorkspaceRowBadge: ComponentType<WorkspaceRowBadgeProps>;
+
 /** Resolves a tab's label, icon, unsaved state and status as the app's tab strip shows them. */
 export declare const WorkspaceTabPresentation: ComponentType<{
   tab: PluginWorkspaceTab;

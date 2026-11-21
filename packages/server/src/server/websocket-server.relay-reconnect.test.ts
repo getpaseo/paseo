@@ -269,6 +269,7 @@ function createServer(options?: {
     "srv_test",
     createStub<AgentManager>({
       subscribe: vi.fn(() => () => {}),
+      onStop: () => () => {},
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
