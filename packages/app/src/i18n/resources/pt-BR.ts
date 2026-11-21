@@ -2550,6 +2550,15 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      addProject: {
+        title: "Adicionar projeto",
+        startOnDirectorySearch: {
+          label: "Abrir na busca de diretório",
+          inlineLabel: "Sempre abrir na busca de diretório",
+          description:
+            "Adicionar projeto começa na busca de diretório. Voltar retorna às outras opções.",
+        },
+      },
       sendShortcut: {
         label: "Atalho de envio",
         options: {

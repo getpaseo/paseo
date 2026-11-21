@@ -2644,6 +2644,15 @@ export const en = {
           queue: "Queue",
         },
       },
+      addProject: {
+        title: "Add project",
+        startOnDirectorySearch: {
+          label: "Open on directory search",
+          inlineLabel: "Always open on directory search",
+          description:
+            "Add project starts on Search for directory. Back returns to the other options.",
+        },
+      },
       sendShortcut: {
         label: "Send shortcut",
         options: {
