@@ -848,6 +848,14 @@ export interface RetiredInternalAgent {
   lastMessage: string | null;
 }
 
+// A reload that succeeds is the newest outcome, so an unread error from before it no longer marks
+// the agent failed; other unread attention carries over.
+function attentionAfterReload(attention: ManagedAgent["attention"]): ManagedAgent["attention"] {
+  return attention.requiresAttention && attention.attentionReason === "error"
+    ? { requiresAttention: false }
+    : attention;
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
@@ -1918,7 +1926,7 @@ export class AgentManager {
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
-    const preservedAttention = existing.attention;
+    const preservedAttention = attentionAfterReload(existing.attention);
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
