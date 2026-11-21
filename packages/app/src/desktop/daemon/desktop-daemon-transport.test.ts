@@ -8,6 +8,21 @@ import { createFakeLocalDaemonTransportRpc } from "./test-local-daemon-transport
 const LOCAL_URL = "paseo+desktop://socket?path=%2Ftmp%2Fpaseo.sock";
 
 describe("desktop-daemon-transport", () => {
+  it("delivers empty text frames through the desktop bridge", async () => {
+    const rpc = createFakeLocalDaemonTransportRpc();
+    const factory = createDesktopDaemonTransportFactory(rpc)!;
+    const transport = factory({ url: LOCAL_URL });
+    const messages: { data: unknown; isBinary: boolean }[] = [];
+    transport.onMessage((data, isBinary) => messages.push({ data, isBinary }));
+    rpc.resolveListen(() => undefined);
+    await Promise.resolve();
+    const sessionId = rpc.openCalls[0]!.sessionId;
+    rpc.emitEvent({ sessionId, kind: "open" });
+    rpc.emitEvent({ sessionId, kind: "message", text: "" });
+    expect(messages).toEqual([{ data: "", isBinary: false }]);
+    transport.close();
+  });
+
   it("uses the main-process event as readiness when it races registration", async () => {
     const rpc = createFakeLocalDaemonTransportRpc();
     const cleanup = vi.fn();

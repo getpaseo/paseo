@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 import {
   buildSshArgs,
   createLocalTransportManager,
@@ -7,6 +9,7 @@ import {
   resolveSshFailureDetail,
   type TransportEndpoint,
   type TransportEventPayload,
+  type TransportTarget,
   type TransportWebSocket,
 } from "./local-transport";
 
@@ -122,6 +125,83 @@ describe("Remote SSH desktop transport", () => {
 });
 
 describe("local transport session lifecycle", () => {
+  it.each<TransportTarget>([
+    SESSION_INPUT.target,
+    { transportType: "socket", transportPath: "/tmp/paseo-test.sock" },
+    { transportType: "pipe", transportPath: "\\\\.\\pipe\\paseo-test" },
+  ])(
+    "preserves real WebSocket text and binary frames for $transportType sessions",
+    async (target) => {
+      const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      await once(server, "listening");
+      const address = server.address();
+      if (typeof address === "string" || address === null) {
+        throw new Error("Expected a TCP WebSocket address");
+      }
+      const events: TransportEventPayload[] = [];
+      let receiveMessage: (() => void) | undefined;
+      const manager = createLocalTransportManager({
+        resolveEndpoint: async () => ({
+          url: `ws://127.0.0.1:${address.port}/ws`,
+          close: () => undefined,
+          failureDetail: () => null,
+        }),
+        createWebSocket: (url) => new WebSocket(url),
+        scheduleTimeout: () => () => undefined,
+        emitEvent: (event) => {
+          events.push(event);
+          receiveMessage?.();
+        },
+      });
+      try {
+        const connected = once(server, "connection");
+        const opened = new Promise<void>((resolve) => {
+          receiveMessage = resolve;
+        });
+        manager.open({ ...SESSION_INPUT, target });
+        const [peer] = await connected;
+        await opened;
+        for (const text of ['{"sessions":[]}', "导入会话 🐈 café", ""]) {
+          const received = new Promise<void>((resolve) => {
+            receiveMessage = resolve;
+          });
+          peer.send(text);
+          await received;
+          expect(events.at(-1)).toEqual({
+            sessionId: SESSION_INPUT.sessionId,
+            kind: "message",
+            text,
+          });
+        }
+        for (const bytes of [Buffer.from([0, 255, 128, 1]), Buffer.from("会话"), Buffer.alloc(0)]) {
+          const received = new Promise<void>((resolve) => {
+            receiveMessage = resolve;
+          });
+          peer.send(bytes);
+          await received;
+          expect(events.at(-1)).toEqual({
+            sessionId: SESSION_INPUT.sessionId,
+            kind: "message",
+            binaryBase64: bytes.toString("base64"),
+          });
+        }
+        const textReceived = once(peer, "message");
+        await manager.send({ sessionId: SESSION_INPUT.sessionId, text: "发往 daemon" });
+        const [textBytes, textIsBinary] = await textReceived;
+        expect([textBytes.toString(), textIsBinary]).toEqual(["发往 daemon", false]);
+
+        const binaryReceived = once(peer, "message");
+        await manager.send({ sessionId: SESSION_INPUT.sessionId, binaryBase64: "AP+A" });
+        const [binaryBytes, binaryIsBinary] = await binaryReceived;
+        expect([binaryBytes, binaryIsBinary]).toEqual([Buffer.from([0, 255, 128]), true]);
+      } finally {
+        manager.closeAll();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
   it("releases an opening transport when its setup deadline expires", async () => {
     const firstEndpoint = createEndpoint();
     const secondEndpoint = createEndpoint();
