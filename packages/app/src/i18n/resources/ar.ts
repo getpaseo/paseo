@@ -2471,6 +2471,12 @@ export const ar: TranslationResources = {
         title: "الإملاء",
         enabled: "الإملاء",
         enabledHint: "تحدّث في مربع الرسالة بدلًا من الكتابة",
+        wrapEnabled: "وضع الإملاء في كتلة",
+        mergeConsecutive: "دمج الإملاءات المتتالية",
+        markers: "علامات الكتلة",
+        prefix: "البادئة",
+        suffix: "اللاحقة",
+        resetMarkers: "استعادة العلامات الافتراضية",
       },
       voiceMode: {
         title: "وضع الصوت",

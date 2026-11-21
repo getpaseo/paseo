@@ -29,9 +29,31 @@ export const SpeechTtsSettingsSchema = z.union([
   z.object({ provider: z.string(), ...ModelFields }).passthrough(),
 ]);
 
+const DictationWrapSettingsSchema = z.object({
+  enabled: z.boolean(),
+  prefix: z.string(),
+  suffix: z.string(),
+  mergeConsecutive: z.boolean(),
+});
+
+export type DictationWrapSettings = z.infer<typeof DictationWrapSettingsSchema>;
+
+export const DEFAULT_DICTATION_WRAP: Readonly<DictationWrapSettings> = {
+  enabled: true,
+  prefix: "```speech-to-text\n",
+  suffix: "\n```",
+  mergeConsecutive: true,
+};
+
 export const SpeechSettingsSchema = z
   .object({
-    dictation: z.object({ enabled: z.boolean(), stt: SpeechSttSettingsSchema }).passthrough(),
+    dictation: z
+      .object({
+        enabled: z.boolean(),
+        stt: SpeechSttSettingsSchema,
+        wrap: DictationWrapSettingsSchema.optional(),
+      })
+      .passthrough(),
     voiceMode: z
       .object({
         enabled: z.boolean(),
@@ -104,6 +126,14 @@ export const SpeechSettingsPatchSchema = z
       .object({
         enabled: z.boolean().nullable().optional(),
         stt: SpeechSttSettingsPatchSchema.optional(),
+        wrap: z
+          .object({
+            enabled: z.boolean().nullable().optional(),
+            prefix: z.string().nullable().optional(),
+            suffix: z.string().nullable().optional(),
+            mergeConsecutive: z.boolean().nullable().optional(),
+          })
+          .optional(),
       })
       .passthrough()
       .optional(),

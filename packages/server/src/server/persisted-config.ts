@@ -138,6 +138,15 @@ const FeatureDictationSchema = z
   .object({
     enabled: z.boolean().optional(),
     stt: SpeechSttConfigSchema.optional(),
+    wrap: z
+      .object({
+        enabled: z.boolean().optional(),
+        prefix: z.string().optional(),
+        suffix: z.string().optional(),
+        mergeConsecutive: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

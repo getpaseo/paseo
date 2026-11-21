@@ -118,6 +118,8 @@ Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain wher
 
 Voice is configured through `features.dictation` and `features.voiceMode`. Provider credentials and options live inline at `features.dictation.stt`, `features.voiceMode.stt`, and `features.voiceMode.tts`.
 
+For `features.dictation.wrap`, see [Dictation blocks](/docs/voice#dictation-blocks).
+
 For voice philosophy, architecture, and complete local/OpenAI setup examples, see [Voice docs](/docs/voice).
 
 ## Bundled web UI
