@@ -50,6 +50,7 @@ import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import { convertLegacyOptions } from "./option-controls.js";
 import { ToolPolicyUnsupportedError, mergeProviderOptions } from "./provider-options.js";
+import { ToolFreeAgentError, assertToolFreeRequest } from "./tool-free.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -78,6 +79,8 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   supportsExactMcpPreapproval: boolean;
+  /** True when this provider, as configured, enforces tool-free agents (`toolPolicy.toolFree`). */
+  supportsToolFree: boolean;
   applyToolPolicy: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -146,13 +149,36 @@ interface ResolvedProvider {
   contract: ProviderContract;
 }
 
+interface ToolFreeLaunchInput {
+  provider: string;
+  runtimeSettings: ProviderRuntimeSettings | undefined;
+  providerOptions: ProviderOptions | undefined;
+}
+
 interface ProviderContract {
   supportsExactMcpPreapproval: boolean;
   applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
+  /**
+   * Present only for adapters that enforce tool-free agents before any tool can run. Throws when
+   * the provider's launch configuration or the agent's effective options would defeat that.
+   */
+  assertToolFreeLaunchable?: (input: ToolFreeLaunchInput) => void;
+  /** Why a provider that otherwise could cannot run tool-free agents, for the refusal. */
+  toolFreeUnsupportedReason?: string;
 }
 
+// Tool-free support is opt-in per adapter, and no built-in adapter opts in today. Claude's
+// adapter proves an empty tool surface and an empty hook listing before each prompt (see
+// providers/claude/tool-free.ts), but Claude Code applies managed policy changes, hooks included,
+// while a session runs and ignores a hook's attempt to block them, so the check cannot keep a
+// managed hook from seeing a prompt it already passed. Codex, OpenCode, ACP, Pi, OMP and plugin
+// providers have no such check at all.
 const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
-  claude: { supportsExactMcpPreapproval: true },
+  claude: {
+    supportsExactMcpPreapproval: true,
+    toolFreeUnsupportedReason:
+      "Claude Code applies managed policy changes, including hooks, during a session and does not let them be blocked, so Paseo cannot keep a prompt away from managed hooks",
+  },
   codex: { supportsExactMcpPreapproval: true },
   opencode: { supportsExactMcpPreapproval: true },
 };
@@ -668,7 +694,11 @@ function createRegistryEntry(
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
+    supportsToolFree: isToolFreeLaunchable(provider, resolved),
     applyToolPolicy: (config, toolPolicy) => {
+      if (toolPolicy?.toolFree) {
+        return applyToolFreePolicy(provider, resolved, { ...config, toolPolicy });
+      }
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
         throw new ToolPolicyUnsupportedError(provider);
       }
@@ -728,6 +758,45 @@ function createRegistryEntry(
       };
     },
   };
+}
+
+function isToolFreeLaunchable(provider: AgentProvider, resolved: ResolvedProvider): boolean {
+  const assertLaunchable = resolved.contract.assertToolFreeLaunchable;
+  if (!assertLaunchable) return false;
+  try {
+    assertLaunchable({
+      provider,
+      runtimeSettings: resolved.runtimeSettings,
+      providerOptions: resolved.providerOptions,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applyToolFreePolicy(
+  provider: AgentProvider,
+  resolved: ResolvedProvider,
+  config: AgentSessionConfig,
+): AgentSessionConfig {
+  const assertLaunchable = resolved.contract.assertToolFreeLaunchable;
+  if (!assertLaunchable) {
+    const reason = resolved.contract.toolFreeUnsupportedReason;
+    throw new ToolFreeAgentError(
+      "provider_unsupported",
+      `Provider '${provider}' cannot run tool-free agents${reason ? `: ${reason}` : ""}`,
+      provider,
+    );
+  }
+  assertToolFreeRequest(config);
+  // The options the session will launch with are the config.json defaults plus the agent's own.
+  assertLaunchable({
+    provider,
+    runtimeSettings: resolved.runtimeSettings,
+    providerOptions: mergeProviderOptions(resolved.providerOptions, config.providerOptions),
+  });
+  return { ...config, toolPolicy: { preapproved: [], toolFree: true } };
 }
 
 function createResolvedProviderClient(

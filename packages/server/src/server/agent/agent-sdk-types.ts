@@ -143,6 +143,7 @@ export interface ProviderSnapshotEntry {
   description?: string;
   iconSvg?: string;
   defaultModeId?: string | null;
+  supportsToolFree?: boolean;
 }
 
 export interface AgentCreateConfigParent {
