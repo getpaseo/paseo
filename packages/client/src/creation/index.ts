@@ -68,7 +68,30 @@ export class CreationClient {
       const relativeCwd =
         agent && sourceCwd ? relativeDirectory(agent.config!.cwd, sourceCwd) : undefined;
       const workspace = await this.deps.legacyWorkspace(workspaceInput);
-      if (workspace.error || !workspace.workspace) return workspace;
+      if (workspace.error || !workspace.workspace) {
+        let creation = workspace.creation;
+        if (
+          !creation &&
+          workspace.error &&
+          ["unknown_branch", "branch_already_checked_out", "missing_checkout_target"].includes(
+            workspace.errorCode ?? "",
+          )
+        ) {
+          creation = {
+            kind: "workspace",
+            idempotencyKey: operation.key,
+            revision: 1,
+            phase: "failed",
+            workspaceId: null,
+            agentId: null,
+            error: workspace.error,
+            errorCode: workspace.errorCode,
+            outcomeUnknown: false,
+          };
+        }
+        if (creation) this.receive(creation);
+        return { ...workspace, ...(creation ? { creation } : {}) };
+      }
       this.receive({
         kind: "workspace",
         idempotencyKey: operation.key,

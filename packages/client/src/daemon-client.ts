@@ -14,7 +14,7 @@ import {
   decodeHostRouteFrame,
   type HostRouteFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { messageTooLargeError } from "./daemon-client-transport-utils.js";
+import { messageTooLargeError, MessageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
@@ -1104,6 +1104,14 @@ export class DaemonConnectionError extends Error {
   }
 }
 
+/** Local creation preflight failed before handing any creation to the transport. */
+export class CreationNotSentError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "CreationNotSentError";
+  }
+}
+
 class DaemonRpcError extends Error {
   readonly requestId: string;
   readonly requestType?: string;
@@ -2171,6 +2179,13 @@ export class DaemonClient {
       });
     try {
       return this.sendTransportFrame(JSON.stringify(message), submitted);
+    } catch (error) {
+      const creation =
+        messageType === "agent.create.request" ||
+        messageType === "create_agent_request" ||
+        messageType === "workspace.create.request";
+      if (creation && error instanceof MessageTooLargeError) throw new CreationNotSentError(error);
+      throw error;
     } finally {
       this.endTraceSection(isOpen);
     }
@@ -3459,6 +3474,41 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  /** Observe a saved operation without retrying its side effects. Legacy hosts cannot reconcile it. */
+  async waitForCreation(
+    kind: CreationSnapshot["kind"],
+    idempotencyKey: string,
+    onEvent: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot | null> {
+    if (this.lastServerInfoMessage?.features?.creationLifecycle !== true) return null;
+    const observation = this.observe("creation.subscribe.response", {
+      type: "creation.subscribe.request",
+      kind,
+      idempotencyKey,
+    });
+    const result = new Promise<CreationSnapshot | null>((resolve, reject) => {
+      const accept = (snapshot: CreationSnapshot | null) => {
+        if (!snapshot) {
+          resolve(null);
+          return;
+        }
+        onEvent(snapshot);
+        if (snapshot.phase === "failed" || snapshot.phase === "completed") resolve(snapshot);
+      };
+      observation.subscribe({
+        snapshot: (payload) => accept(payload.snapshot),
+        update: (message) => {
+          if (message.type === "workspace.create.update" || message.type === "agent.create.update")
+            accept(message.payload);
+        },
+        error: reject,
+      });
+    });
+    return result.finally(() => {
+      void observation.release().catch(() => undefined);
+    });
+  }
+
   // Entity metadata is gated once at the transport boundary.
   private requireEntityMetadata(): void {
     if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
@@ -3489,20 +3539,26 @@ export class DaemonClient {
   }
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
-    if (options.git !== undefined || options.worktreeName !== undefined) {
-      throw new Error(
-        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
-      );
+    let prepared: CreateAgentRequestOptions;
+    try {
+      if (options.git !== undefined || options.worktreeName !== undefined) {
+        throw new Error(
+          "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
+        );
+      }
+      if (options.background !== undefined) this.requireBackgroundCreation(options);
+      if (options.metadata !== undefined) this.requireEntityMetadata();
+      const config = resolveAgentConfig(options);
+      prepared = {
+        ...options,
+        config: this.carriesLegacyOptions(config)
+          ? await this.routeLegacyCreateConfig(config)
+          : config,
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    if (options.background !== undefined) this.requireBackgroundCreation(options);
-    if (options.metadata !== undefined) this.requireEntityMetadata();
-    const config = resolveAgentConfig(options);
-    const result = await this.creations.createAgent({
-      ...options,
-      config: this.carriesLegacyOptions(config)
-        ? await this.routeLegacyCreateConfig(config)
-        : config,
-    });
+    const result = await this.creations.createAgent(prepared);
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
   }
@@ -5485,21 +5541,28 @@ export class DaemonClient {
     input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
-    const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
-    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
-    if (input.agent?.background !== undefined)
-      throw new Error("Configure background on the workspace, not its initial agent.");
-    if (input.metadata !== undefined || input.agent?.metadata !== undefined)
-      this.requireEntityMetadata();
-    let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
-    if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
-      agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+    let resolvedRequestId: string;
+    let prepared: CreateWorkspaceRequestOptions;
+    try {
+      resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+      if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+      if (input.agent?.background !== undefined)
+        throw new Error("Configure background on the workspace, not its initial agent.");
+      if (input.metadata !== undefined || input.agent?.metadata !== undefined)
+        this.requireEntityMetadata();
+      let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+      if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
+        agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+      }
+      prepared = {
+        ...input,
+        requestId: resolvedRequestId,
+        ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    const result = await this.creations.createWorkspace({
-      ...input,
-      requestId: resolvedRequestId,
-      ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
-    });
+    const result = await this.creations.createWorkspace(prepared);
     return {
       ...result,
       workspace: result.workspace ?? null,

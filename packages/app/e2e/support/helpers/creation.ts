@@ -21,6 +21,33 @@ import { revealSidebarProjectWorkspaces } from "./sidebar";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 
+/** Negotiate and verify a creation protocol against the real daemon on the next connection. */
+export async function useCreationProtocol(page: Page, legacy: boolean) {
+  const frames = await loadSessionMessageReaders();
+  let agentRequests = 0;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => {
+      if (frames.client(frame)?.type === (legacy ? "create_agent_request" : "agent.create.request"))
+        agentRequests++;
+      server.send(frame);
+    });
+    server.onMessage((frame) => {
+      if (typeof frame !== "string") return browser.send(frame);
+      const envelope = JSON.parse(frame) as {
+        message?: { payload?: { status?: string; features?: Record<string, unknown> } };
+        payload?: { status?: string; features?: Record<string, unknown> };
+      };
+      const payload = envelope.message?.payload ?? envelope.payload;
+      if (payload?.status === "server_info" && payload.features) {
+        payload.features.creationLifecycle = !legacy;
+        browser.send(JSON.stringify(envelope));
+      } else browser.send(frame);
+    });
+  });
+  return { expectAgentRequest: () => expect(agentRequests).toBe(1) };
+}
+
 /** Capture the submitted agent options; optionally stop provisioning for wire-only assertions. */
 export async function captureWorkspaceAgentRequest(page: Page, options: { block: boolean }) {
   const frames = await loadSessionMessageReaders();
@@ -152,6 +179,16 @@ export async function createCreationScenario(page: Page) {
       await openNewWorkspaceComposer(page, project);
       await selectWorkspaceIsolation(page, isolation);
     },
+    async leaveWorkspaceForm() {
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: project.workspaceId,
+      });
+    },
+    async returnToWorkspaceForm() {
+      await openNewWorkspaceComposer(page, project);
+    },
     async openAgentDraft() {
       await gotoWorkspace(page, project.workspaceId);
       await createAgentTabFromMenu(page);
@@ -231,6 +268,10 @@ export async function createCreationScenario(page: Page) {
     },
     async expectOneCreatedWorkspace() {
       await expect(page).toHaveURL(/\/workspace\//);
+      const workspaces = await this.expectCreatedWorkspaceCount(1);
+      workspaceId = workspaces[0]!.id;
+    },
+    async expectCreatedWorkspaceCount(count: number) {
       await requests.settled();
       const workspaces = (await project.client.fetchWorkspaces()).entries.filter(
         (workspace) =>
@@ -238,8 +279,8 @@ export async function createCreationScenario(page: Page) {
           workspace.id !== project.workspaceId &&
           !evictionWorkspaceIds.has(workspace.id),
       );
-      expect(workspaces).toHaveLength(1);
-      workspaceId = workspaces[0]!.id;
+      expect(workspaces).toHaveLength(count);
+      return workspaces;
     },
     async expectAgentCount(count: number) {
       await requests.settled();

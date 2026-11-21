@@ -1,4 +1,4 @@
-import type { PersistStorage } from "zustand/middleware";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 
 export const DRAFT_PERSIST_INTERVAL_MS = 200;
 export interface PersistenceScheduler {
@@ -9,6 +9,7 @@ export interface PersistenceScheduler {
 
 export interface DraftPersistStorage<T> extends PersistStorage<T> {
   flush: () => Promise<void>;
+  checkpoint: (name: string, value: StorageValue<T>) => Promise<void>;
 }
 
 let nextSystemTimerId = 0;
@@ -54,6 +55,30 @@ export function createDraftPersistStorage<T>(
   let pending: { name: string; value: Parameters<typeof storage.setItem>[1] } | null = null;
   let timer: unknown = null;
   let lastWriteAt = -Infinity;
+  let writes: Promise<void> | null = null;
+
+  function track(pendingWrite: Promise<void>): Promise<void> {
+    writes = pendingWrite;
+    void pendingWrite
+      .finally(() => {
+        if (writes === pendingWrite) writes = null;
+      })
+      .catch(() => undefined);
+    return pendingWrite;
+  }
+
+  function enqueue(operation: () => unknown): Promise<void> {
+    if (writes)
+      return track(
+        writes
+          .catch(() => undefined)
+          .then(operation)
+          .then(() => undefined),
+      );
+    const result = operation();
+    if (result === undefined) return Promise.resolve();
+    return track(Promise.resolve(result).then(() => undefined));
+  }
 
   const cancelTimer = () => {
     if (timer !== null) {
@@ -70,13 +95,19 @@ export function createDraftPersistStorage<T>(
     }
     lastWriteAt = scheduler.now();
     try {
-      await storage.setItem(write.name, write.value);
+      await enqueue(() => storage.setItem(write.name, write.value));
     } catch (error) {
       console.warn("[DraftStore] Failed to persist draft checkpoint", error);
     }
   };
 
   return {
+    checkpoint: async (name, value) => {
+      cancelTimer();
+      pending = null;
+      lastWriteAt = scheduler.now();
+      await enqueue(() => storage.setItem(name, value));
+    },
     getItem: (name) => storage.getItem(name),
     setItem: (name, value) => {
       pending = { name, value };
@@ -92,7 +123,7 @@ export function createDraftPersistStorage<T>(
       cancelTimer();
       pending = null;
       lastWriteAt = scheduler.now();
-      return storage.removeItem(name);
+      return enqueue(() => storage.removeItem(name));
     },
     flush,
   };

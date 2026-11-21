@@ -210,7 +210,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (lifecycle: "sent" | "abandoned") => {
       textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
-      if (lifecycle === "sent") useDraftStore.getState().clearDraftMetadata({ draftKey });
+      if (lifecycle === "sent") {
+        useDraftStore.getState().clearDraftMetadata({ draftKey });
+        useDraftStore.getState().clearDraftCreationId({ draftKey });
+      }
     },
     [draftKey, textPublication],
   );

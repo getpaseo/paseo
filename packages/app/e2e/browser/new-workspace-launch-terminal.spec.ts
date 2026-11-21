@@ -5,6 +5,7 @@ import {
   expectNewWorkspaceDraft,
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
+  selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
 import {
   composerLocator,
@@ -12,6 +13,8 @@ import {
   exitComposerFullscreen,
   expectComposerFullscreenControls,
   resizeComposerViewport,
+  attachComposerTestImage,
+  expectAttachmentPill,
 } from "../support/helpers/composer";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
@@ -22,6 +25,7 @@ import {
   fillTerminalPrompt,
   launchTrigger,
   selectLaunchOption,
+  rejectTerminalCreation,
   submitTerminalLaunch,
   terminalLaunchSubmit,
   terminalPromptInput,
@@ -67,6 +71,42 @@ test.describe("New workspace: launching a terminal", () => {
     await workspace?.cleanup();
   });
 
+  test("a failed terminal launch can become the first chat agent after reload", async ({
+    page,
+  }) => {
+    await rejectTerminalCreation(page);
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, workspace);
+    await selectWorkspaceIsolation(page, "local");
+    await selectLaunchOption(page, "blank");
+    await submitTerminalLaunch(page);
+    await expect(
+      page.getByText("Terminal creation failed for test").filter({ visible: true }).first(),
+    ).toBeVisible();
+    const created = (await workspace.client.fetchWorkspaces()).entries.filter(
+      (entry) => entry.projectId === workspace.projectId && entry.id !== workspace.workspaceId,
+    );
+    expect(created).toHaveLength(1);
+    await page.reload();
+    await selectLaunchOption(page, "chat");
+    await fillNewWorkspaceDraft(page, "First chat after terminal failure");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(
+      page
+        .getByTestId("user-message")
+        .filter({ visible: true, hasText: "First chat after terminal failure" }),
+    ).toBeVisible();
+    const agents = (await workspace.client.fetchAgents()).entries.filter(
+      (entry) => entry.agent.workspaceId === created[0]!.id,
+    );
+    expect(agents).toHaveLength(1);
+    const after = (await workspace.client.fetchWorkspaces()).entries.filter(
+      (entry) => entry.projectId === workspace.projectId && entry.id !== workspace.workspaceId,
+    );
+    expect(after.map((entry) => entry.id)).toEqual([created[0]!.id]);
+  });
+
   test("a profile that takes a prompt launches with it as its trailing argument; a profile without the sentinel launches bare from Launch", async ({
     page,
   }) => {
@@ -79,6 +119,8 @@ test.describe("New workspace: launching a terminal", () => {
         projectKey: workspace.projectKey,
         projectDisplayName: workspace.projectDisplayName,
       });
+      await fillNewWorkspaceDraft(page, "Saved chat draft, not a terminal command");
+      await attachComposerTestImage(page);
       await selectLaunchOption(page, PROMPT_PROFILE.id);
       await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
 
@@ -90,12 +132,17 @@ test.describe("New workspace: launching a terminal", () => {
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "captured: fix the flaky test");
     });
+    const firstWorkspaceUrl = page.url();
 
     await test.step("a profile without the sentinel is read-only and shows the resolved command", async () => {
       await openNewWorkspaceComposer(page, {
         projectKey: workspace.projectKey,
         projectDisplayName: workspace.projectDisplayName,
       });
+      await page.reload();
+      await selectLaunchOption(page, "chat");
+      await expectNewWorkspaceDraft(page, "Saved chat draft, not a terminal command");
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
       await selectLaunchOption(page, BARE_PROFILE.id);
       await expect(terminalPromptInput(page)).toHaveCount(0);
       await expectTerminalPreviewCommand(page, "/bin/sh -c echo bare-launch-static-line; exec cat");
@@ -106,6 +153,7 @@ test.describe("New workspace: launching a terminal", () => {
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "bare-launch-static-line");
+      expect(page.url()).not.toBe(firstWorkspaceUrl);
     });
   });
 
