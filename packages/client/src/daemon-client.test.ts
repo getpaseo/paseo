@@ -8682,6 +8682,110 @@ test("usage request timeout detaches its update listener", async () => {
   }
 });
 
+test("发送消息在慢启动期间等待确认且只投递一次", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "slow_agent_start",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+
+  const send = client.sendAgentMessage("recipient", "continue", { messageId: "slow-start" });
+  const request = parseSentFrame(transport.sent[0]);
+  let settled = false;
+  const markSettled = () => {
+    settled = true;
+  };
+  void send.then(markSettled, markSettled);
+
+  await vi.advanceTimersByTimeAsync(60_001);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(34_999);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "send_agent_message_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "recipient",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(send).resolves.toEqual({});
+  expect(client.isConnected).toBe(true);
+  const requests = transport.sent.filter(
+    (frame) => JSON.parse(assertStr(frame)).type === "session",
+  );
+  expect(requests.map(parseSentFrame)).toEqual([request]);
+});
+
+test("发送消息在服务端启动超时后保留具体错误", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent_start_error",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+
+  const send = client.sendAgentMessage("recipient", "continue");
+  const request = parseSentFrame(transport.sent[0]);
+  const error = "codex run did not start within 120 seconds (phase: run start)";
+  const rejected = expect(send).rejects.toThrow(error);
+  await vi.advanceTimersByTimeAsync(120_001);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "send_agent_message_response",
+      payload: { requestId: request.requestId, agentId: "recipient", accepted: false, error },
+    }),
+  );
+  await rejected;
+  expect(client.isConnected).toBe(true);
+});
+
+test("发送消息无响应时仍在 150 秒截止", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent_message_timeout",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+
+  let settled = false;
+  const outcome = client.sendAgentMessage("recipient", "continue").catch((error: unknown) => error);
+  void outcome.then(() => {
+    settled = true;
+    return undefined;
+  });
+  await vi.advanceTimersByTimeAsync(149_999);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await outcome).toMatchObject({
+    name: "DaemonConnectionError",
+    code: "DAEMON_REQUEST_TIMEOUT",
+    message: "No response to send_agent_message_request after 150000ms",
+  });
+  expect(client.isConnected).toBe(true);
+});
+
 test.each([false, true])(
   "agent provenance requires host support=%s while human sends remain compatible",
   async (supported) => {
