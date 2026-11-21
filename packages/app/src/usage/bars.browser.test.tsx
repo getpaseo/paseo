@@ -63,7 +63,29 @@ const narrowWindow: UsageWindow = {
   resetsAt: new Date(narrowReadingMs + 165.5 * 3_600_000).toISOString(),
 };
 
-it("keeps the French reset countdown and forecast apart in a narrow card", async () => {
+it("shows the forecast as one more datapoint after the reset countdown, in the same line", async () => {
+  act(() =>
+    root.render(
+      <UsageWindowBar
+        window={narrowWindow}
+        forecastAt={narrowForecastAt}
+        displayAs="used"
+        pinnable={false}
+        pinned={false}
+        onTogglePin={ignorePin}
+        pinLabel=""
+        pinTestID=""
+      />,
+    ),
+  );
+
+  const line = Array.from(container.querySelectorAll("*")).find((node) =>
+    node.textContent.startsWith("resets in"),
+  );
+  expect(line?.textContent).toMatch(/^resets in .+\s· .+\s· ~\d+% left at reset$/);
+});
+
+it("wraps the forecast below the countdown in a narrow French card instead of overlapping it", async () => {
   await i18n.changeLanguage("fr");
   container.style.width = "272px";
   act(() =>
@@ -91,5 +113,7 @@ it("keeps the French reset countdown and forecast apart in a narrow card", async
     return range.getBoundingClientRect();
   }
 
-  expect(textBounds("se réinitialise").right).toBeLessThan(textBounds("~").left);
+  const countdown = textBounds("se réinitialise");
+  const forecast = textBounds("~");
+  expect(forecast.left >= countdown.right || forecast.top >= countdown.bottom).toBe(true);
 });
