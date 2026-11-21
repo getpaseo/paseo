@@ -2,6 +2,7 @@ import type { Dirent, Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
+import { fuzzyScore } from "@getpaseo/protocol/search/fuzzy-score";
 import { scorePathMatch, type MatchScore } from "@getpaseo/protocol/search/text-match";
 import { isPathInsideRoot } from "./path.js";
 import { runGitCommand } from "./run-git-command.js";
@@ -113,11 +114,12 @@ const GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES = 256;
 // Windows does not reliably update directory mtime/ctime when children change,
 // so metadata cannot safely validate a cross-request listing cache there.
 const CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA = process.platform !== "win32";
-const MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER = 2;
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_TIER = 5;
+// Same 128-character window the VSCode scorer uses; a longer path only needs its tail.
+const FALLBACK_PATH_WINDOW = 128;
 
 // Each pending fs call holds one of libuv's shared threadpool threads (4 by default), and a read on
 // a hung mount or a protected folder never returns. Searches pile up while the user types, so they
@@ -354,9 +356,7 @@ async function searchTree(
     if (shouldSuggest(entry, input)) ranked.push(rank(entry, input));
     if (
       scanned >= input.maxEntriesScanned ||
-      (threshold &&
-        scanned >= threshold &&
-        hasConfidentResult(ranked, input.plan.normalizedQuery || input.plan.searchTerm))
+      (threshold && scanned >= threshold && hasConfidentResult(ranked))
     )
       break;
   }
@@ -477,10 +477,13 @@ function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
   const lowerPath = relativePath.toLowerCase();
   const query = getRankQuery(input);
   const segments = lowerPath === "." ? [] : lowerPath.split("/");
-  const pathScore = query ? scorePathMatch(query, relativePath) : null;
   const rankFields = input.plan.isPathQuery
-    ? rankPathMatch(pathScore)
-    : rankTextMatch({ query, lowerPath, pathFormat: input.pathFormat, pathScore, segments });
+    ? rankPathMatch(query ? scorePathMatch(query, relativePath) : null)
+    : rankTextMatch({
+        query,
+        relativePath,
+        segments: relativePath === "." ? [] : relativePath.split("/"),
+      });
   return {
     path: entry.visiblePath,
     kind: entry.kind,
@@ -504,16 +507,42 @@ function rankPathMatch(pathScore: MatchScore | null): RankFields {
   };
 }
 
+// The picker query is not always one word: `claude价格` means both "claude" and
+// "价格", typed without a space. Split Latin/digit runs from CJK runs so each becomes a
+// token that must match somewhere; treating it as one string let the compact fallback
+// drop the CJK part and rank unrelated `...code...` files.
+const QUERY_TOKEN = /[a-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
+const CJK_TOKEN = /^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+$/;
+
+function tokenizeFileQuery(query: string): string[] {
+  return query.match(QUERY_TOKEN) ?? [];
+}
+
+function scoreQueryToken(token: string, text: string): number | null {
+  // The token is lowercase; `text` keeps its original case so the scorer can still see
+  // camel-case boundaries. Lowercasing the text too would make `chatInput` and
+  // `chatin` tie.
+  const offset = text.toLowerCase().indexOf(token);
+  if (CJK_TOKEN.test(token)) {
+    // CJK has no camel case or separator boundary, so a substring hit is the honest
+    // signal; an earlier hit wins. Character walks over Chinese read as noise.
+    return offset >= 0 ? 100 - Math.min(offset, 80) : null;
+  }
+  if (offset >= 0) {
+    // An exact substring is a real hit even when it starts mid-word. VSCode rejects a
+    // weak first character, which would drop `arofo` -> `farofoo`; file search reads
+    // that as a miss. Keep VSCode's score when it has one and floor the rest.
+    return Math.max(fuzzyScore(token, text) ?? 0, 3 - Math.min(offset, 3));
+  }
+  return fuzzyScore(token, text);
+}
+
 function rankTextMatch(input: {
   query: string;
-  lowerPath: string;
-  pathFormat: DirectorySuggestionPathFormat;
-  pathScore: MatchScore | null;
+  relativePath: string;
   segments: string[];
 }): RankFields {
-  const { query, lowerPath, pathFormat, pathScore, segments } = input;
-  const offset = lowerPath.indexOf(query);
-  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
+  const { query, relativePath, segments } = input;
   if (!query) {
     return {
       matchTier: 3,
@@ -522,68 +551,53 @@ function rankTextMatch(input: {
       fuzzyScore: NO_FUZZY_SCORE,
     };
   }
-  const segmentRank = rankSegmentMatch({ query, segments, offset, fuzzyScore });
-  if (segmentRank) return segmentRank;
-  if (pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0) {
-    return {
-      matchTier: 3,
-      segmentIndex: NO_SEGMENT_INDEX,
-      matchOffset: offset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
-  }
-  if (fuzzyScore !== null) {
-    return {
-      matchTier: 4,
-      segmentIndex: NO_SEGMENT_INDEX,
-      matchOffset: offset >= 0 ? offset : NO_MATCH_OFFSET,
-      fuzzyScore,
-    };
-  }
-  return {
-    matchTier: pathScore ? Math.min(pathScore.tier, 4) : NO_MATCH_TIER,
-    segmentIndex: NO_SEGMENT_INDEX,
-    matchOffset: pathScore?.offset ?? NO_MATCH_OFFSET,
-    fuzzyScore: pathScore?.spread ?? NO_FUZZY_SCORE,
-  };
-}
 
-function rankSegmentMatch(input: {
-  query: string;
-  segments: string[];
-  offset: number;
-  fuzzyScore: number | null;
-}): RankFields | null {
-  const { query, segments, offset, fuzzyScore } = input;
-  const matchOffset = offset >= 0 ? offset : NO_MATCH_OFFSET;
-  const exact = findSegmentMatchIndex(segments, (segment) => segment === query);
-  if (exact >= 0) {
+  const tokens = tokenizeFileQuery(query);
+  if (tokens.length === 0) {
     return {
-      matchTier: 0,
-      segmentIndex: exact,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+      matchTier: NO_MATCH_TIER,
+      segmentIndex: NO_SEGMENT_INDEX,
+      matchOffset: NO_MATCH_OFFSET,
+      fuzzyScore: NO_FUZZY_SCORE,
     };
   }
-  const prefix = findSegmentMatchIndex(segments, (segment) => segment.startsWith(query));
-  if (prefix >= 0) {
-    return {
-      matchTier: 1,
-      segmentIndex: prefix,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
+
+  // Every token has to land somewhere. The name is what the row shows, so tokens that
+  // hit it make the entry rank above entries where a token only hit the directory.
+  const name = segments.at(-1) ?? "";
+  // A long path keeps its name at the end; the scorer only reads the first 128 characters.
+  const pathTail = relativePath.slice(-FALLBACK_PATH_WINDOW);
+  let nameHits = 0;
+  let score = 0;
+  for (const token of tokens) {
+    const inName = scoreQueryToken(token, name);
+    const inPath = inName === null ? scoreQueryToken(token, pathTail) : null;
+    if (inName === null && inPath === null) {
+      return {
+        matchTier: NO_MATCH_TIER,
+        segmentIndex: NO_SEGMENT_INDEX,
+        matchOffset: NO_MATCH_OFFSET,
+        fuzzyScore: NO_FUZZY_SCORE,
+      };
+    }
+    if (inName !== null) nameHits += 1;
+    score += inName ?? inPath ?? 0;
   }
-  const substring = findSegmentMatchIndex(segments, (segment) => segment.includes(query));
-  if (substring >= 0) {
-    return {
-      matchTier: 2,
-      segmentIndex: substring,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
+
+  let matchTier = 3;
+  if (nameHits === tokens.length) {
+    if (tokens.length > 1) matchTier = 2;
+    else if (name === query) matchTier = 0;
+    else if (name.startsWith(query)) matchTier = 1;
+    else matchTier = 2;
   }
-  return null;
+
+  return {
+    matchTier,
+    segmentIndex: NO_SEGMENT_INDEX,
+    matchOffset: NO_MATCH_OFFSET,
+    fuzzyScore: -score,
+  };
 }
 
 function sortAndFormat(
@@ -628,11 +642,10 @@ function compareKinds(left: DirectorySuggestionKind, right: DirectorySuggestionK
   return left === "directory" ? -1 : 1;
 }
 
-function hasConfidentResult(entries: RankedEntry[], query: string): boolean {
-  const maxFuzzyScore = query.length * MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER;
-  return entries.some(
-    (entry) => entry.matchTier < 4 || (entry.matchTier === 4 && entry.fuzzyScore <= maxFuzzyScore),
-  );
+function hasConfidentResult(entries: RankedEntry[]): boolean {
+  // Only an exact or prefix basename hit justifies stopping the walk early. Scattered
+  // or partial-name hits can still lose to a file further down the tree.
+  return entries.some((entry) => entry.matchTier < 2);
 }
 
 function suffixMatches(visiblePath: string, root: string, query: string): boolean {
@@ -862,28 +875,6 @@ function normalizeLimit(limit: number | undefined): number {
 function normalizeRelativePath(root: string, absolutePath: string): string {
   const relative = path.relative(root, absolutePath);
   return relative ? relative.split(path.sep).join("/") : ".";
-}
-
-function scoreFuzzySubsequence(query: string, candidate: string): number | null {
-  let queryIndex = 0;
-  let first = -1;
-  let previous = -1;
-  let gaps = 0;
-  for (let index = 0; index < candidate.length && queryIndex < query.length; index += 1) {
-    if (candidate[index] !== query[queryIndex]) continue;
-    if (first < 0) first = index;
-    if (previous >= 0) gaps += index - previous - 1;
-    previous = index;
-    queryIndex += 1;
-  }
-  return queryIndex === query.length && first >= 0 ? first + gaps : null;
-}
-
-function findSegmentMatchIndex(
-  segments: string[],
-  predicate: (segment: string) => boolean,
-): number {
-  return segments.findIndex((segment) => predicate(segment));
 }
 
 function sameEntry(left: DirectorySuggestionEntry, right: DirectorySuggestionEntry): boolean {

@@ -843,6 +843,85 @@ describe("relative typed-entry configuration", () => {
     ]);
   });
 
+  it("ranks a basename hit above a directory-only hit", async () => {
+    mkdirSync(path.join(workspaceDir, "chat-input"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "chat-input", "notes.md"), "");
+    writeFileSync(path.join(workspaceDir, "src", "chat-input.tsx"), "");
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "chat-input",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results.map((entry) => entry.path)).toEqual([
+      "src/chat-input.tsx",
+      "src/components/chat-input.tsx",
+      "chat-input/notes.md",
+    ]);
+  });
+
+  it("ranks boundary and contiguous matches the way VSCode does", async () => {
+    mkdirSync(path.join(workspaceDir, "arch"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "arch", "architecture.ts"), "");
+    writeFileSync(path.join(workspaceDir, "src", "chat-input.tsx"), "");
+    writeFileSync(path.join(workspaceDir, "src", "chronicle.ts"), "");
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "chi",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results.map((entry) => entry.path)).toEqual([
+      "src/chat-input.tsx",
+      "src/components/chat-input.tsx",
+      "src/chronicle.ts",
+      "arch/architecture.ts",
+    ]);
+  });
+
+  it("keeps camel-case boundaries when the query is lowercase", async () => {
+    mkdirSync(path.join(workspaceDir, "camel"), { recursive: true });
+    // macOS volumes are case-insensitive, so the lower-case twin needs its own name.
+    writeFileSync(path.join(workspaceDir, "camel", "aaWidget.ts"), "");
+    writeFileSync(path.join(workspaceDir, "camel", "aawidget-x.ts"), "");
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "aw",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results.map((entry) => entry.path)).toEqual([
+      "camel/aaWidget.ts",
+      "camel/aawidget-x.ts",
+    ]);
+  });
+
+  it("splits a mixed CJK/Latin query into tokens that must all match", async () => {
+    writeFileSync(path.join(workspaceDir, "ai模型价格-Claude.md"), "");
+    writeFileSync(path.join(workspaceDir, "cleanup_codex_cua_orphans.sh"), "");
+    writeFileSync(path.join(workspaceDir, "claude.json"), "");
+
+    for (const query of ["claude价格", "claude 价格"]) {
+      const results = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query,
+        limit: 20,
+        includeFiles: true,
+        includeDirectories: false,
+      });
+      expect(results.map((entry) => entry.path)).toEqual(["ai模型价格-Claude.md"]);
+    }
+  });
+
   it("suffix mode matches whole path segment suffixes without fuzzy matches", async () => {
     mkdirSync(path.join(workspaceDir, "packages", "app", "src"), { recursive: true });
     writeFileSync(path.join(workspaceDir, "src", "file.ts"), "");
