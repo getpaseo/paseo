@@ -12,12 +12,23 @@ import { extname, join } from "path";
 export const ICON_PATTERNS = [
   "favicon.svg",
   "favicon.png",
+  "favicon.webp",
+  "favicon.jpg",
+  "favicon.jpeg",
   "favicon-*.svg",
   "favicon-*.png",
   "favico.svg",
   "favico.png",
+  "logo.svg",
+  "logo.png",
+  "logo.webp",
+  "logo.jpg",
+  "logo.jpeg",
   "icon.svg",
   "icon.png",
+  "icon.webp",
+  "icon.jpg",
+  "icon.jpeg",
   "app-icon.svg",
   "app-icon.png",
   "apple-touch-icon.png",
@@ -26,8 +37,6 @@ export const ICON_PATTERNS = [
   "android-chrome-*.png",
   "safari-pinned-tab.svg",
   "mstile-*.png",
-  "logo.svg",
-  "logo.png",
   "favicon.ico",
   "favico.ico",
 ];
@@ -35,7 +44,17 @@ export const ICON_PATTERNS = [
 /**
  * Directories or directory paths to search first (in priority order).
  */
-export const PRIORITY_DIRS = ["public", "static", "priv/static", "assets", "images", "img"];
+export const PRIORITY_DIRS = [
+  "docs",
+  "public",
+  "static",
+  "priv/static",
+  "res",
+  ".github",
+  "assets",
+  "images",
+  "img",
+];
 
 /**
  * Monorepo package directory patterns to scan (e.g., packages/app, apps/web).
@@ -141,6 +160,11 @@ function getWebpDimensions(buffer: Buffer): ImageDimensions | null {
     const bits = buffer.readUInt32LE(21);
     const width = (bits & 0x3fff) + 1;
     const height = ((bits >> 14) & 0x3fff) + 1;
+    return { width, height };
+  } else if (chunkType === "VP8X") {
+    // Extended format (alpha, metadata) - 24-bit canvas width-1 and height-1
+    const width = buffer.readUIntLE(24, 3) + 1;
+    const height = buffer.readUIntLE(27, 3) + 1;
     return { width, height };
   }
   return null;
@@ -291,7 +315,23 @@ async function isExistingDirectory(fullPath: string): Promise<boolean> {
   }
 }
 
-async function findIconInDir(dir: string, patterns: string[]): Promise<string | null> {
+/**
+ * Decides whether a candidate path is usable. Returning null rejects it and
+ * the search moves on to the next candidate in priority order.
+ */
+type CandidateCheck<T> = (fullPath: string) => Promise<T | null>;
+
+interface FindIconInDirInput<T> {
+  dir: string;
+  patterns: string[];
+  check: CandidateCheck<T>;
+}
+
+async function findIconInDir<T>({
+  dir,
+  patterns,
+  check,
+}: FindIconInDirInput<T>): Promise<T | null> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -309,16 +349,16 @@ async function findIconInDir(dir: string, patterns: string[]): Promise<string | 
     }
   }
 
-  const existsResults = await Promise.all(candidatePaths.map((p) => isExistingFile(p)));
-  const foundIndex = existsResults.findIndex((exists) => exists);
-  return foundIndex === -1 ? null : (candidatePaths[foundIndex] ?? null);
+  const results = await Promise.all(candidatePaths.map((p) => check(p)));
+  return results.find((result): result is Awaited<T> => result !== null) ?? null;
 }
 
-async function searchPriorityDirs(
+async function searchPriorityDirs<T>(
   basePath: string,
   ignoredDirsSet: Set<string>,
   remainingDepth: number,
-): Promise<string | null> {
+  check: CandidateCheck<T>,
+): Promise<T | null> {
   const priorityPaths = PRIORITY_DIRS.map((priorityDir) => join(basePath, priorityDir));
   const existenceResults = await Promise.all(
     priorityPaths.map((priorityPath) => isExistingDirectory(priorityPath)),
@@ -326,26 +366,27 @@ async function searchPriorityDirs(
   const searchResults = await Promise.all(
     priorityPaths.map((priorityPath, index) =>
       existenceResults[index]
-        ? searchDirRecursively(priorityPath, ICON_PATTERNS, ignoredDirsSet, remainingDepth)
+        ? searchDirRecursively(priorityPath, ICON_PATTERNS, ignoredDirsSet, remainingDepth, check)
         : Promise.resolve(null),
     ),
   );
-  return searchResults.find((result): result is string => result !== null) ?? null;
+  return searchResults.find((result): result is Awaited<T> => result !== null) ?? null;
 }
 
-async function searchDirRecursively(
+async function searchDirRecursively<T>(
   dir: string,
   patterns: string[],
   ignoredDirs: Set<string>,
   maxDepth: number,
+  check: CandidateCheck<T>,
   currentDepth: number = 0,
-): Promise<string | null> {
+): Promise<T | null> {
   if (currentDepth > maxDepth) {
     return null;
   }
 
   // First check this directory for icons
-  const found = await findIconInDir(dir, patterns);
+  const found = await findIconInDir({ dir, patterns, check });
   if (found) {
     return found;
   }
@@ -367,11 +408,11 @@ async function searchDirRecursively(
   const recursionResults = await Promise.all(
     candidatePaths.map((fullPath, index) =>
       isDirResults[index]
-        ? searchDirRecursively(fullPath, patterns, ignoredDirs, maxDepth, currentDepth + 1)
+        ? searchDirRecursively(fullPath, patterns, ignoredDirs, maxDepth, check, currentDepth + 1)
         : Promise.resolve(null),
     ),
   );
-  return recursionResults.find((result): result is string => result !== null) ?? null;
+  return recursionResults.find((result): result is Awaited<T> => result !== null) ?? null;
 }
 
 /**
@@ -386,10 +427,28 @@ export async function findProjectIcon(
   projectDir: string,
   maxDepth: number = 3,
 ): Promise<string | null> {
+  return searchProjectIcon({
+    projectDir,
+    maxDepth,
+    check: async (fullPath) => ((await isExistingFile(fullPath)) ? fullPath : null),
+  });
+}
+
+interface SearchProjectIconInput<T> {
+  projectDir: string;
+  maxDepth: number;
+  check: CandidateCheck<T>;
+}
+
+async function searchProjectIcon<T>({
+  projectDir,
+  maxDepth,
+  check,
+}: SearchProjectIconInput<T>): Promise<T | null> {
   const ignoredDirsSet = new Set(IGNORED_DIRS);
 
   // First search priority directories
-  const priorityResult = await searchPriorityDirs(projectDir, ignoredDirsSet, maxDepth - 1);
+  const priorityResult = await searchPriorityDirs(projectDir, ignoredDirsSet, maxDepth - 1, check);
   if (priorityResult) {
     return priorityResult;
   }
@@ -406,7 +465,7 @@ export async function findProjectIcon(
     }),
   );
   const monoResults = await Promise.all(
-    monoPaths.map(async (monoPath, monoIdx): Promise<string | null> => {
+    monoPaths.map(async (monoPath, monoIdx): Promise<T | null> => {
       const packageEntries = monoEntries[monoIdx];
       if (!packageEntries) return null;
       const packagePaths = packageEntries.map((packageName) => join(monoPath, packageName));
@@ -414,27 +473,28 @@ export async function findProjectIcon(
         packagePaths.map((packagePath) => isExistingDirectory(packagePath)),
       );
       const packageResults = await Promise.all(
-        packagePaths.map(async (packagePath, idx): Promise<string | null> => {
+        packagePaths.map(async (packagePath, idx): Promise<T | null> => {
           if (!isDirResults[idx]) return null;
           const packagePriorityResult = await searchPriorityDirs(
             packagePath,
             ignoredDirsSet,
             maxDepth - 1,
+            check,
           );
           if (packagePriorityResult) return packagePriorityResult;
-          return await findIconInDir(packagePath, ICON_PATTERNS);
+          return await findIconInDir({ dir: packagePath, patterns: ICON_PATTERNS, check });
         }),
       );
-      return packageResults.find((result): result is string => result !== null) ?? null;
+      return packageResults.find((result): result is Awaited<T> => result !== null) ?? null;
     }),
   );
-  const monoMatch = monoResults.find((result): result is string => result !== null);
+  const monoMatch = monoResults.find((result): result is Awaited<T> => result !== null);
   if (monoMatch) {
     return monoMatch;
   }
 
   // Then search root and any other non-priority directories
-  const found = await findDirRecursively(projectDir);
+  const found = await findDirRecursively(projectDir, check);
   if (found) {
     return found;
   }
@@ -442,11 +502,12 @@ export async function findProjectIcon(
   return null;
 }
 
-async function findDirRecursively(
+async function findDirRecursively<T>(
   dir: string,
+  check: CandidateCheck<T>,
   maxDepth: number = 2,
   currentDepth: number = 0,
-): Promise<string | null> {
+): Promise<T | null> {
   const ignoredDirsSet = new Set(IGNORED_DIRS);
   const priorityDirsSet = new Set(PRIORITY_DIRS);
 
@@ -455,7 +516,7 @@ async function findDirRecursively(
   }
 
   // Check root for icons
-  const found = await findIconInDir(dir, ICON_PATTERNS);
+  const found = await findIconInDir({ dir, patterns: ICON_PATTERNS, check });
   if (found) {
     return found;
   }
@@ -481,29 +542,30 @@ async function findDirRecursively(
   const recursionResults = await Promise.all(
     candidatePaths.map((fullPath, index) =>
       isDirResults[index]
-        ? findDirRecursively(fullPath, maxDepth, currentDepth + 1)
+        ? findDirRecursively(fullPath, check, maxDepth, currentDepth + 1)
         : Promise.resolve(null),
     ),
   );
-  return recursionResults.find((result): result is string => result !== null) ?? null;
+  return recursionResults.find((result): result is Awaited<T> => result !== null) ?? null;
 }
 
 /**
  * Find and read a project icon/favicon, returning it as base64.
- * Only returns square icons smaller than MAX_ICON_SIZE (32KB).
+ * Only returns square icons smaller than MAX_ICON_SIZE (32KB). A candidate that
+ * fails these checks is skipped and the search moves on to the next one.
  *
  * @param projectDir - The root directory of the project to search
  * @returns The icon data with mime type, or null if not found
  */
 export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | null> {
-  const iconPath = await findProjectIcon(projectDir);
-  if (!iconPath) {
-    return null;
-  }
+  return searchProjectIcon({ projectDir, maxDepth: 3, check: loadIcon });
+}
 
+async function loadIcon(iconPath: string): Promise<ProjectIcon | null> {
   try {
     const stats = await stat(iconPath);
-    if (stats.size > MAX_ICON_SIZE) {
+    // Regular files only: reading a named pipe with no writer blocks forever.
+    if (!stats.isFile() || stats.size > MAX_ICON_SIZE) {
       return null;
     }
 
