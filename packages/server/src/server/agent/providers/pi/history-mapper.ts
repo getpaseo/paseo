@@ -23,6 +23,7 @@ import {
 export interface PiCapturedUserMessageEntry {
   id: string;
   text: string;
+  clientMessageId?: string;
 }
 
 export interface PiHistoryMapperHooks {
@@ -109,8 +110,13 @@ export class PiHistoryMapper {
 
   private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
+    const images = Array.isArray(message.content)
+      ? message.content.flatMap((part) =>
+          part.type === "image" ? [{ data: part.data, mimeType: part.mimeType }] : [],
+        )
+      : [];
     this.userIndex += 1;
-    if (!text) {
+    if (!text && images.length === 0) {
       return [];
     }
     const userEntry = this.userEntries[this.userIndex - 1];
@@ -121,7 +127,9 @@ export class PiHistoryMapper {
         item: {
           type: "user_message",
           text,
+          ...(images.length > 0 ? { images } : {}),
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(userEntry?.clientMessageId ? { clientMessageId: userEntry.clientMessageId } : {}),
         },
       },
     ];
