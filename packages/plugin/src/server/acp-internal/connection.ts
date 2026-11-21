@@ -460,6 +460,7 @@ class AcpRuntime {
   private deferredRetirement: Promise<boolean> | null = null;
   private deferredFinalized = false;
   private processFailed = false;
+  private processFailureMessage: string | null = null;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: (options?: {
@@ -562,6 +563,7 @@ class AcpRuntime {
     child?.on("error", (error) => {
       const message = describeError(error);
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       if (this.closing || !this.nativeSessionId) return;
       this.emit({
@@ -574,6 +576,7 @@ class AcpRuntime {
       if (this.closing || this.processFailed || !this.nativeSessionId) return;
       const message = `ACP process exited (${signal ?? code ?? "unknown"})`;
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       this.emit({
         type: "session.runtime_failed",
@@ -657,6 +660,11 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    await this.finishSessionOpen(isConnectionClosed);
+    return sessionCapabilities;
+  }
+
+  private async finishSessionOpen(isConnectionClosed: () => boolean): Promise<void> {
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
@@ -665,7 +673,9 @@ class AcpRuntime {
       await this.waitForLoadReplay(quietPeriod, isConnectionClosed);
       this.replayWindow = "skip";
     }
-    return sessionCapabilities;
+    if (this.processFailed && !isConnectionClosed()) {
+      throw new Error(this.processFailureMessage ?? "ACP process exited during session open");
+    }
   }
 
   async discover(cwd?: string): Promise<ProviderCatalog> {
@@ -1283,10 +1293,13 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
-    const isHistory = !isSessionStateUpdate(notification.update);
-    if (this.replayWindow && isHistory) this.lastLoadHistoryAt = performance.now();
+    if (this.replayWindow && isReplayHistoryUpdate(notification.update)) {
+      this.lastLoadHistoryAt = performance.now();
+    }
     if (this.replayWindow === "skip") {
-      if (!isHistory) this.reduceStateUpdate(notification.update, wireSeq);
+      if (isSessionStateUpdate(notification.update)) {
+        this.reduceStateUpdate(notification.update, wireSeq);
+      }
       return;
     }
     if (
@@ -1628,6 +1641,7 @@ class AcpRuntime {
     if (this.closing || this.processFailed) return;
     const message = "ACP transport closed unexpectedly";
     this.processFailed = true;
+    this.processFailureMessage = message;
     this.settlePendingWork(message);
     if (!this.nativeSessionId) return;
     this.emit({
@@ -1959,6 +1973,18 @@ class AcpRuntime {
       if (remaining <= 0 && Math.max(start, this.lastLoadHistoryAt) === lastHistoryAt) return;
     }
   }
+}
+
+function isReplayHistoryUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk" ||
+    update.sessionUpdate === "tool_call" ||
+    update.sessionUpdate === "tool_call_update" ||
+    update.sessionUpdate === "plan" ||
+    update.sessionUpdate === "compaction_update"
+  );
 }
 
 function isSessionStateUpdate(update: SessionUpdate): boolean {

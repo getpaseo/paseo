@@ -450,6 +450,137 @@ describe("runAcpProvider", () => {
     }
   });
 
+  it("does not extend the load replay wait for session_info_update notifications", async () => {
+    const sessionId = "connector-session";
+    let stream: ReturnType<typeof setInterval> | undefined;
+    const { connector } = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/load") return false;
+        runtime.respond(request, { configOptions: [] });
+        runtime.notify("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "answer-1",
+            content: { type: "text", text: "previous answer" },
+          },
+        });
+        stream = setInterval(() => {
+          if (runtime.readsCanceled) return;
+          runtime.notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "session_info_update",
+              title: "Updated title",
+            },
+          });
+        }, 20);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "load",
+      label: "Load",
+      connector,
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        history: "replay",
+        persistence: { version: 1, data: { sessionId } },
+      });
+      const outcome = await Promise.race([
+        waitForEvent(events, (event) => event.type === "session.ready").then(() => "ready"),
+        new Promise((resolve) => setTimeout(() => resolve("still waiting"), 1_000)),
+      ]);
+      expect(outcome).toBe("ready");
+      expect(events.filter((event) => event.type === "timeline.item")).toHaveLength(1);
+    } finally {
+      clearInterval(stream);
+      await connection.close();
+    }
+  });
+
+  it("fails session open without emitting session.ready or leaking the session when the ACP process crashes mid-replay", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-crash-replay-"));
+    const script = path.join(dir, "crash-replay-agent.mjs");
+    await writeFile(
+      script,
+      `
+      import { createInterface } from "node:readline";
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+        } else if (msg.method === "session/load") {
+          const sid = msg.params.sessionId;
+          send({ id: msg.id, result: { configOptions: [] } });
+          send({
+            method: "session/update",
+            params: {
+              sessionId: sid,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "m-1",
+                content: { type: "text", text: "partial history" },
+              },
+            },
+          });
+          if (sid === "crash-session") {
+            setTimeout(() => process.exit(1), 20);
+          }
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const connection = await runAcpProvider({
+      id: "crash-replay",
+      label: "Crash Replay",
+      command: [process.execPath, script],
+      acpOptions: { loadReplayQuietPeriodMs: 100 },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        requestId: "req-crash",
+        sessionId: "session-1",
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "crash-session" } },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.failed" && event.requestId === "req-crash",
+      );
+      expect(events.some((event) => event.type === "session.ready")).toBe(false);
+
+      // The failed open must not leave a dead session registered under "session-1".
+      await connection.send({
+        ...openInput(),
+        requestId: "req-retry",
+        sessionId: "session-1",
+        history: "replay",
+        persistence: { version: 1, data: { sessionId: "healthy-session" } },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.ready" && event.requestId === "req-retry",
+      );
+    } finally {
+      await connection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("auto-accepts ordinary permissions only in the unattended mode and refuses to switch while busy", async () => {
     const modeConfig = {
       id: "mode",
