@@ -10,7 +10,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
@@ -65,6 +64,7 @@ import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
   getHostProjectId,
+  getHostProjectSourceDirectory,
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
@@ -185,12 +185,30 @@ function buildFirstAgentContext(input: {
   };
 }
 
-interface NewWorkspaceScreenProps {
+export interface NewWorkspacePlacement {
   serverId: string;
   sourceDirectory?: string;
   projectId?: string;
   displayName?: string;
+}
+
+interface NewWorkspaceScreenProps extends NewWorkspacePlacement {
   draftId?: string;
+  onPlacementChange: (placement: NewWorkspacePlacement) => void;
+}
+
+function placementForProject(
+  serverId: string,
+  project: HostProjectListItem,
+): NewWorkspacePlacement {
+  const projectId = getHostProjectId(project, serverId);
+  const sourceDirectory = getHostProjectSourceDirectory(project, serverId);
+  return {
+    serverId,
+    projectId: projectId ?? undefined,
+    sourceDirectory: sourceDirectory ?? undefined,
+    displayName: project.projectName,
+  };
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -336,7 +354,6 @@ interface WorkspaceCreationResult {
 
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
-  worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
   project: HostProjectListItem;
@@ -374,7 +391,6 @@ async function createMultiplicityWorkspace(input: {
           kind: "worktree",
           cwd: input.sourceDirectory,
           projectId,
-          worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
           ...(input.branchName && startsNewBranch(input.checkoutRequest)
             ? { branchName: input.branchName }
@@ -793,6 +809,8 @@ function useNewWorkspaceHostSelector(input: {
     [routeServerId],
   );
 
+  const hasManualHostSelection = manualSelection?.serverId === selectedServerId;
+
   const handleHostPickerOpenChange = useCallback((open: boolean) => {
     setHostPickerOpen(open);
   }, []);
@@ -803,6 +821,7 @@ function useNewWorkspaceHostSelector(input: {
 
   return {
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -813,6 +832,7 @@ function useNewWorkspaceHostSelector(input: {
 interface NewWorkspaceInitialContextState {
   allHosts: HostProfile[];
   selectedServerId: string;
+  hasManualHostSelection: boolean;
   hostPickerOpen: boolean;
   handleSelectHost: (id: string) => void;
   handleHostPickerOpenChange: (open: boolean) => void;
@@ -828,7 +848,7 @@ function useNewWorkspaceInitialContext({
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
-}: NewWorkspaceScreenProps): NewWorkspaceInitialContextState {
+}: NewWorkspacePlacement): NewWorkspaceInitialContextState {
   const allHosts = useHosts();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const projects = useHostProjects(allServerIds);
@@ -874,6 +894,7 @@ function useNewWorkspaceInitialContext({
   const workspaceMultiplicityByServerId = useHostFeatureMap(allServerIds, "workspaceMultiplicity");
   const {
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -890,6 +911,7 @@ function useNewWorkspaceInitialContext({
   return {
     allHosts,
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -901,12 +923,48 @@ function useNewWorkspaceInitialContext({
   };
 }
 
+const EMPTY_WORKSPACE_CREATION_RESULT = { workspace: null } as const;
+
+function useNewWorkspaceCreationState(input: {
+  serverId: string;
+  project: HostProjectListItem | null;
+  sourceDirectory: string | null;
+  draftId?: string;
+}) {
+  const projectId = input.project ? getHostProjectId(input.project, input.serverId) : null;
+  const placementKey = JSON.stringify([input.serverId, projectId, input.sourceDirectory]);
+  const [draftId] = useState(() => input.draftId ?? generateDraftId());
+  // Editing identity survives placement changes; provisioning identity belongs to its destination.
+  const creationIdentity = useMemo(
+    () => ({
+      draftId,
+      idempotencyKey: JSON.stringify([draftId, input.serverId, projectId]),
+    }),
+    [draftId, input.serverId, projectId],
+  );
+  const [resultsByPlacement, setResultsByPlacement] = useState<
+    ReadonlyMap<string, WorkspaceCreationResult>
+  >(() => new Map());
+  const setCreationResult = useCallback(
+    (result: WorkspaceCreationResult) => {
+      setResultsByPlacement((current) => new Map(current).set(placementKey, result));
+    },
+    [placementKey],
+  );
+  return {
+    creationIdentity,
+    creationResult: resultsByPlacement.get(placementKey) ?? EMPTY_WORKSPACE_CREATION_RESULT,
+    setCreationResult,
+  };
+}
+
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
   draftId,
+  onPlacementChange,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -923,6 +981,7 @@ export function NewWorkspaceScreen({
   const {
     allHosts,
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -940,14 +999,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
-  const [creationIdentity] = useState(() => ({
-    draftId: draftId ?? generateDraftId(),
-    worktreeSlug: createNameId(),
-  }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [creationResult, setCreationResult] = useState<
-    WorkspaceCreationResult | { workspace: null }
-  >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -1013,12 +1065,12 @@ export function NewWorkspaceScreen({
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
 
-  const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
     selectedProject,
     selectedSourceDirectory,
+    hasManualProjectSelection,
     projectPickerOptions,
     projectByOptionId,
     selectedProjectOptionId,
@@ -1032,6 +1084,27 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  const { creationIdentity, creationResult, setCreationResult } = useNewWorkspaceCreationState({
+    serverId: selectedServerId,
+    project: selectedProject,
+    sourceDirectory: selectedSourceDirectory,
+    draftId,
+  });
+  const { workspace } = creationResult;
+  useEffect(() => {
+    const hasManualPlacement = hasManualHostSelection || hasManualProjectSelection;
+    if (!hasManualPlacement || !selectedProject || !selectedSourceDirectory) return;
+    const placement = placementForProject(selectedServerId, selectedProject);
+    onPlacementChange(placement);
+  }, [
+    hasManualHostSelection,
+    hasManualProjectSelection,
+    onPlacementChange,
+    selectedProject,
+    selectedServerId,
+    selectedSourceDirectory,
+  ]);
+
   const projectIconTargets = useMemo(
     () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
     [projects, selectedServerId],
@@ -1348,8 +1421,7 @@ export function NewWorkspaceScreen({
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
-        idempotencyKey: creationIdentity.draftId,
-        worktreeSlug: creationIdentity.worktreeSlug,
+        idempotencyKey: creationIdentity.idempotencyKey,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
         project: selectedProject,
@@ -1375,6 +1447,7 @@ export function NewWorkspaceScreen({
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
+      setCreationResult,
       selectedItem,
       selectedProject,
       selectedServerId,
