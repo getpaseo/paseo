@@ -25,6 +25,7 @@ import {
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginButtonRegistration,
+  type PluginComposerPlaceholderRegistration,
 } from "@getpaseo/plugin/client";
 import type {
   EvaluatedPlugin,
@@ -115,6 +116,7 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "subscribe"
   | "addComposerPill"
+  | "setComposerPlaceholder"
   | "addHeaderButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
@@ -167,6 +169,24 @@ export function runPluginClientBundle(
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
+  function trackPlaceholder(
+    registration: PluginComposerPlaceholderRegistration,
+  ): PluginComposerPlaceholderRegistration {
+    let active = true;
+    const remove = () => {
+      if (!active) return;
+      active = false;
+      registration.remove();
+      removals.delete(remove);
+    };
+    removals.add(remove);
+    return {
+      update: (text) => {
+        if (active && !stopped) registration.update(text);
+      },
+      remove,
+    };
+  }
   function trackButton(
     registration: PluginButtonRegistration<PluginText>,
   ): PluginButtonRegistration<PluginText> {
@@ -568,6 +588,10 @@ export function runPluginClientBundle(
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
+    },
+    setComposerPlaceholder(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackPlaceholder(runtime.setComposerPlaceholder(contribution));
     },
     addHeaderButton(contribution) {
       if (stopped) throw new Error("Plugin has stopped");

@@ -11,6 +11,7 @@ import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
+import { composerPlaceholderStore } from "./composer-placeholder/store";
 import type { InstalledPlugin } from "./types";
 
 export function createPluginClientRuntime(
@@ -29,6 +30,9 @@ export function createPluginClientRuntime(
     hosts: getPluginClientApi(installation).hosts,
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
+    },
+    setComposerPlaceholder(contribution) {
+      return composerPlaceholderStore.set(installation, contribution);
     },
     addHeaderButton(contribution) {
       return pluginButtonStore.addHeaderButton(installation, contribution);
