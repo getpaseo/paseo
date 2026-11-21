@@ -77,7 +77,7 @@ describe("OpenCode compact event dump (real)", () => {
   });
 
   afterAll(async () => {
-    await OpenCodeServerManager.getInstance(logger).shutdown();
+    await OpenCodeServerManager.getInstance({ logger }).shutdown();
   });
 
   test("dumps live events emitted by a real /compact turn", async () => {
