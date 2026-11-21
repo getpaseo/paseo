@@ -13,7 +13,7 @@ import {
   parseToolResult,
   resolveToolCallName,
   toolFailureMessage,
-  isOmpToolFailure,
+  getOmpToolStatus,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -220,13 +220,18 @@ export class OmpHistoryMapper {
     if (!detail) {
       return null;
     }
+    const status = getOmpToolStatus({
+      toolCall: tracked,
+      result,
+      isError: Boolean(message.isError),
+    });
     return {
       type: "timeline",
       provider: this.provider,
       item: toToolResultTimelineItem({
         callId: this.resolveToolCallId(message.toolCallId, tracked),
         name: this.toolName(tracked, result),
-        isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
+        status,
         detail,
         errorText: toolFailureMessage(result),
       }),
@@ -297,11 +302,11 @@ export async function* streamOmpCoreHistory(
 function toToolResultTimelineItem(input: {
   callId: string;
   name: string;
-  isError: boolean;
+  status: "completed" | "failed" | "canceled";
   detail: ToolCallDetail;
   errorText: string;
 }): AgentTimelineItem {
-  if (input.isError) {
+  if (input.status === "failed") {
     return {
       type: "tool_call",
       callId: input.callId,
@@ -315,7 +320,7 @@ function toToolResultTimelineItem(input: {
     type: "tool_call",
     callId: input.callId,
     name: input.name,
-    status: "completed",
+    status: input.status,
     detail: input.detail,
     error: null,
   };
