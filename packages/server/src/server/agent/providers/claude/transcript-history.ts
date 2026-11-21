@@ -14,6 +14,8 @@ import {
 } from "./subagents/workflow-replay-source.js";
 
 const READ_CHUNK_BYTES = 1024 * 1024;
+// Async iteration between reads uses microtasks, including work inside the consumer.
+const REPLAY_SLICE_MS = 10;
 
 interface TranscriptEntry extends ClaudeReplayEntry {
   isSidechain?: unknown;
@@ -49,9 +51,14 @@ async function* locatedRecords(
     const { bytesRead: count } = await fd.read(buffer, 0, buffer.length, null);
     if (count === 0) break;
     remaining -= count;
+    let sliceStartedAt = performance.now();
     let start = 0;
     let end: number;
     while ((end = buffer.indexOf(10, start)) !== -1 && end < count) {
+      if (performance.now() - sliceStartedAt >= REPLAY_SLICE_MS) {
+        await setImmediate();
+        sliceStartedAt = performance.now();
+      }
       pieces.push(buffer.subarray(start, end));
       length += end - start;
       const entry = parseRecord(Buffer.concat(pieces, length).toString("utf8"));
@@ -67,8 +74,6 @@ async function* locatedRecords(
       if (entry) yield { entry, location };
       start = end + 1;
     }
-    // Bound parsing work as well as IO; microtasks alone do not service timers or sockets.
-    await setImmediate();
     if (start < count) {
       pieces.push(buffer.subarray(start, count));
       length += count - start;
@@ -100,6 +105,7 @@ function indexedRecords(
   async function* readEntries(): AsyncGenerator<TranscriptEntry> {
     const chunk = Buffer.allocUnsafe(READ_CHUNK_BYTES);
     let window: { file: string; offset: number; bytes: Buffer } | undefined;
+    let sliceStartedAt = performance.now();
     for (const location of locations) {
       if (
         window?.file !== location.file ||
@@ -115,6 +121,11 @@ function indexedRecords(
           offset: location.offset,
           bytes: await readRecordWindow(fd, buffer, location),
         };
+        sliceStartedAt = performance.now();
+      }
+      if (performance.now() - sliceStartedAt >= REPLAY_SLICE_MS) {
+        await setImmediate();
+        sliceStartedAt = performance.now();
       }
       const start = location.offset - window.offset;
       const entry = parseRecord(window.bytes.toString("utf8", start, start + location.length));

@@ -129,12 +129,43 @@ describe("ClaudeAgentSession persisted history load", () => {
         }
       }
       expect(messages).toEqual(Array.from({ length: count }, (_, index) => `${index}:${text}`));
-      // Allow ample room for filesystem scheduling on this ~2 MiB transcript.
-      expect(turns).toBeLessThan(256);
+      expect(turns).toBeLessThan(count);
     } finally {
       await session.close();
     }
   }, 30_000);
+
+  test("yields during replay of a dense window with an expensive consumer", async () => {
+    const file = transcriptPath();
+    const count = 500;
+    const record = JSON.stringify({ type: "assistant", message: { content: "saved reply" } });
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, (record + "\n").repeat(count));
+
+    await withClaudeReplayHistory(file, async (history) => {
+      let turns = 0;
+      let ticker: NodeJS.Immediate | undefined;
+      function tick() {
+        turns++;
+        ticker = setImmediate(tick);
+      }
+
+      let entries = 0;
+      try {
+        for await (const _entry of history.parentEntries) {
+          // Start counting after the read so only yields within the window count.
+          ticker ??= setImmediate(tick);
+          const deadline = performance.now() + 1;
+          while (performance.now() < deadline) {}
+          entries++;
+        }
+      } finally {
+        if (ticker) clearImmediate(ticker);
+      }
+      expect(entries).toBe(count);
+      expect(turns).toBeGreaterThanOrEqual(20);
+    });
+  });
 
   test("serves unrelated health requests while resuming 32 MiB of ordered history", async () => {
     const startedAt = performance.now();
