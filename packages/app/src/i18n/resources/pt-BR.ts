@@ -1345,6 +1345,8 @@ export const ptBR: TranslationResources = {
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "Fixar no topo",
+        unpin: "Desafixar",
         remove: "Remover projeto",
         removing: "Removendo...",
       },

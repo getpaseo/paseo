@@ -1329,6 +1329,8 @@ export const en = {
         openNewWindowFailed: "Couldn't open a new window",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "Pin to top",
+        unpin: "Unpin",
         remove: "Remove project",
         removing: "Removing...",
       },

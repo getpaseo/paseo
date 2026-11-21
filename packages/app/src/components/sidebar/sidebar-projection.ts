@@ -19,7 +19,11 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import {
+  pinnedProjectWorkspaceGroups,
+  statusWorkspaceGroups,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -40,6 +44,7 @@ export interface SidebarProjectionInput {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
+  pinnedProjectKeys: readonly string[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
@@ -54,15 +59,28 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
     projects: input.projects,
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
+    pinnedProjectKeys: input.pinnedProjectKeys,
   });
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
+  const pinnedProjectWorkspaceKeys = new Set<string>();
+  for (const project of pinnedGroups.pinnedProjects) {
+    for (const workspace of project.workspaces) {
+      pinnedProjectWorkspaceKeys.add(workspace.workspaceKey);
+    }
+  }
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
-    (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
+    (workspace) =>
+      !pinnedWorkspaceKeys.has(workspace.workspaceKey) &&
+      !pinnedProjectWorkspaceKeys.has(workspace.workspaceKey),
   );
   // One switch decides both what the list groups by and what the keyboard shortcuts walk, so the
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent
   // fall-through to the project rows.
-  const workspaceGroups = buildWorkspaceGroups(input, unpinnedWorkspaces);
+  const workspaceGroups = buildWorkspaceGroups({
+    input,
+    pinnedProjects: pinnedGroups.pinnedProjects,
+    rest: unpinnedWorkspaces,
+  });
 
   const sections: SidebarShortcutSection[] = [];
   if (!input.pinnedCollapsed) {
@@ -70,6 +88,10 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   }
   if (input.groupMode === "project") {
     sections.push(
+      ...pinnedGroups.pinnedProjects.map((project) => ({
+        workspaces: project.workspaces,
+        collapsed: input.collapsedProjectKeys.has(project.viewKey),
+      })),
       ...pinnedGroups.unpinnedProjects.map((project) => ({
         workspaces: project.workspaces,
         collapsed: input.collapsedProjectKeys.has(project.viewKey),
@@ -84,25 +106,51 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
     );
   }
 
+  const shortcutSections = keepFirstVisibleWorkspaceOccurrence(sections);
+
   return {
     pinnedGroups,
     workspaceGroups,
     projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
-    shortcutModel: buildSidebarShortcutSections({ sections }),
+    shortcutModel: buildSidebarShortcutSections({ sections: shortcutSections }),
   };
 }
 
+function keepFirstVisibleWorkspaceOccurrence(
+  sections: readonly SidebarShortcutSection[],
+): SidebarShortcutSection[] {
+  const seenWorkspaceKeys = new Set<string>();
+  return sections.map((section) => {
+    if (section.collapsed) return section;
+
+    const workspaces = section.workspaces.filter((workspace) => {
+      if (seenWorkspaceKeys.has(workspace.workspaceKey)) return false;
+      seenWorkspaceKeys.add(workspace.workspaceKey);
+      return true;
+    });
+    return { ...section, workspaces };
+  });
+}
+
+interface BuildWorkspaceGroupsInput {
+  input: SidebarProjectionInput;
+  pinnedProjects: SidebarProjectEntry[];
+  rest: SidebarWorkspaceEntry[];
+}
+
 /** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
-function buildWorkspaceGroups(
-  input: SidebarProjectionInput,
-  unpinnedWorkspaces: SidebarWorkspaceEntry[],
-): SidebarWorkspaceGroup[] {
+function buildWorkspaceGroups({
+  input,
+  pinnedProjects,
+  rest,
+}: BuildWorkspaceGroupsInput): SidebarWorkspaceGroup[] {
   switch (input.groupMode) {
     case "project":
       return [];
     case "status":
-      return statusWorkspaceGroups(
-        buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey, input.t),
-      );
+      return [
+        ...pinnedProjectWorkspaceGroups(pinnedProjects, input.workspaceEntriesByKey),
+        ...statusWorkspaceGroups(buildStatusGroups(rest, input.projectNamesByViewKey, input.t)),
+      ];
   }
 }

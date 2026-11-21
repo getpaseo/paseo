@@ -16,9 +16,11 @@ export interface PinnedSidebarKeys {
 
 export interface PinnedSidebarGroups {
   // Individually pinned chats, hoisted into the Pinned section and removed from their
-  // project below. Most recently pinned first.
+  // unpinned project below. Most recently pinned first.
   pinnedChats: SidebarWorkspacePlacement[];
-  // Everything else, with pinned chats removed. Feeds the draggable project list.
+  // Pinned project groups retain every workspace, including individually pinned chats.
+  pinnedProjects: SidebarProjectEntry[];
+  // Unpinned project groups, with individually pinned chats removed.
   unpinnedProjects: SidebarProjectEntry[];
 }
 
@@ -115,13 +117,17 @@ export function splitPinnedSidebarGroups(input: {
   projects: SidebarProjectEntry[];
   keys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
+  pinnedProjectKeys: readonly string[];
 }): PinnedSidebarGroups {
-  const { projects, keys, pinnedWorkspaceOrder } = input;
-  if (keys.pinnedWorkspaceKeys.length === 0) {
-    return { pinnedChats: [], unpinnedProjects: projects };
+  const { projects, keys, pinnedWorkspaceOrder, pinnedProjectKeys } = input;
+  const pinnedProjectKeySet = new Set(pinnedProjectKeys);
+  const hasPinnedProject = projects.some((project) => pinnedProjectKeySet.has(project.viewKey));
+  if (keys.pinnedWorkspaceKeys.length === 0 && !hasPinnedProject) {
+    return { pinnedChats: [], pinnedProjects: [], unpinnedProjects: projects };
   }
   const pinnedWorkspaceKeySet = new Set(keys.pinnedWorkspaceKeys);
   const pinnedChats: SidebarWorkspacePlacement[] = [];
+  const pinnedProjects: SidebarProjectEntry[] = [];
   const unpinnedProjects: SidebarProjectEntry[] = [];
 
   for (const project of projects) {
@@ -130,14 +136,19 @@ export function splitPinnedSidebarGroups(input: {
         pinnedChats.push(workspace);
       }
     }
-    unpinnedProjects.push(projectWithoutPinnedWorkspaces(project, pinnedWorkspaceKeySet));
+    if (pinnedProjectKeySet.has(project.viewKey)) {
+      pinnedProjects.push(project);
+    } else {
+      unpinnedProjects.push(projectWithoutPinnedWorkspaces(project, pinnedWorkspaceKeySet));
+    }
   }
 
-  pinnedChats.sort((a, b) =>
-    (keys.pinnedAtByKey[b.workspaceKey] ?? "").localeCompare(
+  pinnedChats.sort((a, b) => {
+    const recency = (keys.pinnedAtByKey[b.workspaceKey] ?? "").localeCompare(
       keys.pinnedAtByKey[a.workspaceKey] ?? "",
-    ),
-  );
+    );
+    return recency || a.workspaceKey.localeCompare(b.workspaceKey);
+  });
 
   return {
     pinnedChats: applyStoredOrdering({
@@ -145,6 +156,7 @@ export function splitPinnedSidebarGroups(input: {
       storedOrder: pinnedWorkspaceOrder,
       getKey: (workspace) => workspace.workspaceKey,
     }),
+    pinnedProjects,
     unpinnedProjects,
   };
 }
