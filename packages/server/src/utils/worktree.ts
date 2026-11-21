@@ -1811,6 +1811,11 @@ export async function runPluginWorktreeManagerCheckout(
       candidate: managed.path,
       repoPath: cwd,
       allowExistingPath: true,
+    }).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Plugin ${managed.pluginId} worktree.${operation} failed: ${detail}`, {
+        cause: error,
+      });
     });
     verifyValidatedPath?.(validatedPath, managed.pluginId);
     return await adoptPluginWorktree({

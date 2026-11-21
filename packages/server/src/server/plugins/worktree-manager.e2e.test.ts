@@ -561,6 +561,9 @@ export default function contribute(server) {
       if (request.branch === "relative") {
         return { type: "created", path: "relative/path" };
       }
+      if (request.branch === "ancestor") {
+        return { type: "created", path: path.dirname(request.repoRoot) };
+      }
       return;
     },
   });
@@ -580,7 +583,11 @@ export default function contribute(server) {
       ["plain-dir", "did not create a Git worktree"],
       ["other-repo", "outside the repository"],
       ["detached", "detached HEAD"],
-      ["relative", "relative path"],
+      ["relative", "Plugin bad-manager worktree.create failed: The returned path is relative"],
+      [
+        "ancestor",
+        "Plugin bad-manager worktree.create failed: The returned path is an ancestor of the repository",
+      ],
     ];
     for (const [branchName, expectedError] of cases) {
       const created = await client.createWorkspace({
