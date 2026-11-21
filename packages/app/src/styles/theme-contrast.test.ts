@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
-import { buildPluginTheme } from "@/plugins/themes";
+import { buildPluginTheme } from "@/plugins/themes/palette";
 import { contrastRatio } from "@/utils/color";
 import { THEME_OPTIONS, type Theme } from "./theme";
 
