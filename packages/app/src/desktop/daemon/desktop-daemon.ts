@@ -186,8 +186,12 @@ export async function getDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("desktop_daemon_status"));
 }
 
-export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
-  return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
+export type DesktopDaemonStartReason = "launch" | "manual";
+
+export async function startDesktopDaemon(
+  reason: DesktopDaemonStartReason = "launch",
+): Promise<DesktopDaemonStatus> {
+  return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon", { reason }));
 }
 
 export async function stopDesktopDaemon(
