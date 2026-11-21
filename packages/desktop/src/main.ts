@@ -93,7 +93,12 @@ import {
   type OwnedDesktopWindow,
 } from "./window/desktop-window-owner.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
-import { clampWindowStateToWorkAreas, createWindowStateStore } from "./settings/window-state.js";
+import {
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  clampWindowStateToWorkAreas,
+  createWindowStateStore,
+} from "./settings/window-state.js";
 import {
   isDesktopManagedDaemonRunningSync,
   stopDesktopDaemonViaCli,
@@ -707,6 +712,8 @@ async function createWindow(
   const mainWindow = new BrowserWindow({
     title,
     ...resolveWindowBounds(restoredWindowState),
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     backgroundColor: getWindowBackgroundColor(systemTheme),
     ...(iconPath ? { icon: iconPath } : {}),
