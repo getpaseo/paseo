@@ -16,7 +16,7 @@ nav: 配置
 
 ## 生成的起步触发器 {#generated-starter-trigger}
 
-在 Agent 要工作的仓库中运行 `paseo hub init`。设置流程会选择一个应用连接和一个可用的 Agent 运行时，询问哪个用户可以触发它，校验结果并写入一个文件，然后询问是否部署。交互式的 `paseo hub login` 会连接 daemon 并提示你运行这条命令；它不会写入触发器文件。
+在 Agent 要工作的仓库中运行 `paseo hub init`。设置流程会选择一个集成连接和一个可用的 Agent 运行时，询问哪个用户可以触发它，校验结果并写入一个文件，然后询问是否部署。交互式的 `paseo hub login` 会连接 daemon 并提示你运行这条命令；它不会写入触发器文件。
 
 对于名为 `my-team` 的 Slack 连接，生成的文档如下：
 
@@ -54,7 +54,7 @@ run:
       required: true
 ```
 
-`connection` 是应用连接在你组织中的 slug。`target.daemon` 是已连接 daemon 的 slug，`target.cwd` 是你运行设置流程时所在的绝对目录。`agent` 包含你从 daemon 中选择的 Provider、模型和执行模式。模式是必填的。
+`connection` 是集成连接在你组织中的 slug。`target.daemon` 是已连接 daemon 的 slug，`target.cwd` 是你运行设置流程时所在的绝对目录。`agent` 包含你从 daemon 中选择的 Provider、模型和执行模式。模式是必填的。
 
 `continuation.mode: conversation` 让后续请求在同一个 Agent 的同一段 Provider 对话中进行。提示词要求 Agent 先回复，再调用 `hub.finish_execution`；只回复并不会结束执行。
 

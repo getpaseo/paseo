@@ -20,8 +20,6 @@ npx @getpaseo/hub
 
 首次运行不需要数据库、Docker、环境变量或 API key。Hub 会创建内嵌数据库和你的组织。
 
-Hub 会打开 **Home**，这是一份清单，列出了提及能够启动 Agent 之前必须满足的四件事：连接一个应用、连接一个 daemon、创建一个触发器、运行它。下面的步骤就是这四件事。Home 会根据你的组织实际拥有的内容判断每一项，打印下一步需要的命令，并在四项全部完成后收起。
-
 ## 2. 连接 Slack {#2-connect-slack}
 
 **Set up your apps** 说明了如何创建 Slack 应用，并提供一份可以粘贴到 Slack 中的 manifest。保持选择 **Socket Mode**。它由 Hub 主动向外连接，不需要公开地址或 HTTPS。
@@ -44,19 +42,21 @@ paseo hub login http://localhost:3000
 
 在代码所在的机器上、Agent 要工作的仓库中运行它。之后也请在该目录中运行下面的初始化命令，这样它就会成为触发器的工作目录。
 
-在打开的浏览器标签页中批准登录。保持 Hub 标签页打开：它会监测 daemon，并自动显示 **Daemon connected**。daemon 连接后，选择 **Continue**。
+在打开的浏览器标签页中批准登录。在终端中，对 **Connect this daemon to Paseo Hub?** 和 **Allow Hub automations to run agents on this daemon?** 都回答 **Yes**。执行权限默认为否，因此请为本次设置显式开启。保持 Hub 标签页打开：它会监测 daemon，并自动显示 **Daemon connected**。daemon 连接后，选择 **Continue**。
+
+Hub 会打开 **Home**，其中的 **Get started** 包含四个步骤：**Connect an integration**、**Connect a daemon**、**Create a trigger** 和 **Run it**。第一个未完成的步骤会显示提示和操作。已完成的步骤会显示勾选标记和结果，后续步骤只显示标题。四项全部完成后，清单会收起。
+
+如果你没有授予执行权限，Home 会显示 daemon 已连接但无法运行 Agent，并给出修复命令：`paseo hub permissions grant hub.execute`。
 
 ## 4. 创建起步触发器 {#4-create-the-starter-trigger}
 
-批准登录后，对 **Connect this daemon to Paseo Hub?** 和 **Allow Hub automations to run agents on this daemon?** 都回答 **Yes**。执行权限默认为否，因此请为本次设置显式开启。如果你回答了否，Home 会显示 daemon 已连接但无法运行 Agent，并给出修复命令：`paseo hub permissions grant hub.execute`。
-
-然后运行：
+运行：
 
 ```sh
 paseo hub init
 ```
 
-选择 **Custom endpoint** 并确认 `http://localhost:3000`。设置流程会复用你的登录和 daemon 连接，然后列出可用于此触发器的应用连接。如果只连接了一个 Slack 工作区，它会自动选择该连接。如果有多个可用连接，请选择 **Trigger connection**。如果没有任何连接就绪，设置流程会把你引导到 **Hub → Apps**，并在选择 Agent 或写入文件之前停止。
+选择 **Custom endpoint** 并确认 `http://localhost:3000`。设置流程会复用你的登录和 daemon 连接，然后列出可用于此触发器的集成连接。如果只连接了一个 Slack 工作区，它会自动选择该连接。如果有多个可用连接，请选择 **Trigger connection**。如果没有任何连接就绪，设置流程会把你引导到 **Hub → Apps**，并在选择 Agent 或写入文件之前停止。
 
 | 问题                               | 需要填写的内容                                                             |
 | ---------------------------------- | -------------------------------------------------------------------------- |
@@ -66,7 +66,7 @@ paseo hub init
 
 Provider 必须提供可选择的模型和执行模式。如果没有默认模式，请选择 Agent 应该使用的模式。Hub 以无人值守的方式运行 Agent，因此只接受 Claude、Codex 和 OpenCode，并会在部署前根据你的 daemon 检查模型、模式和选项。其他 Provider，或 daemon 不提供的值，会在这里就被拒绝，而不是等到第一次运行。
 
-[查找 Slack ID](/docs/hub/triggers/slack#find-your-slack-ids) 说明了如何复制你的成员 ID。Slack 工作区来自所选的应用连接。
+[查找 Slack ID](/docs/hub/triggers/slack#find-your-slack-ids) 说明了如何复制你的成员 ID。Slack 工作区来自所选的集成连接。
 
 设置流程会校验触发器并写入：
 

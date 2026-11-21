@@ -73,7 +73,7 @@ paseo hub permissions grant hub.execute
 paseo hub permissions revoke hub.execute
 ```
 
-在授予之前，Hub 只把该 daemon 用于身份和在线状态。Daemons 页面会把它显示为 **Connected only** 并给出授权命令，Home 清单会显示 **Cannot run agents**。授予后该权限允许做什么，见 [Hub 安全](/docs/hub/security#choose-daemon-authority)。
+在授予之前，Hub 只把该 daemon 用于身份和在线状态。Daemons 页面会把它显示为 **Connected only** 并给出授权命令，Home 清单会提示该 daemon 还无法运行 Agent。授予后该权限允许做什么，见 [Hub 安全](/docs/hub/security#choose-daemon-authority)。
 
 ## 在配置中引用它 {#reference-it-from-configuration}
 

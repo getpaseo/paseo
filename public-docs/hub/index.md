@@ -36,7 +36,7 @@ Your daemons keep running agents where they always did. Hub decides when to ask 
     └── slack-help.yml
 ```
 
-The file names the app connection, allowed user, daemon, working directory, agent runtime, prompt, and outputs. Setup validates it and asks whether to deploy. Mentioning the bot then starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger) shows what setup wrote.
+The file names the integration connection, allowed user, daemon, working directory, agent runtime, prompt, and outputs. Setup validates it and asks whether to deploy. Mentioning the bot then starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger) shows what setup wrote.
 
 ## Reading order
 
