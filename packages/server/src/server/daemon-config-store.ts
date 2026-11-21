@@ -32,6 +32,7 @@ interface SupportedMutableConfigPatch {
   mcp?: { injectIntoAgents?: boolean };
   usage?: { enabled: boolean };
   browserTools?: { enabled?: boolean };
+  workspaceSplitSync?: MutableDaemonConfig["workspaceSplitSync"];
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
   metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
@@ -249,6 +250,7 @@ const RELOADABLE_PATHS = [
   "daemon.mcp.injectIntoAgents",
   "daemon.usage.enabled",
   "daemon.browserTools.enabled",
+  "daemon.workspaceSplitSync",
   "daemon.hostnames",
   "daemon.cors.allowedOrigins",
   "daemon.trustedProxies",
@@ -277,6 +279,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.mcp.injectIntoAgents", "mcp.injectIntoAgents"],
   ["daemon.usage.enabled", "usage.enabled"],
   ["daemon.browserTools.enabled", "browserTools.enabled"],
+  ["daemon.workspaceSplitSync", "workspaceSplitSync"],
   ["daemon.hostnames", "hostnames"],
   ["daemon.cors.allowedOrigins", "cors.allowedOrigins"],
   ["daemon.trustedProxies", "trustedProxies"],
@@ -349,6 +352,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
   return {
     ...pickRelayPatch(patch.relay),
     usage: patch.usage,
+    workspaceSplitSync: patch.workspaceSplitSync,
     ...(patch.mcp?.injectIntoAgents !== undefined
       ? { mcp: { injectIntoAgents: patch.mcp.injectIntoAgents } }
       : {}),
@@ -862,6 +866,7 @@ function mergeMutableDaemonPatch(
     next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };
   }
   if (patch.usage) next.usage = patch.usage;
+  if (patch.workspaceSplitSync !== undefined) next.workspaceSplitSync = patch.workspaceSplitSync;
   if (patch.browserTools?.enabled !== undefined) {
     next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
   }

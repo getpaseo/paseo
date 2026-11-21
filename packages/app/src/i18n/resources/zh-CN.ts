@@ -2293,6 +2293,12 @@ export const zhCN: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "同步工作区分栏",
+      off: "关闭",
+      desktop: "仅桌面设备",
+      all: "所有设备",
+    },
     title: "设置",
     loading: "正在加载设置...",
     groups: {

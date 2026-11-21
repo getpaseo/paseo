@@ -2350,6 +2350,12 @@ export const ptBR: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "Sincronizar divisões do espaço de trabalho",
+      off: "Desativado",
+      desktop: "Somente computadores",
+      all: "Todos os dispositivos",
+    },
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {

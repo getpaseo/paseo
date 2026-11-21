@@ -2339,6 +2339,12 @@ export const ja: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "ワークスペースの分割を同期",
+      off: "オフ",
+      desktop: "デスクトップのみ",
+      all: "すべてのデバイス",
+    },
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {

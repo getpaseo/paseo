@@ -2344,6 +2344,12 @@ export const en = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "Sync workspace splits",
+      off: "Off",
+      desktop: "Desktops only",
+      all: "All devices",
+    },
     title: "Settings",
     loading: "Loading settings...",
     groups: {

@@ -499,6 +499,18 @@ Array of workspace records. A workspace is a specific working directory within a
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 
+### Shared workspace tabs
+
+A workspace record can carry its shared tab layout. The first client to open an unseeded workspace
+offers its local layout. The registry serializes subsequent batches of tab operations with its other
+mutations and publishes the resulting revision through workspace updates. This keeps initialization
+and updates in the same atomic write as the workspace record.
+
+Host settings control split syncing through `daemon.workspaceSplitSync` in `config.json`. It
+defaults to `off` and also accepts `desktop` and `all`. Tabs and agent visibility sync in every
+mode. Split replacements contain pane membership and sizes. Focus, per-panel state, Explorer
+chrome, drafts, launcher tabs, commit previews, and embedded browser instances stay on the device.
+
 ### Workspace label catalog
 
 **Path:** `$PASEO_HOME/projects/workspace-labels.json`

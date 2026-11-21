@@ -2352,6 +2352,12 @@ export const ru: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "Синхронизировать разделение рабочего пространства",
+      off: "Выключено",
+      desktop: "Только компьютеры",
+      all: "Все устройства",
+    },
     title: "Настройки",
     loading: "Загрузка настроек...",
     groups: {

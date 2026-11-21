@@ -1,3 +1,12 @@
+import {
+  WorkspaceTabLayoutStateSchema,
+  applyWorkspaceTabLayoutOperations,
+  isValidWorkspaceSharedSplit,
+  type WorkspaceTabLayout,
+  type WorkspaceTabLayoutOperation,
+  type WorkspaceTabLayoutState,
+} from "@getpaseo/protocol/workspace-tab-layout";
+
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { promises as fs } from "node:fs";
 
@@ -104,6 +113,7 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  tabLayout: WorkspaceTabLayoutStateSchema.optional(),
   labels: z.array(z.string()).optional(),
   // Plugin-owned data. Paseo stores it and never reads a key.
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
@@ -160,6 +170,13 @@ export interface ProjectRegistry {
   subscribeToMutations?(listener: (mutation: ProjectMutation) => void | Promise<void>): () => void;
 }
 
+interface ApplyWorkspaceTabLayoutInput {
+  workspaceId: string;
+  seed?: WorkspaceTabLayout;
+  operations: WorkspaceTabLayoutOperation[];
+  syncSplits: () => boolean;
+}
+
 export interface WorkspaceRegistry {
   initialize(): Promise<void>;
   existsOnDisk(): Promise<boolean>;
@@ -171,6 +188,7 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
+  applyTabLayout(input: ApplyWorkspaceTabLayoutInput): Promise<WorkspaceTabLayoutState>;
   archive(
     workspaceId: string,
     archivedAt: string,
@@ -517,6 +535,20 @@ export class FileBackedProjectRegistry
   }
 }
 
+function seedWorkspaceTabLayout(
+  seed: WorkspaceTabLayout | undefined,
+  syncSplits: boolean,
+): WorkspaceTabLayout {
+  if (!seed) throw new Error("Workspace tab layout has not been seeded");
+  const split = syncSplits ? seed.split : undefined;
+  if (split && !isValidWorkspaceSharedSplit(split)) throw new Error("Invalid workspace split tree");
+  return {
+    ...seed,
+    tabs: [...new Map(seed.tabs.map((tab) => [tab.tabId, tab])).values()],
+    split,
+  };
+}
+
 export class FileBackedWorkspaceRegistry
   extends FileBackedRegistry<PersistedWorkspaceRecord>
   implements WorkspaceRegistry
@@ -567,11 +599,19 @@ export class FileBackedWorkspaceRegistry
     record: PersistedWorkspaceRecord,
     context?: WorkspaceMutationContext,
   ): Promise<void> {
-    await super.upsert(record);
+    const workspace = await this.mutateCache((records) => {
+      const existing = records.get(record.workspaceId);
+      const next = PersistedWorkspaceRecordSchema.parse({
+        ...record,
+        tabLayout: existing?.tabLayout ?? record.tabLayout,
+      });
+      records.set(record.workspaceId, next);
+      return next;
+    });
     await this.notifyMutation({
       kind: "upsert",
-      workspaceId: record.workspaceId,
-      workspace: record,
+      workspaceId: workspace.workspaceId,
+      workspace,
       ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
     });
   }
@@ -605,6 +645,37 @@ export class FileBackedWorkspaceRegistry
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
     await this.notifyMutation({ kind: "remove", workspaceId, workspace });
+  }
+
+  async applyTabLayout(input: ApplyWorkspaceTabLayoutInput): Promise<WorkspaceTabLayoutState> {
+    const { workspaceId, seed, operations } = input;
+    let state: WorkspaceTabLayoutState | undefined;
+    const [workspace] = await this.mutateMany((records) => {
+      const existing = records.get(workspaceId);
+      if (!existing || existing.archivedAt) throw new Error("Workspace not found");
+      const current = existing.tabLayout;
+      const syncSplits = input.syncSplits();
+      const base = current ?? seedWorkspaceTabLayout(seed, syncSplits);
+      if (
+        syncSplits &&
+        operations.some((op) => op.kind === "split" && !isValidWorkspaceSharedSplit(op.split))
+      ) {
+        throw new Error("Invalid workspace split tree");
+      }
+      const next = applyWorkspaceTabLayoutOperations(base, operations, syncSplits);
+      const revision = current?.revision ?? 0;
+      state = WorkspaceTabLayoutStateSchema.parse({ ...next, revision });
+      if (current && JSON.stringify(current) === JSON.stringify(state)) {
+        return [];
+      }
+      state = { ...next, revision: revision + 1 };
+      return [{ ...existing, tabLayout: state }];
+    });
+    if (workspace) {
+      await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
+    }
+    if (!state) throw new Error("Workspace tab layout unavailable");
+    return state;
   }
 
   async commitWorkspaceLabelMutation<TResult>(input: {

@@ -16,6 +16,11 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 });
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  applyWorkspaceTabLayoutOperations,
+  syncsWorkspaceSplits,
+} from "@getpaseo/protocol/workspace-tab-layout";
+import { diffWorkspaceTabLayout } from "@/stores/workspace-tab-sync-layout";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { setPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
@@ -5495,4 +5500,139 @@ it("reentering a workspace restores its suspended pane without choosing another 
   store.getState().focusWorkspace(workspaceKey);
   expect(store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId).toBe(paneId);
   expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
+});
+
+describe("shared workspace tab layouts", () => {
+  const workspaceKey = "test-host:tab-sync";
+  const makeStore = () =>
+    createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds(), {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    });
+
+  it("keeps local focus, state, and tab neighbours while applying the shared order", () => {
+    const store = makeStore();
+    const open = store.getState().openTab;
+    open({
+      workspaceKey,
+      intent: "reveal",
+      target: { kind: "file", path: "one.ts", lineStart: 12 },
+    });
+    store.getState().setTabState(workspaceKey, "file_one.ts", "local cursor");
+    open({ workspaceKey, intent: "reveal", target: { kind: "draft", draftId: "local-draft" } });
+    open({ workspaceKey, intent: "reveal", target: { kind: "file", path: "two.ts" } });
+    store.getState().focusTab(workspaceKey, "local-draft");
+    const current = store.getState().projectSharedTabLayout(workspaceKey, false);
+    expect(current.tabs).toEqual([
+      { tabId: "file_one.ts", target: { kind: "file", path: "one.ts" } },
+      { tabId: "file_two.ts", target: { kind: "file", path: "two.ts" } },
+    ]);
+    store.getState().mergeSharedTabLayout(
+      workspaceKey,
+      {
+        ...current,
+        tabs: current.tabs.toReversed(),
+        hiddenAgentIds: ["hidden"],
+        pinnedAgentIds: ["pinned"],
+      },
+      false,
+    );
+    const state = store.getState();
+    const layout = state.layoutByWorkspace[workspaceKey];
+    const pane = findPaneById(layout.root, layout.focusedPaneId);
+    expect(pane?.tabIds).toEqual(["file_two.ts", "file_one.ts", "local-draft"]);
+    expect(pane?.focusedTabId).toBe("local-draft");
+    expect(
+      state.getWorkspaceTabs(workspaceKey).find((tab) => tab.tabId === "file_one.ts"),
+    ).toMatchObject({
+      state: "local cursor",
+      target: { lineStart: 12 },
+    });
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toEqual(new Set(["hidden"]));
+    expect(state.pinnedAgentIdsByWorkspace[workspaceKey]).toEqual(new Set(["pinned"]));
+    expect(findPaneById(layout.root, "explorer")?.hidden).toBe(true);
+  });
+
+  it("rebases a local move without replacing tabs opened on another device", () => {
+    const store = makeStore();
+    for (const path of ["a.ts", "b.ts", "c.ts"]) {
+      store.getState().openTab({ workspaceKey, intent: "reveal", target: { kind: "file", path } });
+    }
+    const before = store.getState().projectSharedTabLayout(workspaceKey, false);
+    const [a, b, c] = before.tabs;
+    const operations = diffWorkspaceTabLayout(before, { ...before, tabs: [b, c, a] });
+    expect(operations).toEqual([{ kind: "move", tabId: a.tabId }]);
+    const independent = { tabId: "file_d.ts", target: { kind: "file" as const, path: "d.ts" } };
+    const remote = { ...before, tabs: [a, independent, b, c] };
+    expect(applyWorkspaceTabLayoutOperations(remote, operations, false).tabs).toEqual([
+      independent,
+      b,
+      c,
+      a,
+    ]);
+  });
+
+  it("uses local panes when splits are off and installs the shared tree on an eligible desktop", () => {
+    const store = makeStore();
+    const one = { tabId: "file_one.ts", target: { kind: "file" as const, path: "one.ts" } };
+    const two = { tabId: "file_two.ts", target: { kind: "file" as const, path: "two.ts" } };
+    const tree = {
+      tabs: [one, two],
+      hiddenAgentIds: [],
+      pinnedAgentIds: [],
+      split: {
+        rootId: "two-columns",
+        nodes: [
+          { kind: "pane" as const, id: "first", tabIds: [one.tabId] },
+          { kind: "pane" as const, id: "second", tabIds: [two.tabId] },
+          {
+            kind: "group" as const,
+            id: "two-columns",
+            direction: "horizontal" as const,
+            childIds: ["first", "second"],
+            sizes: [0.6, 0.4],
+          },
+        ],
+      },
+    };
+    store
+      .getState()
+      .mergeSharedTabLayout(workspaceKey, tree, syncsWorkspaceSplits("desktop", false));
+    let state = store.getState();
+    expect(collectAllPanes(state.layoutByWorkspace[workspaceKey].root)).toHaveLength(1);
+    expect(state.getTabDestination(workspaceKey, one.tabId)).toMatchObject({ paneId: "main" });
+    state.mergeSharedTabLayout(workspaceKey, tree, syncsWorkspaceSplits("desktop", true));
+    state = store.getState();
+    expect(state.getTabDestination(workspaceKey, one.tabId)).toMatchObject({ paneId: "first" });
+    expect(state.getTabDestination(workspaceKey, two.tabId)).toMatchObject({ paneId: "second" });
+    expect(state.splitSizesByWorkspace[workspaceKey]["two-columns"]).toEqual([0.6, 0.4]);
+
+    const other = makeStore();
+    for (const [device, paneId] of [
+      [store, "first"],
+      [other, "second"],
+    ] as const) {
+      device.getState().mergeSharedTabLayout(workspaceKey, tree, true);
+      device.getState().focusPane(workspaceKey, paneId);
+      const unassigned = {
+        tabId: "file_mobile.ts",
+        target: { kind: "file" as const, path: "mobile.ts" },
+      };
+      device.getState().mergeSharedTabLayout(workspaceKey, { ...tree, tabs: [unassigned] }, true);
+      expect(device.getState().getTabDestination(workspaceKey, unassigned.tabId)).toMatchObject({
+        paneId: "first",
+      });
+    }
+    store.getState().mergeSharedTabLayout(workspaceKey, tree, true);
+    state = store.getState();
+
+    const opened = { tabId: "file_new.ts", target: { kind: "file" as const, path: "new.ts" } };
+    state.mergeSharedTabLayout(workspaceKey, { ...tree, tabs: [one, two, opened] }, false);
+    expect(store.getState().getTabDestination(workspaceKey, opened.tabId)).toMatchObject({
+      paneId: "second",
+    });
+    state.mergeSharedTabLayout(workspaceKey, { ...tree, tabs: [two, opened] }, false);
+    expect(store.getState().getTabDestination(workspaceKey, one.tabId)).toBeNull();
+  });
 });
