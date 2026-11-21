@@ -30,6 +30,8 @@ export type OmpRuntimeEventMapping =
       logReason: string;
     };
 
+const XD_MOUNT_NOTICE_PREFIX = "xd://: mounted ";
+
 interface StatusLineInput {
   callId: string;
   name: string;
@@ -69,6 +71,25 @@ function mapNoticeEvent(event: unknown): OmpRuntimeEventMapping {
   const parsed = OmpNoticeEventSchema.safeParse(event);
   if (!parsed.success) {
     return { handled: true, item: null, logReason: "malformed_omp_notice" };
+  }
+  // Repeated mount notices can fill the chat with the full tool list.
+  if (parsed.data.message.startsWith(XD_MOUNT_NOTICE_PREFIX)) {
+    const names = parsed.data.message
+      .slice(XD_MOUNT_NOTICE_PREFIX.length)
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    return {
+      handled: true,
+      item: buildStatusLineItem({
+        callId: `omp-xd-mount:${hashParts(parsed.data.message)}`,
+        name: "omp_xd_mount",
+        label: `Mounted ${names.length} tool${names.length === 1 ? "" : "s"}`,
+        text: names.join("\n"),
+        icon: "wrench",
+        metadata: { synthetic: true, source: "omp_xd_mount", count: names.length },
+      }),
+    };
   }
   return {
     handled: true,
