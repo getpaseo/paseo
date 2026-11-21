@@ -116,8 +116,10 @@ function mountTimeline(
       scrollContainer.scrollTop = top;
     },
     // A wheel listener runs before the browser applies the scroll the wheel causes.
-    wheelUpTo: (top: number) => {
-      scrollContainer.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1000 }));
+    wheelUpTo: (top: number, deltaX = 0) => {
+      scrollContainer.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, deltaX, deltaY: -1000 }),
+      );
       scrollContainer.scrollTop = top;
     },
     shiftWheelUp: () =>
@@ -303,19 +305,22 @@ describe("web disclosure hold", () => {
 });
 
 describe("web output following", () => {
-  it("keeps the reading position when stream output grows before the wheel scroll event", async () => {
-    const history = Array.from({ length: 20 }, (_, index) => row(index));
-    const timeline = mountTimeline(history);
-    await timeline.settle();
-    expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+  it.each([0, 1])(
+    "keeps the reading position when stream output grows before the wheel scroll event (horizontal delta %s)",
+    async (deltaX) => {
+      const history = Array.from({ length: 20 }, (_, index) => row(index));
+      const timeline = mountTimeline(history);
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
 
-    const readingOffset = timeline.scrollTop() - 400;
-    timeline.wheelUpTo(readingOffset);
-    // Stream output can commit before the browser delivers the scroll event.
-    timeline.render({ historyMounted: [...history, row(20)] });
-    await timeline.settle();
-    expect(timeline.scrollTop()).toBe(readingOffset);
-  });
+      const readingOffset = timeline.scrollTop() - 400;
+      timeline.wheelUpTo(readingOffset, deltaX);
+      // Stream output can commit before the browser delivers the scroll event.
+      timeline.render({ historyMounted: [...history, row(20)] });
+      await timeline.settle();
+      expect(timeline.scrollTop()).toBe(readingOffset);
+    },
+  );
 
   it("keeps following output after horizontal Shift+wheel", async () => {
     const history = Array.from({ length: 20 }, (_, index) => row(index));
