@@ -52,6 +52,8 @@ export function RewindCommandCenterRegistration({
     agentId,
     client,
     messageId: message?.messageId,
+    images: message?.images,
+    attachments: message?.attachments,
   });
   const items = useRewindMenuItems(capabilities);
   const actions = useMemo<CommandCenterContribution[]>(() => {
