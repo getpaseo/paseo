@@ -65,6 +65,27 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 设置界面只替换第一项，并保留自定义列表的其余部分。直接编辑文件后，请重启 daemon。
 
+## 主机级指令 {#host-wide-instructions}
+
+个人习惯（而不是项目要求）应该放在 daemon 配置里，而不是每个仓库里。在 `~/.paseo/config.json` 的 `agents.metadataGeneration` 下设置同样的键：
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "title": { "instructions": "使用简短、任务形态的标题。" },
+      "branchName": { "instructions": "使用 <type>/<short-description> 格式。" },
+      "commitMessage": { "instructions": "遵循 Conventional Commits。" },
+      "pullRequest": { "instructions": "包含 Summary 和 Testing 两节。" }
+    }
+  }
+}
+```
+
+Paseo 对每一类元数据单独解析：先项目 `paseo.json`，再主机配置，最后是内置默认值。在一处覆盖标题，不会影响从其他来源继承的分支名、提交信息和 PR 文本。纯目录工作区没有仓库，因此只会看到主机级指令和默认值。
+
+直接编辑文件后请重启 daemon。在设置界面选择模型不会丢掉这些指令。
+
 ## 按项目设置指令 {#per-project-instructions}
 
 你可以在仓库根目录的 `paseo.json` 文件中，按仓库调整每类元数据的措辞。Paseo 从基础分支已提交的版本中读取它，方式与读取 worktree 配置相同。
@@ -80,4 +101,4 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 }
 ```
 
-每个键都是可选的；只有你设置的键会受影响。你的指令会**替换**该类元数据的默认风格，而不是追加到默认风格之后，因此你的措辞永远不会与 Paseo 的默认值冲突。功能性要求（要生成什么以及输出格式）始终适用，不能被覆盖。
+每个键都是可选的；只有你设置的键会受影响。你的指令会**替换**该类元数据的默认风格，而不是追加到默认风格之后，因此你的措辞永远不会与 Paseo 的默认值冲突。项目指令还会替换该类型的[主机级指令](#host-wide-instructions)。功能性要求（要生成什么以及输出格式）始终适用，不能被覆盖。
