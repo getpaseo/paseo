@@ -1079,6 +1079,75 @@ interface SearchProcess {
 // Reading a tree is cheap; re-deriving each entry's path state is not. A scan that asks whether
 // every ancestor of every entry is inside the root, or is Git-ignored, costs multiples of the
 // read and is what made large home directories exceed the client request timeout.
+describe("exact lookups", () => {
+  let parent: string;
+
+  beforeEach(() => {
+    parent = realpathSync(mkdtempSync(path.join(tmpdir(), "directory-exact-lookup-")));
+    initGitRepo(parent, "ignored.md\n");
+    mkdirSync(path.join(parent, "nested", "deeper"), { recursive: true });
+    writeFileSync(path.join(parent, "notes.md"), "notes\n");
+    writeFileSync(path.join(parent, "ignored.md"), "ignored\n");
+    writeFileSync(path.join(parent, "nested", "deeper", "notes.md.bak"), "backup\n");
+  });
+
+  afterEach(() => {
+    rmSync(parent, { recursive: true, force: true });
+  });
+
+  // The workspace configuration the daemon uses for a request with a cwd.
+  function lookUp(query: string, cwd = parent) {
+    return searchDirectoryEntries({
+      root: cwd,
+      query,
+      pathFormat: "relative",
+      includeFiles: true,
+      includeDirectories: true,
+      matchMode: "exact",
+      pathQueryPolicy: "slashes",
+      blankQueryBehavior: "children",
+      traversableHiddenDirectoryNames: WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+      respectGitIgnore: true,
+      limit: 1,
+    });
+  }
+
+  it("reports what the named entry is", async () => {
+    await expect(lookUp("notes.md")).resolves.toEqual([{ path: "notes.md", kind: "file" }]);
+    await expect(lookUp("ignored.md")).resolves.toEqual([{ path: "ignored.md", kind: "file" }]);
+    await expect(lookUp("nested")).resolves.toEqual([{ path: "nested", kind: "directory" }]);
+  });
+
+  it.skipIf(isWindows)("reports a symlink as what it points to", async () => {
+    symlinkSync(path.join(parent, "nested"), path.join(parent, "linked-dir"));
+    symlinkSync(path.join(parent, "notes.md"), path.join(parent, "linked-notes.md"));
+
+    await expect(lookUp("linked-dir")).resolves.toEqual([
+      { path: "linked-dir", kind: "directory" },
+    ]);
+    await expect(lookUp("linked-notes.md")).resolves.toEqual([
+      { path: "linked-notes.md", kind: "file" },
+    ]);
+  });
+
+  it("answers a miss without walking the directory or listing Git files", async () => {
+    startGitCommandMetrics();
+    const results = await Promise.all([
+      lookUp("notes.m"),
+      lookUp("deeper"),
+      lookUp("notes.md.bak"),
+    ]);
+    const gitMetrics = stopGitCommandMetrics();
+
+    expect(results).toEqual([[], [], []]);
+    expect(gitMetrics.commands).toEqual([]);
+  });
+
+  it("finds nothing under a directory that does not exist", async () => {
+    await expect(lookUp("notes.md", path.join(parent, "missing"))).resolves.toEqual([]);
+  });
+});
+
 describe("home-tree scan cost", () => {
   const DEPTH = 8;
   const CHAINS = 40;
