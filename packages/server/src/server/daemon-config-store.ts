@@ -38,6 +38,7 @@ interface SupportedMutableConfigPatch {
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
+  idleRuntimeCleanupMinutes?: number;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   appendSystemPrompt?: string;
@@ -261,6 +262,7 @@ const RELOADABLE_PATHS = [
   "daemon.agentProfiles",
   "app.baseUrl",
   "agents.idleRuntimeCleanup",
+  "agents.idleRuntimeCleanupMinutes",
   "agents.resumeOnStartup",
   "agents.resumePrompt",
   "agents.providers",
@@ -289,6 +291,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.agentProfiles", "agentProfiles"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.idleRuntimeCleanup", "idleRuntimeCleanup"],
+  ["agents.idleRuntimeCleanupMinutes", "idleRuntimeCleanupMinutes"],
   ["agents.resumeOnStartup", "resumeOnStartup"],
   ["agents.resumePrompt", "resumePrompt"],
   ["agents.providers", "providers"],
@@ -368,9 +371,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.resumeOnStartup !== undefined ? { resumeOnStartup: patch.resumeOnStartup } : {}),
     ...(patch.resumePrompt !== undefined ? { resumePrompt: patch.resumePrompt } : {}),
-    ...(patch.idleRuntimeCleanup !== undefined
-      ? { idleRuntimeCleanup: patch.idleRuntimeCleanup }
-      : {}),
+    ...idleRuntimeCleanupPatch(patch),
     ...(patch.appendSystemPrompt !== undefined
       ? { appendSystemPrompt: patch.appendSystemPrompt }
       : {}),
@@ -805,7 +806,7 @@ function mergeMutableAgentPatch(
     patch.metadataGeneration === undefined &&
     patch.skills === undefined &&
     !hasRestartRecoveryPatch(patch) &&
-    patch.idleRuntimeCleanup === undefined &&
+    Object.keys(idleRuntimeCleanupPatch(patch)).length === 0 &&
     removeProviders.length === 0
   ) {
     return persistedAgents;
@@ -839,9 +840,7 @@ function mergeMutableAgentPatch(
   }
 
   Object.assign(next, restartRecoveryPatch(patch));
-  if (patch.idleRuntimeCleanup !== undefined) {
-    next["idleRuntimeCleanup"] = patch.idleRuntimeCleanup;
-  }
+  Object.assign(next, idleRuntimeCleanupPatch(patch));
 
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;
 }
@@ -875,6 +874,19 @@ function mergeMutableDaemonPatch(
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function idleRuntimeCleanupPatch(
+  patch: Pick<MutableDaemonConfigPatch, "idleRuntimeCleanup" | "idleRuntimeCleanupMinutes">,
+) {
+  return {
+    ...(patch.idleRuntimeCleanup !== undefined
+      ? { idleRuntimeCleanup: patch.idleRuntimeCleanup }
+      : {}),
+    ...(patch.idleRuntimeCleanupMinutes !== undefined
+      ? { idleRuntimeCleanupMinutes: patch.idleRuntimeCleanupMinutes }
+      : {}),
+  };
 }
 
 function hasRestartRecoveryPatch(patch: SupportedMutableConfigPatch) {
