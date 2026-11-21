@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, View, type ViewStyle } from "react-native";
-import { Code, Maximize2, Workflow } from "lucide-react-native";
+import { Pressable, type ViewStyle } from "react-native";
+import { Check, Code, Copy, Maximize2, Workflow } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { HighlightedCodeBlock, useCodeCopy } from "@/components/highlighted-code-block";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
 import type { Theme } from "@/styles/theme";
 import type { MarkdownFenceRendererProps } from "./types";
@@ -36,6 +36,7 @@ function MermaidFenceHostImpl({
   const showDiagramPress = useCallback(() => setShowSource(false), []);
   const openFullscreen = useCallback(() => setIsFullscreen(true), []);
   const closeFullscreen = useCallback(() => setIsFullscreen(false), []);
+  const { copied, copy } = useCodeCopy(code);
   const handleRendered = useCallback(
     (message: MermaidRenderedMessage) => {
       setHasRuntimeContent(true);
@@ -60,13 +61,19 @@ function MermaidFenceHostImpl({
         onPress: showSourcePress,
       },
       {
+        icon: copied ? Check : Copy,
+        label: t("message.actions.copyCode"),
+        onPress: copy,
+        testID: "mermaid-copy",
+      },
+      {
         icon: Maximize2,
         label: t("message.diagram.fullscreen"),
         onPress: openFullscreen,
         testID: "mermaid-fullscreen",
       },
     ],
-    [openFullscreen, showSourcePress, t],
+    [copied, copy, openFullscreen, showSourcePress, t],
   );
   const diagramStyle = useMemo(
     () => [
@@ -82,34 +89,22 @@ function MermaidFenceHostImpl({
   );
   const sourceVisible = !diagramVisible;
   const viewportStyle = diagramVisible ? diagramStyle : measuringStyle;
+  const canReturnToDiagram = showSource && canShowDiagram;
+  const sourceControls = useMemo(
+    () => (canReturnToDiagram ? <ViewDiagramButton onPress={showDiagramPress} /> : null),
+    [canReturnToDiagram, showDiagramPress],
+  );
 
   return (
     <>
       {sourceVisible ? (
-        <View style={sourceContainerStyle}>
-          <HighlightedCodeBlock
-            code={code}
-            language="mermaid"
-            inheritedStyles={inheritedStyles}
-            textStyle={textStyle}
-          />
-          {showSource && canShowDiagram ? (
-            <Pressable
-              accessibilityLabel={t("message.diagram.viewDiagram")}
-              accessibilityRole="button"
-              hitSlop={4}
-              onPress={showDiagramPress}
-              style={controlStyles.sourceButton}
-            >
-              {({ hovered }) => (
-                <Workflow
-                  size={14}
-                  color={hovered ? controlStyles.iconHovered.color : controlStyles.icon.color}
-                />
-              )}
-            </Pressable>
-          ) : null}
-        </View>
+        <HighlightedCodeBlock
+          code={code}
+          language="mermaid"
+          inheritedStyles={inheritedStyles}
+          textStyle={textStyle}
+          controls={sourceControls}
+        />
       ) : null}
       <div inert={!diagramVisible} style={boundaryStyle}>
         <ZoomableViewport
@@ -138,6 +133,26 @@ function MermaidFenceHostImpl({
   );
 }
 
+function ViewDiagramButton({ onPress }: { onPress: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Pressable
+      accessibilityLabel={t("message.diagram.viewDiagram")}
+      accessibilityRole="button"
+      hitSlop={4}
+      onPress={onPress}
+      style={controlStyles.sourceButton}
+    >
+      {({ hovered }) => (
+        <Workflow
+          size={14}
+          color={hovered ? controlStyles.iconHovered.color : controlStyles.icon.color}
+        />
+      )}
+    </Pressable>
+  );
+}
+
 const MEASURING_SIZE = { width: 240, height: 240 };
 /**
  * The toolbar overlays the top of the box (8px offset + 32px compact buttons) and the box clips
@@ -146,7 +161,6 @@ const MEASURING_SIZE = { width: 240, height: 240 };
 const MIN_DIAGRAM_BOX_HEIGHT = 56;
 const MAX_PREVIEW_HEIGHT = 480;
 const boundaryStyle: React.CSSProperties = { display: "contents" };
-const sourceContainerStyle: ViewStyle = { position: "relative" };
 /**
  * The viewport's own root is `flex: 1`, so as a flex item it has `flex-basis: 0%` and that basis
  * replaces the height below. In the markdown column there is no free space to grow into, so the
@@ -170,9 +184,6 @@ const measuringStyle: ViewStyle = {
 };
 const controlStyles = StyleSheet.create((theme) => ({
   sourceButton: {
-    position: "absolute",
-    top: theme.spacing[2],
-    right: theme.spacing[2],
     padding: theme.spacing[1],
   },
   icon: { color: theme.colors.foregroundMuted },

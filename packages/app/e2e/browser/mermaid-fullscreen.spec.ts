@@ -7,6 +7,8 @@ import {
   expectCompletedDiagram,
   expectFullscreenDiagram,
   expectFullscreenDiagramClosed,
+  expectSourceViewCopiesDiagramSource,
+  expectToolbarCopiesDiagramSource,
   openDiagramFullscreen,
   requestDiagram,
   waitForDiagramTurnToComplete,
@@ -14,14 +16,13 @@ import {
 } from "../support/helpers/diagram";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
-const MERMAID_DIAGRAM = [
-  "```mermaid",
+const MERMAID_SOURCE = [
   "flowchart LR",
   "  Start --> Middle",
   "  Middle --> Review",
   "  Review --> Ship",
-  "```",
 ].join("\n");
+const MERMAID_DIAGRAM = ["```mermaid", MERMAID_SOURCE, "```"].join("\n");
 
 test("bounds a tall inline diagram", async ({ page }) => {
   test.setTimeout(120_000);
@@ -103,6 +104,40 @@ test("opens a Mermaid diagram fullscreen and closes it again", async ({ page }) 
       await expectFullscreenDiagram(page, ["Start", "Ship"]);
       await closeDiagramFullscreenFromOutside(page);
       await expectFullscreenDiagramClosed(page);
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("copies a Mermaid diagram's source from the diagram and from its source view", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "mermaid-copy-",
+    title: "Copy Mermaid",
+    featureValues: {
+      mockStreamingAssistantResponse: MERMAID_DIAGRAM,
+      mockStreamingAssistantIntervalMs: 10,
+    },
+  });
+  try {
+    await test.step("Open the conversation and wait for the rendered diagram", async () => {
+      await openAgentRoute(page, agent);
+      await requestDiagram(agent);
+      await waitForDiagramTurnToComplete(agent);
+      await expectCompletedDiagram(page, ["Start", "Ship"]);
+    });
+
+    await test.step("The diagram's toolbar copies the source", async () => {
+      await expectToolbarCopiesDiagramSource(page, MERMAID_SOURCE);
+    });
+
+    await test.step("The source view's Copy and View diagram each take their own clicks", async () => {
+      await expectSourceViewCopiesDiagramSource(page, MERMAID_SOURCE);
+      await expectCompletedDiagram(page, ["Start", "Ship"]);
     });
   } finally {
     await agent.cleanup();
