@@ -481,6 +481,7 @@ export const ja: TranslationResources = {
     },
     row: {
       importing: "インポート中...",
+      cwdMissing: "フォルダーが存在しません",
     },
   },
   workspace: {
