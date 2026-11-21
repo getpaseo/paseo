@@ -64,6 +64,24 @@ function backgroundTaskItem(input: { status: "running" | "completed"; log: strin
 }
 
 describe("curateAgentActivity", () => {
+  it.each([
+    ["error", "Error"],
+    ["warning", "Warning"],
+    ["info", "Info"],
+  ] as const)("preserves multiline %s notifications in text activity", (level, label) => {
+    expect(
+      curateAgentActivity([
+        {
+          type: "notification",
+          level,
+          message: "QA_POLICY_REJECTED: remove QA_BLOCK and retry.\nSecond line: omit that token.",
+        },
+      ]),
+    ).toBe(
+      `[${label}] QA_POLICY_REJECTED: remove QA_BLOCK and retry.\nSecond line: omit that token.`,
+    );
+  });
+
   it("keeps reasoning before the assistant text that followed it", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "reasoning", text: "Check the commands first." },
