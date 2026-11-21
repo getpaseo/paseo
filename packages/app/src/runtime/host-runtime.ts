@@ -96,6 +96,7 @@ import { projectIconCache } from "@/projects/icon-cache";
 import { createPerformanceTrace } from "@/performance/native-trace";
 import { revokePushNotifications } from "@/push-notifications";
 import { createAppWebSocketFactory } from "./websocket-factory";
+import { readQueuedMessages, type QueuedMessageStorage } from "./queued-message-storage";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type PairingNavigationTarget = "openProject" | "hostRoot" | "hostSettings";
@@ -1695,6 +1696,8 @@ export class HostRuntimeStore {
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
+  private queuedMessageHydration = new Map<string, Promise<void>>();
+  private hydratedQueuedMessageServers = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
   private nextCancellationRequestId = 0;
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
@@ -2471,6 +2474,7 @@ export class HostRuntimeStore {
       });
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);
+      void this.restoreQueuedMessages(host.serverId);
       const directory = new DirectorySync(
         host.serverId,
         {
@@ -2514,6 +2518,41 @@ export class HostRuntimeStore {
         });
       this.emit(host.serverId);
     }
+  }
+
+  private restoreQueuedMessages(serverId: string): Promise<void> {
+    if (this.hydratedQueuedMessageServers.has(serverId)) return Promise.resolve();
+    const existing = this.queuedMessageHydration.get(serverId);
+    if (existing) return existing;
+
+    const restore = readQueuedMessages(this.storage as QueuedMessageStorage, serverId)
+      .then((stored) => {
+        const session = useSessionStore.getState().sessions[serverId];
+        if (!session) return undefined;
+        const merged = new Map(stored);
+        for (const [agentId, messages] of session.queuedMessages) {
+          const existingMessages = merged.get(agentId) ?? [];
+          const ids = new Set(existingMessages.map((message) => message.id));
+          merged.set(agentId, [
+            ...existingMessages,
+            ...messages.filter((message) => !ids.has(message.id)),
+          ]);
+        }
+        this.hydratedQueuedMessageServers.add(serverId);
+        useSessionStore.getState().setQueuedMessages(serverId, merged);
+        return undefined;
+      })
+      .catch((error) => {
+        this.hydratedQueuedMessageServers.add(serverId);
+        console.warn("[HostRuntime] Failed to restore queued messages", { serverId, error });
+      })
+      .finally(() => {
+        if (this.queuedMessageHydration.get(serverId) === restore) {
+          this.queuedMessageHydration.delete(serverId);
+        }
+      });
+    this.queuedMessageHydration.set(serverId, restore);
+    return restore;
   }
 
   private syncHostDiscovery(serverId: string): void {
