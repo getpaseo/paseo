@@ -39,6 +39,73 @@ it("reports a CLI without the acp subcommand as unavailable", async () => {
   });
 });
 
+it("publishes Antigravity skills separately from built-in commands", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      if (method === "initialize") {
+        send({ id, result: { protocolVersion: 1 } });
+      }
+      if (method === "session/new") {
+        send({ id, result: { sessionId: "native" } });
+        send({ method: "session/update", params: { sessionId: "native", update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: ["goal", "compact", "schedule", "browser", "plan", "grill-me",
+            "teamwork", "learn", "boost", "agy-customizations", "antigravity-guide", "diagnose"]
+            .map(name => ({ name, description: name })),
+        } } });
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: [],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "new",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) => event.type === "session.commands" || event.type === "request.failed",
+        ),
+      )
+      .toMatchObject({ type: "session.commands" });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.commands")?.commands)
+      .toEqual([
+        ...[
+          "goal",
+          "compact",
+          "schedule",
+          "browser",
+          "plan",
+          "grill-me",
+          "teamwork",
+          "learn",
+          "boost",
+        ].map((name) => ({ name, description: name, kind: "command" })),
+        ...["agy-customizations", "antigravity-guide", "diagnose"].map((name) => ({
+          name,
+          description: name,
+          kind: "skill",
+        })),
+      ]);
+  } finally {
+    await connection.close();
+  }
+});
+
 it.each([true, false])(
   "loads a saved stream-JSON session with ACP system prompt support %s",
   async (supportsSystemPrompt) => {

@@ -38,6 +38,7 @@ import {
   requireProviderCapabilities,
   type ProviderCatalog,
   type ProviderCapability,
+  type ProviderCommand,
   type ProviderConfigState,
   type ProviderConnectRequest,
   type ProviderConnection,
@@ -1398,11 +1399,18 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "available_commands_update") {
-      const commands = update.availableCommands.map((command) => ({
-        name: command.name,
-        description: command.description,
-        argumentHint: command.input?.hint,
-      }));
+      const context = { sessionId: this.options.boundarySessionId };
+      const commands = update.availableCommands.map((command) => {
+        let entry: ProviderCommand = {
+          name: command.name,
+          description: command.description,
+          argumentHint: command.input?.hint,
+        };
+        for (const transformer of this.transformers) {
+          entry = transformer.command?.(entry, context) ?? entry;
+        }
+        return entry;
+      });
       this.emit({ type: "session.commands", sessionId: this.options.boundarySessionId, commands });
       this.receivedInitialCommands = true;
       this.commandWaiter?.();

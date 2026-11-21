@@ -442,6 +442,15 @@ Use `config(state, context)` to return the configuration snapshot that Paseo dis
 Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
 Use `configure` to send changes to the agent.
 
+Publish `session.commands` to advertise slash commands and skills. Each entry carries `name`,
+`description`, and optional `argumentHint` and `kind`. The composer suggests both kinds at the
+start of a prompt. Use `kind: "skill"` if the agent accepts the skill inline as part of a normal
+message. The default kind is `"command"`.
+
+In the ACP shim, use `command(entry, context)` to return a rewritten entry for each advertised
+slash command. For example, a plugin with a vendor skill registry can set the kind with
+`return { ...entry, kind: skills.has(entry.name) ? "skill" : "command" }`.
+
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string

@@ -136,6 +136,8 @@ export interface AcpTransformer {
   configure?(change: AcpConfigChange, context: AcpConfigureContext): Promise<"handled" | "pass">;
   /** Rewrites every session config snapshot before Paseo sees it. */
   config?(state: ProviderConfigState, context: AcpContext): ProviderConfigState;
+  /** Rewrites each advertised ACP slash command before Paseo sees it. */
+  command?(command: ProviderCommand, context: AcpContext): ProviderCommand;
   notification?(
     notification: { method: string; params: JsonValue },
     context: AcpContext,
