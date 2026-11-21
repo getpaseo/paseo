@@ -36,6 +36,8 @@ export interface PluginButton<Text extends PluginText = string> {
   label?: Text;
   visible?: boolean;
   disabled?: boolean;
+  /** True or false marks a choice; omit for an ordinary action button. */
+  selected?: boolean;
   behavior: PluginButtonBehavior<Text>;
 }
 export interface PluginButtonRegistration<Text extends PluginText = string> {
