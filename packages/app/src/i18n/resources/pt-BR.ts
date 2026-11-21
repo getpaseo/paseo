@@ -863,6 +863,7 @@ export const ptBR: TranslationResources = {
         },
         viewPr: "Ver PR",
         createPr: {
+          ...en.workspace.git.actions.createPr,
           label: "Criar PR",
           pending: "Criando PR...",
           success: "PR criada",

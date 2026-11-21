@@ -25,10 +25,11 @@ export interface BuildMetadataPromptOptions {
   after: string;
   trailing?: string;
   workspaceGitService?: RepoRootResolver;
+  metadataOverrides?: PaseoMetadataGeneration;
 }
 
 export async function buildMetadataPrompt(options: BuildMetadataPromptOptions): Promise<string> {
-  const overrides = await readProjectMetadataOverrides(options);
+  const overrides = options.metadataOverrides ?? (await readProjectMetadataOverrides(options));
   const styleBlocks = options.styles.map((section) =>
     renderStyleSection(section, overrides?.[section.configKey]?.instructions),
   );
@@ -54,6 +55,19 @@ async function readProjectMetadataOverrides(
   } catch {
     return undefined;
   }
+}
+
+export async function readProjectMetadataInstructions(
+  cwd: string,
+  workspaceGitService: RepoRootResolver,
+  configKey: MetadataConfigKey,
+): Promise<string | undefined> {
+  const repoRoot = await workspaceGitService.resolveRepoRoot(cwd);
+  const result = await readPaseoConfig(repoRoot);
+  if (!result.ok) throw new Error("Unable to read project PR instructions");
+  const overrides = result.config?.metadataGeneration;
+  const instructions = overrides?.[configKey]?.instructions;
+  return isNonEmptyString(instructions) ? instructions.trim() : undefined;
 }
 
 function isNonEmptyString(value: unknown): value is string {

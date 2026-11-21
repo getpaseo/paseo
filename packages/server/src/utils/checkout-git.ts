@@ -4328,6 +4328,7 @@ function parseHeadPushRefspec(refspec: string | null): string | null {
 }
 
 export interface CreatePullRequestOptions {
+  approvedHeadSha?: string;
   title: string;
   body?: string;
   base?: string;
@@ -4393,6 +4394,25 @@ export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
 export type ReviewDecision = "approved" | "changes_requested" | "pending" | null;
 
+export async function capturePrCheckoutState(
+  cwd: string,
+  requestedBaseRef?: string,
+  context?: CheckoutContext,
+) {
+  const head = await getCurrentBranch(cwd);
+  const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
+  const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
+  if (!head || !base) throw new Error("Unable to determine PR head and base");
+  const git = async (...args: string[]) => (await runGitCommand(args, { cwd })).stdout.trim();
+  return {
+    head,
+    base,
+    headSha: await git("rev-parse", "HEAD"),
+    baseSha: await git("rev-parse", await resolveBestComparisonBaseRef(cwd, base)),
+    origin: await git("remote", "get-url", "origin"),
+  };
+}
+
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
@@ -4422,12 +4442,21 @@ export async function createPullRequest(
   // the forge resolver has already matched the origin remote to a forge. If the
   // adapter still fails after the push, retrying is safe — the non-force push
   // of the head branch is idempotent.
-  await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
+  // Push the approved commit rather than a branch tip that may have moved
+  // since confirmation. This remains a non-force push.
+  const pushArgs = options.approvedHeadSha
+    ? ["push", "origin", `${options.approvedHeadSha}:refs/heads/${head}`]
+    : ["push", "-u", "origin", head];
+  await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
+  if (options.approvedHeadSha) {
+    await runGitCommand(["branch", `--set-upstream-to=origin/${head}`, "--", head], { cwd });
+  }
 
   const result = await forgeService.createPullRequest({
     cwd,
     title: options.title,
     body: options.body,
+    draft: options.draft,
     head,
     base: normalizedBase,
   });
