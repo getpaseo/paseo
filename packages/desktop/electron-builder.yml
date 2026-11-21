@@ -48,6 +48,8 @@ mac:
   notarize: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    NSAppleEventsUsageDescription: "Paseo lets coding agents control Mac apps when you ask them to."
   extraResources:
     - from: bin/paseo
       to: bin/paseo
