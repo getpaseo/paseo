@@ -25,7 +25,11 @@ export interface RegisteredPluginButton {
   context: PluginButtonContext;
   button: ResolvedPluginButton;
   pending: boolean;
-  open: boolean;
+  /**
+   * The rendered control whose surface is open. One entry can render in more than one place (a
+   * retained workspace keeps its composer mounted while hidden), and only the pressed one opens.
+   */
+  openIn: string | null;
 }
 
 function resolveAction(
@@ -108,7 +112,7 @@ export class PluginButtonStore {
         context,
         button: initialButton,
         pending: false,
-        open: false,
+        openIn: null,
       },
     ]);
     const unsubscribe = installation.i18n.subscribe(() => {
@@ -124,7 +128,7 @@ export class PluginButtonStore {
         const button = validateButton(nextSource, this.validation, installation.i18n.resolve);
         sourceButton = nextSource;
         const close = !button.visible || button.disabled || patch.behavior !== undefined;
-        this.replace(key, { button, open: close ? false : entry.open });
+        this.replace(key, { button, openIn: close ? null : entry.openIn });
       },
       remove: () => {
         unsubscribe();
@@ -134,11 +138,17 @@ export class PluginButtonStore {
     };
   }
 
-  setOpen(key: number, open: boolean): void {
+  /** Opens or closes the surface of one rendered control, identified by `control`. */
+  setOpen(key: number, control: string, open: boolean): void {
     const entry = this.entries.find((candidate) => candidate.key === key);
     if (!entry) return;
-    if (open && (!entry.button.visible || entry.button.disabled || entry.pending)) return;
-    this.replace(key, { open });
+    if (open) {
+      if (!entry.button.visible || entry.button.disabled || entry.pending) return;
+      this.replace(key, { openIn: control });
+      return;
+    }
+    // Another copy closing (or unmounting) must not close the surface the user opened.
+    if (entry.openIn === control) this.replace(key, { openIn: null });
   }
 
   async run(key: number, path: readonly string[] = []): Promise<void> {
@@ -156,7 +166,7 @@ export class PluginButtonStore {
 
   private replace(
     key: number,
-    patch: Partial<Pick<RegisteredPluginButton, "button" | "open" | "pending">>,
+    patch: Partial<Pick<RegisteredPluginButton, "button" | "openIn" | "pending">>,
   ): void {
     if (!this.entries.some((entry) => entry.key === key)) return;
     this.publish(this.entries.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));

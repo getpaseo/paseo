@@ -6,6 +6,7 @@ import type { PluginButtonIcon, PluginHostProps } from "@getpaseo/plugin/client"
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   useCallback,
+  useId,
   useMemo,
   useSyncExternalStore,
   type ReactElement,
@@ -256,9 +257,11 @@ function ButtonControl({ view }: { view: ButtonView }) {
   if (composer) label = button.label ?? button.title;
   else if (props.layout.compact) label = undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
+  const control = useId();
+  const open = entry.openIn === control;
   const setOpen = useCallback(
-    (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
-    [entry.key],
+    (next: boolean) => pluginButtonStore.setOpen(entry.key, control, next),
+    [entry.key, control],
   );
   const buttonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
@@ -266,11 +269,11 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
-            (hovered || pressed || entry.open) && styles.active,
+            (hovered || pressed || open) && styles.active,
             disabled && styles.disabled,
           ]
-        : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+        : headerButtonStyle(props.layout.compact, { hovered, pressed, open }, disabled),
+    [composer, disabled, open, props.layout.compact],
   );
   const contents = (
     <>
@@ -327,7 +330,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
     [view, entry.key, button.behavior],
   );
   return (
-    <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
+    <MenuRoot compactMode="sheet" open={open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent>
