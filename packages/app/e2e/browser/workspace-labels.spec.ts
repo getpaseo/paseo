@@ -3,6 +3,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { openWorkspaceSidebarKebab } from "../support/helpers/sidebar";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 interface SessionEnvelope {
@@ -114,11 +115,7 @@ async function expectAssigned(
 }
 
 async function openWorkspaceLabels(page: import("@playwright/test").Page, workspaceId: string) {
-  const serverId = getServerId();
-  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`).first();
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.hover();
-  await page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`).first().click();
+  const serverId = await openWorkspaceSidebarKebab(page, workspaceId);
   await page.getByTestId(`sidebar-workspace-menu-labels-${serverId}:${workspaceId}`).click();
   await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
 }

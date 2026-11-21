@@ -70,7 +70,7 @@ export function UsageCard({
 }) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const { refresh, refreshState } = useReportRefresh(serverId, entry.id, agentId);
+  const { refresh, refreshState } = useReportRefresh(serverId, entry, agentId);
   // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
   const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
@@ -176,7 +176,7 @@ function UsageCardBody({
   refreshState: UsageRefresh;
 }) {
   const { t } = useTranslation();
-  const { windows, balances, details, retained, successfulAt, messages } = report;
+  const { windows, balances, details, retained, successfulAt, forecastAt, messages } = report;
   const footer = entry.account.label ?? null;
   return (
     <>
@@ -194,6 +194,7 @@ function UsageCardBody({
               entry={entry}
               window={window}
               retained={retained}
+              forecastAt={forecastAt}
               display={display}
               pinnable={pinnable}
             />
@@ -267,8 +268,10 @@ function CardWindowBar({
   display,
   pinnable,
   retained,
+  forecastAt,
 }: {
   retained: boolean;
+  forecastAt: string | null;
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
@@ -285,6 +288,7 @@ function CardWindowBar({
     <UsageWindowBar
       window={window}
       retained={retained}
+      forecastAt={forecastAt}
       displayAs={display.displayAs}
       pinnable={pinnable}
       pinned={display.isPinned(pin)}

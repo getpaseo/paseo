@@ -257,6 +257,59 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("reports a spent create budget without blaming a manager it did not call", async () => {
+    const first = await createPlugin(
+      "first-manager",
+      `import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create({ path: directory }, { signal }) {
+      writeFileSync(path.join(directory, "started"), "");
+      while (!existsSync(path.join(directory, "decline"))) {
+        signal.throwIfAborted();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    },
+  });
+}`,
+    );
+    const second = await createPlugin(
+      "second-manager",
+      `export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create() { throw new Error("Second manager was called"); },
+  });
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("first-manager", first);
+      await runtime.startPlugin("second-manager", second);
+      // Advance the deadline clock while real subprocess IPC and timers keep running.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const creation = runtime.createWorktree({
+        kind: "branch-off",
+        repoRoot: first,
+        sourceCheckout: first,
+        branch: "topic",
+        slug: "topic",
+        path: first,
+        baseRef: "main",
+        untrusted: false,
+      });
+      const failure = creation.catch((error: unknown) => error);
+      await expect.poll(() => readTextIfPresent(path.join(first, "started"))).toBe("");
+      vi.setSystemTime(Date.now() + 120_000);
+      await writeFile(path.join(first, "decline"), "");
+      expect(await failure).toMatchObject({ message: "Worktree creation manager budget expired" });
+    } finally {
+      vi.useRealTimers();
+      await runtime.stopAll();
+    }
+  });
+
   it.each([
     { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
     { specifier: "@getpaseo/plugin", moduleDirectory: "server" },

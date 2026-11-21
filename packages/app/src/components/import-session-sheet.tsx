@@ -1,6 +1,6 @@
 import React, { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -40,6 +40,7 @@ import {
   resolveDirectoryLabel,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
+  previousPageLimit,
   type ProviderErrorRow,
   resolveImportTarget,
   resolveProvidersToFetch,
@@ -100,11 +101,12 @@ interface SessionsQueryConfig {
   // Query's default retry would keep the header spinner turning and pile up
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
-  placeholderData: typeof keepPreviousData;
+  placeholderData: () => RecentSessionsResponse | undefined;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
 function buildSessionsQueriesConfig(args: {
+  queryClient: QueryClient;
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
@@ -113,14 +115,24 @@ function buildSessionsQueriesConfig(args: {
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, visible, client, cwd, query, limit, hostDisconnectedMessage } = args;
+  const { queryClient, providersToFetch, visible, client, cwd, query, limit } = args;
+  const { hostDisconnectedMessage } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
+  const previousLimit = previousPageLimit(limit);
   return providersToFetch.map((provider) => ({
     queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
     enabled,
     retry: false as const,
-    placeholderData: keepPreviousData,
+    // While Load more fetches the next page, keep showing the page it grew from. React Query's
+    // keepPreviousData cannot do this here: useQueries gives a changed key a new observer, which
+    // has no previous data, so the rows would vanish and the list would remount at the top.
+    placeholderData: () =>
+      previousLimit === null
+        ? undefined
+        : queryClient.getQueryData<RecentSessionsResponse>(
+            buildSessionsQueryKey({ cwd, query, limit: previousLimit, provider }),
+          ),
     queryFn: async () => {
       if (!client) {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -522,6 +534,7 @@ export function ImportSessionSheet({
   const queriesConfig = useMemo(
     () =>
       buildSessionsQueriesConfig({
+        queryClient,
         providersToFetch,
         visible,
         client,
@@ -530,7 +543,7 @@ export function ImportSessionSheet({
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [queryClient, providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });

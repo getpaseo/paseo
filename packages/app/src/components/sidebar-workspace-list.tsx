@@ -1,3 +1,4 @@
+import { useWorkspaceRowPress } from "../../modules/paseo-press-feedback";
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -86,6 +87,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
+import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -126,7 +128,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useWorkspaceReadState } from "@/hooks/use-workspace-read-state";
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
@@ -1090,13 +1091,11 @@ function WorkspaceRowInner({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const handlePress = useCallback(() => {
-    if (interaction.didLongPressRef.current) {
-      interaction.didLongPressRef.current = false;
-      return;
-    }
-    onPress();
-  }, [interaction.didLongPressRef, onPress]);
+  const { onPress: handlePress, feedback } = useWorkspaceRowPress({
+    didLongPressRef: interaction.didLongPressRef,
+    onPress,
+    selected,
+  });
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const isEditingTitle = titleEditor !== null;
@@ -1191,6 +1190,7 @@ function WorkspaceRowInner({
                   onTogglePin={onTogglePin}
                 />
               </SidebarWorkspaceRowContent>
+              {feedback}
             </SidebarWorkspaceContextMenu>
           </View>
         );
@@ -1296,17 +1296,6 @@ function WorkspaceRowWithMenu({
       toast.error(error instanceof Error ? error.message : "Failed to mark workspace as unread");
     });
   }, [markUnread, toast]);
-
-  useKeyboardActionHandler({
-    handlerId: `workspace-archive-${workspace.workspaceKey}`,
-    actions: ["workspace.archive"],
-    enabled: selected && !isArchiving,
-    priority: 0,
-    handle: () => {
-      handleArchive();
-      return true;
-    },
-  });
 
   return (
     <>
@@ -2551,6 +2540,7 @@ function ProjectModeList({
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
+      <SidebarToastClearance />
     </>
   );
 
@@ -2592,8 +2582,7 @@ const styles = StyleSheet.create((theme) => ({
     // Optical inset: aligns the visible Pinned/Workspaces glyph edge with the
     // Schedules icon across the divider; their layout boxes have different insets.
     paddingTop: 2,
-    // The sidebar toast floats over the list's end. Keep this padding the same whether or not
-    // a toast shows: changing it moves the rows when the toast leaves.
+    // Room for the sidebar toast comes from SidebarToastClearance at the end of the content.
     paddingBottom: theme.spacing[4],
   },
   projectListContainer: {

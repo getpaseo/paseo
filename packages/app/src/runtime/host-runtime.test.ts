@@ -2739,6 +2739,52 @@ describe("HostRuntimeStore", () => {
     session.clearSession(host.serverId);
   });
 
+  it("loads the directory for a consumer that sees a restored host before the registry finishes loading", async () => {
+    const host = makeHost({
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        [REGISTRY_KEY]: JSON.stringify([host]),
+        "@paseo:e2e": "1",
+      }),
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    // A component renders on every tick while the registry loads, and acquires directory
+    // demand for each host it reads, as the sidebar does on its first render.
+    const registry = { loading: true };
+    const boot = store.boot().finally(() => {
+      registry.loading = false;
+    });
+    let releaseDemand: (() => void) | null = null;
+    while (registry.loading && !releaseDemand) {
+      if (store.getHosts().some((candidate) => candidate.serverId === host.serverId)) {
+        releaseDemand = store.acquireDirectoryDemand(host.serverId);
+      }
+      await Promise.resolve();
+    }
+    await boot;
+    expect(releaseDemand).not.toBeNull();
+
+    await waitForHostOnline(store, host.serverId);
+    await vi.waitFor(() => expect(fakeClient.fetchAgentsCalls).toHaveLength(1));
+
+    releaseDemand?.();
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("keeps readable hosts when the registry holds entries this build can't read", async () => {
     const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
 
@@ -2863,7 +2909,8 @@ describe("HostRuntimeStore", () => {
       await registryLoaded;
 
       expect(store.isHostRegistryLoaded()).toBe(true);
-      expect(hostListNotifications).toBe(2);
+      // Publishing the restored hosts, the registry turning ready, and the registry loading.
+      expect(hostListNotifications).toBe(3);
     } finally {
       if (previousOverride === undefined) {
         delete process.env.EXPO_PUBLIC_LOCAL_DAEMON;

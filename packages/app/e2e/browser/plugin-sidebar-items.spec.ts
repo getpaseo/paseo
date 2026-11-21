@@ -362,6 +362,16 @@ test.describe("Plugin sidebar items", () => {
     });
   });
 
+  test("a plugin screen reads workspaces through the state hooks", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    await expect(headerRow(page, SHOWCASE_PLUGIN_ID, "deploys")).toBeVisible({ timeout: 30_000 });
+    await runCommand(page, "Open plugin workspaces");
+    await expect(screenTitle(page)).toHaveText("Workspaces");
+    await expect(page.getByText(`Workspace ${workspaceId}`, { exact: true })).toBeVisible();
+    await expect(page.getByText("Plugin failed", { exact: false })).toHaveCount(0);
+  });
+
   test("a header row's shortcut hint presses the row", async ({ page }) => {
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);

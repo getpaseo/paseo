@@ -117,10 +117,11 @@ export function useComposerHeight({
   useEffect(() => {
     const source = textareaRef.current;
     if (!source || typeof ResizeObserver === "undefined") return;
-    let previousWidth = source.clientWidth;
-    const observer = new ResizeObserver(() => {
-      const nextWidth = source.clientWidth;
-      if (Math.abs(nextWidth - previousWidth) < 1) return;
+    let previousWidth: number | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      // Hint padding changes the width text wraps at even when clientWidth stays fixed.
+      const nextWidth = entry.contentRect.width;
+      if (nextWidth === previousWidth) return;
       previousWidth = nextWidth;
       measure(paramsRef.current.getText());
     });

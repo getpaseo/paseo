@@ -7,6 +7,8 @@ import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
+import { PUBLISH_WORKSPACES } from "./publish-release-packages.mjs";
+
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
@@ -142,8 +144,8 @@ test("change gating allows superseded workflow runs to cancel", () => {
 
 test("published npm packages declare and ship the repository license", () => {
   const rootManifest = JSON.parse(readFileSync(new URL("package.json", repoRoot), "utf8"));
-  const workspaceArgs = rootManifest.scripts["release:publish"].match(/--workspace=\S+/g);
-  assert.notEqual(workspaceArgs, null, "release:publish must select public packages");
+  assert.match(rootManifest.scripts["release:publish"], /scripts\/publish-release-packages\.mjs/);
+  const workspaceArgs = PUBLISH_WORKSPACES.map((workspace) => `--workspace=${workspace}`);
   const packed = JSON.parse(
     execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json", ...workspaceArgs], {
       cwd: repoRoot,
@@ -164,8 +166,8 @@ test("published npm packages declare and ship the repository license", () => {
   }));
   assert.deepEqual(
     licenses,
-    workspaceArgs.map((workspace) => ({
-      name: workspace.slice("--workspace=".length),
+    PUBLISH_WORKSPACES.map((workspace) => ({
+      name: workspace,
       license: "Apache-2.0",
       files: ["LICENSE"],
     })),
@@ -365,14 +367,32 @@ test("packaging runs on main without allocating pull-request runners", () => {
     assert.doesNotMatch(trigger, /pull_request/);
     assert.doesNotMatch(source, /dorny\/paths-filter/);
   }
+  const docker = readFileSync(dockerWorkflowPath, "utf8");
+  assert.match(
+    docker,
+    /group: docker-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true' && format\('publish-\{0\}', inputs\.paseo_version \|\| github\.run_id\) \|\| github\.ref \}\}/,
+    "manual Docker release retries use their own concurrency group so main pushes never cancel them",
+  );
+  assert.match(
+    docker,
+    /cancel-in-progress: \$\{\{ !startsWith\(github\.ref, 'refs\/tags\/'\) && !\(github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true'\) \}\}/,
+    "Docker cancels superseded non-tag main checks while preserving tag and manual publish runs",
+  );
+  const nix = readFileSync(nixWorkflowPath, "utf8");
+  assert.match(nix.split("jobs:", 1)[0], /^\s+workflow_dispatch:/m);
 });
 
-test("desktop packaging smokes main pushes and only the pull requests that touch packaging", () => {
+test("CI and desktop packaging verify release branches isolated from main traffic", () => {
+  const ciTrigger = readFileSync(ciWorkflowPath, "utf8").split("jobs:", 1)[0];
+  assert.match(ciTrigger, /push:\s*\n\s+branches: \[main, "release\/\*\*"\]/);
+
   const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
   const trigger = source.split("jobs:", 1)[0];
-  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(trigger, /push:\s*\n\s+branches: \[main, "release\/\*\*"\]/);
+  assert.match(trigger, /^\s+workflow_dispatch:/m);
   assert.match(trigger, /pull_request:\s*\n\s+paths:/);
   assert.match(trigger, /- "packages\/desktop\/\*\*"/);
+  assert.match(trigger, /^\s+cancel-in-progress: true$/m);
   assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
     assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
@@ -582,107 +602,291 @@ test("Windows units and integration run independently with complete routed cover
   }
 });
 
-test("macOS release retries only transient stapling failures without rebuilding the signed app", async (t) => {
+test("desktop release creates release-manifests before entering it and uses the xcrun retry script", () => {
   const workflow = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
-  const wrapper = workflow
-    .match(/<<'STAPLER'\n([\s\S]*?)\n          STAPLER/)[1]
-    .replace(/^          /gm, "");
-  const networkError =
+  assert.match(workflow, /scripts\/macos-xcrun-retry\.sh/);
+  assert.match(workflow, /mkdir -p release-manifests\s*\n\s+cd release-manifests/);
+});
+
+test("macOS release xcrun wrapper retries transient stapling and notarization failures without rebuilding", async (t) => {
+  const wrapperSource = readFileSync(new URL("scripts/macos-xcrun-retry.sh", repoRoot), "utf8");
+  const networkLostError =
     'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."';
+  const notaryTimeoutWithId =
+    'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out." UserInfo={NSErrorFailingURLStringKey=https://appstoreconnect.apple.com/notary/v2/submissions/ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba?})';
+  const notaryOfflineWithId =
+    'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={NSErrorFailingURLStringKey=https://appstoreconnect.apple.com/notary/v2/submissions/ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba?})';
+  const notaryUploadTimeout =
+    'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out.")';
+  const acceptedJson = JSON.stringify({
+    id: "ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba",
+    message: "Successfully received submission info",
+    status: "Accepted",
+  });
+  const invalidJson = JSON.stringify({
+    id: "ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba",
+    message: "Submission invalid",
+    status: "Invalid",
+  });
+
   const cases = [
     {
-      name: "success",
-      outcomes: [0],
-      output: "stapled",
-      command: "stapler",
+      name: "stapler success",
+      steps: [{ code: 0, output: "stapled" }],
+      args: ["stapler", "staple", "-v", "Paseo signed.app"],
       expected: 0,
-      attempts: 1,
+      expectedCalls: [["stapler", "staple", "-v", "Paseo signed.app"]],
+      expectPattern: /stapled/,
     },
     {
-      name: "transient then success",
-      outcomes: [68, 0],
-      output: networkError,
-      command: "stapler",
+      name: "stapler transient then success",
+      steps: [
+        { code: 68, output: networkLostError },
+        { code: 0, output: "stapled" },
+      ],
+      args: ["stapler", "staple", "-v", "Paseo signed.app"],
       expected: 0,
-      attempts: 2,
+      expectedCalls: [
+        ["stapler", "staple", "-v", "Paseo signed.app"],
+        ["stapler", "staple", "-v", "Paseo signed.app"],
+      ],
+      expectPattern: /stapled/,
     },
     {
-      name: "exhausted network retries",
-      outcomes: [68, 68, 68, 68, 0],
-      output: networkError,
-      command: "stapler",
+      name: "stapler exhausted network retries",
+      steps: [
+        { code: 68, output: networkLostError },
+        { code: 68, output: networkLostError },
+        { code: 68, output: networkLostError },
+        { code: 68, output: networkLostError },
+      ],
+      args: ["stapler", "staple", "-v", "Paseo signed.app"],
       expected: 68,
-      attempts: 4,
+      expectedCalls: Array.from({ length: 4 }, () => [
+        "stapler",
+        "staple",
+        "-v",
+        "Paseo signed.app",
+      ]),
+      expectPattern: /network connection was lost/,
     },
     {
-      name: "non-network staple error",
-      outcomes: [68, 0],
-      output: "ticket not found",
-      command: "stapler",
+      name: "stapler non-network error is not retried",
+      steps: [{ code: 68, output: "ticket not found" }],
+      args: ["stapler", "staple", "-v", "Paseo signed.app"],
       expected: 68,
-      attempts: 1,
+      expectedCalls: [["stapler", "staple", "-v", "Paseo signed.app"]],
+      expectPattern: /ticket not found/,
     },
     {
-      name: "different exit code",
-      outcomes: [1, 0],
-      output: networkError,
-      command: "stapler",
+      name: "notarytool switches to wait when polling fails after upload and emits clean JSON",
+      steps: [
+        { code: 1, output: notaryTimeoutWithId },
+        { code: 1, output: notaryOfflineWithId },
+        { code: 0, output: acceptedJson },
+      ],
+      args: [
+        "notarytool",
+        "submit",
+        "/tmp/Paseo.zip",
+        "--apple-id",
+        "id",
+        "--password",
+        "pw",
+        "--team-id",
+        "team",
+        "--wait",
+        "--output-format",
+        "json",
+      ],
+      expected: 0,
+      expectedCalls: [
+        [
+          "notarytool",
+          "submit",
+          "/tmp/Paseo.zip",
+          "--apple-id",
+          "id",
+          "--password",
+          "pw",
+          "--team-id",
+          "team",
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+        [
+          "notarytool",
+          "wait",
+          "ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba",
+          "--apple-id",
+          "id",
+          "--password",
+          "pw",
+          "--team-id",
+          "team",
+          "--output-format",
+          "json",
+        ],
+        [
+          "notarytool",
+          "wait",
+          "ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba",
+          "--apple-id",
+          "id",
+          "--password",
+          "pw",
+          "--team-id",
+          "team",
+          "--output-format",
+          "json",
+        ],
+      ],
+      expectCleanJson: true,
+    },
+    {
+      name: "notarytool retries submit when upload fails before submission ID exists",
+      steps: [
+        { code: 1, output: notaryUploadTimeout },
+        { code: 0, output: acceptedJson },
+      ],
+      args: [
+        "notarytool",
+        "submit",
+        "/tmp/Paseo.zip",
+        "--apple-id",
+        "id",
+        "--wait",
+        "--output-format",
+        "json",
+      ],
+      expected: 0,
+      expectedCalls: [
+        [
+          "notarytool",
+          "submit",
+          "/tmp/Paseo.zip",
+          "--apple-id",
+          "id",
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+        [
+          "notarytool",
+          "submit",
+          "/tmp/Paseo.zip",
+          "--apple-id",
+          "id",
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+      ],
+      expectCleanJson: true,
+    },
+    {
+      name: "notarytool deterministic Invalid rejection is never retried",
+      steps: [{ code: 0, output: invalidJson }],
+      args: [
+        "notarytool",
+        "submit",
+        "/tmp/Paseo.zip",
+        "--apple-id",
+        "id",
+        "--wait",
+        "--output-format",
+        "json",
+      ],
+      expected: 0,
+      expectedCalls: [
+        [
+          "notarytool",
+          "submit",
+          "/tmp/Paseo.zip",
+          "--apple-id",
+          "id",
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+      ],
+      expectCleanJson: true,
+    },
+    {
+      name: "notarytool bad credentials error is never retried",
+      steps: [{ code: 1, output: "Error: HTTP status code: 401. Invalid credentials." }],
+      args: [
+        "notarytool",
+        "submit",
+        "/tmp/Paseo.zip",
+        "--apple-id",
+        "id",
+        "--wait",
+        "--output-format",
+        "json",
+      ],
       expected: 1,
-      attempts: 1,
-    },
-    {
-      name: "notary submission is not retried",
-      outcomes: [68, 0],
-      output: networkError,
-      command: "notarytool",
-      expected: 68,
-      attempts: 1,
+      expectedCalls: [
+        [
+          "notarytool",
+          "submit",
+          "/tmp/Paseo.zip",
+          "--apple-id",
+          "id",
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+      ],
+      expectPattern: /Invalid credentials/,
     },
   ];
   for (const scenario of cases) {
     await t.test(scenario.name, () => {
-      const directory = mkdtempSync(join(tmpdir(), "stapler-retry-"));
+      const directory = mkdtempSync(join(tmpdir(), "xcrun-retry-"));
       try {
         const statePath = join(directory, "state.json");
         const realXcrun = join(directory, "real-xcrun");
         const wrapperPath = join(directory, "xcrun");
-        writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+        writeFileSync(wrapperPath, wrapperSource, { mode: 0o755 });
         writeFileSync(join(directory, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-        writeFileSync(
-          statePath,
-          JSON.stringify({ outcomes: scenario.outcomes, output: scenario.output, calls: [] }),
-        );
+        writeFileSync(statePath, JSON.stringify({ steps: scenario.steps, calls: [] }));
         writeFileSync(
           realXcrun,
           `#!/usr/bin/env node
 const fs = require("node:fs");
-const state = JSON.parse(fs.readFileSync(process.env.STAPLER_STATE, "utf8"));
+const state = JSON.parse(fs.readFileSync(process.env.XCRUN_STATE, "utf8"));
 state.calls.push(process.argv.slice(2));
-const code = state.outcomes.shift();
-fs.writeFileSync(process.env.STAPLER_STATE, JSON.stringify(state));
-console.log(state.output);
-process.exit(code);
+const next = state.steps.shift();
+fs.writeFileSync(process.env.XCRUN_STATE, JSON.stringify(state));
+if (!next) process.exit(99);
+process.stdout.write(next.output + "\\n");
+process.exit(next.code);
 `,
           { mode: 0o755 },
         );
-        const args = [scenario.command, "staple", "-v", "Paseo signed.app"];
-        const result = spawnSync("bash", [wrapperPath, ...args], {
+        const result = spawnSync("bash", [wrapperPath, ...scenario.args], {
           encoding: "utf8",
           env: {
             ...process.env,
             PASEO_REAL_XCRUN: realXcrun,
-            STAPLER_STATE: statePath,
+            XCRUN_STATE: statePath,
             PATH: `${directory}:${process.env.PATH}`,
           },
           timeout: 5000,
         });
         assert.equal(result.status, scenario.expected, result.stdout + result.stderr);
         const state = JSON.parse(readFileSync(statePath, "utf8"));
-        assert.deepEqual(
-          state.calls,
-          Array.from({ length: scenario.attempts }, () => args),
-        );
-        assert.match(result.stdout, /stapled|network connection was lost|ticket not found/);
+        assert.deepEqual(state.calls, scenario.expectedCalls);
+        if (scenario.expectCleanJson) {
+          // @electron/notarize merges stdout and stderr before calling JSON.parse.
+          const parsed = JSON.parse((result.stdout + result.stderr).trim());
+          assert.equal(parsed.id, "ee2872f3-65d9-49f7-b2b5-adcdfe2db6ba");
+        }
+        if (scenario.expectPattern) {
+          assert.match(result.stdout + result.stderr, scenario.expectPattern);
+        }
       } finally {
         rmSync(directory, { recursive: true, force: true });
       }

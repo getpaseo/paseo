@@ -4,6 +4,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { Keyboard, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
@@ -21,7 +22,6 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
@@ -330,16 +330,6 @@ export function WorkspaceDraftComposer({
     throw new Error("Workspace draft composer state is required");
   }
 
-  const draftProvider = composerState.selectedProvider;
-  const draftProviderDefinitions = composerState.providerDefinitions;
-  const draftThinkingOptions = composerState.availableThinkingOptions;
-  const draftSelectedThinkingId = composerState.selectedThinkingOptionId;
-  const draftSetThinkingOption = composerState.setThinkingOptionFromUser;
-  const draftModeOptions = composerState.modeOptions;
-  const draftSelectedMode = composerState.selectedMode;
-  const draftSetMode = composerState.setModeFromUser;
-  const draftOptionControls = composerState.agentControls.optionControls;
-
   const clearDraftInput = draftInput.clear;
   const replaceDraftText = draftInput.replaceText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -471,35 +461,6 @@ export function WorkspaceDraftComposer({
         onCreated(result);
       },
     });
-  useAgentControlCommandCenterActions({
-    sourceId: `draft:${serverId}:${tabId}`,
-    enabled: isPaneFocused && !isSubmitting,
-    controls: {
-      serverId,
-      ownerKey: tabId,
-      provider: draftProvider,
-      providerDefinitions: draftProviderDefinitions,
-      models: {
-        providers: composerState.modelSelectorProviders,
-        selectedProvider: draftProvider,
-        selectedModelId: composerState.effectiveModelId,
-        select: (provider, modelId) => {
-          composerState.setProviderAndModelFromUser(provider, modelId);
-        },
-      },
-      thinking: {
-        options: draftThinkingOptions,
-        selectedId: draftSelectedThinkingId,
-        select: draftSetThinkingOption,
-      },
-      modes: {
-        options: draftModeOptions,
-        selectedId: draftSelectedMode,
-        select: draftSetMode,
-      },
-      optionControls: draftOptionControls ?? null,
-    },
-  });
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
     draftInput.isHydrated &&
@@ -576,14 +537,17 @@ export function WorkspaceDraftComposer({
   return (
     <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
       {formErrorMessage ? (
-        <View style={styles.formErrorRow}>
+        <View
+          style={styles.formErrorRow}
+          dataSet={isComposerFullscreen ? undefined : CHAT_COLUMN_RAIL_DATASET}
+        >
           <View style={styles.formError}>
             <Text style={styles.errorText}>{formErrorMessage}</Text>
           </View>
         </View>
       ) : null}
       {importPillPress && !isComposerFullscreen ? (
-        <View style={styles.importPillRow}>
+        <View style={styles.importPillRow} dataSet={CHAT_COLUMN_RAIL_DATASET}>
           <View style={styles.importPillContent}>
             <ComposerImportPill onPress={importPillPress} />
           </View>
