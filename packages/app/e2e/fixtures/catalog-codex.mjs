@@ -1,6 +1,10 @@
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
 
+// `--daybreak` stands in for an account enrolled in Daybreak Blue: Sol offers Blue, 6.1 Sol
+// offers standard only, and each reply names the program its turn asked for.
+const daybreak = process.argv.includes("--daybreak");
+
 const fast = { id: "priority", name: "Fast", description: "Faster processing, increased usage" };
 const ultra = {
   id: "ultrafast",
@@ -15,6 +19,13 @@ const models = [
     model: model.id,
     defaultReasoningEffort: "medium",
     supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Medium" }],
+    ...(daybreak
+      ? {
+          availableAccessPrograms: {
+            cyber: model.id === "gpt-6-sol" ? ["standard", "daybreakBlue"] : ["standard"],
+          },
+        }
+      : {}),
   }),
 );
 
@@ -57,7 +68,9 @@ function respond(method, params) {
             item: {
               id: randomUUID(),
               type: "agentMessage",
-              text: "Ready to work on this project.",
+              text: daybreak
+                ? `Access program: ${params.cyberAccessProgram ?? "none"}.`
+                : "Ready to work on this project.",
             },
           },
         });

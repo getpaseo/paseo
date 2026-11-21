@@ -58,13 +58,60 @@ export const CODEX_PLAN_MODE_CONTROL: AgentOptionToggleControl = {
   icon: "list-todo",
 };
 
+/** What `model/list` says a model accepts as a turn's `cyberAccessProgram`, for this account. */
+export const CodexAccessProgramsSchema = z.object({
+  cyber: z.array(z.string()).optional(),
+});
+export type CodexAccessPrograms = z.infer<typeof CodexAccessProgramsSchema>;
+
+// Codex asks for Blue when a model offers both (`ModelAccessPrograms::daybreak` in codex-rs).
+const CODEX_DAYBREAK_PROGRAMS = ["daybreakBlue", "daybreakRed"];
+
+export const CODEX_DAYBREAK_CONTROL: AgentOptionToggleControl = {
+  type: "toggle",
+  key: "daybreak",
+  label: "Daybreak",
+  description: "Run turns under your account's Daybreak access for security work",
+  tooltip: "Toggle Daybreak",
+  icon: "sun",
+};
+
+export function codexOffersDaybreak(programs: string[]): boolean {
+  return CODEX_DAYBREAK_PROGRAMS.some((program) => programs.includes(program));
+}
+
+/**
+ * The `cyberAccessProgram` a turn asks for, chosen the way Codex's own clients choose it: on asks
+ * for the model's Daybreak program, off asks for `standard`, and unset sends nothing so Codex
+ * keeps its automatic treatment. A program the model does not offer is never sent, because
+ * Codex fails the whole turn over it.
+ */
+export function codexCyberAccessProgram(input: {
+  programs: string[];
+  daybreak: boolean | null;
+}): string | null {
+  const { programs, daybreak } = input;
+  if (daybreak === null) return null;
+  if (!daybreak) return programs.includes("standard") ? "standard" : null;
+  return CODEX_DAYBREAK_PROGRAMS.find((program) => programs.includes(program)) ?? null;
+}
+
+export function readCodexDaybreak(options: Record<string, unknown> | undefined): boolean | null {
+  const daybreak = options?.daybreak;
+  return typeof daybreak === "boolean" ? daybreak : null;
+}
+
 export function buildCodexControls(input: {
   serviceTiers: CodexServiceTier[];
   planModeAvailable?: boolean;
+  daybreakAvailable?: boolean;
 }): AgentOptionControl[] {
   const controls = buildCodexSpeedControl(input.serviceTiers);
   if (input.planModeAvailable !== false) {
     controls.push({ ...CODEX_PLAN_MODE_CONTROL });
+  }
+  if (input.daybreakAvailable) {
+    controls.push({ ...CODEX_DAYBREAK_CONTROL });
   }
   return controls;
 }

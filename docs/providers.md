@@ -51,8 +51,8 @@ or without a control.
   rejected too, so a stored option always describes what runs. Claude reads most options when it
   starts its query, and replacing a started query would end its background work, so after the
   first prompt only Fast and Ultracode can change. Codex fixes its approval policy and sandbox
-  when the thread starts, so it applies only `service_tier` and `plan_mode` live. A session with no
-  `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
+  when the thread starts, so it applies only `service_tier`, `plan_mode` and `daybreak` live. A
+  session with no `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
   it ended up with when they differ from the request. The daemon stores the patch and that
   result in one step after the call resolves. Throwing rejects the whole patch and none of it is
   stored. Emit nothing from inside the call. If the provider's own state moved before it refused,

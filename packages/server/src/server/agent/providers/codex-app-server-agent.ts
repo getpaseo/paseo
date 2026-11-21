@@ -86,9 +86,14 @@ import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js"
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
   buildCodexControls,
+  codexCyberAccessProgram,
+  codexOffersDaybreak,
   codexSpeedTiers,
+  CodexAccessProgramsSchema,
   CodexServiceTierSchema,
+  readCodexDaybreak,
   readCodexServiceTier,
+  type CodexAccessPrograms,
   type CodexServiceTier,
 } from "./codex-feature-definitions.js";
 import {
@@ -1030,6 +1035,7 @@ interface CodexModel {
   defaultReasoningEffort?: string;
   supportedReasoningEfforts?: CodexReasoningEffortEntry[];
   serviceTiers?: CodexServiceTier[];
+  availableAccessPrograms?: CodexAccessPrograms | null;
 }
 
 const CodexModelListResponseSchema = z.object({
@@ -1038,6 +1044,7 @@ const CodexModelListResponseSchema = z.object({
       z.object({
         id: z.string(),
         serviceTiers: z.array(CodexServiceTierSchema).optional(),
+        availableAccessPrograms: CodexAccessProgramsSchema.nullable().optional(),
         displayName: z.string().optional(),
         description: z.string().optional(),
         isDefault: z.boolean().optional(),
@@ -3955,6 +3962,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     return buildCodexControls({
       serviceTiers: this.offeredServiceTiers(),
       planModeAvailable: this.hasPlanCollaborationMode(),
+      daybreakAvailable: codexOffersDaybreak(this.offeredAccessPrograms()),
     });
   }
 
@@ -4255,12 +4263,26 @@ export class CodexAppServerAgentSession implements AgentSession {
    * below all read this, so what the control offers is what the session will run.
    */
   private offeredServiceTiers(): CodexServiceTier[] {
-    const selectedModel = this.config.model
+    return codexSpeedTiers(
+      this.selectedCatalogModel()?.serviceTiers ?? [],
+      this.supportsUnadvertisedFlex,
+    );
+  }
+
+  /**
+   * The `cyberAccessProgram` values the catalog offers this account on the selected model. Codex
+   * lists Daybreak only for accounts enrolled in it, so the Daybreak control follows this list.
+   */
+  private offeredAccessPrograms(): string[] {
+    return this.selectedCatalogModel()?.availableAccessPrograms?.cyber ?? [];
+  }
+
+  private selectedCatalogModel(): CodexModel | undefined {
+    return this.config.model
       ? this.speedModels.find(
           (model) => model.id === this.config.model || model.model === this.config.model,
         )
       : (this.speedModels.find((model) => model.isDefault) ?? this.speedModels[0]);
-    return codexSpeedTiers(selectedModel?.serviceTiers ?? [], this.supportsUnadvertisedFlex);
   }
 
   /**
@@ -4280,6 +4302,17 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private get serviceTier(): string | null {
     return this.resolveServiceTier(this.requestedServiceTier);
+  }
+
+  /**
+   * A saved Daybreak stays saved across a switch to a model that lacks it; that model's turns
+   * send nothing, and switching back asks for Daybreak again.
+   */
+  private get cyberAccessProgram(): string | null {
+    return codexCyberAccessProgram({
+      programs: this.offeredAccessPrograms(),
+      daybreak: readCodexDaybreak(this.providerOptions),
+    });
   }
 
   private resolveServiceTier(requested: string | null): string | null {
@@ -4694,6 +4727,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       params.effort = thinkingOptionId;
     }
     params.serviceTier = this.serviceTier ?? "default";
+    const cyberAccessProgram = this.cyberAccessProgram;
+    if (cyberAccessProgram) {
+      params.cyberAccessProgram = cyberAccessProgram;
+    }
     if (this.resolvedCollaborationMode) {
       params.collaborationMode = {
         mode: this.resolvedCollaborationMode.mode,
@@ -4776,6 +4813,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         modeId: this.currentMode ?? null,
         effort: thinkingOptionId ?? null,
         serviceTier: this.serviceTier,
+        cyberAccessProgram: this.cyberAccessProgram,
         cwd: this.config.cwd ?? null,
         approvalPolicy: approvalPolicy ?? null,
         sandboxPolicyType: sandboxPolicyType ?? null,
@@ -5155,7 +5193,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: "codex",
       patch: options,
       current: this.providerOptions,
-      live: ["service_tier", "plan_mode"],
+      live: ["service_tier", "plan_mode", "daybreak"],
     });
     const valid =
       validateProviderOptions(
@@ -5163,6 +5201,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         CodexProviderOptionsSchema,
         applyProviderOptionsPatch({ options: this.providerOptions, patch: options }),
       ) ?? {};
+    if (options.daybreak === true && !codexOffersDaybreak(this.offeredAccessPrograms())) {
+      throw new Error(`Daybreak is not available for model '${this.config.model ?? "default"}'`);
+    }
     const requested = "service_tier" in options ? readCodexServiceTier(options) : null;
     let accepted = this.requestedServiceTier;
     if ("service_tier" in options) {
@@ -6075,7 +6116,12 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
-    const { service_tier: _tier, plan_mode: _plan, ...codexConfig } = this.providerOptions;
+    const {
+      service_tier: _tier,
+      plan_mode: _plan,
+      daybreak: _daybreak,
+      ...codexConfig
+    } = this.providerOptions;
     Object.assign(innerConfig, codexConfig);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);

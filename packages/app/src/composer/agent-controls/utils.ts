@@ -2,6 +2,7 @@ import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/prot
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
+  DAYBREAK_FEATURE_ID,
   FAST_MODE_FEATURE_ID,
   PLAN_MODE_FEATURE_ID,
   SPEED_FEATURE_ID,
@@ -49,6 +50,7 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
     case "auto_accept":
       return "green";
     case "ultracode":
+    case DAYBREAK_FEATURE_ID:
       return "purple";
     case PLAN_MODE_FEATURE_ID:
       return "blue";

@@ -11,6 +11,7 @@ import {
   ShieldOff,
   ShieldPlus,
   ShieldQuestionMark,
+  Sun,
   Zap,
 } from "lucide-react-native";
 import { isLucideIconName, pluginIconComponent } from "@/plugins/icons";
@@ -41,6 +42,7 @@ const MODE_ICONS: Record<string, AgentControlIcon> = {
 const FEATURE_ICONS: Record<string, AgentControlIcon> = {
   "list-todo": ListTodo,
   "shield-check": ShieldCheck,
+  sun: Sun,
   zap: Zap,
 };
 

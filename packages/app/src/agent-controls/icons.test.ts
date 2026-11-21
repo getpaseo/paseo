@@ -1,4 +1,4 @@
-import { Settings2 } from "lucide-react-native";
+import { Settings2, Sun } from "lucide-react-native";
 import { describe, expect, it } from "vitest";
 import { getAgentFeatureIcon } from "./icons";
 
@@ -7,6 +7,10 @@ describe("getAgentFeatureIcon", () => {
     const icon = getAgentFeatureIcon("Mic");
     expect(icon).not.toBe(Settings2);
     expect(getAgentFeatureIcon("Mic")).toBe(icon);
+  });
+
+  it("draws the Daybreak control's built-in icon", () => {
+    expect(getAgentFeatureIcon("sun")).toBe(Sun);
   });
 
   it("falls back to the generic icon for a missing or unknown name", () => {

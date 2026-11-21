@@ -21,6 +21,7 @@ describe("feature metadata helpers", () => {
     expect(getFeatureHighlightColor("service_tier")).toBe("yellow");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
     expect(getFeatureHighlightColor("ultracode")).toBe("purple");
+    expect(getFeatureHighlightColor("daybreak")).toBe("purple");
     expect(getFeatureHighlightColor("other")).toBe("default");
   });
 });

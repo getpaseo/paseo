@@ -1105,3 +1105,136 @@ describe("Codex app-server provider controls", () => {
     });
   });
 });
+
+const DAYBREAK_CONTROL = {
+  type: "toggle",
+  key: "daybreak",
+  label: "Daybreak",
+  description: "Run turns under your account's Daybreak access for security work",
+  tooltip: "Toggle Daybreak",
+  icon: "sun",
+};
+
+/** `model/list` for an account enrolled in Daybreak Blue, as Codex 0.169 reports it. */
+const DAYBREAK_MODELS = [
+  { id: "gpt-6-sol", cyber: ["standard", "daybreakBlue"] },
+  { id: "gpt-6.1-sol", cyber: ["standard"] },
+  { id: "red-team-model", cyber: ["daybreakRed"] },
+].map(({ id, cyber }) => ({
+  id,
+  isDefault: id === "gpt-6-sol",
+  defaultReasoningEffort: "medium",
+  serviceTiers: [],
+  availableAccessPrograms: { cyber },
+}));
+
+function connectDaybreakSession(configOverrides: Partial<AgentSessionConfig> = {}) {
+  return createConnectedSession(
+    { model: "gpt-6-sol", ...configOverrides },
+    {
+      models: DAYBREAK_MODELS,
+    },
+  );
+}
+
+describe("Codex Daybreak control", () => {
+  test("a model the catalog offers Daybreak on shows the toggle, and turning it on asks for Blue", async () => {
+    const { session, appServer } = await connectDaybreakSession();
+
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL, DAYBREAK_CONTROL]);
+    await expect(session.applyOptions?.({ daybreak: true })).resolves.toEqual({});
+    await session.startTurn("hello");
+
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      cyberAccessProgram: "daybreakBlue",
+    });
+  });
+
+  test("an agent that never set Daybreak sends no program, so Codex keeps its own treatment", async () => {
+    const { session, appServer } = await connectDaybreakSession();
+
+    await session.startTurn("hello");
+
+    expect(await appServer.waitForTurnStart()).not.toHaveProperty("cyberAccessProgram");
+  });
+
+  test("turning Daybreak off asks for the standard program", async () => {
+    const { session, appServer } = await connectDaybreakSession({
+      providerOptions: { daybreak: true },
+    });
+
+    await session.applyOptions?.({ daybreak: false });
+    await session.startTurn("hello");
+
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      cyberAccessProgram: "standard",
+    });
+  });
+
+  test("a model offered only Daybreak Red asks for Red", async () => {
+    const { session, appServer } = await connectDaybreakSession({
+      model: "red-team-model",
+      providerOptions: { daybreak: true },
+    });
+
+    await session.startTurn("hello");
+
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      cyberAccessProgram: "daybreakRed",
+    });
+  });
+
+  test("a model without Daybreak hides the toggle and refuses to turn it on", async () => {
+    const { session, appServer } = await connectDaybreakSession({ model: "gpt-6.1-sol" });
+
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
+    await expect(session.applyOptions?.({ daybreak: true })).rejects.toThrow(
+      "Daybreak is not available for model 'gpt-6.1-sol'",
+    );
+    await session.startTurn("hello");
+
+    expect(await appServer.waitForTurnStart()).not.toHaveProperty("cyberAccessProgram");
+  });
+
+  test("a saved Daybreak sends nothing on a model without it, which Codex would refuse", async () => {
+    const { session, appServer } = await connectDaybreakSession({
+      providerOptions: { daybreak: true },
+    });
+
+    await session.setModel?.("gpt-6.1-sol");
+    await session.startTurn("hello");
+
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
+    expect(await appServer.waitForTurnStart()).not.toHaveProperty("cyberAccessProgram");
+  });
+
+  test("a saved Daybreak stays saved across a model without it and applies again on the way back", async () => {
+    const { session, appServer } = await connectDaybreakSession({
+      providerOptions: { daybreak: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.setModel?.("gpt-6.1-sol");
+    await session.setModel?.("gpt-6-sol");
+    await session.startTurn("hello");
+
+    expect(events.filter((event) => event.type === "options_changed")).toEqual([]);
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      cyberAccessProgram: "daybreakBlue",
+    });
+  });
+
+  test("Daybreak is a composer control and stays out of the Codex config", async () => {
+    const { session, appServer } = await connectDaybreakSession({
+      providerOptions: { daybreak: true, web_search: "live" },
+    });
+
+    await session.startTurn("hello");
+
+    const threadStart = await appServer.waitForRequest("thread/start");
+    const turnStart = await appServer.waitForTurnStart();
+    expect(threadStart.config).toEqual({ web_search: "live" });
+    expect(turnStart.config).toEqual({ web_search: "live" });
+  });
+});
