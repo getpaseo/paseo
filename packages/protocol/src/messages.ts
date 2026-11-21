@@ -1116,6 +1116,13 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspacePinOrderSetRequestSchema = z.object({
+  type: z.literal("workspace.pin.order.set.request"),
+  workspaceIds: z.array(z.string()).min(2),
+  legacyWorkspaceIds: z.array(z.string()).optional(),
+  requestId: z.string(),
+});
+
 export const WorkspaceBaseBranchSetRequestSchema = z.object({
   type: z.literal("workspace.base_branch.set.request"),
   workspaceId: z.string(),
@@ -2373,6 +2380,15 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspacePinOrderSetResponseSchema = z.object({
+  type: z.literal("workspace.pin.order.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceBaseBranchSetResponseSchema = z.object({
   type: z.literal("workspace.base_branch.set.response"),
   payload: z.object({
@@ -3593,6 +3609,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentMetadataUpdateRequestSchema,
   WorkspaceMetadataUpdateRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspacePinOrderSetRequestSchema,
   WorkspaceBaseBranchSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
@@ -4124,6 +4141,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
+        workspacePinOrder: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -4521,6 +4539,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    pinnedOrder: z.number().int().nonnegative().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     metadata: EntityMetadataSchema.optional(),
@@ -7776,6 +7795,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentMetadataUpdateResponseSchema,
   WorkspaceMetadataUpdateResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspacePinOrderSetResponseSchema,
   WorkspaceBaseBranchSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,

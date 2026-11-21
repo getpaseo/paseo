@@ -8562,6 +8562,110 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   });
 });
 
+test("a reorder publishes pin ranks to a second session and re-pinning clears the rank", async () => {
+  const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-pin-order-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects.json"),
+    logger,
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(paseoHome, "workspaces.json"),
+    logger,
+  );
+  const events: SessionOutboundMessage[] = [];
+  const writerEvents: SessionOutboundMessage[] = [];
+  const writer = createSessionForWorkspaceTests({
+    paseoHome,
+    projectRegistry,
+    workspaceRegistry,
+    onMessage: (message) => writerEvents.push(message),
+  });
+  const observer = createSessionForWorkspaceTests({
+    paseoHome,
+    projectRegistry,
+    workspaceRegistry,
+    onMessage: (message) => events.push(message),
+  });
+  try {
+    const pinnedAt = "2026-03-01T12:00:00.000Z";
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "p",
+        kind: "non_git",
+        rootPath: REPO_CWD,
+        displayName: "Repo",
+        createdAt: pinnedAt,
+        updatedAt: pinnedAt,
+      }),
+    );
+    for (const workspaceId of ["ws-first", "ws-second"]) {
+      await workspaceRegistry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "p",
+          cwd: REPO_CWD,
+          kind: "directory",
+          displayName: workspaceId,
+          createdAt: pinnedAt,
+          updatedAt: pinnedAt,
+          pinnedAt,
+        }),
+      );
+    }
+    await observer.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "subscribe",
+      subscribe: { subscriptionId: "subscribe" },
+    });
+    events.length = 0;
+    await writer.handleMessage({
+      type: "workspace.pin.order.set.request",
+      requestId: "drag",
+      workspaceIds: ["ws-second", "ws-first"],
+    });
+    expect(findByType(writerEvents, "workspace.pin.order.set.response")?.payload).toEqual({
+      requestId: "drag",
+      accepted: true,
+      error: null,
+    });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "workspace_update",
+          payload: expect.objectContaining({
+            workspace: expect.objectContaining({ id: "ws-second", pinnedOrder: 0 }),
+          }),
+        }),
+        expect.objectContaining({
+          type: "workspace_update",
+          payload: expect.objectContaining({
+            workspace: expect.objectContaining({ id: "ws-first", pinnedOrder: 1 }),
+          }),
+        }),
+      ]),
+    );
+
+    for (const pinned of [false, true]) {
+      await writer.handleMessage({
+        type: "workspace.pin.set.request",
+        workspaceId: "ws-first",
+        pinned,
+        requestId: pinned ? "repin" : "unpin",
+      });
+    }
+    expect(await workspaceRegistry.get("ws-first")).toMatchObject({
+      pinnedAt: expect.any(String),
+      pinnedOrder: undefined,
+    });
+    expect(await workspaceRegistry.get("ws-second")).toMatchObject({ pinnedAt, pinnedOrder: 0 });
+  } finally {
+    await writer.cleanup();
+    await observer.cleanup();
+    rmSync(paseoHome, { force: true, recursive: true });
+  }
+});
+
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(

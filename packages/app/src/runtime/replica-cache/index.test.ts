@@ -369,7 +369,7 @@ describe("ReplicaCache", () => {
     expect(restored.workspaces.get(workspace.id)?.forgeWeb).toEqual(forgeWeb);
   });
 
-  it("preserves workspace sorting timestamps across cache reopen", async () => {
+  it("preserves workspace sorting timestamps and pin rank across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
     const baseline = directory();
@@ -377,6 +377,8 @@ describe("ReplicaCache", () => {
       ...workspacePayload(),
       createdAt: "2026-07-18T08:00:00.000Z",
       lastUserMessageAt: "2026-07-18T09:00:00.000Z",
+      pinnedAt: "2026-07-18T10:00:00.000Z",
+      pinnedOrder: 0,
     });
     baseline.workspaces.set(workspace.id, workspace);
     commitDirectory(writer, SERVER_ID, baseline);

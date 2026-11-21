@@ -3,12 +3,12 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/sidebar-workspaces-view-model";
-import { splitPinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import { planPinnedSidebarReorder, splitPinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 
-function placement(workspaceKey: string): SidebarWorkspacePlacement {
+function placement(workspaceKey: string, serverId = "s1"): SidebarWorkspacePlacement {
   return {
     workspaceKey,
-    serverId: "s1",
+    serverId,
     workspaceId: workspaceKey,
     projectViewKey: "p1",
     projectName: "Project 1",
@@ -37,8 +37,10 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
+        pinnedOrderByKey: {},
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
+      syncedHostIds: new Set(),
       pinnedWorkspaceOrder: [],
     });
     expect(result.pinnedChats).toHaveLength(1);
@@ -49,7 +51,8 @@ describe("splitPinnedSidebarGroups", () => {
     const projects = [project("p1", [])];
     const result = splitPinnedSidebarGroups({
       projects,
-      keys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      keys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {}, pinnedOrderByKey: {} },
+      syncedHostIds: new Set(),
       pinnedWorkspaceOrder: [],
     });
     expect(result.unpinnedProjects).toHaveLength(1);
@@ -61,8 +64,10 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["w1"],
+        pinnedOrderByKey: {},
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
+      syncedHostIds: new Set(),
       pinnedWorkspaceOrder: [],
     });
     expect(result.pinnedChats.map((w) => w.workspaceKey)).toEqual(["w1"]);
@@ -75,11 +80,13 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["older", "newer"],
+        pinnedOrderByKey: {},
         pinnedAtByKey: {
           older: "2026-01-01T00:00:00Z",
           newer: "2026-02-01T00:00:00Z",
         },
       },
+      syncedHostIds: new Set(),
       pinnedWorkspaceOrder: [],
     });
 
@@ -95,12 +102,14 @@ describe("splitPinnedSidebarGroups", () => {
       projects,
       keys: {
         pinnedWorkspaceKeys: ["older", "newer", "new"],
+        pinnedOrderByKey: {},
         pinnedAtByKey: {
           older: "2026-01-01T00:00:00Z",
           newer: "2026-02-01T00:00:00Z",
           new: "2026-03-01T00:00:00Z",
         },
       },
+      syncedHostIds: new Set(),
       pinnedWorkspaceOrder: ["older", "newer"],
     });
 
@@ -109,5 +118,40 @@ describe("splitPinnedSidebarGroups", () => {
       "older",
       "newer",
     ]);
+  });
+});
+
+describe("host pin order", () => {
+  it("applies host ranks within their slots and ignores local order for upgraded hosts", () => {
+    const a = placement("a");
+    const b = placement("b");
+    const newPin = placement("new");
+    const c = placement("c", "s2");
+    const d = placement("d", "s2");
+    const pinGroups = splitPinnedSidebarGroups({
+      projects: [project("p1", [a, b, newPin, c, d])],
+      keys: {
+        pinnedWorkspaceKeys: ["a", "b", "new", "c", "d"],
+        pinnedAtByKey: {
+          a: "2026-01-01T00:00:00Z",
+          b: "2026-02-01T00:00:00Z",
+          new: "2026-05-01T00:00:00Z",
+          c: "2026-03-01T00:00:00Z",
+          d: "2026-04-01T00:00:00Z",
+        },
+        pinnedOrderByKey: { a: 0, b: 1 },
+      },
+      syncedHostIds: new Set(["s1"]),
+      pinnedWorkspaceOrder: ["b", "a", "c", "d"],
+    });
+
+    expect(pinGroups.pinnedChats).toEqual([newPin, c, d, a, b]);
+    expect(planPinnedSidebarReorder(pinGroups, [c, newPin, d, a, b]).size).toBe(0);
+    expect(planPinnedSidebarReorder(pinGroups, [newPin, c, d, b, a])).toEqual(
+      new Map([["s1", [newPin, b, a]]]),
+    );
+    expect(planPinnedSidebarReorder(pinGroups, [newPin, d, c, a, b])).toEqual(
+      new Map([[null, [d, c]]]),
+    );
   });
 });

@@ -77,6 +77,9 @@ export function createTestRegistries() {
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
+    setPinnedOrder: async () => {
+      throw new Error("Pin ordering is outside the reconciliation fixture");
+    },
     archive: async (id: string, archivedAt: string) => {
       const gate = archiveGate;
       archiveGate = null;

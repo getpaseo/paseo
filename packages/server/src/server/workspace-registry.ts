@@ -103,6 +103,8 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Pins without a rank precede the last manual order, newest first.
+  pinnedOrder: z.number().int().nonnegative().optional(),
   labels: z.array(z.string()).optional(),
   // Plugin-owned data. Paseo stores it and never reads a key.
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
@@ -170,6 +172,10 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
+  setPinnedOrder(
+    workspaceIds: readonly string[],
+    legacyWorkspaceIds?: readonly string[],
+  ): Promise<void>;
   archive(
     workspaceId: string,
     archivedAt: string,
@@ -516,6 +522,24 @@ export class FileBackedProjectRegistry
   }
 }
 
+// Replace the slots occupied by these pins. Filtered-out pins and pins added by
+// another client keep their positions. Ignore IDs that are no longer pinned.
+function reorderPinnedSlots(
+  order: readonly PersistedWorkspaceRecord[],
+  workspaceIds: readonly string[],
+): PersistedWorkspaceRecord[] {
+  const byId = new Map(order.map((workspace) => [workspace.workspaceId, workspace]));
+  const requested = [...new Set(workspaceIds)].flatMap((id) => {
+    const workspace = byId.get(id);
+    return workspace ? [workspace] : [];
+  });
+  const requestedIds = new Set(requested.map((workspace) => workspace.workspaceId));
+  let index = 0;
+  return order.map((workspace) =>
+    requestedIds.has(workspace.workspaceId) ? requested[index++]! : workspace,
+  );
+}
+
 export class FileBackedWorkspaceRegistry
   extends FileBackedRegistry<PersistedWorkspaceRecord>
   implements WorkspaceRegistry
@@ -588,6 +612,7 @@ export class FileBackedWorkspaceRegistry
           ...existing,
           updatedAt: archivedAt,
           archivedAt,
+          pinnedOrder: undefined,
           head: context?.head,
           ...(context?.autoArchivedChangeRequestUrl
             ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
@@ -604,6 +629,38 @@ export class FileBackedWorkspaceRegistry
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
     await this.notifyMutation({ kind: "remove", workspaceId, workspace });
+  }
+
+  async setPinnedOrder(
+    workspaceIds: readonly string[],
+    legacyWorkspaceIds: readonly string[] = [],
+  ): Promise<void> {
+    const changed = await this.mutateMany((records) => {
+      const pinned = [...records.values()].filter(
+        (workspace) => !workspace.archivedAt && workspace.pinnedAt != null,
+      );
+      const pinnedIds = new Set(pinned.map((workspace) => workspace.workspaceId));
+      if ([...new Set(workspaceIds)].filter((id) => pinnedIds.has(id)).length < 2) {
+        return [];
+      }
+      pinned.sort(
+        (a, b) =>
+          (a.pinnedOrder ?? -1) - (b.pinnedOrder ?? -1) ||
+          b.pinnedAt!.localeCompare(a.pinnedAt!) ||
+          a.workspaceId.localeCompare(b.workspaceId),
+      );
+      const initialOrder = pinned.some((workspace) => workspace.pinnedOrder !== undefined)
+        ? pinned
+        : reorderPinnedSlots(pinned, legacyWorkspaceIds);
+      return reorderPinnedSlots(initialOrder, workspaceIds).flatMap((workspace, pinnedOrder) =>
+        workspace.pinnedOrder === pinnedOrder ? [] : [{ ...workspace, pinnedOrder }],
+      );
+    });
+    await Promise.all(
+      changed.map((workspace) =>
+        this.notifyMutation({ kind: "upsert", workspaceId: workspace.workspaceId, workspace }),
+      ),
+    );
   }
 
   async commitWorkspaceLabelMutation<TResult>(input: {

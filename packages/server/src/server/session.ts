@@ -3452,6 +3452,8 @@ export class Session {
         return this.handleProjectRemoveRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.pin.order.set.request":
+        return this.handleWorkspacePinOrderSetRequest(msg);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
       case "workspace.base_branch.set.request":
@@ -4461,6 +4463,7 @@ export class Session {
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
         pinnedAt: nextPinnedAt,
+        pinnedOrder: undefined,
         updatedAt,
       }));
       if (!updated) {
@@ -4485,6 +4488,26 @@ export class Session {
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
     }
+  }
+
+  private async handleWorkspacePinOrderSetRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.pin.order.set.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceIds, legacyWorkspaceIds } = request;
+    let error: string | null = null;
+    try {
+      await this.workspaceRegistry.setPinnedOrder(workspaceIds, legacyWorkspaceIds);
+    } catch (cause) {
+      this.sessionLogger.error(
+        { err: cause, requestId },
+        "session: workspace.pin.order.set.request error",
+      );
+      error = getErrorMessageOr(cause, "Failed to reorder pinned workspaces");
+    }
+    this.emit({
+      type: "workspace.pin.order.set.response",
+      payload: { requestId, accepted: error === null, error },
+    });
   }
 
   private async handleWorkspaceRecoveryInspectRequest(
@@ -6220,6 +6243,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      pinnedOrder: workspace.pinnedOrder,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       metadata: workspace.metadata,
       background: workspace.background,
@@ -6320,6 +6344,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      pinnedOrder: result.workspace.pinnedOrder,
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),
