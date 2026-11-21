@@ -40,4 +40,15 @@ describe("desktop workspace navigation", () => {
     const target = { serverId: "srv_devbox", path: "/worktree" };
     expect(inbox.deliverOrQueue(7, target)).toEqual(target);
   });
+
+  it("drops queued workspace navigation when the window receives an agent link", () => {
+    const inbox = new WorkspaceNavigationInbox();
+    const target = { serverId: "srv_devbox", path: "/worktree" };
+    expect(inbox.deliverOrQueue(7, target)).toBeNull();
+
+    inbox.cancel(7);
+
+    expect(inbox.windowReady(7)).toBeNull();
+    expect(inbox.deliverOrQueue(7, target)).toEqual(target);
+  });
 });

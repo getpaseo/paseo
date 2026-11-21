@@ -45,7 +45,9 @@ export function createAddHostFlow() {
     store,
     open(options: AddHostOptions = {}) {
       store.getState().session?.close();
-      store.setState({ session: createSession(options) });
+      const session = createSession(options);
+      store.setState({ session });
+      return session.close;
     },
   };
 }

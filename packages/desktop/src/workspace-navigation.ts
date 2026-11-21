@@ -38,6 +38,10 @@ export class WorkspaceNavigationInbox {
 
   removeWindow(webContentsId: number): void {
     this.readyWindows.delete(webContentsId);
+    this.cancel(webContentsId);
+  }
+
+  cancel(webContentsId: number): void {
     this.pendingByWindow.delete(webContentsId);
   }
 }

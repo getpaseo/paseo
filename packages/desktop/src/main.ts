@@ -860,8 +860,11 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
     return ownedDesktopWindow(win);
   },
   agentRoute: buildAgentDeepLinkRoute,
-  deliverAgent: (webContentsId, target) =>
-    agentNavigationInbox.deliverOrQueue(webContentsId, target),
+  deliverAgent: (webContentsId, target) => {
+    workspaceNavigationInbox.cancel(webContentsId);
+    webContents.fromId(webContentsId)?.send("paseo:event:cancel-workspace-navigation");
+    return agentNavigationInbox.deliverOrQueue(webContentsId, target);
+  },
 });
 
 let workspaceWindowCreation: Promise<void> | null = null;
@@ -897,12 +900,13 @@ async function openOrFocusWorkspace(target: WorkspaceDeepLinkTarget): Promise<vo
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-function receiveAgentDeepLink(input: string): void {
-  const target = parseAgentDeepLink(input);
+function receiveAgentDeepLink(target: AgentDeepLinkTarget | null): void {
   if (!target) {
     return;
   }
 
+  pendingWorkspaceNavigation = null;
+  workspaceNavigationSequence += 1;
   if (bootstrapIsComplete) {
     void desktopWindowOwner
       .openOrFocusAgent(target)
@@ -911,16 +915,6 @@ function receiveAgentDeepLink(input: string): void {
   }
 
   pendingAgentNavigation = target;
-  void bootstrapComplete.then(() => {
-    if (pendingAgentNavigation !== target) {
-      return undefined;
-    }
-    pendingAgentNavigation = null;
-    void desktopWindowOwner
-      .openOrFocusAgent(target)
-      .catch((error) => log.error("[window] failed to route queued agent link", error));
-    return undefined;
-  });
 }
 
 function receiveWorkspaceDeepLink(target: WorkspaceDeepLinkTarget | null): void {
@@ -933,20 +927,13 @@ function receiveWorkspaceDeepLink(target: WorkspaceDeepLinkTarget | null): void 
     return;
   }
 
+  pendingAgentNavigation = null;
   pendingWorkspaceNavigation = target;
-  void bootstrapComplete.then(() => {
-    if (pendingWorkspaceNavigation !== target) return undefined;
-    pendingWorkspaceNavigation = null;
-    void openOrFocusWorkspace(target).catch((error) =>
-      log.error("[window] failed to route queued workspace link", error),
-    );
-    return undefined;
-  });
 }
 
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  receiveAgentDeepLink(url);
+  receiveAgentDeepLink(parseAgentDeepLink(url));
   receiveWorkspaceDeepLink(parseWorkspaceDeepLink(url));
 });
 
@@ -965,9 +952,7 @@ function setupSingleInstanceLock(): boolean {
   app.on("second-instance", (_event, commandLine) => {
     const agentTarget = parseAgentDeepLinkFromArgv(commandLine);
     if (agentTarget) {
-      void bootstrapComplete
-        .then(() => desktopWindowOwner.openOrFocusAgent(agentTarget))
-        .catch((error) => log.error("[window] failed to route second-instance agent link", error));
+      receiveAgentDeepLink(agentTarget);
       return;
     }
 

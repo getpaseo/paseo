@@ -84,11 +84,18 @@ export function UsageBody({
     );
   }
 
-  if (view.reports.length === 0) {
-    return <UsageMessage text={t("providerUsage.empty")} />;
-  }
-
-  return <UsageList serverId={serverId} reports={view.reports} display={display} />;
+  return (
+    <View style={styles.reports}>
+      {view.refreshFailed ? (
+        <Alert size="sm" variant="error" title={t("providerUsage.refreshFailed")} />
+      ) : null}
+      {view.reports.length === 0 ? (
+        <UsageMessage text={t("providerUsage.empty")} />
+      ) : (
+        <UsageList serverId={serverId} reports={view.reports} display={display} />
+      )}
+    </View>
+  );
 }
 
 export function UsageMessage({ text }: { text: string }) {
@@ -100,6 +107,7 @@ export function UsageMessage({ text }: { text: string }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  reports: { gap: theme.spacing[3] },
   emptyCard: {
     padding: theme.spacing[4],
     alignItems: "center",

@@ -61,4 +61,22 @@ describe("add host flow", () => {
     flow.store.getState().session!.complete({ serverId: "approved" });
     expect(events).toEqual(["dismissed", "approved"]);
   });
+
+  it("closes only the request that owns the returned cancellation handle", () => {
+    const flow = createAddHostFlow();
+    const dismissals: string[] = [];
+    const cancelLinkRequest = flow.open({
+      method: "ssh",
+      onDismiss: () => dismissals.push("link"),
+    });
+    cancelLinkRequest();
+    expect(flow.store.getState().session).toBeNull();
+
+    flow.open({ method: "direct", onDismiss: () => dismissals.push("manual") });
+    const manualRequest = flow.store.getState().session;
+    cancelLinkRequest();
+
+    expect(flow.store.getState().session).toBe(manualRequest);
+    expect(dismissals).toEqual(["link"]);
+  });
 });

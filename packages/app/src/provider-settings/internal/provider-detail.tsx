@@ -117,12 +117,7 @@ export function ProviderDetail({
         action={installation.action}
       />
       {sections.models ? (
-        <ProviderModels
-          serverId={serverId}
-          entry={entry}
-          discovered={sections.models === "all"}
-          refresh={refresh}
-        />
+        <ProviderModels serverId={serverId} entry={entry} discovered={sections.models === "all"} />
       ) : null}
       <Troubleshooting
         serverId={serverId}

@@ -878,11 +878,12 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     const text = "é🙂".repeat(30_000);
     const historyDir = claudeProjectDirSync(cwd, { configDir });
     mkdirSync(historyDir, { recursive: true });
+    const first = parentEntry([{ type: "text", text }]);
+    // Put the first byte of é at the end of a 1 MiB read.
+    const padding = " ".repeat(1024 * 1024 - 1 - first.indexOf(text));
     writeFileSync(
       path.join(historyDir, "replay-session.jsonl"),
-      parentEntry([{ type: "text", text }]) +
-        "\r\nnot json\r\n" +
-        parentEntry([{ type: "text", text: "final row" }]),
+      padding + first + "\r\nnot json\r\n" + parentEntry([{ type: "text", text: "final row" }]),
     );
     const events = await replayEvents();
     expect(events.filter((event) => event.type === "timeline").map((event) => event.item)).toEqual([

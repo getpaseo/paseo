@@ -2,13 +2,14 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import type { UsageReportEntry } from "@getpaseo/protocol/messages";
+import type { UsageReport, UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { openSettingsSection } from "../support/helpers/settings";
 import { gate } from "../support/helpers/context-window";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { getServerId } from "../support/helpers/server-id";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import {
@@ -45,6 +46,7 @@ import {
   refreshAllUsage,
   togglePin,
   usageItem,
+  usageModal,
 } from "../support/helpers/usage-sidebar-item";
 
 const emptyHome = path.join(tmpdir(), `paseo-usage-empty-${randomUUID()}`);
@@ -233,8 +235,8 @@ test.describe("usage modal", () => {
       ],
     });
     await gotoAppShell(page);
-    // Three windows leave no room for labels in the summary, so it reads percents.
-    await expectPinnedUsage(page, ["31%", "20%", "12%"]);
+    // Three Weekly labels overflow the summary, so it falls back to compact shorthands.
+    await expectPinnedUsage(page, ["31% wk", "20% wk", "12% wk"]);
     await openUsageFromItem(page);
     await expectUsageCardOrder(page, ["alpha:a", "beta:home", "beta:work"]);
 
@@ -834,6 +836,8 @@ test("usage percentages state their meaning and follow the selected language", a
   }
 });
 
+const exhaustionClock = /^runs out (?:[A-Z][a-z]{2} )?\d{1,2}:\d{2}(?: [AP]M)?$/;
+
 test("open usage clocks advance without refreshing or reopening", async ({ page }) => {
   test.setTimeout(120_000);
   const now = new Date();
@@ -851,12 +855,16 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     const card = page.getByTestId("usage-report-login-journey:account");
     await expect(card.getByTestId("usage-freshness")).toHaveText("Updated just now");
     await expect(card.getByText("resets in 30m", { exact: false }).first()).toBeVisible();
+    const forecast = card.getByText(exhaustionClock);
+    await expect(forecast).toBeVisible();
+    const forecastTime = (await forecast.innerText()).replace(/^[^0-9]+/, "");
     // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
     // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
     await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
     await expect(card.getByText(/resets in (28|29)m/).first()).toBeVisible();
-    await expect(card.getByText(/runs out in (28|29)m/)).toBeVisible();
+    // The weekday drops off at local midnight, but the forecast time stays fixed.
+    await expect(forecast).toHaveText(new RegExp(` ${forecastTime}$`));
     await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
       /^resets in (28|29)m\s·\s/,
     );
@@ -864,6 +872,115 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     await login.cleanup();
   }
 });
+
+test("Refresh all keeps quota visible after a timeout and shows only reset details when back on track", async ({
+  page,
+}) => {
+  const reading = new Date();
+  const login = await installLoginUsage(usageReading(reading, 40));
+  try {
+    const transport = await installDaemonWebSocketGate(page);
+    await openCompactUsageWithClock(page, reading);
+    await expectQuota(page, "40% used", exhaustionClock);
+
+    await timeOutUsageRefresh(page, transport);
+    await expectQuota(page, "40% used", null);
+    await expectUsageRefreshError(page).toBeVisible();
+
+    await login.setReport(usageReading(reading, 10));
+    transport.releaseHeldClientRequest();
+    await refreshAllUsage(page);
+    await expectQuota(page, "10% used", null);
+    await expectUsageRefreshError(page).toBeHidden();
+  } finally {
+    await login.cleanup();
+  }
+});
+
+test("a card refresh timeout is visible alongside a newer quota forecast", async ({ page }) => {
+  const reading = new Date();
+  const login = await installLoginUsage(usageReading(reading, 40));
+  try {
+    const transport = await installDaemonWebSocketGate(page);
+    await openCompactUsageWithClock(page, reading);
+    await expectQuota(page, "40% used", exhaustionClock);
+
+    await delayCardRefreshResponse(page, transport);
+    await login.setReport(usageReading(reading, 45));
+    await refreshAllUsage(page);
+    await expectQuota(page, "45% used", exhaustionClock);
+
+    await advanceUsageClock(page, 61_000);
+    await expect(
+      usageModal(page)
+        .getByTestId("usage-report-login-journey:account")
+        .getByTestId("usage-refresh-error"),
+    ).toHaveText("Unable to refresh usage");
+    await expectQuota(page, "45% used", exhaustionClock);
+  } finally {
+    await login.cleanup();
+  }
+});
+
+function expectUsageRefreshError(page: Page) {
+  return expect(
+    usageModal(page).getByRole("alert").getByText("Unable to refresh usage", { exact: true }),
+  );
+}
+
+async function delayCardRefreshResponse(
+  page: Page,
+  transport: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+) {
+  await expect(page.getByRole("button", { name: "Refresh all", exact: true })).toBeEnabled();
+  transport.holdNextServerMessage("usage.list_reports.response");
+  await refreshLoginUsage(page);
+  await transport.waitForHeldServerMessage("usage.list_reports.response");
+}
+
+function usageReading(observed: Date, usedPct: number): UsageReport {
+  return {
+    status: "available",
+    observedAt: observed.toISOString(),
+    windows: [
+      {
+        id: "session",
+        label: "Session",
+        usedPct,
+        durationSeconds: 18_000,
+        resetsAt: new Date(observed.getTime() + 4 * 3_600_000).toISOString(),
+      },
+    ],
+  };
+}
+
+async function expectQuota(page: Page, amount: string, forecast: string | RegExp | null) {
+  const usage = usageModal(page);
+  await expect(usage.getByText(amount, { exact: true })).toBeVisible();
+  await expect(usage.getByText(/^resets in /)).toBeVisible();
+  if (forecast === null) {
+    await expect(usage.getByRole("checkbox", { name: /^Pin Claude Session/ })).toHaveAccessibleName(
+      /^Pin Claude Session, \d+% used · resets in [^·]+ · [^·]+$/,
+    );
+    await expect(usage.getByText(/^runs out /)).toBeHidden();
+    return;
+  }
+  await expect(usage.getByText(forecast)).toBeVisible();
+}
+
+async function timeOutUsageRefresh(
+  page: Page,
+  transport: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+) {
+  const refresh = page.getByRole("button", { name: "Refresh all", exact: true });
+  await expect(refresh).toBeEnabled();
+  transport.holdNextClientRequest("usage.list_reports.request");
+  await refreshAllUsage(page);
+  await transport.waitForHeldClientRequest();
+  await expect(refresh).toBeDisabled();
+  await advanceUsageClock(page, 61_000);
+  await expect(refresh).toBeEnabled();
+}
 
 async function openCompactUsageWithClock(page: Page, now: Date) {
   await page.setViewportSize({ width: 390, height: 844 });

@@ -51,7 +51,7 @@ To add one, open **Settings → Hosts → your host → Providers**, select **+ 
 - [Gajae Code](https://gajae-code.com), subscription-based coding agent with plan-before-mutation workflows.
 - [Gemini CLI](https://geminicli.com), Google's official Gemini CLI.
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent), Zhipu AI's GLM coding agent.
-- [goose](https://block.github.io/goose/), Block's local open-source AI agent.
+- [goose](https://block.github.io/goose/), Block's local open-source AI agent. Paseo lists models from all providers configured in goose when goose supports model inventory discovery.
 - [Grok](https://docs.x.ai/build/overview), xAI's Grok Build agentic coding CLI.
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp), Nous Research's self-improving agent.
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html), JetBrains' coding agent.
