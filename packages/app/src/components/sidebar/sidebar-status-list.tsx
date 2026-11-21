@@ -22,6 +22,7 @@ import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { StyleSheet } from "react-native-unistyles";
 import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -819,6 +820,9 @@ function StatusWorkspaceRowInnerContent({
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
+  const { touchScreen } = usePointerCapabilities();
+  // The row menu opens from the kebab only; a touch screen can't hover to reveal it.
+  const showsTouchActions = isTouchPlatform || touchScreen;
   const [isHighlighted, setIsHighlighted] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const {
@@ -863,7 +867,7 @@ function StatusWorkspaceRowInnerContent({
           trailing,
           hasArchiveAction: Boolean(onArchive),
           isHovered,
-          isTouchPlatform,
+          isTouchPlatform: showsTouchActions,
           showShortcut,
         });
         const workspaceRowStyle = getStatusWorkspaceRowStyle({
