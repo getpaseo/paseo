@@ -17,5 +17,7 @@ export const routeSchema = z.discriminatedUnion("store", [
     })
     .strict(),
 ]);
-export const inputSchema = z.object({ route: routeSchema }).strict();
+export const inputSchema = z
+  .object({ route: routeSchema, accountKey: z.string().min(1).optional() })
+  .strict();
 export type UsageInput = z.infer<typeof inputSchema>;

@@ -1,4 +1,6 @@
+import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
@@ -870,6 +872,38 @@ test.describe("New workspace flow", () => {
       }
     });
 
+    test("selects a local branch whose name resembles an exact remote ref", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-local-exact-name-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync("git", ["checkout", "-b", "remote-topic"], { cwd: tempRepo.path });
+        const remoteHead = commitLocalOnly(tempRepo.path, "remote-topic-only");
+        execFileSync("git", ["update-ref", "refs/remotes/company/topic", remoteHead], {
+          cwd: tempRepo.path,
+        });
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "-c", "refs/remotes/company/topic"], { cwd: tempRepo.path });
+        const localHead = commitLocalOnly(tempRepo.path, "local-topic-only");
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByPlaceholder("Search branches").fill("topic");
+        await expectStartingRefRows(page, [
+          "refs/remotes/company/topic, local branch",
+          "topic (company), company branch",
+        ]);
+        await startingRefRow(page, "refs/remotes/company/topic, local branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(remoteHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toMatchObject({
+          baseRef: "refs/heads/refs/remotes/company/topic",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     for (const remote of ["company", "upstream"]) {
       test(`selects ${remote} explicitly when non-origin remote defaults are ambiguous`, async ({
         page,
@@ -904,7 +938,7 @@ test.describe("New workspace flow", () => {
             "main (upstream), upstream branch",
             "main, local branch",
           ]);
-          await page.getByPlaceholder("Search branches and PRs").fill(remote);
+          await page.getByPlaceholder("Search branches").fill(remote);
           const otherRemote = remote === "company" ? "upstream" : "company";
           await expect(
             startingRefRow(page, `main (${otherRemote}), ${otherRemote} branch`),
@@ -1039,6 +1073,53 @@ test.describe("New workspace flow", () => {
         await tempRepo.cleanup();
       }
     });
+  });
+
+  test("existing worktree starts the first agent in the chosen worktree", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("existing-worktree-");
+    // Made with git, not Paseo: the list holds every git worktree of the repository.
+    const worktreePath = path.join(tempRepo.path, "manual-worktree");
+    execSync(`git worktree add -b e2e/manual ${JSON.stringify(worktreePath)}`, {
+      cwd: tempRepo.path,
+      stdio: "ignore",
+    });
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      localProjectIds.add(openedProject.projectId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "existing");
+      await expect(page.getByTestId("new-workspace-worktree-picker-trigger")).toContainText(
+        "e2e/manual",
+      );
+      await submitNewWorkspacePrompt(page);
+
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      localWorkspaceIds.add(createdWorkspace.workspaceId);
+      expect(await realpath(createdWorkspace.workspaceDirectory)).toBe(
+        await realpath(worktreePath),
+      );
+
+      const agentTabs = page
+        .getByTestId(`workspace-deck-entry-${getServerId()}:${createdWorkspace.workspaceId}`)
+        .filter({ visible: true })
+        .locator('[data-testid^="workspace-tab-agent_"]');
+      await expect(agentTabs).toHaveCount(1, { timeout: 30_000 });
+    } finally {
+      await tempRepo.cleanup();
+    }
   });
 
   test("branch picker opens via keyboard and selects the filtered option on Enter", async ({

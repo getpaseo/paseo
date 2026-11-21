@@ -4,6 +4,7 @@ import { within } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
+import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { ExpandableBadge } from "@/components/message";
 import { page, userEvent } from "vitest/browser";
 import { PlanCard } from "@/components/plan-card";
@@ -200,5 +201,115 @@ describe("tool badge file action", () => {
     act(() => disclosure.focus());
     await userEvent.keyboard("{Enter}");
     expect(view().queryByText("File contents")).toBeNull();
+  });
+});
+
+const longDetail = {
+  type: "unknown" as const,
+  input: { text: "input\n".repeat(80) },
+  output: { text: "output\n".repeat(80) },
+};
+
+describe("inline tool detail height", () => {
+  it("caps the complete detail, including input, output and error, to its allowance", () => {
+    act(() =>
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToolCallDetailsContent
+            detail={longDetail}
+            errorText={"error\n".repeat(80)}
+            maxHeight={200}
+          />
+        </QueryClientProvider>,
+      ),
+    );
+    expect(container.getBoundingClientRect().height).toBeLessThanOrEqual(200);
+    expect(container.textContent).toContain("output");
+    expect(container.textContent).toContain("error");
+  });
+});
+
+const longShellDetail = {
+  type: "shell" as const,
+  command: "echo command\n".repeat(80),
+  output: "output\n".repeat(80),
+};
+
+const longEditDetail = {
+  type: "edit" as const,
+  filePath: "example.txt",
+  oldString: "old line\n".repeat(80),
+  newString: "new line\n".repeat(80),
+};
+
+describe("capped tool scrolling", () => {
+  it.each([longShellDetail, longEditDetail])(
+    "gives a capped $type detail one vertical scroll owner",
+    (detail) => {
+      act(() =>
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <ToolCallDetailsContent detail={detail} maxHeight={200} />
+          </QueryClientProvider>,
+        ),
+      );
+      const verticalScrollers = Array.from(container.querySelectorAll("*")).filter((node) =>
+        ["auto", "scroll"].includes(getComputedStyle(node).overflowY),
+      );
+      expect(verticalScrollers).toHaveLength(1);
+      expect(container.getBoundingClientRect().height).toBeLessThanOrEqual(200);
+    },
+  );
+});
+
+function renderCopyOutput() {
+  return <button type="button">Copy output</button>;
+}
+
+const searchQuery = "IANA example domains";
+const queryOnlySearch = { type: "search", query: searchQuery, toolName: "web_search" } as const;
+
+function renderSearchDetails() {
+  return <ToolCallDetailsContent detail={queryOnlySearch} />;
+}
+
+function SearchBadge() {
+  const [expanded, setExpanded] = React.useState(false);
+  const toggle = React.useCallback(() => setExpanded((current) => !current), []);
+  return (
+    <ExpandableBadge
+      label="Search"
+      isExpanded={expanded}
+      onToggle={toggle}
+      renderDetails={renderSearchDetails}
+    />
+  );
+}
+
+describe("tool detail interaction", () => {
+  it("shows the query when an expanded search has no results", async () => {
+    act(() => root.render(<SearchBadge />));
+    await page.getByRole("button", { name: "Search" }).click();
+    await expect.element(page.getByText(searchQuery, { exact: true })).toBeVisible();
+  });
+
+  it("keeps detail controls in the tab order", async () => {
+    function Badge() {
+      const [expanded, setExpanded] = React.useState(true);
+      const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
+      return (
+        <ExpandableBadge
+          label="Probe"
+          isExpanded={expanded}
+          onToggle={toggle}
+          renderDetails={renderCopyOutput}
+        />
+      );
+    }
+    act(() => root.render(<Badge />));
+    const header = view().getByRole("button", { name: "Probe" });
+    act(() => header.focus());
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement).toBe(view().getByRole("button", { name: "Copy output" }));
   });
 });

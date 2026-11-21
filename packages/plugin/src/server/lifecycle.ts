@@ -37,7 +37,12 @@ export type PluginWorktreeCreateRequest = {
   slug: string;
   path: string;
 } & (
-  | { kind: "branch-off"; baseRef: string }
+  | {
+      kind: "branch-off";
+      baseRef: string;
+      /** Where the new branch starts when that is not `baseRef`, such as a fork's head. */
+      readonly startPoint?: string;
+    }
   | { kind: "checkout-branch" }
   | {
       kind: "checkout-change-request";
@@ -88,6 +93,8 @@ export interface PluginSessionOpenRequest {
   readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+  /** Instructions appended for this open; not saved on the agent. */
+  appendSystemPrompt?: string[];
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;

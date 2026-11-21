@@ -1,6 +1,6 @@
 ---
 title: Daemons in Hub
-description: Enroll a machine with Hub, reference it from configuration, and understand what Hub owns once it is connected.
+description: Enroll a Paseo daemon with Hub, grant execution permission, and target it from triggers.
 nav: Daemons
 order: 63
 category: Hub
@@ -8,9 +8,9 @@ category: Hub
 
 # Daemons in Hub
 
-A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then triggers can reference it.
+A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, grant execution permission, and reference its slug in your triggers.
 
-## Connect
+## Connect a daemon
 
 Log in from the machine first:
 
@@ -18,33 +18,31 @@ Log in from the machine first:
 paseo hub login https://hub.example.com
 ```
 
-The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`.
+The CLI prints a URL and verification code and opens your browser. After approval, Paseo stores an organization-scoped CLI login under `PASEO_HOME`.
 
-In an interactive terminal, login offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to **Triggers** and prints `paseo hub init` for creating a starter trigger as code. `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through connection and initialization.
+In an interactive terminal, `login` offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes, and execution permission defaults to no. `--json` and non-TTY logins do not prompt.
 
-Enroll the daemon on its own when you declined, or when the machine is already logged in:
+If you skipped connection during login, enroll the daemon separately:
 
 ```sh
 paseo hub connect
 ```
 
-`connect` uses the active login to request a single-use enrollment token. The daemon exchanges it for its own relationship credential; your CLI login is never stored as daemon authority.
+`connect` uses your active login to request a single-use enrollment token. The daemon exchanges that token for its own relationship credential, so your CLI login is never stored as daemon authority.
 
-Hub derives the daemon's initial slug from its hostname. If that slug is already used in the organization, Hub adds a short daemon ID suffix. You can rename the daemon later in Hub.
+Hub derives the daemon's initial slug from its hostname using lowercase words joined by hyphens, such as `build-studio`. If that slug is already taken in the organization, Hub appends a short daemon ID suffix.
 
-Each daemon has two identifiers: an immutable generated ID and a friendly slug. Hub normalizes slugs with lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. The slug is what the dashboard shows and what configuration references.
+You can rename the slug later in Hub without changing the immutable daemon ID, then update any triggers that reference the old slug.
 
-You can rename the slug later without changing the daemon ID. Renaming after a configuration is active means updating that configuration.
-
-For unattended setup, pass an organization API key without storing it:
+For unattended setup, pass an organization API key through the environment:
 
 ```sh
 PASEO_HUB_URL=https://hub.example.com PASEO_HUB_API_KEY=paseo_pk_... paseo hub connect
 ```
 
-Origin precedence is explicit `[origin]`, `PASEO_HUB_URL`, active stored login, then `https://hub.paseo.sh`. An explicit `--api-key <secret>` takes precedence over the environment and an exact-origin stored login.
+Origin precedence is explicit `[origin]` or `--hub`, then `PASEO_HUB_URL`, then the active stored login, then `https://hub.paseo.sh`. An explicit `--api-key <secret>` takes precedence over environment variables and stored logins.
 
-Check and undo:
+Check status or disconnect a daemon:
 
 ```sh
 paseo hub status
@@ -52,22 +50,18 @@ paseo hub disconnect
 paseo hub disconnect --force   # drop local authority when Hub is unreachable
 ```
 
-One daemon has one Hub relationship. Connecting a daemon that already has one is refused.
+One daemon connects to one Hub organization at a time. Connecting a daemon that already belongs to a Hub is refused.
 
-`paseo hub logout` removes the active CLI login. The daemon's relationship is a separate identity and stays connected.
-
-In an interactive terminal, logout offers to disconnect a daemon enrolled with the same Hub. Accepting disconnects first and then deletes the login, so a failed disconnection keeps your credential. Declining removes only the login.
-
-Noninteractive and `--json` logout never disconnect implicitly:
+`paseo hub logout` removes the stored CLI login. In an interactive terminal, it offers to disconnect a daemon connected to the same Hub first. In `--json` or non-interactive mode, `logout` never disconnects the daemon unless you pass `--disconnect-daemon`:
 
 ```sh
-paseo hub logout --disconnect-daemon           # remove both identities
-paseo hub logout --disconnect-daemon --force   # drop local authority when Hub is unreachable
+paseo hub logout --disconnect-daemon
+paseo hub logout --disconnect-daemon --force
 ```
 
-## Let Hub run agents on it
+## Grant execution permission
 
-Enrolling a daemon does not let Hub start agents on it. That is the separate `hub.execute` permission, which login asks about and defaults to no. Grant it from the machine at any time:
+Enrolling a daemon does not allow Hub to start agents on it. Grant the `hub.execute` permission from that machine:
 
 ```sh
 paseo hub permissions list
@@ -75,50 +69,71 @@ paseo hub permissions grant hub.execute
 paseo hub permissions revoke hub.execute
 ```
 
-Until it is granted, Hub keeps the daemon for identity and presence only. The Daemons page shows it as **Connected only** with the grant command, and Home's checklist reads **Cannot run agents**. [Hub security](/docs/hub/security#choose-daemon-authority) covers what the permission allows once granted.
+Until `hub.execute` is granted, Hub tracks the daemon for identity and presence only. **Daemons** marks it as **Connected only** and **Home** notes that it cannot run agents. See [Choose daemon authority](/docs/hub/security#choose-daemon-authority) for what `hub.execute` permits.
 
-## Reference it from configuration
+## Target a daemon from a trigger
+
+Reference the daemon slug and an existing working directory under `run.target`:
 
 ```yaml
-environments:
-  dev:
-    kind: daemon
+name: repo-triage
+on:
+  manual.run: {}
+run:
+  target:
     daemon: my-macbook
     cwd: /Users/you/code/your-repo
+  agent:
+    provider: codex
+    mode: full-access
+  prompt: Inspect the repository status and call hub.finish_execution.
 ```
 
-`daemon` is the friendly slug. It resolves to the immutable daemon ID when the configuration activates, so a daemon that no longer exists fails activation instead of failing at dispatch.
+`daemon` resolves to the immutable daemon ID when you save or deploy the trigger. `cwd` is an absolute path that already exists on that machine. Hub does not clone repositories for you.
 
-`cwd` is a path on that machine. Hub does not clone anything for you; the directory must already exist.
-
-To keep executions off your working tree, add a worktree:
+To isolate each run on its own git branch instead of editing your working tree, add a `worktree` block:
 
 ```yaml
-worktree:
-  mode: branch-off
-  newBranch: trigger-${{ paseo.execution.id }}
-  base: origin/main
+name: isolate-fix
+on:
+  manual.run: {}
+run:
+  target:
+    daemon: build-server
+    cwd: /workspace/project
+    worktree:
+      mode: branch-off
+      newBranch: trigger-${{ paseo.execution.id }}
+      base: origin/main
+  agent:
+    provider: codex
+    mode: full-access
+  prompt: Run tests and call hub.finish_execution.
 ```
 
-`${{ paseo.execution.id }}` renders the execution's UUID, so every execution gets its own branch off `origin/main`.
+`${{ paseo.execution.id }}` renders the execution UUID, giving each run a unique branch off `origin/main` that survives retries and recovery. See [Trigger YAML reference](/docs/hub/configuration/reference#target-and-worktree) and [Git worktrees](/docs/worktrees).
 
-[Environment fields](/docs/hub/configuration/hub-yml#environments) lists what `newBranch` accepts. See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
+## Provider discovery
 
-## What Hub owns
+When you select a daemon and working directory in the Hub trigger editor, Hub asks that daemon for its configured providers, models, execution modes, and thinking options.
 
-For agents it dispatched, Hub owns creation, reconnect recovery, output observation, and completion. Agents you start yourself are untouched.
+Hub works with any provider configured on your Paseo daemon, including Claude Code, Codex, OpenCode, Pi, and custom or plugin providers.
 
-If Hub loses the create response, or the daemon restarts mid-execution, Hub resends the same create intent with the same execution id. The daemon returns the existing agent rather than running the prompt again. An agent that closed or errored is recorded as interrupted; Hub never silently starts a second one.
+## Recovery and ownership
 
-## Status
+For agents it dispatches, Hub owns creation, reconnect recovery, output tracking, and completion. Agents you start locally are untouched.
 
-| Status            | Meaning                                        |
-| ----------------- | ---------------------------------------------- |
-| Approval required | The CLI is waiting for you to approve the code |
-| Connected         | Online and accepting dispatch                  |
-| Offline           | Enrolled but not currently connected           |
-| Revoked           | Access removed from Hub                        |
+If Hub loses the create response or the daemon restarts mid-run, Hub resends the same create intent with the same execution ID. The daemon returns the existing agent instead of running the prompt twice. If an agent closes or crashes, Hub marks the run interrupted and does not silently start a second agent.
 
-An event that arrives while a daemon is offline fails dispatch with `daemon_not_connected`. Nothing is queued for later. The event is in the project's Activity, and the trigger has to fire again. An offline daemon also blocks saving a trigger that changes its target or agent, because Hub checks that agent against it; see [Saving checks the agent against the daemon](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
+## Daemon status
 
-Revoking from **Daemons → Revoke daemon** ends the relationship from Hub's side. The daemon keeps running your local agents.
+| Status            | Meaning                                  |
+| ----------------- | ---------------------------------------- |
+| Approval required | The CLI is waiting for browser approval. |
+| Connected         | Online and connected to Hub.             |
+| Offline           | Enrolled, but not currently connected.   |
+| Revoked           | Access was removed from Hub.             |
+
+While the daemon is offline, you can save dashboard edits that keep the same target and agent settings, such as a prompt change. `paseo hub deploy` and direct API installs require a connected target daemon even for that edit. See [trigger validation](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
+
+Revoking from **Daemons → Revoke daemon** ends the relationship from Hub's side while leaving local agents running.

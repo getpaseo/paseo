@@ -17,6 +17,11 @@ export function nextPageLimit(limit: number): number {
   return PAGE_LIMITS.find((candidate) => candidate > limit) ?? limit;
 }
 
+/** The page Load more grew this limit from, or null for the first page. */
+export function previousPageLimit(limit: number): number | null {
+  return PAGE_LIMITS.findLast((candidate) => candidate < limit) ?? null;
+}
+
 export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;

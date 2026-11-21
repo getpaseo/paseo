@@ -50,7 +50,7 @@ const TEST_SPEED_MODELS = [
   serviceTiers: [{ id: "priority", name: "Fast", description: "Faster processing" }],
 }));
 
-function speedControl() {
+function speedControlWith(choices: { value: string; label: string }[]) {
   return {
     type: "select",
     key: "service_tier",
@@ -60,11 +60,28 @@ function speedControl() {
     icon: "zap",
     desktopTrigger: "icon",
     defaultValue: "default",
-    choices: [
-      { value: "default", label: "Normal" },
-      { value: "priority", label: "Fast" },
-    ],
+    choices,
   };
+}
+
+/** The Speed control for a model that advertises Fast. */
+function speedControl() {
+  return speedControlWith([
+    { value: "default", label: "Normal" },
+    { value: "flex", label: "Flex" },
+    { value: "priority", label: "Fast" },
+  ]);
+}
+
+/**
+ * Flex is a Codex tier rather than a catalog one, so a model that advertises no speed still
+ * offers Normal and Flex.
+ */
+function flexSpeedControl() {
+  return speedControlWith([
+    { value: "default", label: "Normal" },
+    { value: "flex", label: "Flex" },
+  ]);
 }
 
 const PLAN_CONTROL = {
@@ -122,13 +139,14 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSessionHarness(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
 } {
   const config = createConfig(configOverrides);
   const appServer = createFakeCodexAppServer({
+    initialize: () => ({ userAgent: options.userAgent ?? "codex/0.156.0" }),
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
     "model/list": () => ({ data: options.models ?? TEST_SPEED_MODELS }),
   });
@@ -143,7 +161,7 @@ function createSessionHarness(
 
 async function createConnectedSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -178,6 +196,7 @@ describe("Codex app-server provider controls", () => {
           defaultValue: "default",
           choices: [
             { value: "default", label: "Normal" },
+            { value: "flex", label: "Flex" },
             { value: "priority", label: "Fast" },
             { value: "ultrafast", label: "Ultrafast" },
           ],
@@ -213,6 +232,7 @@ describe("Codex app-server provider controls", () => {
           key: "service_tier",
           choices: [
             { value: "default", label: "Normal" },
+            { value: "flex", label: "Flex" },
             { value: "future-tier", label: "Future speed" },
           ],
         }),
@@ -317,6 +337,7 @@ describe("Codex app-server provider controls", () => {
           key: "service_tier",
           choices: [
             { value: "default", label: "Normal" },
+            { value: "flex", label: "Flex" },
             { value: "priority", label: "Fast" },
           ],
         }),
@@ -427,7 +448,8 @@ describe("Codex app-server provider controls", () => {
     });
     const fresh = await createConnectedSession({ model });
     try {
-      expect(session.controls.map((control) => control.key)).toEqual(["plan_mode"]);
+      // Flex is not a catalog tier, so it stays on offer; the Fast the record asked for does not.
+      expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
       await expect(fresh.session.applyOptions?.({ service_tier: "fast" })).rejects.toThrow(
         `Codex speed 'fast' is not available for model '${model}'`,
       );
@@ -473,10 +495,10 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("controls return only the plan toggle when model does not support fast mode", async () => {
+  test("controls offer Flex and the plan toggle when a model advertises no speed", async () => {
     const { session } = await createConnectedSession({ model: "gpt-3.5-turbo" });
 
-    expect(session.controls).toEqual([PLAN_CONTROL]);
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
   });
 
   test("constructor ignores restored fast mode when model does not support it", async () => {
@@ -485,7 +507,7 @@ describe("Codex app-server provider controls", () => {
       providerOptions: { service_tier: "fast" },
     });
 
-    expect(session.controls).toEqual([PLAN_CONTROL]);
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
@@ -502,6 +524,101 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
       serviceTier: "priority",
     });
+  });
+
+  test.each([
+    { name: "a model catalog", models: TEST_SPEED_MODELS },
+    { name: "an empty model catalog", models: [] },
+  ])("older Codex clears saved Flex with $name", async ({ models }) => {
+    const { session, appServer } = await createConnectedSession(
+      { thinkingOptionId: "medium", providerOptions: { service_tier: "flex" } },
+      { models, userAgent: "codex/0.155.0" },
+    );
+    try {
+      const speed = session.controls?.find((control) => control.key === "service_tier");
+      expect(
+        speed?.type === "select" && speed.choices.some((choice) => choice.value === "flex"),
+      ).toBeFalsy();
+      await expect(session.applyOptions?.({ service_tier: "flex" })).rejects.toThrow(
+        "Codex speed 'flex' is not available",
+      );
+      expect(session.openOptionsPatch).toEqual({ service_tier: "default" });
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("Flex is offered on a model that advertises no speed and reaches the turn", async () => {
+    const { session, appServer } = await createConnectedSession({ model: "gpt-3.5-turbo" });
+    try {
+      await session.applyOptions?.({ service_tier: "flex" });
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        serviceTier: "flex",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a restored Flex runs on Flex instead of falling back to Normal", async () => {
+    const { session, appServer } = await createConnectedSession({
+      providerOptions: { service_tier: "flex" },
+    });
+    try {
+      // Nothing to report: the session runs the speed it was given.
+      expect(session.openOptionsPatch).toEqual({});
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        serviceTier: "flex",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("Flex survives a switch to a model that advertises no speed", async () => {
+    const { session, appServer } = await createConnectedSession({
+      providerOptions: { service_tier: "flex" },
+    });
+    try {
+      await session.setModel("gpt-3.5-turbo");
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        serviceTier: "flex",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a catalog that advertises Flex keeps its own name and is not listed twice", async () => {
+    const { session } = await createConnectedSession(
+      { model: "flex-model" },
+      {
+        models: [
+          {
+            id: "flex-model",
+            serviceTiers: [{ id: "flex", name: "Slow lane", description: "Slower processing" }],
+          },
+        ],
+      },
+    );
+    try {
+      expect(session.controls).toContainEqual(
+        expect.objectContaining({
+          key: "service_tier",
+          choices: [
+            { value: "default", label: "Normal" },
+            { value: "flex", label: "Slow lane" },
+          ],
+        }),
+      );
+    } finally {
+      await session.close();
+    }
   });
 
   test("selecting Normal after Fast explicitly selects Normal", async () => {
@@ -967,7 +1084,7 @@ describe("Codex app-server provider controls", () => {
     await session.applyOptions?.({ service_tier: "priority" });
     await session.setModel("gpt-3.5-turbo");
 
-    expect(session.controls).toEqual([PLAN_CONTROL]);
+    expect(session.controls).toEqual([flexSpeedControl(), PLAN_CONTROL]);
     await session.startTurn("hello");
 
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({

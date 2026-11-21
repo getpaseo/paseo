@@ -27,6 +27,10 @@ export default function contribute(server: PluginServerContext) {
 
     return {
       ...request,
+      appendSystemPrompt: [
+        ...(request.appendSystemPrompt ?? []),
+        "Follow the team engineering guide.",
+      ],
       mcpServers: {
         ...request.mcpServers,
         company: {

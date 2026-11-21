@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -19,6 +19,12 @@ import {
 import type { ComposerControlPresentation } from "@/composer/agent-controls/layout";
 import { getAgentControlHintKey, getFeatureHighlightColor } from "@/composer/agent-controls/utils";
 
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useComposerInput } from "@/composer/session";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { resolveNextChoiceId } from "./mode";
+
 const SEARCH_THRESHOLD = 6;
 
 function getFeatureHighlight(
@@ -33,6 +39,8 @@ function getFeatureHighlight(
 function toFeatureItem(
   control: AgentOptionControl,
   optionControls: ComposerOptionControls,
+  surface: ComposerControlSurface,
+  t: TFunction,
 ): ComposerControlItem {
   const { options, onSetOption } = optionControls;
   const base = {
@@ -43,11 +51,15 @@ function toFeatureItem(
     testID: `agent-feature-${control.key}`,
   };
   if (control.type === "toggle") {
+    const enabled = readToggleOption(control, options);
+    const stateLabel = enabled ? t("agentControls.features.on") : t("agentControls.features.off");
     return {
       ...base,
       type: "toggle",
-      tooltip: getControlTooltip(control),
-      value: readToggleOption(control, options),
+      tooltip:
+        control.tooltip ??
+        (surface === "toolbar" ? `${control.label}: ${stateLabel}` : control.label),
+      value: enabled,
       onChange: (value) => onSetOption(control.key, value),
     };
   }
@@ -71,6 +83,41 @@ interface ThinkingControl {
   displayLabel: string;
 }
 
+export function useModelPickerShortcut(disabled: boolean) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const input = useComposerInput();
+  const action =
+    isActiveComposer && !disabled && input
+      ? {
+          id: "message-input.model-toggle" as const,
+          canOpen: input.isFocused,
+        }
+      : undefined;
+  const keys = useShortcutKeys(action ? "toggle-model-picker" : null);
+  return { action, keys };
+}
+
+export function useEffortCycleShortcut(thinking: ThinkingControl | null, disabled: boolean) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const input = useComposerInput();
+  const effortHandlerId = useId();
+  const nextEffortId = resolveNextChoiceId(thinking?.options ?? [], thinking?.selectedId);
+  const canCycleEffort = isActiveComposer && !disabled && nextEffortId !== null && input !== null;
+  useKeyboardActionHandler({
+    handlerId: effortHandlerId,
+    actions: ["message-input.effort-cycle"],
+    enabled: canCycleEffort,
+    isActive: input?.isFocused,
+    priority: 200,
+    handle: () => {
+      if (!thinking || nextEffortId === null) return false;
+      thinking.onSelect(nextEffortId);
+      return true;
+    },
+  });
+  return useShortcutKeys(canCycleEffort ? "cycle-effort" : null);
+}
+
 /** The thinking select and the option controls, as the data `ComposerControl` draws. */
 export function useAgentControlItems({
   surface,
@@ -92,9 +139,11 @@ export function useAgentControlItems({
   const features = useMemo(
     () =>
       optionControls
-        ? optionControls.controls.map((control) => toFeatureItem(control, optionControls))
+        ? optionControls.controls.map((control) =>
+            toFeatureItem(control, optionControls, surface, t),
+          )
         : [],
-    [optionControls],
+    [optionControls, surface, t],
   );
   return { thinking: thinkingItem, features };
 }

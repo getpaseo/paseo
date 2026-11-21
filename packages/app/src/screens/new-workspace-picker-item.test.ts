@@ -8,6 +8,7 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemToCheckoutRequest,
+  refListOptions,
   startsNewBranch,
   type PickerItem,
 } from "./new-workspace-picker-item";
@@ -106,12 +107,123 @@ describe("pickerItemToCheckoutRequest", () => {
   });
 });
 
+describe("pickerItemToCheckoutRequest with an action", () => {
+  it("checks a branch out by its branch name, whichever ref the row stands for", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/remotes/origin/dev",
+      accessibilityLabel: "dev, origin branch",
+    };
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
+      action: "checkout",
+      refName: "dev",
+    });
+  });
+
+  it("branches off a pull request, still naming the pull request", () => {
+    const item: PickerItem = { kind: "github-pr", item: prItem };
+    expect(pickerItemToCheckoutRequest(item, "branch-off")).toEqual({
+      action: "branch-off",
+      refName: "feature/picker",
+      checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+      githubPrNumber: 42,
+    });
+  });
+});
+
+describe("refListOptions", () => {
+  const branchDetails: BranchPickerDetail[] = [
+    {
+      name: "main",
+      committerDate: 20,
+      hasLocal: true,
+      hasRemote: true,
+      localAhead: 1,
+      localBehind: 0,
+    },
+    { name: "dev", committerDate: 10, hasLocal: true, hasRemote: false },
+  ];
+  const data = buildPickerOptionData({ branchDetails, prItems: [prItem], baseItem: null });
+
+  it("lists branches and pull requests apart", () => {
+    const list = (kind: PickerItem["kind"]) =>
+      refListOptions({ ...data, kind, action: "branch-off" }).map((option) => option.label);
+    expect(list("branch")).toEqual(["main", "main (local)", "dev"]);
+    expect(list("github-pr")).toEqual(["#42 Add picker"]);
+  });
+
+  it("shows one row per branch when checking out, since both refs check out the same branch", () => {
+    const rows = refListOptions({ ...data, kind: "branch", action: "checkout" });
+    expect(rows.map((option) => option.label)).toEqual(["main", "dev"]);
+  });
+
+  it("keeps the selected row of a branch when checking out", () => {
+    const localMain = branchPickerOptionId("refs/heads/main");
+    const rows = refListOptions({
+      ...data,
+      selectedOptionId: localMain,
+      kind: "branch",
+      action: "checkout",
+    });
+    expect(rows.map((option) => [option.id, option.label])).toEqual([
+      [localMain, "main"],
+      [branchPickerOptionId("refs/heads/dev"), "dev"],
+    ]);
+  });
+});
+
 describe("buildBranchPickerItems", () => {
+  it("keeps a normalized local name that resembles an exact remote ref", () => {
+    const items = buildBranchPickerItems([
+      { name: "refs/remotes/company/topic", committerDate: 1, hasLocal: true, hasRemote: false },
+      {
+        name: "refs/remotes/company/topic",
+        refName: "refs/remotes/company/topic",
+        committerDate: 2,
+        hasLocal: false,
+        hasRemote: true,
+      },
+    ]);
+    expect(items).toEqual([
+      {
+        kind: "branch",
+        name: "refs/remotes/company/topic",
+        refName: "refs/heads/refs/remotes/company/topic",
+        accessibilityLabel: "refs/remotes/company/topic, local branch",
+        committerDate: 1,
+      },
+      {
+        kind: "branch",
+        name: "topic (company)",
+        refName: "refs/remotes/company/topic",
+        accessibilityLabel: "topic (company), company branch",
+        committerDate: 2,
+      },
+    ]);
+    expect(pickerItemToCheckoutRequest(items[0])).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/refs/remotes/company/topic",
+    });
+  });
+
   it("keeps exact non-origin refs distinct from local and origin branches", () => {
     const items = buildBranchPickerItems([
       { name: "main", committerDate: 1, hasLocal: true, hasRemote: false },
-      { name: "refs/remotes/company/main", committerDate: 2, hasLocal: false, hasRemote: true },
-      { name: "refs/remotes/upstream/main", committerDate: 3, hasLocal: false, hasRemote: true },
+      {
+        name: "refs/remotes/company/main",
+        refName: "refs/remotes/company/main",
+        committerDate: 2,
+        hasLocal: false,
+        hasRemote: true,
+      },
+      {
+        name: "refs/remotes/upstream/main",
+        refName: "refs/remotes/upstream/main",
+        committerDate: 3,
+        hasLocal: false,
+        hasRemote: true,
+      },
     ]);
     expect(items).toEqual([
       {
@@ -136,7 +248,7 @@ describe("buildBranchPickerItems", () => {
         committerDate: 3,
       },
     ]);
-    expect(items.map(pickerItemToCheckoutRequest)).toEqual([
+    expect(items.map((item) => pickerItemToCheckoutRequest(item))).toEqual([
       { action: "branch-off", refName: "refs/heads/main" },
       { action: "branch-off", refName: "refs/remotes/company/main" },
       { action: "branch-off", refName: "refs/remotes/upstream/main" },
@@ -479,5 +591,14 @@ describe("startsNewBranch", () => {
       }),
     ).toBe(false);
     expect(startsNewBranch({ githubPrNumber: 7 })).toBe(false);
+  });
+
+  it("is true for a branch-off from a change request", () => {
+    expect(
+      startsNewBranch({
+        action: "branch-off",
+        checkoutSource: { kind: "change_request", forge: "github", number: 7 },
+      }),
+    ).toBe(true);
   });
 });
