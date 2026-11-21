@@ -338,6 +338,7 @@ describe("toAgentPayload", () => {
         metadata: {
           restored: new Date("2025-03-01T00:00:00.000Z"),
           paseoInstructionReceipt: { threadId: "persist-99", digest: "internal-digest" },
+          toolPolicySource: "plugin",
           empty: {},
           mcpServers: {
             hub: {

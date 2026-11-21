@@ -2,10 +2,11 @@ import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
+import type { AgentStreamEvent, McpServerConfig } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
+import { V2Runtime } from "./runtime.js";
 
 function terminalEvents(events: AgentStreamEvent[]) {
   return events.filter(
@@ -17,6 +18,384 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("a failed child read releases its pending location before a different child opens", async () => {
+    const harness = new V2Harness();
+    const child = {
+      ...harness.info,
+      id: "child",
+      parentID: "session",
+      location: { directory: "/children" },
+    };
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    harness.api.event.subscribe = async function* (options) {
+      yield { id: "connected", created: 1, type: "server.connected", data: {} };
+      await new Promise<void>((resolve) =>
+        options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    };
+    let failRead = true;
+    harness.api.session.get = async ({ sessionID }) => {
+      if (sessionID === "child" && failRead) throw new Error("child read failed");
+      return sessionID === "child" ? child : harness.info;
+    };
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      startup: {
+        select: async () => ({ kind: "owned" }),
+        start: async () => ({ ...harness.connection, stop: async () => undefined }),
+      },
+    });
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const launch = { env: { TOKEN: "same-process" } };
+    const parent = await client.createSession({ provider: "opencode", cwd: "/parent" }, launch);
+    const handle = {
+      provider: "opencode" as const,
+      sessionId: "child",
+      metadata: { cwd: "/children" },
+    };
+    await expect(
+      client.resumeSession(
+        handle,
+        { mcpServers: { first: { type: "stdio", command: "first" } } },
+        launch,
+      ),
+    ).rejects.toThrow("child read failed");
+    failRead = false;
+    const opened = await client.resumeSession(
+      handle,
+      { mcpServers: { second: { type: "stdio", command: "second" } } },
+      launch,
+    );
+    try {
+      expect(harness.mcpAdds).toEqual(["second"]);
+    } finally {
+      await opened.close();
+      await parent.close();
+      await client.shutdown();
+    }
+  });
+
+  test("alternate-directory siblings cannot replace each other's MCP credentials on one helper", async () => {
+    const harness = new V2Harness();
+    harness.info.location.directory = "/parent";
+    const childA = {
+      ...harness.info,
+      id: "child-a",
+      parentID: "session",
+      location: { directory: "/children" },
+    };
+    const childB = { ...childA, id: "child-b" };
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [childA, childB] : [],
+      cursor: {},
+    });
+    harness.api.event.subscribe = async function* (options) {
+      yield { id: "connected", created: 1, type: "server.connected", data: {} };
+      await new Promise<void>((resolve) =>
+        options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    };
+    const reads: string[] = [];
+    harness.api.session.get = async ({ sessionID }) => {
+      reads.push(sessionID);
+      if (sessionID === "child-b") throw new Error("conflicting child provider read reached");
+      return sessionID === "child-a" ? childA : harness.info;
+    };
+    const writes: unknown[] = [];
+    const add = harness.api.mcp.add;
+    harness.api.mcp.add = async (input) => {
+      writes.push(input);
+      await add(input);
+    };
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      startup: {
+        select: async () => ({ kind: "owned" }),
+        start: async () => ({ ...harness.connection, stop: async () => undefined }),
+      },
+    });
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const launch = { env: { TOKEN: "same-process" } };
+    const parent = await client.createSession({ provider: "opencode", cwd: "/parent" }, launch);
+    const first = await client.resumeSession(
+      { provider: "opencode", sessionId: "child-a", metadata: { cwd: "/children" } },
+      {
+        mcpServers: {
+          tools: { type: "http", url: "https://tools.test", headers: { Authorization: "first" } },
+        },
+      },
+      launch,
+    );
+    try {
+      await expect(
+        client.resumeSession(
+          { provider: "opencode", sessionId: "child-b", metadata: { cwd: "/children" } },
+          {
+            mcpServers: {
+              tools: {
+                type: "http",
+                url: "https://tools.test",
+                headers: { Authorization: "second" },
+              },
+            },
+          },
+          launch,
+        ),
+      ).rejects.toThrow("cannot change MCP servers");
+      expect(reads).not.toContain("child-b");
+      expect(writes).toEqual([
+        {
+          server: "tools",
+          location: { directory: "/children" },
+          config: {
+            type: "remote",
+            url: "https://tools.test",
+            headers: { Authorization: "first" },
+            oauth: false,
+            codemode: false,
+          },
+        },
+      ]);
+    } finally {
+      await first.close();
+      await parent.close();
+      await client.shutdown();
+    }
+  });
+
+  test.each([
+    { name: "removed server", servers: {} },
+    { name: "changed transport", servers: { tools: { type: "http", url: "https://tools.test" } } },
+    {
+      name: "changed command",
+      servers: {
+        tools: { type: "stdio", command: "other", args: ["one"], env: { TOKEN: "first" } },
+      },
+    },
+    {
+      name: "changed args",
+      servers: {
+        tools: { type: "stdio", command: "tools", args: ["two"], env: { TOKEN: "first" } },
+      },
+    },
+    {
+      name: "changed stdio env",
+      servers: {
+        tools: { type: "stdio", command: "tools", args: ["one"], env: { TOKEN: "second" } },
+      },
+    },
+  ] satisfies Array<{ name: string; servers: Record<string, McpServerConfig> }>)(
+    "retained connections reject $name before provider access",
+    async ({ servers }) => {
+      const harness = new V2Harness();
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        mcpServers: {
+          tools: { type: "stdio", command: "tools", args: ["one"], env: { TOKEN: "first" } },
+        },
+      });
+      harness.api.session.get = async () => {
+        throw new Error("provider read reached");
+      };
+      try {
+        await expect(
+          client.resumeSession(session.describePersistence(), { mcpServers: servers }),
+        ).rejects.toThrow("cannot change MCP servers");
+        expect(harness.mcpAdds).toEqual(["tools"]);
+        expect(harness.retains).toEqual([]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test("retained connections compare a snapshot and allow reordered identical MCP bindings", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const servers = {
+      tools: { type: "http" as const, url: "https://tools.test", headers: { A: "a", B: "b" } },
+    };
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      mcpServers: servers,
+    });
+    harness.api.session.get = async () => {
+      throw new Error("compatible provider read");
+    };
+    try {
+      servers.tools.headers.A = "mutated";
+      await expect(
+        client.resumeSession(session.describePersistence(), { mcpServers: servers }),
+      ).rejects.toThrow("cannot change MCP servers");
+      await expect(
+        client.resumeSession(session.describePersistence(), {
+          mcpServers: {
+            tools: { headers: { B: "b", A: "a" }, url: "https://tools.test", type: "http" },
+          },
+        }),
+      ).rejects.toThrow("compatible provider read");
+      expect(harness.retains).toEqual([{ dedicated: true, env: undefined }]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("retained isolated sessions allow identity changes but reject changed process environment before provider access", async () => {
+    const harness = new V2Harness();
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      startup: {
+        select: async () => ({ kind: "owned" }),
+        start: async () => ({ ...harness.connection, stop: async () => undefined }),
+      },
+    });
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project" },
+      {
+        env: { TOKEN: "first", PASEO_AGENT_ID: "owner" },
+      },
+    );
+    harness.api.session.get = async () => {
+      throw new Error("provider read reached");
+    };
+    try {
+      await expect(
+        client.resumeSession(session.describePersistence(), undefined, {
+          env: { TOKEN: "first", PASEO_AGENT_ID: "child" },
+        }),
+      ).rejects.toThrow("provider read reached");
+      await expect(
+        client.resumeSession(session.describePersistence(), undefined, {
+          env: { TOKEN: "second", PASEO_AGENT_ID: "child" },
+        }),
+      ).rejects.toThrow("cannot change process environment");
+      await expect(client.resumeSession(session.describePersistence())).rejects.toThrow(
+        "cannot change process environment",
+      );
+      expect(harness.mcpAdds).toEqual([]);
+    } finally {
+      await session.close();
+      await client.shutdown();
+    }
+  });
+
+  test("retained shared sessions reject new isolation before provider access", async () => {
+    const harness = new V2Harness();
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      startup: {
+        select: async () => ({ kind: "owned" }),
+        start: async () => ({ ...harness.connection, stop: async () => undefined }),
+      },
+    });
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    harness.api.session.get = async () => {
+      throw new Error("provider read reached");
+    };
+    try {
+      await expect(
+        client.resumeSession(session.describePersistence(), undefined, { env: { TOKEN: "new" } }),
+      ).rejects.toThrow("requires an isolated server");
+      expect(harness.mcpAdds).toEqual([]);
+    } finally {
+      await session.close();
+      await client.shutdown();
+    }
+  });
+
+  test("an empty native tool policy keeps shell permission pending despite auto_accept", async () => {
+    const harness = new V2Harness();
+    const replies: string[] = [];
+    harness.api.permission.list = async () => [
+      { id: "shell-approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      toolPolicy: { preapproved: [] },
+      providerOptions: { auto_accept: true },
+    });
+    try {
+      expect(session.getPendingPermissions().map(({ id }) => id)).toEqual(["shell-approval"]);
+      expect(replies).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    {
+      name: "credentials",
+      server: { type: "http", url: "https://tools.test", headers: { Authorization: "second" } },
+    },
+    {
+      name: "URL",
+      server: { type: "http", url: "https://other.test", headers: { Authorization: "first" } },
+    },
+  ] satisfies Array<{ name: string; server: McpServerConfig }>)(
+    "retained same-location children reject changed MCP $name before provider writes",
+    async ({ server }) => {
+      const harness = new V2Harness();
+      harness.api.session.list = async (input) => ({
+        data:
+          input?.parentID === "session"
+            ? [{ ...harness.info, id: "child", parentID: "session" }]
+            : [],
+        cursor: {},
+      });
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        mcpServers: {
+          tools: { type: "http", url: "https://tools.test", headers: { Authorization: "first" } },
+        },
+      });
+      harness.mcpAdds.length = 0;
+      let reads = 0;
+      harness.api.session.get = async () => {
+        reads += 1;
+        throw new Error("provider read reached");
+      };
+      try {
+        await expect(
+          client.resumeSession(
+            { provider: "opencode", sessionId: "child", metadata: { cwd: "/tmp/project" } },
+            { mcpServers: { tools: server } },
+          ),
+        ).rejects.toThrow("cannot change MCP servers");
+        expect(reads).toBe(0);
+        expect(harness.mcpAdds).toEqual([]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("reopening replaces and removes plugin instructions", async () => {
     const harness = new V2Harness();
     const client = new OpenCodeV2AgentClient({

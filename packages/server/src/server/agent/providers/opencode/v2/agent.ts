@@ -1,4 +1,5 @@
 import { OpenCodeV2Session } from "./session.js";
+import { isDeepStrictEqual } from "node:util";
 import { V2_CAPABILITIES } from "./capabilities.js";
 import {
   controls,
@@ -53,11 +54,17 @@ interface V2AgentOptions {
   selection?: OpenCodeServiceSelection;
 }
 
+interface RetainedConnection {
+  connection: V2Connection;
+  cwd: string;
+  mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+}
+
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode";
   readonly capabilities: AgentCapabilityFlags;
   private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
-  private readonly connections = new Map<string, V2Connection>();
+  private readonly connections = new Map<string, RetainedConnection>();
   constructor(private readonly options: V2AgentOptions) {
     const bridge = options.bridge;
     this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(bridge) };
@@ -115,6 +122,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
     );
     try {
+      connection.reserveMcpServers(config.cwd, config.mcpServers ?? {});
       const info = await connection.client.session.create({
         location: { directory: config.cwd },
         title: config.title,
@@ -143,12 +151,19 @@ export class OpenCodeV2AgentClient implements AgentClient {
       provider: "opencode",
       cwd,
     };
-    const connection =
-      this.connections.get(handle.nativeHandle ?? handle.sessionId)?.retain() ??
-      (await this.runtime.acquire(
-        requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
-      ));
+    const retained = this.connections.get(handle.nativeHandle ?? handle.sessionId);
+    if (retained?.cwd === cwd && !isDeepStrictEqual(retained.mcpServers, config.mcpServers ?? {}))
+      throw new Error(
+        "OpenCode retained connection cannot change MCP servers in the same location",
+      );
+    const request = requiresDedicatedV2Server(config, launch)
+      ? { env: launch?.env, dedicated: true }
+      : {};
+    const connection = retained
+      ? retained.connection.retain(request)
+      : await this.runtime.acquire(request);
     try {
+      connection.reserveMcpServers(config.cwd, config.mcpServers ?? {});
       const info = await connection.client.session.get({
         sessionID: handle.nativeHandle ?? handle.sessionId,
       });
@@ -174,11 +189,23 @@ export class OpenCodeV2AgentClient implements AgentClient {
     persist: boolean,
     historyOnly = false,
   ) {
-    const acquire = () =>
-      this.runtime.acquire(
+    const acquire = async () => {
+      const next = await this.runtime.acquire(
         requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
       );
-    let ownedConnection = connection;
+      try {
+        next.reserveMcpServers(config.cwd, config.mcpServers ?? {});
+        return next;
+      } catch (error) {
+        await next.release();
+        throw error;
+      }
+    };
+    const binding: RetainedConnection = {
+      connection,
+      cwd: config.cwd,
+      mcpServers: structuredClone(config.mcpServers ?? {}),
+    };
     const bridge = this.options.bridge;
     const unbind = bridge?.bindSession({
       sessionId: info.id,
@@ -187,7 +214,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     });
     const bound = new Map<string, () => void>();
     const bindChild = (childId: string) => {
-      this.connections.set(childId, ownedConnection);
+      this.connections.set(childId, binding);
       if (bound.has(childId)) return;
       const childUnbind = bridge?.bindSession({
         sessionId: childId,
@@ -196,17 +223,15 @@ export class OpenCodeV2AgentClient implements AgentClient {
       });
       if (childUnbind) bound.set(childId, childUnbind);
     };
-    this.connections.set(info.id, connection);
+    this.connections.set(info.id, binding);
     const releaseBindings = () => {
       unbind?.();
       for (const cleanup of bound.values()) cleanup();
       for (const [id, owner] of this.connections)
-        if (owner === ownedConnection) this.connections.delete(id);
+        if (owner === binding) this.connections.delete(id);
     };
     const moved = (next: V2Connection) => {
-      for (const [id, owner] of this.connections)
-        if (owner === ownedConnection) this.connections.set(id, next);
-      ownedConnection = next;
+      binding.connection = next;
     };
     const session = new OpenCodeV2Session(
       connection,

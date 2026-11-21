@@ -75,6 +75,9 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
     providerOptions: record.config?.providerOptions ?? undefined,
     toolPolicy: record.config?.toolPolicy ?? undefined,
+    ...(record.config?.toolPolicySource
+      ? { toolPolicySource: record.config.toolPolicySource }
+      : {}),
     systemPrompt: record.config?.systemPrompt ?? undefined,
     mcpServers: record.config?.mcpServers ?? undefined,
   });
@@ -96,6 +99,7 @@ export function buildSessionConfig(
     thinkingOptionId: overrides.thinkingOptionId,
     providerOptions: overrides.providerOptions,
     toolPolicy: overrides.toolPolicy,
+    ...(overrides.toolPolicySource ? { toolPolicySource: overrides.toolPolicySource } : {}),
     systemPrompt: overrides.systemPrompt,
     mcpServers: overrides.mcpServers,
   });

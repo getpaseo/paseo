@@ -30,6 +30,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .strict()
       .nullable()
       .optional(),
+    toolPolicySource: z.literal("plugin").optional(),
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
@@ -94,6 +95,7 @@ export type SerializableAgentConfig = Pick<
   | "thinkingOptionId"
   | "providerOptions"
   | "toolPolicy"
+  | "toolPolicySource"
   | "systemPrompt"
   | "mcpServers"
 >;

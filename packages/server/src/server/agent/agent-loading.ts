@@ -118,7 +118,7 @@ export async function ensureAgentLoaded(
         buildConfigOverrides(record),
         agentId,
         { ...extractTimestamps(record), attention: extractAttention(record) },
-        deps.purpose ? { purpose: deps.purpose } : undefined,
+        { ...(deps.purpose ? { purpose: deps.purpose } : {}), restoreToolPolicySource: true },
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {

@@ -5130,6 +5130,11 @@ export class Session {
           effectiveOverrides,
           undefined,
           { workspaceId: matched?.record.workspaceId },
+          {
+            restoreToolPolicySource: Boolean(
+              matched && !Object.hasOwn(overrides ?? {}, "toolPolicy"),
+            ),
+          },
         );
       } catch (error) {
         if (matched?.didUnarchive && matched.originalArchivedAt) {

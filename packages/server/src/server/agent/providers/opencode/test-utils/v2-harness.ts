@@ -6,7 +6,7 @@ import type {
   SessionLogItem,
 } from "@opencode/client";
 import type { V2Api } from "../v2/api.js";
-import type { V2Connection } from "../v2/runtime.js";
+import type { V2Connection, V2RuntimeAcquireOptions } from "../v2/runtime.js";
 
 function unexpected(): never {
   throw new Error("Unexpected OpenCode v2 test operation");
@@ -28,6 +28,7 @@ export class V2Harness {
   readonly prompts: string[] = [];
   readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
   readonly mcpAdds: string[] = [];
+  readonly retains: V2RuntimeAcquireOptions[] = [];
   readonly instructions = new Map<string, string>();
   releases = 0;
   active = false;
@@ -184,6 +185,8 @@ export class V2Harness {
     event: { subscribe: (options) => this.events(options?.signal) },
   };
   readonly connection: V2Connection = {
+    reserveMcpServers: () => {},
+    commitMcpServers: () => {},
     bindSession: async () => {},
     unbindSession: async () => {},
     refreshLocation: async () => {},
@@ -191,7 +194,10 @@ export class V2Harness {
     release: async () => {
       this.releases += 1;
     },
-    retain: () => this.connection,
+    retain: (input = {}) => {
+      this.retains.push(input);
+      return this.connection;
+    },
     exited: new Promise<Error>(() => undefined),
   };
   readonly runtime = { acquire: async () => this.connection, shutdown: async () => undefined };

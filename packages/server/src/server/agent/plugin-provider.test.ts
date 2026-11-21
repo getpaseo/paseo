@@ -19,6 +19,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentManager } from "./agent-manager.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
@@ -49,6 +50,533 @@ const CAPABILITIES = [
   "session.subsession",
   "permission",
 ] as const;
+
+test("plugin-only preapprovals keep unsupported providers opening with ordinary permissions", async () => {
+  const harness = createProviderHarness({ completeTurn: false });
+  const logger = createTestLogger();
+  const warnings: string[] = [];
+  logger.warn = ((_fields: unknown, message: string) => {
+    warnings.push(message);
+  }) as typeof logger.warn;
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const definitions = buildProviderRegistry(logger, { pluginProviders: registry.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: definitions,
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.create.before"
+          ? {
+              ...request,
+              config: {
+                ...request.config,
+                mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+                toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+              },
+            }
+          : request,
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: harness.registration.id, cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+      config: {
+        mcpServers: { computer: { url: "http://127.0.0.1/computer" } },
+        toolPolicy: undefined,
+      },
+    });
+    await agent.session!.startTurn("use a tool");
+    expect(agent.session!.getPendingPermissions()).toEqual([
+      expect.objectContaining({ id: "permission-1", name: "write" }),
+    ]);
+    expect(harness.inputs.filter((input) => input.type === "session.permission")).toEqual([]);
+    expect(warnings).toEqual([
+      "Provider does not support plugin preapprovals; keeping ordinary permission prompts",
+    ]);
+    await manager.closeAgent(agent.id);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("caller-required plugin preapprovals reject with a typed error before opening", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  try {
+    await expect(
+      registry.clients()[harness.registration.id]!.createSession({
+        provider: harness.registration.id,
+        cwd: tmpdir(),
+        mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+        toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish" }] },
+      }),
+    ).rejects.toMatchObject({
+      name: "ToolPolicyUnsupportedError",
+      code: "tool_policy_unsupported",
+      provider: harness.registration.id,
+    });
+    expect(harness.inputs).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("plugin preapproval provenance survives storage and cold loading but not explicit replacement", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-policy-origin-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    registry: storage,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.create.before"
+          ? {
+              ...request,
+              config: {
+                ...request.config,
+                mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+                toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+              },
+            }
+          : request,
+    },
+  });
+  try {
+    const created = await manager.createAgent(
+      { provider: harness.registration.id, cwd: home },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.closeAgent(created.id);
+    const stored = await storage.get(created.id);
+    expect(stored?.config).toMatchObject({ toolPolicySource: "plugin" });
+    const restored = await ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(restored.config).toMatchObject({ toolPolicySource: "plugin" });
+    const restoredHandle = restored.session!.describePersistence()!;
+    await manager.closeAgent(created.id);
+    await expect(
+      manager.resumeAgentFromPersistence(
+        restoredHandle,
+        {
+          provider: harness.registration.id,
+          cwd: home,
+          ...stored!.config,
+        },
+        created.id,
+      ),
+    ).rejects.toMatchObject({ code: "tool_policy_unsupported" });
+    await ensureAgentLoaded(created.id, { agentManager: manager, agentStorage: storage, logger });
+    await expect(
+      manager.reloadAgentSession(created.id, {
+        toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+        toolPolicySource: "plugin",
+      }),
+    ).rejects.toMatchObject({ code: "tool_policy_unsupported" });
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a hook cannot remove a caller-required policy when no grants remain in its result", async () => {
+  const harness = createProviderHarness();
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.create.before"
+          ? { ...request, config: { ...request.config, toolPolicy: undefined } }
+          : request,
+    },
+  });
+  try {
+    await expect(
+      manager.createAgent(
+        {
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+          mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+          toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish" }] },
+        },
+        undefined,
+        { workspaceId: undefined },
+      ),
+    ).rejects.toMatchObject({ code: "tool_policy_unsupported" });
+    expect(harness.inputs.filter((input) => input.type === "session.open")).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("unsupported plugin providers accept an empty policy without granting permission", async () => {
+  const harness = createProviderHarness({ completeTurn: false });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  try {
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: tmpdir(),
+      toolPolicy: { preapproved: [] },
+    });
+    await session.startTurn("ask");
+    expect(session.getPendingPermissions()).toEqual([
+      expect.objectContaining({ id: "permission-1" }),
+    ]);
+    expect(harness.inputs.filter((input) => input.type === "session.permission")).toEqual([]);
+    await session.close();
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("negotiated exact policy support receives plugin grants unchanged", async () => {
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "permission.tool_policy"],
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const toolPolicy = { preapproved: [{ kind: "mcp" as const, server: "computer", tool: "click" }] };
+  try {
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: tmpdir(),
+      mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+      toolPolicy,
+      toolPolicySource: "plugin",
+    });
+    expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+      config: { toolPolicy },
+    });
+    expect(harness.inputs.find((input) => input.type === "session.open")).not.toHaveProperty(
+      "config.toolPolicySource",
+    );
+    await session.close();
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("hooks cannot replace a caller-required MCP server binding", async () => {
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "permission.tool_policy"],
+  });
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.create.before"
+          ? {
+              ...request,
+              config: {
+                ...request.config,
+                mcpServers: { hub: { type: "http", url: "http://127.0.0.1/replacement" } },
+              },
+            }
+          : request,
+    },
+  });
+  try {
+    await expect(
+      manager.createAgent(
+        {
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+          mcpServers: { hub: { type: "http", url: "http://127.0.0.1/original" } },
+          toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish" }] },
+        },
+        undefined,
+        { workspaceId: undefined },
+      ),
+    ).rejects.toThrow("cannot replace MCP server 'hub'");
+    expect(harness.inputs.filter((input) => input.type === "session.open")).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("a mixed caller and hook policy remains required as a whole", async () => {
+  const harness = createProviderHarness();
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.create.before"
+          ? {
+              ...request,
+              config: {
+                ...request.config,
+                toolPolicy: {
+                  preapproved: [
+                    ...(request.config.toolPolicy?.preapproved ?? []),
+                    { kind: "mcp", server: "hub", tool: "plugin_tool" },
+                  ],
+                },
+              },
+            }
+          : request,
+    },
+  });
+  try {
+    await expect(
+      manager.createAgent(
+        {
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+          mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+          toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish" }] },
+        },
+        undefined,
+        { workspaceId: undefined },
+      ),
+    ).rejects.toMatchObject({ code: "tool_policy_unsupported" });
+    expect(harness.inputs.filter((input) => input.type === "session.open")).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("explicit cold resume policy cannot reuse a saved plugin origin", async () => {
+  const harness = createProviderHarness();
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+  });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence(
+        {
+          provider: harness.registration.id,
+          sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+          metadata: { cwd: tmpdir(), toolPolicySource: "plugin" },
+        },
+        {
+          cwd: tmpdir(),
+          toolPolicySource: "plugin",
+          mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+          toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "tool_policy_unsupported" });
+    expect(harness.inputs.filter((input) => input.type === "session.open")).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("a plugin policy recreates from a record without becoming caller-required", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-policy-recreate-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    registry: storage,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: { emit: () => {}, before: async (_name, request) => request },
+  });
+  const id = "00000000-0000-4000-8000-000000000501";
+  try {
+    await storage.upsert({
+      id,
+      provider: harness.registration.id,
+      cwd: home,
+      labels: {},
+      metadata: {},
+      createdAt: "2026-11-19T00:00:00.000Z",
+      updatedAt: "2026-11-19T00:00:00.000Z",
+      lastStatus: "closed",
+      config: {
+        toolPolicySource: "plugin",
+        toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+        mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+      },
+    });
+    const agent = await manager.createAgentFromRecord(id);
+    expect(agent.config.toolPolicySource).toBe("plugin");
+    expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+      config: { toolPolicy: undefined },
+    });
+    await manager.closeAgent(id);
+  } finally {
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("plugin-only preapprovals stay optional when rewind reopens the provider", async () => {
+  const harness = createRewindProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    mcpServers: { computer: { type: "http", url: "http://127.0.0.1/computer" } },
+    toolPolicy: { preapproved: [{ kind: "mcp", server: "computer", tool: "click" }] },
+    toolPolicySource: "plugin",
+  });
+  try {
+    await session.run("A");
+    await session.run("B");
+    await session.revertConversation!({ messageId: "user-B" });
+    const opens = harness.inputs.filter((input) => input.type === "session.open");
+    expect(opens).toHaveLength(2);
+    expect(opens[1]).toMatchObject({
+      config: {
+        toolPolicy: undefined,
+        mcpServers: { computer: { url: "http://127.0.0.1/computer" } },
+      },
+    });
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+});
+
+test("in-place hook edits cannot remove required grants or forge their origin", async () => {
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "permission.tool_policy"],
+  });
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) => {
+        if (name !== "agent.create.before") return request;
+        request.config.toolPolicy!.preapproved.splice(0, 1);
+        request.config.toolPolicy!.preapproved.push({
+          kind: "mcp",
+          server: "hub",
+          tool: "plugin_tool",
+        });
+        return { ...request, config: { ...request.config, toolPolicySource: "plugin" } };
+      },
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: harness.registration.id,
+        cwd: tmpdir(),
+        mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "hub", tool: "finish" },
+            { kind: "mcp", server: "hub", tool: "reply" },
+          ],
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(agent.config.toolPolicy?.preapproved).toEqual([
+      { kind: "mcp", server: "hub", tool: "finish" },
+      { kind: "mcp", server: "hub", tool: "reply" },
+      { kind: "mcp", server: "hub", tool: "plugin_tool" },
+    ]);
+    expect(agent.config.toolPolicySource).toBeUndefined();
+    await manager.closeAgent(agent.id);
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("in-place credential changes cannot reuse a caller-required server URL", async () => {
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "permission.tool_policy"],
+  });
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: buildProviderRegistry(logger, { pluginProviders: registry.definitions() }),
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) => {
+        if (name !== "agent.create.before") return request;
+        const server = request.config.mcpServers!.hub;
+        if (server.type === "http") server.headers = { Authorization: "Bearer outsider" };
+        return request;
+      },
+    },
+  });
+  try {
+    await expect(
+      manager.createAgent(
+        {
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+          mcpServers: {
+            hub: {
+              type: "http",
+              url: "http://127.0.0.1/hub",
+              headers: { Authorization: "Bearer owner" },
+            },
+          },
+          toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish" }] },
+        },
+        undefined,
+        { workspaceId: undefined },
+      ),
+    ).rejects.toThrow("cannot replace MCP server 'hub'");
+    expect(harness.inputs.filter((input) => input.type === "session.open")).toEqual([]);
+  } finally {
+    await registry.shutdown();
+  }
+});
 
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];

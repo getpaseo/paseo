@@ -77,7 +77,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    * generic ACP providers (which only extend the literal "acp" sentinel).
    */
   derivedFromProviderId: string | null;
-  supportsExactMcpPreapproval: boolean;
+  supportsExactMcpPreapproval: boolean | "deferred";
   applyToolPolicy: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -100,7 +100,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 export interface RegisteredProviderDefinition extends AgentProviderDefinition {
   requiresConfiguration?: boolean;
   iconSvg?: string;
-  supportsExactMcpPreapproval: boolean;
+  supportsExactMcpPreapproval: boolean | "deferred";
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
 }
 
@@ -147,7 +147,7 @@ interface ResolvedProvider {
 }
 
 interface ProviderContract {
-  supportsExactMcpPreapproval: boolean;
+  supportsExactMcpPreapproval: boolean | "deferred";
   applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
 }
 
@@ -669,8 +669,18 @@ function createRegistryEntry(
     derivedFromProviderId: resolved.derivedFromProviderId,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
     applyToolPolicy: (config, toolPolicy) => {
-      if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
-        throw new ToolPolicyUnsupportedError(provider);
+      if (toolPolicy && resolved.contract.supportsExactMcpPreapproval === false) {
+        if (toolPolicy.preapproved.length && config.toolPolicySource !== "plugin") {
+          throw new ToolPolicyUnsupportedError(provider);
+        }
+        if (toolPolicy.preapproved.length)
+          logger.warn(
+            { provider, preapprovalCount: toolPolicy.preapproved.length },
+            "Provider does not support plugin preapprovals; keeping ordinary permission prompts",
+          );
+        return toolPolicy.preapproved.length
+          ? { ...config, toolPolicy }
+          : { ...config, toolPolicy: undefined, toolPolicySource: undefined };
       }
       return {
         ...config,

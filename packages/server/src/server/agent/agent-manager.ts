@@ -9,6 +9,7 @@ import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/inde
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -241,6 +242,61 @@ function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
 
+function preserveCallerToolPolicy(
+  config: AgentSessionConfig,
+  original: AgentSessionConfig,
+): AgentSessionConfig {
+  const required = original.toolPolicySource === "plugin" ? undefined : original.toolPolicy;
+  if (!required?.preapproved.length) {
+    if (config.toolPolicy) return { ...config, toolPolicySource: "plugin" };
+    return { ...config, toolPolicy: required, toolPolicySource: undefined };
+  }
+  for (const grant of required.preapproved) {
+    const server = original.mcpServers?.[grant.server];
+    if (server && !isDeepStrictEqual(server, config.mcpServers?.[grant.server])) {
+      throw new Error(
+        `Plugin hooks cannot replace MCP server '${grant.server}' required by the caller's tool policy`,
+      );
+    }
+  }
+  const grants = [...required.preapproved, ...(config.toolPolicy?.preapproved ?? [])];
+  const unique = new Map(
+    grants.map((grant) => [JSON.stringify([grant.kind, grant.server, grant.tool]), grant]),
+  );
+  return {
+    ...config,
+    toolPolicy: { preapproved: [...unique.values()] },
+    toolPolicySource: undefined,
+  };
+}
+
+function withToolPolicyOverride(
+  config: AgentSessionConfig,
+  overrides: Partial<AgentSessionConfig> | undefined,
+): AgentSessionConfig {
+  if (overrides && Object.hasOwn(overrides, "toolPolicy")) {
+    return { ...config, toolPolicySource: undefined };
+  }
+  return config;
+}
+
+function restoreToolPolicySource(
+  config: AgentSessionConfig,
+  overrides: Partial<AgentSessionConfig> | undefined,
+  record: StoredAgentRecord | null,
+  restore: boolean | undefined,
+): AgentSessionConfig {
+  return restore
+    ? {
+        ...config,
+        toolPolicySource: record?.config?.toolPolicySource ?? overrides?.toolPolicySource,
+      }
+    : withToolPolicyOverride(
+        { ...config, toolPolicySource: record?.config?.toolPolicySource },
+        overrides,
+      );
+}
+
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   const config: AgentSessionConfig = {
     provider: record.provider,
@@ -261,6 +317,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.providerOptions = record.config.providerOptions;
   }
   if (record.config.toolPolicy != null) config.toolPolicy = record.config.toolPolicy;
+  if (record.config.toolPolicySource) config.toolPolicySource = record.config.toolPolicySource;
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
@@ -353,6 +410,7 @@ interface AgentManagerRescueTimeouts {
 
 interface ProviderEnabledFlag {
   enabled: boolean;
+  supportsExactMcpPreapproval?: boolean | "deferred";
   derivedFromProviderId?: string | null;
   applyToolPolicy?: (
     config: AgentSessionConfig,
@@ -1572,7 +1630,9 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal) {
-      const sent = exposeFeatureValuesToHook(config);
+      const { toolPolicySource: _toolPolicySource, ...hookConfig } = config;
+      const original = structuredClone(config);
+      const sent = exposeFeatureValuesToHook(hookConfig);
       const request = await this.pluginLifecycle.before("agent.create.before", {
         config: sent,
         env: options.env,
@@ -1588,6 +1648,7 @@ export class AgentManager {
         }),
         internal: config.internal,
       };
+      config = preserveCallerToolPolicy(config, original);
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -1666,7 +1727,7 @@ export class AgentManager {
       background?: boolean;
       attention?: AttentionState;
     },
-    resumeOptions?: AgentResumeSessionOptions,
+    resumeOptions?: AgentResumeSessionOptions & { restoreToolPolicySource?: boolean },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(
       agentId ?? this.idFactory(),
@@ -1700,7 +1761,7 @@ export class AgentManager {
       background?: boolean;
       attention?: AttentionState;
     },
-    resumeOptions?: AgentResumeSessionOptions,
+    resumeOptions?: AgentResumeSessionOptions & { restoreToolPolicySource?: boolean },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(
@@ -1708,7 +1769,7 @@ export class AgentManager {
       "resumeAgentFromPersistence",
     );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
-    const mergedConfig = {
+    let mergedConfig = {
       ...metadata,
       ...overrides,
       provider: handle.provider,
@@ -1718,6 +1779,12 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    mergedConfig = restoreToolPolicySource(
+      mergedConfig,
+      overrides,
+      record,
+      resumeOptions?.restoreToolPolicySource,
+    );
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
     const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
@@ -1909,11 +1976,14 @@ export class AgentManager {
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
-    const refreshConfig = {
-      ...existing.config,
-      ...overrides,
-      provider,
-    } as AgentSessionConfig;
+    const refreshConfig = withToolPolicyOverride(
+      {
+        ...existing.config,
+        ...overrides,
+        provider,
+      } as AgentSessionConfig,
+      overrides,
+    );
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       refreshConfig,
       agentId,
@@ -6356,6 +6426,12 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
+    if (
+      launchConfig.toolPolicySource === "plugin" &&
+      this.providerDefinitions.get(launchConfig.provider)?.supportsExactMcpPreapproval === false
+    ) {
+      launchConfig = { ...launchConfig, toolPolicy: undefined, toolPolicySource: undefined };
+    }
     const savedServerNames = new Set(
       Object.keys(stripInternalPaseoMcpServer(launchConfig).mcpServers ?? {}),
     );
