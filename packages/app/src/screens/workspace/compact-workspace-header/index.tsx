@@ -20,7 +20,8 @@ export { CompactWorkspaceTabStrip, type CompactWorkspaceTabStripMenuActions } fr
 
 interface CompactWorkspaceHeaderProps {
   serverId: string;
-  workspaceId: string;
+  /** Omitted where the header has no workspace, so plugin vertical-bar buttons are skipped. */
+  workspaceId?: string;
   isLoading: boolean;
   title: string;
   subtitle: string;
@@ -99,7 +100,9 @@ export function CompactWorkspaceHeader({
       ) : null}
       <WindowLayoutActions active={actionsActive}>
         {actions}
-        <PluginVerticalBarButtons serverId={serverId} workspaceId={workspaceId} />
+        {workspaceId ? (
+          <PluginVerticalBarButtons serverId={serverId} workspaceId={workspaceId} />
+        ) : null}
       </WindowLayoutActions>
     </IconButtonChromeProvider>
   );
