@@ -56,6 +56,9 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { FILE_UPLOAD_MAX_BYTES, resolveUploadMaxFileBytes } from "@/attachments/upload-limit";
+import { formatFileSize } from "@/utils/format-file-size";
 import { getDesktopHost } from "@/desktop/host";
 import { routeTerminalDrop } from "@/terminal/drop/terminal-file-drop";
 import { prepareDroppedPathsForTerminal } from "@/terminal/drop/terminal-path";
@@ -295,6 +298,9 @@ export function TerminalPane({
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config: daemonConfig } = useDaemonConfig(serverId);
+  const uploadLimitRef = useRef(FILE_UPLOAD_MAX_BYTES);
+  uploadLimitRef.current = resolveUploadMaxFileBytes(daemonConfig);
   const isTerminalPresented = retainedPanelActive && isWorkspaceFocused;
   const supportsTerminalRestoreModes = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
@@ -347,7 +353,10 @@ export function TerminalPane({
   const reportFilePasteFailure = useStableEvent((error: unknown) => {
     const reason =
       error instanceof TerminalFileTooLargeError
-        ? t("composer.errors.fileTooLarge", { size: "50MB", fileName: error.fileName })
+        ? t("composer.errors.fileTooLarge", {
+            size: formatFileSize(error.limitBytes),
+            fileName: error.fileName,
+          })
         : toErrorMessage(error);
     toast.error(t("workspace.terminal.pasteFileFailed", { reason }));
   });
@@ -357,6 +366,7 @@ export function TerminalPane({
         onUploadingChange: showFileUploading,
         onUploaded: reportFileUploaded,
         onFailure: reportFilePasteFailure,
+        resolveMaxFileBytes: () => uploadLimitRef.current,
       }),
   );
   useEffect(() => () => void filePastes.cancel(), [filePastes, terminalStreamKey]);

@@ -1,5 +1,6 @@
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
+import { formatFileSize } from "@/utils/format-file-size";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type {
@@ -126,15 +127,20 @@ export async function pickAndPersistImages(input: {
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
+  maxFileBytes?: number;
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
   const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
+  const maxFileBytes = input.maxFileBytes ?? FILE_UPLOAD_MAX_BYTES;
 
   for (const file of input.files) {
     const bytes = await file.readBytes();
-    if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
+    if (bytes.byteLength > maxFileBytes) {
       throw new Error(
-        i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
+        i18n.t("composer.errors.fileTooLarge", {
+          size: formatFileSize(maxFileBytes),
+          fileName: file.fileName,
+        }),
       );
     }
     prepared.push({
