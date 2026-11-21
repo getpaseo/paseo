@@ -16,7 +16,7 @@ import {
 import { UsageMeter } from "./meter";
 import { displayPercent, usageWindowRowLabel } from "./model";
 import { usagePace } from "./pace";
-import { UsageResetLine } from "./reset-line";
+import { UsageDatapointLine } from "./datapoint-line";
 import type { UsageDisplayAs } from "./preferences";
 import type { UsageTone, UsageWindow } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
@@ -124,14 +124,7 @@ function WindowRowContent({
         {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
       <UsageMeter percent={percent} tone={forecast?.tone ?? "default"} />
-      {countdown || forecast ? (
-        <View style={styles.timingRow}>
-          <View style={styles.resetTiming}>
-            <UsageResetLine countdown={countdown} exactTime={exactTime} />
-          </View>
-          {forecast ? <Text style={styles.forecast(forecast.tone)}>{forecast.label}</Text> : null}
-        </View>
-      ) : null}
+      <UsageDatapointLine datapoints={[countdown, exactTime, forecast?.label ?? null]} />
     </>
   );
 }
@@ -199,23 +192,6 @@ function UsagePinGlyph({ pinned }: { pinned: boolean }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  timingRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[2],
-  },
-  resetTiming: { flex: 1, minWidth: 0 },
-  forecast: (tone: UsageTone) => ({
-    color: {
-      danger: theme.colors.statusDanger,
-      warning: theme.colors.statusWarning,
-      default: theme.colors.foregroundMuted,
-      ok: theme.colors.statusSuccess,
-    }[tone],
-    fontSize: theme.fontSize.sm,
-    maxWidth: "50%",
-    textAlign: "right",
-  }),
   row: { gap: 3, paddingVertical: theme.spacing[1.5] },
   pin: { width: 12, alignItems: "center" },
   tooltipText: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.sm },
