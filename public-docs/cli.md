@@ -207,11 +207,19 @@ Then list, use, rename, or archive it:
 ```bash
 paseo workspace ls
 paseo workspace ls --background               # Also include background workspaces
+paseo workspace ls --label "Needs review" --json
 paseo run --workspace <workspace-id> "implement authentication"
 paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
 paseo workspace archive <workspace-id>
 ```
+
+Workspace listings include labels, the Git branch, and the pull request known to the host.
+Repeat `--label` to match any of the supplied workspace labels. Matching ignores case and
+normalizes whitespace. Label filtering requires a host with workspace label support.
+Use `--json` or the global `--format yaml` option for scripts. A missing branch or pull request
+appears as `null`. PR information comes from the host's current snapshot, which may be empty
+or stale. Check the forge for current status before acting on a PR.
 
 Inside an agent session, `PASEO_WORKSPACE_ID` holds the agent's own workspace ID, so an agent can run `paseo workspace rename "$PASEO_WORKSPACE_ID" "Auth rework"` or `paseo workspace archive "$PASEO_WORKSPACE_ID"` even when other workspaces share its directory.
 
