@@ -31,13 +31,15 @@ function workspace(input: {
   id: string;
   projectId: string;
   projectRoot: string;
+  workspaceDirectory?: string;
   worktreeRoot: string;
   mainRepoRoot?: string;
   remote: string;
 }): WorkspaceDescriptor {
+  const workspaceDirectory = input.workspaceDirectory ?? input.projectRoot;
   const checkout = input.mainRepoRoot
     ? {
-        cwd: input.projectRoot,
+        cwd: workspaceDirectory,
         isGit: true as const,
         currentBranch: "main",
         remoteUrl: null,
@@ -46,7 +48,7 @@ function workspace(input: {
         mainRepoRoot: input.mainRepoRoot,
       }
     : {
-        cwd: input.projectRoot,
+        cwd: workspaceDirectory,
         isGit: true as const,
         currentBranch: "main",
         remoteUrl: null,
@@ -63,7 +65,7 @@ function workspace(input: {
     projectDisplayName: "acme/app",
     projectCustomName: null,
     projectRootPath: input.projectRoot,
-    workspaceDirectory: input.projectRoot,
+    workspaceDirectory,
     projectKind: "git",
     workspaceKind: "local_checkout",
     name: "main",
@@ -279,6 +281,45 @@ describe("local project links", () => {
       remoteDisplay: "github.com/acme/app",
       subdirectory: "packages/web",
     });
+  });
+
+  test("uses a managed worktree for its exact main-repository project", () => {
+    const descriptor = project({ id: "prj-main", root: "/repos/app" });
+    expect(
+      resolveProjectGitIdentity({
+        project: descriptor,
+        workspaces: [
+          workspace({
+            id: "ws-main",
+            projectId: descriptor.projectId,
+            projectRoot: descriptor.projectRootPath,
+            workspaceDirectory: "/repos/.paseo/worktrees/feature",
+            worktreeRoot: "/repos/.paseo/worktrees/feature",
+            mainRepoRoot: "/repos/app",
+            remote: "https://github.com/acme/app.git",
+          }),
+        ],
+      }),
+    ).toMatchObject({ repository: "github.com/acme/app", subdirectory: "" });
+  });
+
+  test("does not use an ancestor workspace checkout as selected-root evidence", () => {
+    const descriptor = project({ id: "prj-inner", root: "/repo/outer/inner" });
+    expect(
+      resolveProjectGitIdentity({
+        project: descriptor,
+        workspaces: [
+          workspace({
+            id: "ws-outer",
+            projectId: descriptor.projectId,
+            projectRoot: descriptor.projectRootPath,
+            workspaceDirectory: "/repo/outer",
+            worktreeRoot: "/repo/outer",
+            remote: "https://github.com/acme/outer.git",
+          }),
+        ],
+      }),
+    ).toBeNull();
   });
 
   test("does not infer an identity when a project is outside its Git worktree", () => {

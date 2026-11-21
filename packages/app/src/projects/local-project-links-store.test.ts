@@ -6,6 +6,7 @@ import {
   LocalProjectLinksPersistedStateSchema,
   type LocalProjectLinksPersistedState,
 } from "./local-project-links-store";
+import type { ProjectLinkPlacement } from "./local-project-links";
 
 function storageThat(write: () => Promise<void>): PersistStorage<LocalProjectLinksPersistedState> {
   return {
@@ -73,13 +74,42 @@ function storageWithPendingFirstWrite() {
   };
 }
 
-const input = {
+function placement(input: {
+  serverId: string;
+  projectId: string;
+  identity: { repository: string; subdirectory: string } | null;
+}): ProjectLinkPlacement {
+  return {
+    serverId: input.serverId,
+    serverName: input.serverId,
+    projectId: input.projectId,
+    projectName: input.projectId,
+    projectRootPath: `/${input.projectId}`,
+    projectKey: null,
+    identity: input.identity && { ...input.identity, remoteDisplay: input.identity.repository },
+  };
+}
+
+function linkInput(input: {
+  members: Array<{ serverId: string; projectId: string }>;
+  identity: { repository: string; subdirectory: string };
+  placements?: readonly ProjectLinkPlacement[];
+}) {
+  return {
+    ...input,
+    placements:
+      input.placements ??
+      input.members.map((member) => placement({ ...member, identity: input.identity })),
+  };
+}
+
+const input = linkInput({
   members: [
     { serverId: "host-a", projectId: "project-a" },
     { serverId: "host-b", projectId: "project-b" },
   ],
   identity: { repository: "github.com/acme/app", subdirectory: "" },
-};
+});
 
 describe("local project links store", () => {
   test("waits for hydration before applying and acknowledging a link", async () => {
@@ -158,6 +188,44 @@ describe("local project links store", () => {
     expect(pendingStorage.setItem).not.toHaveBeenCalled();
   });
 
+  test("rejects a suggestion when hydration reveals an unverified saved member", async () => {
+    const persistedLink = {
+      id: "local-existing",
+      members: [
+        { serverId: "host-a", projectId: "project-a" },
+        { serverId: "host-b", projectId: "project-b" },
+      ],
+      identity: input.identity,
+    };
+    const pendingStorage = storageWithPendingRead();
+    const store = createLocalProjectLinksStore(pendingStorage.storage);
+    await pendingStorage.readStarted;
+
+    const save = store.getState().linkProjects(
+      linkInput({
+        members: [
+          { serverId: "host-a", projectId: "project-a" },
+          { serverId: "host-c", projectId: "project-c" },
+        ],
+        identity: input.identity,
+        placements: [
+          placement({ serverId: "host-a", projectId: "project-a", identity: input.identity }),
+          placement({
+            serverId: "host-b",
+            projectId: "project-b",
+            identity: { repository: "github.com/acme/other", subdirectory: "" },
+          }),
+          placement({ serverId: "host-c", projectId: "project-c", identity: input.identity }),
+        ],
+      }),
+    );
+    pendingStorage.finishRead(JSON.stringify({ state: { links: [persistedLink] }, version: 0 }));
+
+    await expect(save).rejects.toThrow("can no longer be linked");
+    expect(store.getState().links).toEqual([persistedLink]);
+    expect(pendingStorage.setItem).not.toHaveBeenCalled();
+  });
+
   test("waits for a local write before reporting a link complete", async () => {
     let finishWrite: () => void;
     const pendingWrite = new Promise<void>((resolve) => {
@@ -187,7 +255,9 @@ describe("local project links store", () => {
     const store = createLocalProjectLinksStore(storageThat(async () => undefined));
 
     expect(LocalProjectLinksPersistedStateSchema.parse(persisted)).toEqual(persisted);
-    await expect(store.getState().linkProjects({ ...input, members })).resolves.toBeUndefined();
+    await expect(
+      store.getState().linkProjects(linkInput({ members, identity: input.identity })),
+    ).resolves.toBeUndefined();
     expect(store.getState().links).toEqual([
       expect.objectContaining({ identity: input.identity, members }),
     ]);
@@ -210,13 +280,13 @@ describe("local project links store", () => {
     const first = store.getState().linkProjects(input);
     await vi.waitFor(() => expect(pendingStorage.setItem).toHaveBeenCalledOnce());
 
-    const laterInput = {
+    const laterInput = linkInput({
       members: [
         { serverId: "host-c", projectId: "project-c" },
         { serverId: "host-d", projectId: "project-d" },
       ],
       identity: { repository: "github.com/acme/other", subdirectory: "" },
-    };
+    });
     const later = store.getState().linkProjects(laterInput);
     expect(pendingStorage.setItem).toHaveBeenCalledOnce();
 

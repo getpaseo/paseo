@@ -103,11 +103,12 @@ export function ProjectLinksSheet({
               projectId,
             })),
             identity: suggestion.identity,
+            placements,
           }),
         successMessage: t("settings.projectLinks.toasts.linked"),
       });
     },
-    [linkProjects, runProjectLinkMutation, t],
+    [linkProjects, placements, runProjectLinkMutation, t],
   );
 
   const handleUnlink = useCallback(

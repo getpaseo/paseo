@@ -118,11 +118,29 @@ export function resolveProjectGitIdentity(input: {
   return sawIdentity ? resolved : null;
 }
 
-/** Prefer the checkout that actually contains the selected project. */
+/**
+ * Use Git facts only when the workspace proves they belong to the selected project root. An
+ * arbitrary ancestor workspace can own an explicitly selected nested project, including an
+ * independent nested repository, so containment alone is not enough evidence.
+ */
 function findProjectCheckoutRoot(
   projectRootPath: string,
-  checkout: { worktreeRoot: string; mainRepoRoot: string | null },
+  checkout: {
+    cwd: string;
+    worktreeRoot: string;
+    isPaseoOwnedWorktree: boolean;
+    mainRepoRoot: string | null;
+  },
 ): string | null {
+  const hasCheckoutAtSelectedRoot =
+    pathsReferToSameLocation(checkout.cwd, projectRootPath) ||
+    pathsReferToSameLocation(checkout.worktreeRoot, projectRootPath);
+  const hasCorrespondingManagedWorktree =
+    checkout.isPaseoOwnedWorktree &&
+    checkout.mainRepoRoot !== null &&
+    pathsReferToSameLocation(checkout.mainRepoRoot, projectRootPath);
+  if (!hasCheckoutAtSelectedRoot && !hasCorrespondingManagedWorktree) return null;
+
   const candidateRoots = [checkout.worktreeRoot, checkout.mainRepoRoot];
   return (
     candidateRoots.find(
@@ -130,6 +148,10 @@ function findProjectCheckoutRoot(
         root !== null && relativeProjectPath(root, projectRootPath) !== null,
     ) ?? null
   );
+}
+
+function pathsReferToSameLocation(left: string, right: string): boolean {
+  return relativeProjectPath(left, right) === "";
 }
 
 export function deriveProjectGitIdentity(input: {

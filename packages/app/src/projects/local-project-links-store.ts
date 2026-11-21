@@ -5,10 +5,12 @@ import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
   findLocalProjectLink,
+  isValidLocalProjectLink,
   projectLinkPlacementKey,
   sameLocalProjectLinkIdentity,
   type LocalProjectLink,
   type LocalProjectLinkIdentity,
+  type ProjectLinkPlacement,
   type ProjectLinkPlacementRef,
 } from "./local-project-links";
 
@@ -43,6 +45,7 @@ interface LocalProjectLinksStoreState {
   linkProjects: (input: {
     members: ProjectLinkPlacementRef[];
     identity: LocalProjectLinkIdentity;
+    placements: readonly ProjectLinkPlacement[];
   }) => Promise<void>;
   unlinkProject: (placement: ProjectLinkPlacementRef) => Promise<void>;
 }
@@ -89,20 +92,19 @@ export function linkLocalProjects(input: {
   ];
 }
 
-function isLocalProjectLinkRequestSatisfied(input: {
+function findSatisfiedLocalProjectLink(input: {
   links: readonly LocalProjectLink[];
   members: readonly ProjectLinkPlacementRef[];
   identity: LocalProjectLinkIdentity;
-}): boolean {
+}): LocalProjectLink | null {
   const members = normalizeMembers(input.members);
+  if (members.length < 2 || !hasDistinctServers(members)) return null;
   return (
-    members.length >= 2 &&
-    hasDistinctServers(members) &&
-    input.links.some(
+    input.links.find(
       (link) =>
         sameLocalProjectLinkIdentity(link.identity, input.identity) &&
         members.every((member) => findLocalProjectLink([link], member) !== null),
-    )
+    ) ?? null
   );
 }
 
@@ -166,7 +168,16 @@ export function createLocalProjectLinksStore(
           linkProjects: (input) =>
             updateLinks((links) => {
               const nextLinks = linkLocalProjects({ ...input, links });
-              if (!isLocalProjectLinkRequestSatisfied({ ...input, links: nextLinks })) {
+              const linked = findSatisfiedLocalProjectLink({ ...input, links: nextLinks });
+              const placementsByKey = new Map(
+                input.placements.map((placement) => [
+                  projectLinkPlacementKey(placement),
+                  placement,
+                ]),
+              );
+              // Hydration can reveal a saved member that the suggestion did not include. Verify
+              // the whole resulting link against current Git facts before reporting success.
+              if (!linked || !isValidLocalProjectLink(linked, placementsByKey)) {
                 throw new Error("The selected projects can no longer be linked.");
               }
               return nextLinks;
