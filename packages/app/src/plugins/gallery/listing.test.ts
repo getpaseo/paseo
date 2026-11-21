@@ -5,6 +5,7 @@ import {
   featuredListings,
   filterDirectory,
   formatInstallCount,
+  formatListingUpdatedAge,
   listingImages,
   listingText,
 } from "./listing";
@@ -102,6 +103,17 @@ describe("listing presentation", () => {
       "9.9k",
       "12k",
     ]);
+  });
+
+  it("formats listing update ages as human-readable durations", () => {
+    const now = new Date("2026-11-17T00:00:00Z");
+    expect(formatListingUpdatedAge("2026-11-16T00:00:00Z", "en", now)).toBe("1 day ago");
+    expect(formatListingUpdatedAge("2026-11-16T16:00:00Z", "en", now)).toBe("8 hours ago");
+    expect(formatListingUpdatedAge("2026-11-03T00:00:00Z", "en", now)).toBe("2 weeks ago");
+    expect(formatListingUpdatedAge("2026-10-17T00:00:00Z", "en", now)).toBe("1 month ago");
+    expect(formatListingUpdatedAge("2025-11-17T00:00:00Z", "en", now)).toBe("1 year ago");
+    expect(formatListingUpdatedAge("2026-11-16T00:00:00Z", "es", now)).toBe("hace 1 día");
+    expect(formatListingUpdatedAge("2026-11-03T00:00:00Z", "es", now)).toBe("hace 2 semanas");
   });
 
   it("shows images and leaves videos out", () => {
