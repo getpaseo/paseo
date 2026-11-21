@@ -28,6 +28,8 @@ export const itemSchema = z.object({
   entryId: z.string().optional(),
   kind: z.string(),
   status: z.string(),
+  controlStatus: z.string().optional(),
+  result: z.object({ errorKind: z.string().optional() }).nullish(),
   turnId: z.string().nullable().optional(),
   commandId: z.string().optional(),
   recordedAt: z.string().optional(),
@@ -84,6 +86,8 @@ export type WireApproval = z.infer<typeof approvalSchema>;
 export const notificationSchema = z.object({
   sessionId: z.string().optional(),
   viewCursor: z.string().optional(),
+  // Marks a subagent's event projected onto the parent's plane; its viewCursor is the child's.
+  subagentOrigin: z.unknown().optional(),
 });
 export const frameSchema = z.object({
   jsonrpc: z.literal("2.0"),
