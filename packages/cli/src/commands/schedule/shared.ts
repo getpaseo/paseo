@@ -99,6 +99,26 @@ export function formatDurationMs(durationMs: number): string {
   return parts.join("");
 }
 
+export type ScheduleWorkspaceIsolation = "local" | "worktree";
+
+// Same spelling and validation as `paseo run --new-workspace`; the CLI never exposes `--isolation`.
+export function parseNewWorkspaceFlag(
+  value: string | undefined,
+): ScheduleWorkspaceIsolation | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "local" || trimmed === "worktree") {
+    return trimmed;
+  }
+  throw {
+    code: "INVALID_OPTIONS",
+    message: `Unsupported new workspace kind: ${value}`,
+    details: "Use --new-workspace local or --new-workspace worktree",
+  } satisfies CommandError;
+}
+
 function resolveScheduleTarget(args: {
   targetValue: string | undefined;
   hasExplicitNewAgentOption: boolean;
@@ -116,7 +136,8 @@ function resolveScheduleTarget(args: {
   if (hasExplicitNewAgentOption) {
     throw {
       code: "INVALID_TARGET",
-      message: "--provider/--mode/--thinking can only be used with a new-agent target",
+      message:
+        "--provider/--mode/--thinking/--new-workspace can only be used with a new-agent target",
       details: "Use --target new-agent or omit --target to create a new agent schedule",
     } satisfies CommandError;
   }
@@ -147,6 +168,7 @@ export function parseScheduleCreateInput(options: {
   provider?: string;
   mode?: string;
   thinking?: string;
+  newWorkspace?: string;
   cwd?: string;
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
@@ -190,8 +212,12 @@ export function parseScheduleCreateInput(options: {
       message: "--thinking cannot be empty",
     } satisfies CommandError;
   }
+  const isolation = parseNewWorkspaceFlag(options.newWorkspace);
   const hasExplicitNewAgentOption =
-    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
+    options.provider !== undefined ||
+    options.mode !== undefined ||
+    options.thinking !== undefined ||
+    options.newWorkspace !== undefined;
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -204,6 +230,7 @@ export function parseScheduleCreateInput(options: {
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
         ...(thinkingOptionId ? { thinkingOptionId } : {}),
+        ...(isolation ? { isolation } : {}),
       },
     };
   };
@@ -248,6 +275,8 @@ export interface ScheduleUpdateOptionsInput {
   provider?: string;
   model?: string;
   mode?: string;
+  thinking?: string;
+  newWorkspace?: string;
   cwd?: string;
   maxRuns?: string;
   expiresIn?: string;
@@ -426,6 +455,14 @@ function buildNewAgentConfigPatch(
   if (options.mode !== undefined) {
     const trimmed = options.mode.trim();
     patch.modeId = trimmed.length > 0 ? trimmed : null;
+  }
+  if (options.thinking !== undefined) {
+    const trimmed = options.thinking.trim();
+    patch.thinkingOptionId = trimmed.length > 0 ? trimmed : null;
+  }
+  const isolation = parseNewWorkspaceFlag(options.newWorkspace);
+  if (isolation !== undefined) {
+    patch.isolation = isolation;
   }
   if (options.cwd !== undefined) {
     const trimmed = options.cwd.trim();

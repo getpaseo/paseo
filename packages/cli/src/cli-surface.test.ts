@@ -90,10 +90,21 @@ describe("canonical CLI surface", () => {
     const update = agent?.commands.find((command) => command.name() === "update");
     const schedule = cli.commands.find((command) => command.name() === "schedule");
     const scheduleCreate = schedule?.commands.find((command) => command.name() === "create");
+    const scheduleUpdate = schedule?.commands.find((command) => command.name() === "update");
 
     expect(run?.helpInformation()).toContain("--thinking <id>");
     expect(update?.helpInformation()).toContain("--thinking <id>");
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
+    expect(scheduleUpdate?.helpInformation()).toContain("--thinking <id>");
+  });
+
+  it("names schedule run isolation the same way run does", () => {
+    const schedule = createCli().commands.find((command) => command.name() === "schedule");
+    for (const name of ["create", "update"]) {
+      const help = schedule?.commands.find((command) => command.name() === name)?.helpInformation();
+      expect(help).toContain("--new-workspace <local|worktree>");
+      expect(help).not.toContain("--isolation");
+    }
   });
 
   it("offers opening an existing agent in the desktop app", () => {

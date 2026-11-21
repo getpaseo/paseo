@@ -147,6 +147,8 @@ Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFini
 
 MCP heartbeat 是临时的：只能创建或删除。要修改一个 heartbeat，请删除它并创建一个替代的。暂停、恢复、更新、查看、日志和单次运行只适用于新建 Agent 的定时任务。
 
+`create_schedule` 和 `update_schedule` 接受应用中 **Edit schedule** 表单的全部 Agent 设置：`provider`（或 `provider/model`）、`model`、`mode`、`thinking`、`isolation`（`local` 或 `worktree`）和 `cwd`。在 Agent 作用域的会话中，`create_schedule` 会把你自己的 provider、model、mode、thinking、provider 选项、功能、系统提示词和 MCP 服务器复制到你省略的字段上。当定时运行不应沿用你当前的设置时，请显式传入 `mode` 和 `thinking`。
+
 默认情况下，新建 Agent 的定时任务每次运行结束时都会归档其工作区。`create_schedule` 和 `update_schedule` 不提供 **Archive on finish**（`archiveOnFinish`）；要让之后的运行工作区保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-workspaces)。
 
 ### Agent 配置 {#agent-profiles}
