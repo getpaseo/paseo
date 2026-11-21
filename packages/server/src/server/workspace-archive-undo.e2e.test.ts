@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 
@@ -95,6 +96,64 @@ async function isAgentArchived(agentId: string): Promise<boolean> {
   if (!entry) throw new Error(`Agent ${agentId} is missing`);
   return entry.agent.archivedAt !== null && entry.agent.archivedAt !== undefined;
 }
+
+test("another session lists and receives the archiving timestamp during agent teardown", async () => {
+  const teardownStarted = Promise.withResolvers<void>();
+  const teardownReleased = Promise.withResolvers<void>();
+  await ctx.cleanup();
+  ctx = await createDaemonTestContext({
+    agentClients: createTestAgentClients({
+      closeSession: async () => {
+        teardownStarted.resolve();
+        await teardownReleased.promise;
+      },
+    }),
+  });
+  const repo = createRepoWithGatedTeardown();
+  repo.releaseTeardown();
+  const { workspaceId } = await createWorktreeWorkspaceWithAgent(repo.repoDir, "observe-archive");
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+
+  await observer.connect();
+  const timestamps: Array<string | null> = [];
+  const stop = observer.on("workspace_update", ({ payload }) => {
+    if (payload.kind === "upsert" && payload.workspace.id === workspaceId) {
+      timestamps.push(payload.workspace.archivingAt);
+    }
+  });
+
+  try {
+    const initial = await observer.fetchWorkspaces({ subscribe: {} });
+    expect(initial.entries.find((entry) => entry.id === workspaceId)?.archivingAt).toBeNull();
+    const archive = ctx.client.archiveWorkspace(workspaceId);
+    try {
+      await Promise.race([
+        teardownStarted.promise,
+        archive.then(() => {
+          throw new Error("Archive completed before agent teardown started");
+        }),
+      ]);
+      const initiating = await ctx.client.fetchWorkspaces();
+      const archivingAt = initiating.entries.find((entry) => entry.id === workspaceId)?.archivingAt;
+      expect(archivingAt).toEqual(expect.any(String));
+
+      const observed = await observer.fetchWorkspaces();
+      expect(observed.entries.find((entry) => entry.id === workspaceId)?.archivingAt).toBe(
+        archivingAt,
+      );
+      expect(timestamps).toContain(archivingAt);
+    } finally {
+      teardownReleased.resolve();
+      await archive;
+    }
+  } finally {
+    stop();
+    await observer.close();
+  }
+}, 60000);
 
 test.skipIf(process.platform === "win32")(
   "an undo while teardown runs cancels the archive before the worktree is deleted",

@@ -48,6 +48,30 @@ export class WorkspaceArchiveOperations {
   private readonly lanes = new Map<string, LaneEntry>();
   private readonly checkoutGates = new Map<string, Promise<void>>();
 
+  // Project removal can overlap a checkout-scoped archive of the same workspace.
+  private readonly archiving = new Map<string, { startedAt: string; count: number }>();
+
+  getArchivingAt(workspaceId: string): string | null {
+    return this.archiving.get(workspaceId)?.startedAt ?? null;
+  }
+
+  markArchiving(workspaceIds: Iterable<string>, startedAt: string): void {
+    for (const id of workspaceIds) {
+      const current = this.archiving.get(id);
+      if (current) current.count += 1;
+      else this.archiving.set(id, { startedAt, count: 1 });
+    }
+  }
+
+  clearArchiving(workspaceIds: Iterable<string>): void {
+    for (const id of workspaceIds) {
+      const current = this.archiving.get(id);
+      if (!current) continue;
+      current.count -= 1;
+      if (current.count === 0) this.archiving.delete(id);
+    }
+  }
+
   archive(
     workspaceId: string,
     run: (signal: AbortSignal) => Promise<ArchiveResult>,

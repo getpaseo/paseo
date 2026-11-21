@@ -1175,25 +1175,12 @@ export async function createPaseoDaemon(
         untrustedSource: workspace.untrustedSource,
       }));
   };
-  const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
-    const workspaceIdList = Array.from(workspaceIds);
-    for (const session of wsServer?.listSessions() ?? []) {
-      session.markWorkspaceArchivingForExternalMutation(workspaceIdList, archivingAt);
-    }
-  };
-  const clearWorkspaceArchivingExternal = (workspaceIds: Iterable<string>) => {
-    const workspaceIdList = Array.from(workspaceIds);
-    for (const session of wsServer?.listSessions() ?? []) {
-      session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
-    }
-  };
+  const markWorkspaceArchiving = (workspaceIds: Iterable<string>, archivingAt: string) =>
+    workspaceArchiveOperations.markArchiving(workspaceIds, archivingAt);
+  const clearWorkspaceArchiving = (workspaceIds: Iterable<string>) =>
+    workspaceArchiveOperations.clearArchiving(workspaceIds);
   const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
-    const workspaceIdList = Array.from(workspaceIds);
-    await Promise.all(
-      (wsServer?.listSessions() ?? []).map((session) =>
-        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
-      ),
-    );
+    await wsServer?.publishWorkspaceUpdates(workspaceIds);
   };
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
@@ -1247,8 +1234,8 @@ export async function createPaseoDaemon(
     getAutoArchivedChangeRequestUrl: async (workspaceId) =>
       (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-    markWorkspaceArchiving: markWorkspaceArchivingExternal,
-    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+    markWorkspaceArchiving,
+    clearWorkspaceArchiving,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
   });
 
@@ -1336,8 +1323,8 @@ export async function createPaseoDaemon(
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           archiveWorkspaceRecordExternal(workspaceIdToArchive, undefined, archivedAt),
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-        markWorkspaceArchiving: markWorkspaceArchivingExternal,
-        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        markWorkspaceArchiving,
+        clearWorkspaceArchiving,
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
@@ -1368,8 +1355,8 @@ export async function createPaseoDaemon(
     emit: emitExternalSessionMessage,
     emitAgentRemove: async () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-    markWorkspaceArchiving: markWorkspaceArchivingExternal,
-    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+    markWorkspaceArchiving,
+    clearWorkspaceArchiving,
     killTerminalsForWorkspace: (workspaceId) =>
       killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceId),
     logger,
@@ -1465,8 +1452,8 @@ export async function createPaseoDaemon(
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           archiveWorkspaceRecordExternal(workspaceIdToArchive, undefined, archivedAt),
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-        markWorkspaceArchiving: markWorkspaceArchivingExternal,
-        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        markWorkspaceArchiving,
+        clearWorkspaceArchiving,
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace(
             {
@@ -1644,8 +1631,8 @@ export async function createPaseoDaemon(
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
       getGlobalServicePorts: () => daemonConfigStore.readServicePorts(),
     }),
-    markWorkspaceArchiving: markWorkspaceArchivingExternal,
-    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+    markWorkspaceArchiving,
+    clearWorkspaceArchiving,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),

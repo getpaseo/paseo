@@ -506,6 +506,7 @@ export interface SessionOptions {
   getTransportBufferedAmount?: (source?: object) => number | null;
   getConnectedHostBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
+  publishWorkspaceArchiveUpdates?: (workspaceIds: Iterable<string>) => Promise<void>;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
@@ -803,6 +804,7 @@ export class Session {
     | null;
   private readonly getTransportBufferedAmount: (source?: object) => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly onWorkspaceArchiveUpdate: SessionOptions["publishWorkspaceArchiveUpdates"];
   private readonly onWorkspaceRecovered:
     | ((workspace: PersistedWorkspaceRecord) => Promise<void>)
     | null;
@@ -978,6 +980,7 @@ export class Session {
       : null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
+    this.onWorkspaceArchiveUpdate = options.publishWorkspaceArchiveUpdates;
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
@@ -1308,8 +1311,7 @@ export class Session {
       archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
       emit: (message) => this.emit(message),
       emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
-      emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-        this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+      emitWorkspaceUpdatesForWorkspaceIds: this.publishWorkspaceArchiveUpdates,
       markWorkspaceArchiving: (workspaceIds, archivingAt) =>
         this.markWorkspaceArchiving(workspaceIds, archivingAt),
       clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
@@ -1361,6 +1363,7 @@ export class Session {
       getGlobalServicePorts: () => this.daemonConfigStore.readServicePorts(),
     });
     this.workspaceDirectory = new WorkspaceDirectory({
+      getArchivingAt: (workspaceId) => this.workspaceArchiveOperations.getArchivingAt(workspaceId),
       logger: this.sessionLogger,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
@@ -1684,16 +1687,11 @@ export class Session {
     });
   }
 
-  markWorkspaceArchivingForExternalMutation(
+  private readonly publishWorkspaceArchiveUpdates = (
     workspaceIds: Iterable<string>,
-    archivingAt: string,
-  ): void {
-    this.markWorkspaceArchiving(workspaceIds, archivingAt);
-  }
-
-  clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
-    this.clearWorkspaceArchiving(workspaceIds);
-  }
+  ): Promise<void> =>
+    this.onWorkspaceArchiveUpdate?.(workspaceIds) ??
+    this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
 
   async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
     await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
@@ -4217,13 +4215,12 @@ export class Session {
         .filter((workspace) => !workspace.archivedAt)
         .map((workspace) => workspace.workspaceId);
 
-      if (activeWorkspaceIds.length > 0) {
-        this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
-        await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds);
-      }
-
       const removedWorkspaceIds: string[] = [];
+      this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
       try {
+        if (activeWorkspaceIds.length > 0) {
+          await this.publishWorkspaceArchiveUpdates(activeWorkspaceIds);
+        }
         for (const workspaceId of activeWorkspaceIds) {
           const archivedAt = new Date().toISOString();
           await archiveWorkspaceContents(
@@ -4251,19 +4248,18 @@ export class Session {
             "Failed to clean up removed project icon",
           );
         });
+
+        const updateIds =
+          removedWorkspaceIds.length > 0
+            ? removedWorkspaceIds
+            : [projectWorkspaces[0]?.workspaceId ?? projectId];
+        await this.emitWorkspaceUpdatesForWorkspaceIds(updateIds, { removedProjectId: projectId });
       } finally {
+        this.clearWorkspaceArchiving(activeWorkspaceIds);
         if (activeWorkspaceIds.length > 0) {
-          this.clearWorkspaceArchiving(activeWorkspaceIds);
+          await this.publishWorkspaceArchiveUpdates(activeWorkspaceIds);
         }
       }
-
-      const updateIds =
-        removedWorkspaceIds.length > 0
-          ? removedWorkspaceIds
-          : [projectWorkspaces[0]?.workspaceId ?? projectId];
-      await this.emitWorkspaceUpdatesForWorkspaceIds(updateIds, {
-        removedProjectId: projectId,
-      });
 
       this.emit({
         type: "project.remove.response",
@@ -5835,8 +5831,7 @@ export class Session {
         archiveWorkspaceRecord: (workspaceId, archivedAt) =>
           this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
-        emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-          this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+        emitWorkspaceUpdatesForWorkspaceIds: this.publishWorkspaceArchiveUpdates,
         markWorkspaceArchiving: (workspaceIds, archivingAt) =>
           this.markWorkspaceArchiving(workspaceIds, archivingAt),
         clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
@@ -6403,11 +6398,11 @@ export class Session {
   }
 
   markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
-    this.workspaceDirectory.markArchiving(workspaceIds, archivingAt);
+    this.workspaceArchiveOperations.markArchiving(workspaceIds, archivingAt);
   }
 
   clearWorkspaceArchiving(workspaceIds: Iterable<string>): void {
-    this.workspaceDirectory.clearArchiving(workspaceIds);
+    this.workspaceArchiveOperations.clearArchiving(workspaceIds);
   }
 
   private async buildWorkspaceDescriptorMap(options: {
@@ -8253,8 +8248,7 @@ export class Session {
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
               archiveWorkspaceRecord: (workspaceId, archivedAt) =>
                 this.archiveWorkspaceRecord(workspaceId, archivedAt),
-              emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-                this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+              emitWorkspaceUpdatesForWorkspaceIds: this.publishWorkspaceArchiveUpdates,
               markWorkspaceArchiving: (workspaceIds, archivingAt) =>
                 this.markWorkspaceArchiving(workspaceIds, archivingAt),
               clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
