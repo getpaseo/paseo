@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import {
   formatDisplayPct,
@@ -130,18 +130,34 @@ describe("exact quota times", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("shows only the time within 24 hours", () => {
+  it("shows only the time for the same local day", () => {
     expect(at(2026, 9, 29, 15, 0)).toMatch(/^(3:00 PM|15:00)$/);
-    expect(at(2026, 9, 30, 11, 59)).toMatch(/^(11:59 AM|11:59)$/);
   });
 
-  it("adds the weekday within 7 days", () => {
-    expect(at(2026, 9, 30, 12, 0)).toMatch(/^Fri (12:00 PM|12:00)$/);
-    expect(at(2026, 10, 5, 11, 59)).toMatch(/^Thu (11:59 AM|11:59)$/);
+  it("shows the weekday for tomorrow even when it is less than 24 hours away", () => {
+    expect(at(2026, 9, 30, 11, 59)).toMatch(/^Fri (11:59 AM|11:59)$/);
+    expect(at(2026, 10, 4, 15, 0)).toMatch(/^Wed (3:00 PM|15:00)$/);
   });
 
-  it("adds the date after 7 days", () => {
-    expect(at(2026, 10, 5, 12, 0)).toMatch(/^Nov 5, (12:00 PM|12:00)$/);
+  it("includes the date on the same weekday next week even when fewer than 7 days elapse", () => {
+    expect(at(2026, 10, 5, 10, 0)).toMatch(/^Thu, Nov 5, (10:00 AM|10:00)$/);
+  });
+
+  it("includes the weekday and date seven or more calendar days out", () => {
+    expect(at(2026, 10, 5, 12, 0)).toMatch(/^Thu, Nov 5, (12:00 PM|12:00)$/);
+    expect(at(2026, 10, 6, 15, 0)).toMatch(/^Fri, Nov 6, (3:00 PM|15:00)$/);
+  });
+
+  it("counts calendar days across the spring daylight-saving transition", () => {
+    vi.stubEnv("TZ", "America/New_York");
+    try {
+      const before = new Date(2026, 2, 7, 12);
+      const after = new Date(2026, 2, 14, 12);
+      expect(after.getTime() - before.getTime()).toBe(167 * 3_600_000);
+      expect(formatResetTime(after.toISOString(), before.getTime())).toMatch(/^Sat, Mar 14, /);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("shows the exhaustion clock time with the same weekday and date rules as reset time", () => {
@@ -149,8 +165,8 @@ describe("exact quota times", () => {
       formatRunsOutLabel(new Date(...args).toISOString(), now)?.replace(/\s/g, " ");
 
     expect(runsOut(2026, 9, 29, 15, 0)).toMatch(/^runs out (3:00 PM|15:00)$/);
-    expect(runsOut(2026, 9, 30, 15, 30)).toMatch(/^runs out Fri (3:30 PM|15:30)$/);
-    expect(runsOut(2026, 10, 5, 15, 30)).toMatch(/^runs out Nov 5, (3:30 PM|15:30)$/);
+    expect(runsOut(2026, 9, 30, 9, 32)).toMatch(/^runs out Fri (9:32 AM|09:32|9:32)$/);
+    expect(runsOut(2026, 10, 5, 15, 30)).toMatch(/^runs out Thu, Nov 5, (3:30 PM|15:30)$/);
   });
 
   it("uses the app language for the exhaustion label and weekday", async () => {

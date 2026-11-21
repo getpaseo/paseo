@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
-import { formatTimeOfDay } from "@/utils/time";
+import { formatTimeOfDay, localCalendarDaysBetween } from "@/utils/time";
 import type { UsageDisplayAs } from "./preferences";
 import type { UsageBalanceUnit, UsageReportEntry } from "./types";
 
@@ -121,8 +121,8 @@ export function formatResetLabel(
 }
 
 /**
- * When a window resets on the clock: "3:00 PM" within a day, "Fri 3:00 PM" within a week,
- * "Oct 31, 3:00 PM" after that. Names follow the app language; 12/24h follows the device.
+ * A clock time today, a weekday for the next six calendar days, and a weekday plus date after that.
+ * Names follow the app language. The clock uses the device's 12/24h preference.
  * Nothing for a time that has passed, where the countdown already says so.
  */
 export function formatResetTime(
@@ -136,12 +136,13 @@ export function formatResetTime(
   if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
   const time = formatTimeOfDay(at);
   const locale = i18n.resolvedLanguage;
-  if (diffMs < DAY_MS) return time;
-  if (diffMs < 7 * DAY_MS) {
+  const dayDiff = localCalendarDaysBetween(new Date(now), at);
+  if (dayDiff === 0) return time;
+  if (dayDiff <= 6) {
     const weekday = at.toLocaleDateString(locale, { weekday: "short" });
     return t("providerUsage.timing.resetsAtWeekday", { weekday, time });
   }
-  const date = at.toLocaleDateString(locale, { month: "short", day: "numeric" });
+  const date = at.toLocaleDateString(locale, { weekday: "short", month: "short", day: "numeric" });
   return t("providerUsage.timing.resetsAtDate", { date, time });
 }
 

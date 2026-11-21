@@ -836,7 +836,7 @@ test("usage percentages state their meaning and follow the selected language", a
   }
 });
 
-const exhaustionClock = /^runs out \d{1,2}:\d{2}(?: [AP]M)?$/;
+const exhaustionClock = /^runs out (?:[A-Z][a-z]{2} )?\d{1,2}:\d{2}(?: [AP]M)?$/;
 
 test("open usage clocks advance without refreshing or reopening", async ({ page }) => {
   test.setTimeout(120_000);
@@ -910,7 +910,11 @@ test("a card refresh timeout is visible alongside a newer quota forecast", async
     await expectQuota(page, "45% used", exhaustionClock);
 
     await advanceUsageClock(page, 61_000);
-    await expectUsageRefreshError(page).toBeVisible();
+    await expect(
+      usageModal(page)
+        .getByTestId("usage-report-login-journey:account")
+        .getByTestId("usage-refresh-error"),
+    ).toHaveText("Unable to refresh usage");
     await expectQuota(page, "45% used", exhaustionClock);
   } finally {
     await login.cleanup();
@@ -918,7 +922,9 @@ test("a card refresh timeout is visible alongside a newer quota forecast", async
 });
 
 function expectUsageRefreshError(page: Page) {
-  return expect(usageModal(page).getByText("Unable to refresh usage", { exact: true }));
+  return expect(
+    usageModal(page).getByRole("alert").getByText("Unable to refresh usage", { exact: true }),
+  );
 }
 
 async function delayCardRefreshResponse(
