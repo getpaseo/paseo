@@ -64,6 +64,7 @@ export interface StreamViewportHandle {
    */
   holdRow: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
+  cancelScrollToMessage?: () => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -95,9 +96,10 @@ export interface StreamRenderInput {
   isInitialHistoryLoading?: boolean;
   revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
-  // The history row under the top of the viewport, for surfaces that mark where the reader
-  // is in the transcript. Only the web viewport measures it today.
+  // The row under the top of the viewport, for surfaces that mark where the reader is in
+  // the transcript.
   onReadingPositionChange?: (rowId: string | null) => void;
+  onUserScrollStart?: () => void;
   onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
