@@ -30,6 +30,8 @@ const catalogRows = readFixture("catalog-controls");
 const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
+let pageHung = false;
+const failedChildReads = new Set();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
@@ -78,6 +80,9 @@ function receiveFrame(line) {
     for (const row of terminalFirst) emitFixtureMessage(row.msg, recorded, frame);
     setTimeout(() => emitFixtureMessage(response.msg, recorded, frame), 50);
   } else for (const row of messages) emitFixtureMessage(row.msg, recorded, frame);
+  // The parent's last live notifications before it waits on the subagent.
+  if (process.env.MUSE_TEST_CHILD_APPROVAL && frame.method === "turn/start")
+    projectChildApproval(frame.params.sessionId);
 }
 function controlResponse(frame) {
   if (frame.method === "session/resume" && process.env.MUSE_TEST_HISTORY) {
@@ -110,10 +115,7 @@ function controlResponse(frame) {
     return true;
   }
   if (process.env.MUSE_TEST_HANG === frame.method) return true;
-  if (frame.method === "session/setReasoningEffort") {
-    respond(frame, { status: "accepted", commandId: frame.params.commandId });
-    return true;
-  }
+  if (scriptedResponse(frame)) return true;
   if (frame.method === "account/read") {
     respond(frame, { credentialRequired: true, state: process.env.MUSE_TEST_ACCOUNT || "envKey" });
     return true;
@@ -127,6 +129,58 @@ function controlResponse(frame) {
   }
   if (frame.method === "session/resume" && process.env.MUSE_TEST_GONE) {
     rpcError(frame, -32020, "sessionNotFound", "missing");
+    return true;
+  }
+  return false;
+}
+// Commands accepted without a recorded exchange, and the view/page failures some tests script.
+function scriptedResponse(frame) {
+  if (
+    frame.method === "session/setReasoningEffort" ||
+    (process.env.MUSE_TEST_CHILD_APPROVAL && frame.method === "approval/decide") ||
+    (process.env.MUSE_TEST_RESUMED_MODEL &&
+      ["session/setModel", "session/setApprovalMode"].includes(frame.method))
+  ) {
+    respond(frame, { status: "accepted", commandId: frame.params.commandId });
+    return true;
+  }
+  return (frame.method === "view/page" && failedPage(frame)) || failedChildRead(frame);
+}
+const childReadFailures = {
+  "view/page": "MUSE_TEST_CHILD_PAGE_FAIL",
+  "session/read": "MUSE_TEST_CHILD_READ_FAIL",
+};
+// Muse 1.4.7 can refuse to read a subagent's view right after creating it ("view range read failed").
+function failedChildRead(frame) {
+  const failure = process.env[childReadFailures[frame.method]];
+  if (!failure || frame.params.sessionId !== "fixture-child") return false;
+  if (failure === "once" && failedChildReads.has(frame.method)) return false;
+  failedChildReads.add(frame.method);
+  rpcError(frame, -32603, "internal", "view range read failed");
+  return true;
+}
+function failedPage(frame) {
+  const anchor = frame.params.cursor;
+  // Real Muse rejects an anchor from another session's view the same way (live probe, Muse 1.4.7).
+  if (
+    process.env.MUSE_TEST_CHILD_APPROVAL &&
+    anchor &&
+    anchor.split(":")[1] !== frame.params.sessionId
+  ) {
+    send({
+      jsonrpc: "2.0",
+      id: frame.id,
+      error: {
+        code: -32004,
+        message: "unknown cursor anchor",
+        data: { kind: "notFound", reason: "missingAnchor", anchor },
+      },
+    });
+    return true;
+  }
+  // Never answering lets the plugin's own request timeout fail the repair on the test's fake clock.
+  if (process.env.MUSE_TEST_PAGE_HANG_ONCE && !pageHung) {
+    pageHung = true;
     return true;
   }
   return false;
@@ -341,6 +395,15 @@ function applyWireVariants(message) {
     message.result.session.modelId = null;
     message.result.session.providerId = null;
   }
+  // Muse 1.4.7 can resume a session on its default model and approval mode.
+  if (message.result?.session && message.result.history && process.env.MUSE_TEST_RESUMED_MODEL) {
+    message.result.session.modelId = process.env.MUSE_TEST_RESUMED_MODEL;
+    message.result.session.approvalMode = {
+      lastCommandId: null,
+      mode: "onRequest",
+      source: "replay",
+    };
+  }
 }
 function parityDelivery(message) {
   if (process.env.MUSE_TEST_WORKFLOW && message.method === "turn/completed")
@@ -379,6 +442,42 @@ function parityDelivery(message) {
     });
   return false;
 }
+// A subagent's approval projected onto the parent's plane, shaped like Muse 1.4.7's: the parent's
+// sessionId, but a viewCursor and sourceRange from the child's stream.
+function projectChildApproval(sessionId) {
+  const child = "fixture-child";
+  const subagentOrigin = { subagentId: "subagent-1", childSessionId: child, childRunId: child };
+  const sourceRange = {
+    stream: { kind: "session", id: child },
+    first: { id: "fixture-child-record", sequence: 2 },
+    last: { id: "fixture-child-record", sequence: 2 },
+  };
+  const approvalId = "fixture-child-approval";
+  send({
+    jsonrpc: "2.0",
+    method: "approval/requested",
+    params: {
+      sessionId,
+      approvalId,
+      itemId: "fixture-child-tool",
+      toolName: "bash",
+      subject: { kind: "shell", command: "FOO=1 ls ~" },
+      currentRequirementId: { approvalId, sourceIndex: 0 },
+      availableChoices: [
+        { choiceId: "approve-once", decision: "approved", scope: "once", label: "Approve once" },
+        { choiceId: "deny-once", decision: "denied", scope: "once", label: "Deny" },
+      ],
+      sourceRange,
+      subagentOrigin,
+      viewCursor: `v:${child}:2`,
+    },
+  });
+  send({
+    jsonrpc: "2.0",
+    method: "approval/resolved",
+    params: { sessionId, approvalId, sourceRange, subagentOrigin, viewCursor: `v:${child}:3` },
+  });
+}
 function applyTestVariants(message) {
   applyParityVariants(message);
   if (message.method === "turn/completed" && process.env.MUSE_TEST_INTERRUPT_TERMINAL)
@@ -412,6 +511,14 @@ function applyParityVariants(message) {
       message.params.item.kind = "subagent";
       message.params.item.role = "worker";
       message.params.item.objective = "Child objective";
+    }
+    // Muse 1.4.7 leaves a finished subagent `inProgress` and reports the end in controlStatus.
+    if (process.env.MUSE_TEST_CHILD_OUTCOME && message.method === "item/completed") {
+      message.params.item.status = "inProgress";
+      message.params.item.controlStatus = "resultReady";
+      message.params.item.result = { summary: "Child done", evidenceRefs: [], artifactRefs: [] };
+      if (process.env.MUSE_TEST_CHILD_OUTCOME === "failed")
+        message.params.item.result.errorKind = "childFailed";
     }
   }
   if (message.params?.availableChoices && process.env.MUSE_TEST_DENIED)
