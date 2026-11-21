@@ -2339,7 +2339,6 @@ export const ptBR: TranslationResources = {
       resetsIn: "redefine em {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      projectedLeftAtReset: "~{{percentage}} restará na renovação",
       limitReached: "Limite atingido",
       mayHaveRunOut: "A cota pode ter se esgotado",
       runsOutAt: "esgotamento previsto para {{time}}",

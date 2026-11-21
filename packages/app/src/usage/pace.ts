@@ -5,7 +5,7 @@ type UsagePace =
   | { kind: "unknown" }
   | { kind: "reached" }
   | { kind: "runsOut"; at: string }
-  | { kind: "remaining"; remainingAtResetPct: number };
+  | { kind: "onTrack" | "tight" };
 
 /** Estimate from the window's average pace as of the reading. The clock only expires the estimate. */
 export function usagePace(window: UsageWindow, observedAt: string | null, now: number): UsagePace {
@@ -43,5 +43,5 @@ export function usagePace(window: UsageWindow, observedAt: string | null, now: n
     const runsOut = sampled + ((100 - used) / used) * elapsed;
     return { kind: "runsOut", at: new Date(runsOut).toISOString() };
   }
-  return { kind: "remaining", remainingAtResetPct: 100 - projectedAtReset };
+  return { kind: projectedAtReset >= 90 ? "tight" : "onTrack" };
 }

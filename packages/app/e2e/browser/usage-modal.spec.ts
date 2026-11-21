@@ -872,7 +872,7 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
   }
 });
 
-test("Refresh all keeps quota visible and restores the forecast after a timeout", async ({
+test("Refresh all keeps quota visible after a timeout and shows only reset details when back on track", async ({
   page,
 }) => {
   const reading = new Date();
@@ -889,7 +889,7 @@ test("Refresh all keeps quota visible and restores the forecast after a timeout"
     await login.setReport(usageReading(reading, 10));
     transport.releaseHeldClientRequest();
     await refreshAllUsage(page);
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expectQuota(page, "10% used", null);
     await expectUsageRefreshError(page).toBeHidden();
   } finally {
     await login.cleanup();
@@ -905,13 +905,13 @@ test("a card refresh timeout is visible alongside a newer quota forecast", async
     await expectQuota(page, "40% used", exhaustionClock);
 
     await delayCardRefreshResponse(page, transport);
-    await login.setReport(usageReading(reading, 10));
+    await login.setReport(usageReading(reading, 45));
     await refreshAllUsage(page);
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expectQuota(page, "45% used", exhaustionClock);
 
     await advanceUsageClock(page, 61_000);
     await expectUsageRefreshError(page).toBeVisible();
-    await expectQuota(page, "10% used", "~50% left at reset");
+    await expectQuota(page, "45% used", exhaustionClock);
   } finally {
     await login.cleanup();
   }
@@ -952,6 +952,9 @@ async function expectQuota(page: Page, amount: string, forecast: string | RegExp
   await expect(usage.getByText(amount, { exact: true })).toBeVisible();
   await expect(usage.getByText(/^resets in /)).toBeVisible();
   if (forecast === null) {
+    await expect(usage.getByRole("checkbox", { name: /^Pin Claude Session/ })).toHaveAccessibleName(
+      /^Pin Claude Session, \d+% used · resets in [^·]+ · [^·]+$/,
+    );
     await expect(usage.getByText(/^runs out /)).toBeHidden();
     return;
   }

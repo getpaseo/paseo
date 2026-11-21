@@ -2328,7 +2328,6 @@ export const ja: TranslationResources = {
       resetsIn: "{{duration}}後にリセット",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}} {{time}}",
-      projectedLeftAtReset: "リセット時に約{{percentage}}残る見込み",
       limitReached: "上限に達しました",
       mayHaveRunOut: "上限に達した可能性があります",
       runsOutAt: "{{time}}に上限に到達",

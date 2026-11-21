@@ -2355,7 +2355,6 @@ export const fr: TranslationResources = {
       resetsIn: "se réinitialise dans {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      projectedLeftAtReset: "~{{percentage}} restant à la réinitialisation",
       limitReached: "Limite atteinte",
       mayHaveRunOut: "Le quota est peut-être épuisé",
       runsOutAt: "épuisement prévu {{time}}",

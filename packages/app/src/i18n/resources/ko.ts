@@ -2316,7 +2316,6 @@ export const ko: TranslationResources = {
       resetsIn: "{{duration}} 후 재설정",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}} {{time}}",
-      projectedLeftAtReset: "초기화 시 약 {{percentage}} 남을 예정",
       limitReached: "한도에 도달함",
       mayHaveRunOut: "한도를 소진했을 수 있음",
       runsOutAt: "{{time}}에 한도에 도달",

@@ -2341,7 +2341,6 @@ export const ru: TranslationResources = {
       resetsIn: "сброс через {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      projectedLeftAtReset: "К сбросу останется ~{{percentage}}",
       limitReached: "Лимит исчерпан",
       mayHaveRunOut: "Лимит мог уже исчерпаться",
       runsOutAt: "закончится {{time}}",

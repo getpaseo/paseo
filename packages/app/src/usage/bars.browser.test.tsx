@@ -106,10 +106,45 @@ const narrowForecastAt = new Date(narrowReadingMs).toISOString();
 const narrowWindow: UsageWindow = {
   id: "weekly",
   label: "Weekly",
-  usedPct: 0.2,
+  usedPct: 6,
   durationSeconds: 604_800,
   resetsAt: new Date(narrowReadingMs + 165.5 * 3_600_000).toISOString(),
 };
+
+const onTrackWindow: UsageWindow = {
+  id: "session",
+  label: "Session",
+  usedPct: 40,
+  durationSeconds: 18_000,
+  resetsAt: new Date(narrowReadingMs + 3_600_000).toISOString(),
+};
+const tightWindow: UsageWindow = { ...onTrackWindow, usedPct: 77 };
+
+it.each([
+  ["green", onTrackWindow, "rgb(21, 128, 61)"],
+  ["amber", tightWindow, "rgb(217, 119, 6)"],
+] as const)("shows only the reset details for an on-track %s bar", (_, usageWindow, color) => {
+  act(() =>
+    root.render(
+      <UsageWindowBar
+        window={usageWindow}
+        forecastAt={narrowForecastAt}
+        displayAs="used"
+        pinnable={false}
+        pinned={false}
+        onTogglePin={ignorePin}
+        pinLabel=""
+        pinTestID=""
+      />,
+    ),
+  );
+
+  const row = container.firstElementChild!;
+  const [label, track, datapoints] = row.children;
+  expect(label.textContent).toBe(`Session${usageWindow.usedPct}% used`);
+  expect(datapoints.textContent).toMatch(/^resets in [^·]+\s· [^·]+$/);
+  expect(getComputedStyle(track.firstElementChild!).backgroundColor).toBe(color);
+});
 
 it("shows the forecast as one more datapoint after the reset countdown, in the same line", async () => {
   act(() =>
@@ -130,7 +165,7 @@ it("shows the forecast as one more datapoint after the reset countdown, in the s
   const line = Array.from(container.querySelectorAll("*")).find((node) =>
     node.textContent.startsWith("resets in"),
   );
-  expect(line?.textContent).toMatch(/^resets in .+\s· .+\s· ~\d+% left at reset$/);
+  expect(line?.textContent).toMatch(/^resets in [^·]+\s· [^·]+\s· runs out .+$/);
 });
 
 it("wraps the forecast below the countdown in a narrow French card instead of overlapping it", async () => {
@@ -162,6 +197,6 @@ it("wraps the forecast below the countdown in a narrow French card instead of ov
   }
 
   const countdown = textBounds("se réinitialise");
-  const forecast = textBounds("~");
+  const forecast = textBounds("épuisement prévu");
   expect(forecast.left >= countdown.right || forecast.top >= countdown.bottom).toBe(true);
 });

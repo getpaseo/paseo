@@ -2323,7 +2323,6 @@ export const ar: TranslationResources = {
       resetsIn: "تتم إعادة التعيين خلال {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}، {{time}}",
-      projectedLeftAtReset: "نحو {{percentage}} متبقية عند إعادة التعيين",
       limitReached: "تم بلوغ الحد",
       mayHaveRunOut: "ربما نفدت الحصة",
       runsOutAt: "ينفد عند {{time}}",

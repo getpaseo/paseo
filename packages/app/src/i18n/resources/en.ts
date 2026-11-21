@@ -2333,7 +2333,6 @@ export const en = {
       resetsIn: "resets in {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      projectedLeftAtReset: "~{{percentage}} left at reset",
       limitReached: "Limit reached",
       mayHaveRunOut: "May have run out",
       runsOutAt: "runs out {{time}}",

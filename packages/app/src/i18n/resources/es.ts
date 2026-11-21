@@ -2354,7 +2354,6 @@ export const es: TranslationResources = {
       resetsIn: "se restablece en {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      projectedLeftAtReset: "~{{percentage}} restante al restablecerse",
       limitReached: "Límite alcanzado",
       mayHaveRunOut: "Puede que ya se haya agotado",
       runsOutAt: "agotamiento previsto {{time}}",

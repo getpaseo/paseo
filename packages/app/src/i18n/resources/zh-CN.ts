@@ -2282,7 +2282,6 @@ export const zhCN: TranslationResources = {
       resetsIn: "将在 {{duration}}后重置",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}} {{time}}",
-      projectedLeftAtReset: "重置时约剩余 {{percentage}}",
       limitReached: "已达到上限",
       mayHaveRunOut: "额度可能已用完",
       runsOutAt: "将在 {{time}} 用尽",
