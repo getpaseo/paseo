@@ -1,4 +1,5 @@
 import type { ForgeSearchKind } from "@getpaseo/protocol/messages";
+import type { ChangeRequestSource } from "./change-request-source.js";
 
 export type ForgeSearchRequestKind = ForgeSearchKind | "github-issue" | "github-pr" | "pr";
 
@@ -533,6 +534,8 @@ export interface ForgeService {
       onError?: (error: unknown) => void;
     },
   ): { unsubscribe: () => void };
+  /** Exact-URL change request observation adapter for watches, when supported by the forge. */
+  changeRequests?: ChangeRequestSource;
   invalidate(options: { cwd: string }): void;
   dispose?(): void;
 }

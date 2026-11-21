@@ -57,7 +57,12 @@ const changeRequestFields = {
 };
 const worktreeRequestSchema = z.discriminatedUnion("kind", [
   z
-    .object({ ...worktreeRequestFields, kind: z.literal("branch-off"), baseRef: z.string().min(1) })
+    .object({
+      ...worktreeRequestFields,
+      kind: z.literal("branch-off"),
+      baseRef: z.string().min(1),
+      startPoint: z.string().min(1).optional(),
+    })
     .strict(),
   z
     .object({
@@ -239,6 +244,28 @@ function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpe
   );
 }
 
+type WorktreeBeforeRequest = z.infer<(typeof beforeSchemas)["worktree.create.before"]>;
+
+function validateWorktreeBeforeResult(
+  previous: WorktreeBeforeRequest,
+  next: WorktreeBeforeRequest,
+): WorktreeBeforeRequest {
+  if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
+    throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+  }
+  if (previous.kind === "branch-off" && next.kind === "branch-off") {
+    if (next.startPoint !== undefined && next.startPoint !== previous.startPoint) {
+      throw new Error("worktree.create.before hooks cannot change startPoint");
+    }
+    if (next.startPoint === undefined && previous.startPoint !== undefined) {
+      return { ...next, startPoint: previous.startPoint };
+    }
+  } else if (next.kind === "branch-off" && next.startPoint !== undefined) {
+    throw new Error("worktree.create.before hooks cannot change startPoint");
+  }
+  return next;
+}
+
 export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
@@ -280,9 +307,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);
-    if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
-      throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
-    }
+    return validateWorktreeBeforeResult(previous, next) as PluginWireBeforeRequests[Name];
   }
   return result;
 }

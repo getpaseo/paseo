@@ -701,6 +701,7 @@ export interface AgentPermissionResult {
 }
 
 export interface AgentUsageSession {
+  launch?: import("@getpaseo/plugin/server/provider").ProviderLaunch;
   provider: string;
   model?: string;
   env: Record<string, string>;
@@ -851,6 +852,9 @@ export interface AgentClientUpdateContext extends AgentClientInstallationContext
 }
 
 export interface AgentClient {
+  resolveUsageLaunch?(): Promise<
+    import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined
+  >;
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
   /**

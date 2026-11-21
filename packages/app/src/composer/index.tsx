@@ -30,6 +30,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
@@ -2575,7 +2576,10 @@ function ComposerContentImpl({
       >
         <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
         {/* Input area */}
-        <View style={inputAreaContainerStyle}>
+        <View
+          style={inputAreaContainerStyle}
+          dataSet={isFullscreen ? undefined : CHAT_COLUMN_RAIL_DATASET}
+        >
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}

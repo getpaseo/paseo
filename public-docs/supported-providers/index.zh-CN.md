@@ -49,7 +49,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 - [Gajae Code](https://gajae-code.com)：订阅制编程 Agent，采用先规划再修改的工作流。
 - [Gemini CLI](https://geminicli.com)：Google 官方的 Gemini CLI。
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent)：智谱 AI 的 GLM 编程 Agent。
-- [goose](https://block.github.io/goose/)：Block 的本地开源 AI Agent。
+- [goose](https://block.github.io/goose/)：Block 的本地开源 AI Agent。如果 goose 支持发现模型清单，Paseo 会列出 goose 中所有已配置 Provider 的模型。
 - [Grok](https://docs.x.ai/build/overview)：xAI 的 Grok Build Agent 编程 CLI。
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)：Nous Research 的自我改进型 Agent。
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html)：JetBrains 的编程 Agent。

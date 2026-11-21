@@ -2404,6 +2404,46 @@ describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", 
     await service.dispose();
   });
 
+  test("a snapshot read during restoration waits for fresh checkout facts", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let holdRestoredRead = false;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        if (holdRestoredRead) {
+          started.resolve();
+          await release.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    holdRestoredRead = true;
+    const restoringRead = service.getSnapshot(workspace);
+    await started.promise;
+    const concurrentRead = service.getSnapshot(workspace);
+    release.resolve();
+
+    expect((await restoringRead).git.isGit).toBe(true);
+    expect((await concurrentRead).git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
   test("a resumed workspace rebuilds observation from fresh facts, not the non-git facts cached while its folder was gone", async () => {
     const workspace = await createTemporaryFolder();
     const git = createFolderBackedGit();

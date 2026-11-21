@@ -43,25 +43,38 @@ async function writeCachedValue<T>(
   );
 }
 
-export async function getBlockingColdCache<T>({
-  context,
-  key,
-  isValue,
-  fetchFresh,
-}: {
+interface CacheOptions<T> {
   context: WebsiteCacheContext;
   key: string;
   isValue: Validator<T>;
   fetchFresh: () => Promise<T>;
-}): Promise<T> {
+}
+
+function refreshInBackground<T>({ context, key, fetchFresh }: CacheOptions<T>): void {
+  context.waitUntil(
+    fetchFresh()
+      .then((fresh) => writeCachedValue(context.cache, key, fresh))
+      .catch(() => undefined),
+  );
+}
+
+/** Return the cached value, warming the cache in the background when it is empty or stale. */
+export async function getNonBlockingColdCache<T>(options: CacheOptions<T>): Promise<T | null> {
+  const { context, key, isValue } = options;
+  if (!context.cache) return null;
+  const cached = await readCachedValue(context.cache, key, isValue);
+  if (!cached || Date.now() - cached.fetchedAt > GITHUB_CACHE_TTL_MS) {
+    refreshInBackground(options);
+  }
+  return cached?.value ?? null;
+}
+
+export async function getBlockingColdCache<T>(options: CacheOptions<T>): Promise<T> {
+  const { context, key, isValue, fetchFresh } = options;
   const cached = await readCachedValue(context.cache, key, isValue);
   if (cached) {
     if (Date.now() - cached.fetchedAt > GITHUB_CACHE_TTL_MS) {
-      context.waitUntil(
-        fetchFresh()
-          .then((fresh) => writeCachedValue(context.cache, key, fresh))
-          .catch(() => undefined),
-      );
+      refreshInBackground(options);
     }
     return cached.value;
   }

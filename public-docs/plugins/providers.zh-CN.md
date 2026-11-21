@@ -472,7 +472,12 @@ export default function contribute(server: PluginServerContext) {
 
 适配层负责 ACP 进程、能力映射、会话生命周期、提示词、权限和时间线转换。不要把这些机制复制到插件中。
 
-只在 ACP 无法描述厂商差异时使用 `transformers`。用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
+使用 `transformers` 处理 ACP 无法描述的厂商差异。
+[goose 模型转换器](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+使用 `context.request` 读取 Agent 的模型列表，并使用 `config` 为会话的模型 ID 添加当前 Provider 前缀。
+参见 [ACP 适配器参考](/docs/plugins/reference#providers)。
+
+用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
 
 ```ts
 import type { AcpTransformer } from "@getpaseo/plugin/server/acp";

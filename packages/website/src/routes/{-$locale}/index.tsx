@@ -3,6 +3,7 @@ import { Trans } from "react-i18next";
 import { LandingPage } from "~/components/landing-page";
 import { getTranslator, routeLocale } from "~/i18n";
 import { pageMeta } from "~/meta";
+import { getPluginCount } from "~/plugins";
 
 export const Route = createFileRoute("/{-$locale}/")({
   head: ({ params }) => {
@@ -15,6 +16,7 @@ export const Route = createFileRoute("/{-$locale}/")({
       locale,
     });
   },
+  loader: async () => ({ pluginCount: await getPluginCount() }),
   component: Home,
 });
 
@@ -32,5 +34,6 @@ const SUBTITLE = (
 );
 
 function Home() {
-  return <LandingPage title={TITLE} subtitle={SUBTITLE} />;
+  const { pluginCount } = Route.useLoaderData();
+  return <LandingPage title={TITLE} subtitle={SUBTITLE} pluginCount={pluginCount} showHubEyebrow />;
 }
