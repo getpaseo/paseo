@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +16,7 @@ import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   findAssistantMessageEnd,
+  findLastConversationEntry,
   findSteeredMessageParent,
   revertClaudeConversation,
   revertClaudeConversationAndFiles,
@@ -387,6 +389,52 @@ describe("Claude fork point", () => {
     const { transcriptPath, ids } = writeConversation();
 
     await expect(findAssistantMessageEnd(transcriptPath, ids.sidechain)).resolves.toBeNull();
+  });
+
+  test("branches a running turn with everything written so far", async () => {
+    const { projectDir, sessionId, transcriptPath, ids } = writeConversation();
+    const thirdUser = randomUUID();
+    const toolCall = randomUUID();
+    appendFileSync(
+      transcriptPath,
+      [
+        entry({ type: "user", uuid: thirdUser, parentUuid: ids.secondText, text: "third" }),
+        entry({
+          type: "assistant",
+          uuid: toolCall,
+          parentUuid: thirdUser,
+          text: "running the command",
+          apiMessageId: "msg_third",
+        }),
+        entry({
+          type: "assistant",
+          uuid: randomUUID(),
+          parentUuid: null,
+          text: "subagent still working",
+          isSidechain: true,
+        }),
+        JSON.stringify({ type: "last-prompt", lastPrompt: "third" }),
+        // Claude Code is still writing this line.
+        '{"type":"assistant","uuid":"',
+      ].join("\n"),
+    );
+
+    const upToMessageId = await findLastConversationEntry(transcriptPath);
+    expect(upToMessageId).toBe(toolCall);
+    const fork = await realClaudeRewindSdk.forkSession(sessionId, {
+      upToMessageId: toolCall,
+      transcriptPath,
+    });
+
+    expect(readMessageTexts(path.join(projectDir, `${fork.sessionId}.jsonl`))).toEqual([
+      "first",
+      "thinking",
+      "first reply",
+      "second",
+      "second reply",
+      "third",
+      "running the command",
+    ]);
   });
 
   test("branches the conversation after the selected assistant message", async () => {

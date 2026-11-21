@@ -2164,11 +2164,12 @@ export const AgentForkContextRequestMessageSchema = z.object({
 });
 
 // Branches the agent's provider session at the end of the turn that ends with
-// `boundaryMessageId` and opens the branch as a new agent on the same provider.
+// `boundaryMessageId` and opens the branch as a new agent on the same provider. Without
+// `boundaryMessageId` the branch takes everything written so far, including a running turn.
 export const AgentForkRequestMessageSchema = z.object({
   type: z.literal("agent.fork.request"),
   agentId: z.string(),
-  boundaryMessageId: z.string(),
+  boundaryMessageId: z.string().optional(),
   // The new agent's working directory and workspace. Both default to the source agent's.
   cwd: z.string().optional(),
   workspaceId: z.string().optional(),

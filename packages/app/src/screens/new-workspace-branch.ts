@@ -48,7 +48,7 @@ export async function runCreateBranchedWorkspace(
     withInitialAgent: false,
   });
   const agent = await client.forkAgent(branch.sourceAgentId, {
-    boundaryMessageId: branch.boundaryMessageId,
+    ...(branch.boundaryMessageId ? { boundaryMessageId: branch.boundaryMessageId } : {}),
     cwd: workspace.workspaceDirectory,
     workspaceId: workspace.id,
   });

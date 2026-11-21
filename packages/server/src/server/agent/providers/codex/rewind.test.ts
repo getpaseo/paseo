@@ -381,6 +381,25 @@ describe("Codex branch", () => {
     expect(threadId).toBe("forked-thread");
   });
 
+  test("forks everything written so far, a running turn included, without an assistant message", async () => {
+    const codex = new LegacyHistoryCodex();
+
+    const threadId = await branchCodexConversation({ ...branchSettings, client: codex });
+
+    expect(threadId).toBe("forked-thread");
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        cwd: "/workspace/branch",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([]);
+  });
+
   test("declines to branch when the assistant message is not in the thread", async () => {
     const codex = new PaginatedHistoryCodex();
 

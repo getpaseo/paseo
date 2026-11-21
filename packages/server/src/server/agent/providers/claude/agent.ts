@@ -92,6 +92,7 @@ import {
   findSteeredMessageParent,
   realClaudeRewindSdk,
   findAssistantMessageEnd,
+  findLastConversationEntry,
   revertClaudeConversation,
   revertClaudeFiles,
   type ClaudeRewindSdk,
@@ -3442,7 +3443,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async forkConversation(input: {
-    messageId: string;
+    messageId?: string;
     cwd: string;
   }): Promise<AgentPersistenceHandle> {
     await this.ensureHistoryReady();
@@ -3451,9 +3452,18 @@ class ClaudeAgentSession implements AgentSession {
     if (!sessionId || !transcriptPath) {
       throw new Error("Claude session is not ready for fork");
     }
-    const upToMessageId = await findAssistantMessageEnd(transcriptPath, input.messageId);
+    // Without a message the branch takes everything written so far, a running turn included.
+    // On resume Claude Code records a tool call left without a result as interrupted.
+    const upToMessageId =
+      input.messageId === undefined
+        ? await findLastConversationEntry(transcriptPath)
+        : await findAssistantMessageEnd(transcriptPath, input.messageId);
     if (!upToMessageId) {
-      throw new Error(`Claude fork target ${input.messageId} is not in the transcript`);
+      throw new Error(
+        input.messageId === undefined
+          ? "Claude transcript has no messages to fork"
+          : `Claude fork target ${input.messageId} is not in the transcript`,
+      );
     }
     // The copy is written beside the source transcript. Claude Code resumes a session by id from
     // any working directory, so a fork into another directory still finds it.

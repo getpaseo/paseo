@@ -359,7 +359,6 @@ export const fr: TranslationResources = {
       forkNewTab: "Nouvel onglet",
       forkNewWorkspace: "Nouvel espace de travail",
       forkBranchUnsupported: "Ce fournisseur ne peut pas brancher sa session.",
-      forkBranchRunningTurn: "Disponible quand ce tour sera terminé.",
       forkBranchNoMessageId: "Ce tour ne peut pas être branché.",
       forkUnavailable: "Mettez à jour l’hôte pour utiliser cette fonction.",
       forkMissingWorkspace: "Cet agent n’est dans aucun espace de travail.",

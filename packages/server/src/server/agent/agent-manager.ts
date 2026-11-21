@@ -4103,7 +4103,7 @@ export class AgentManager {
    */
   async fork(
     agentId: string,
-    input: { messageId: string; cwd?: string; workspaceId?: string },
+    input: { messageId?: string; cwd?: string; workspaceId?: string },
   ): Promise<ManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
     if (!agent.session.forkConversation) {

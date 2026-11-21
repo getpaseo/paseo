@@ -354,7 +354,6 @@ export const ar: TranslationResources = {
       forkNewTab: "تبويب جديد",
       forkNewWorkspace: "مساحة عمل جديدة",
       forkBranchUnsupported: "لا يستطيع هذا المزوّد تفريع جلسته.",
-      forkBranchRunningTurn: "متاح عند انتهاء هذا الدور.",
       forkBranchNoMessageId: "لا يمكن تفريع هذا الدور.",
       forkUnavailable: "حدّث المضيف لاستخدام هذا.",
       forkMissingWorkspace: "هذا الوكيل ليس في مساحة عمل.",

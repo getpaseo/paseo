@@ -89,6 +89,22 @@ describe("runCreateBranchedWorkspace", () => {
     ]);
   });
 
+  it("branches a turn still running without a boundary, so the branch takes everything so far", async () => {
+    const harness = createHarness();
+
+    await runCreateBranchedWorkspace({
+      payload: payload("Carry on here."),
+      branch: { sourceAgentId: "source-agent", sourceCwd: "/sample/repo" },
+      ensureWorkspace: harness.ensureWorkspace,
+      client: harness.client,
+      serverId: "server-abc",
+      navigate: harness.navigate,
+    });
+
+    expect(harness.forks).toHaveLength(1);
+    expect(harness.forks[0]?.options).not.toHaveProperty("boundaryMessageId");
+  });
+
   it("opens the branch without sending anything when the prompt is empty", async () => {
     const harness = createHarness();
 

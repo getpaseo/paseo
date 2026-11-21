@@ -359,7 +359,6 @@ export const ja: TranslationResources = {
       forkNewTab: "新しいタブ",
       forkNewWorkspace: "新しいワークスペース",
       forkBranchUnsupported: "このプロバイダーはセッションを分岐できません。",
-      forkBranchRunningTurn: "このターンが終わると使えます。",
       forkBranchNoMessageId: "このターンは分岐できません。",
       forkUnavailable: "これを使用するにはホストを更新してください。",
       forkMissingWorkspace: "このエージェントはワークスペース内にありません。",

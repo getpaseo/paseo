@@ -358,7 +358,6 @@ export const ru: TranslationResources = {
       forkNewTab: "Новая вкладка",
       forkNewWorkspace: "Новое рабочее пространство",
       forkBranchUnsupported: "Этот провайдер не может ответвить сессию.",
-      forkBranchRunningTurn: "Станет доступно, когда этот ход завершится.",
       forkBranchNoMessageId: "Этот ход нельзя ответвить.",
       forkUnavailable: "Обновите хост, чтобы использовать эту функцию.",
       forkMissingWorkspace: "Этот агент не связан с рабочим пространством.",

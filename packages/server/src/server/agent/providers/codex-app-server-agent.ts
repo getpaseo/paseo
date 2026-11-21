@@ -5497,7 +5497,7 @@ export class CodexAppServerAgentSession implements AgentSession {
    * starts without the source's async questions; its first load delivers Paseo's instructions.
    */
   async forkConversation(input: {
-    messageId: string;
+    messageId?: string;
     cwd: string;
   }): Promise<AgentPersistenceHandle> {
     await this.connect();

@@ -809,8 +809,11 @@ function normalizeListCommandsOptions(
   return { agentId: input, ...legacyOptions };
 }
 export interface AgentForkOptions {
-  /** The assistant message that ends the turn to branch after. */
-  boundaryMessageId: string;
+  /**
+   * The assistant message that ends the turn to branch after. Omit it to branch everything
+   * written so far, including a turn still running.
+   */
+  boundaryMessageId?: string;
   cwd?: string;
   workspaceId?: string;
 }
@@ -4260,14 +4263,14 @@ export class DaemonClient {
     return payload;
   }
 
-  /** Branch the agent's provider session after a turn and open the branch as a new agent. */
+  /** Branch the agent's provider session and open the branch as a new agent. */
   async forkAgent(agentId: string, options: AgentForkOptions): Promise<AgentSnapshotPayload> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "agent.fork.request",
       agentId,
       requestId,
-      boundaryMessageId: options.boundaryMessageId,
+      ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     });

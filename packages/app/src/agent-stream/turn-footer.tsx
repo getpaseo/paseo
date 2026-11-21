@@ -134,7 +134,6 @@ const WorkingIndicator = memo(function WorkingIndicator({
   forkBranchUnavailableReason: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
-  const { t } = useTranslation();
   const active = useRetainedPanelActive();
   return (
     <View style={stylesheet.turnFooterContent}>
@@ -145,10 +144,8 @@ const WorkingIndicator = memo(function WorkingIndicator({
       {onForkInFlightTurn ? (
         <AssistantForkMenu
           onFork={onForkInFlightTurn}
-          // A branch copies whole turns, and this one has not ended.
-          branchUnavailableReason={
-            forkBranchUnavailableReason ?? t("message.actions.forkBranchRunningTurn")
-          }
+          // The branch takes everything the provider has written so far.
+          branchUnavailableReason={forkBranchUnavailableReason}
         />
       ) : null}
       {inFlightTurnStartedAt ? (

@@ -149,15 +149,26 @@ export async function revertCodexConversation(
 
 /**
  * Forks the thread through the turn holding the assistant message and returns the new
- * thread id. Paseo's assistant message id is the Codex item id.
+ * thread id. Paseo's assistant message id is the Codex item id. Without a message the fork
+ * takes everything written so far; Codex marks a turn still running as aborted in the fork.
  */
 export async function branchCodexConversation(
   input: CodexForkSettings & {
     client: CodexRewindClient;
     threadId: string;
-    messageId: string;
+    messageId?: string;
   },
 ): Promise<string> {
+  if (input.messageId === undefined) {
+    return forkCodexThreadWithoutLastTurns({
+      client: input.client,
+      threadId: input.threadId,
+      settings: input,
+      droppedTurns: 0,
+      firstDroppedTurnId: null,
+      target: "the latest item",
+    });
+  }
   const turnsAfter = await readCodexTurnsAfterItem(input.client, input.threadId, input.messageId);
   if (turnsAfter === null) {
     throw new Error(`Codex fork target ${input.messageId} is not in the thread`);

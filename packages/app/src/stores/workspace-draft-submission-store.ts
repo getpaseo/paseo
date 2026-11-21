@@ -29,7 +29,8 @@ export interface PendingWorkspaceDraftSubmission {
 export interface WorkspaceDraftBranch {
   sourceAgentId: string;
   sourceCwd: string;
-  boundaryMessageId: string;
+  /** The assistant message ending the turn to branch after; absent for a turn still running. */
+  boundaryMessageId?: string;
 }
 
 export interface PendingWorkspaceDraftSetup {

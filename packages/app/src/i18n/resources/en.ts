@@ -353,7 +353,6 @@ export const en = {
       forkNewTab: "New tab",
       forkNewWorkspace: "New workspace",
       forkBranchUnsupported: "This provider can't branch its session.",
-      forkBranchRunningTurn: "Available when this turn finishes.",
       forkBranchNoMessageId: "This turn can't be branched.",
       forkUnavailable: "Update the host to use this.",
       forkMissingWorkspace: "This agent is not in a workspace.",

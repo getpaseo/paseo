@@ -72,22 +72,21 @@ function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
   );
 }
 
+/** A transcript entry in the main conversation; forkSession resolves its uuid. */
+interface ConversationEntry {
+  type?: unknown;
+  uuid: string;
+  message?: { id?: unknown };
+}
+
 /**
- * The uuid of the transcript entry that ends the assistant message `messageId`, the place to fork
- * a conversation after that message. `messageId` is either an entry uuid (rows replayed from the
- * transcript) or the API message id (rows streamed live). Claude Code writes one entry per content
- * block, all sharing the API message id, so the message ends at the last of them. Null when the
- * main conversation holds no such message; subagent sidechains are skipped, since forkSession
- * cannot resolve their uuids.
+ * The main conversation's entries in file order. Lines that do not parse (including one Claude
+ * Code is still writing), entries without a uuid and subagent sidechains are skipped, since
+ * forkSession cannot resolve sidechain uuids.
  */
-export async function findAssistantMessageEnd(
-  transcriptPath: string,
-  messageId: string,
-): Promise<string | null> {
+async function* readConversationEntries(transcriptPath: string): AsyncGenerator<ConversationEntry> {
   const input = createReadStream(transcriptPath, { encoding: "utf8" });
   const lines = createInterface({ input, crlfDelay: Infinity });
-  let apiMessageId: string | null = null;
-  let end: string | null = null;
   try {
     for await (const line of lines) {
       if (!line.trim()) continue;
@@ -97,26 +96,53 @@ export async function findAssistantMessageEnd(
       } catch {
         continue;
       }
-      const entry = parsed as {
-        type?: unknown;
-        uuid?: unknown;
-        isSidechain?: unknown;
-        message?: { id?: unknown };
-      };
+      if (typeof parsed !== "object" || parsed === null) continue;
+      const entry = parsed as { uuid?: unknown; isSidechain?: unknown };
       if (entry.isSidechain === true || typeof entry.uuid !== "string") continue;
-      const entryApiId = entry.type === "assistant" ? entry.message?.id : undefined;
-      if (apiMessageId === null) {
-        if (entry.uuid !== messageId && entryApiId !== messageId) continue;
-        if (typeof entryApiId !== "string") return entry.uuid;
-        apiMessageId = entryApiId;
-      }
-      if (entryApiId === apiMessageId) end = entry.uuid;
+      yield parsed as ConversationEntry;
     }
   } finally {
     lines.close();
     input.destroy();
   }
+}
+
+/**
+ * The uuid of the transcript entry that ends the assistant message `messageId`, the place to fork
+ * a conversation after that message. `messageId` is either an entry uuid (rows replayed from the
+ * transcript) or the API message id (rows streamed live). Claude Code writes one entry per content
+ * block, all sharing the API message id, so the message ends at the last of them. Null when the
+ * main conversation holds no such message.
+ */
+export async function findAssistantMessageEnd(
+  transcriptPath: string,
+  messageId: string,
+): Promise<string | null> {
+  let apiMessageId: string | null = null;
+  let end: string | null = null;
+  for await (const entry of readConversationEntries(transcriptPath)) {
+    const entryApiId = entry.type === "assistant" ? entry.message?.id : undefined;
+    if (apiMessageId === null) {
+      if (entry.uuid !== messageId && entryApiId !== messageId) continue;
+      if (typeof entryApiId !== "string") return entry.uuid;
+      apiMessageId = entryApiId;
+    }
+    if (entryApiId === apiMessageId) end = entry.uuid;
+  }
   return end;
+}
+
+/**
+ * The uuid of the last user or assistant message in the main conversation, the place to fork a
+ * turn that is still running. Claude Code writes a message once it has finished streaming, so a
+ * reply still streaming is not in the copy.
+ */
+export async function findLastConversationEntry(transcriptPath: string): Promise<string | null> {
+  let last: string | null = null;
+  for await (const entry of readConversationEntries(transcriptPath)) {
+    if (entry.type === "user" || entry.type === "assistant") last = entry.uuid;
+  }
+  return last;
 }
 
 /**

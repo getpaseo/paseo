@@ -127,10 +127,10 @@ async function openBranchFork(input: {
   labels: { noMessageId: string; missingWorkspace: string };
 }): Promise<void> {
   const { client, serverId, request, draftSetup, labels } = input;
-  // The menu only offers a branch for a completed turn with a provider message id on a host and
-  // provider that support it.
+  // A turn still running has no boundary: the branch takes everything written so far. The menu
+  // only offers a branch for a completed turn whose reply has a provider message id.
   const boundaryMessageId = request.boundary?.boundaryMessageId;
-  if (!boundaryMessageId || !draftSetup) {
+  if ((request.boundary && !boundaryMessageId) || !draftSetup) {
     throw new Error(labels.noMessageId);
   }
   if (request.target.destination === "tab") {

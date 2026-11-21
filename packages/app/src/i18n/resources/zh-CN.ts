@@ -354,7 +354,6 @@ export const zhCN: TranslationResources = {
       forkNewTab: "新标签页",
       forkNewWorkspace: "新工作区",
       forkBranchUnsupported: "此 Provider 无法分支会话。",
-      forkBranchRunningTurn: "这一轮结束后可用。",
       forkBranchNoMessageId: "这一轮无法分支。",
       forkUnavailable: "请更新主机以使用此功能。",
       forkMissingWorkspace: "此 Agent 不在工作区中。",

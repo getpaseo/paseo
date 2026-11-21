@@ -355,7 +355,6 @@ export const ko: TranslationResources = {
       forkNewTab: "새 탭",
       forkNewWorkspace: "새 워크스페이스",
       forkBranchUnsupported: "이 프로바이더는 세션을 분기할 수 없습니다.",
-      forkBranchRunningTurn: "이 턴이 끝나면 사용할 수 있습니다.",
       forkBranchNoMessageId: "이 턴은 분기할 수 없습니다.",
       forkUnavailable: "이를 사용하려면 호스트를 업데이트하세요.",
       forkMissingWorkspace: "이 에이전트는 워크스페이스에 속해 있지 않습니다.",

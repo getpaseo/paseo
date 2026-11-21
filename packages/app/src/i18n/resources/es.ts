@@ -359,7 +359,6 @@ export const es: TranslationResources = {
       forkNewTab: "Pestaña nueva",
       forkNewWorkspace: "Espacio de trabajo nuevo",
       forkBranchUnsupported: "Este proveedor no puede ramificar su sesión.",
-      forkBranchRunningTurn: "Disponible cuando termine este turno.",
       forkBranchNoMessageId: "Este turno no se puede ramificar.",
       forkUnavailable: "Actualiza el host para usar esto.",
       forkMissingWorkspace: "Este agente no está en un espacio de trabajo.",

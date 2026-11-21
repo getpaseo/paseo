@@ -780,10 +780,11 @@ export interface AgentSession {
   revertBoth?(input: { messageId: string }): Promise<void>;
   /**
    * Copy the provider session up to the end of the turn that ends with `messageId` into a new
-   * provider session, leaving this one untouched. Returns the handle that resumes the copy in
+   * provider session, leaving this one untouched. Without `messageId` the copy takes everything
+   * written so far, including a turn still running. Returns the handle that resumes the copy in
    * `cwd`. Sessions that declare `supportsNativeFork` implement this.
    */
-  forkConversation?(input: { messageId: string; cwd: string }): Promise<AgentPersistenceHandle>;
+  forkConversation?(input: { messageId?: string; cwd: string }): Promise<AgentPersistenceHandle>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

@@ -358,7 +358,6 @@ export const ptBR: TranslationResources = {
       forkNewTab: "Nova aba",
       forkNewWorkspace: "Novo workspace",
       forkBranchUnsupported: "Este provedor não consegue ramificar a sessão.",
-      forkBranchRunningTurn: "Disponível quando este turno terminar.",
       forkBranchNoMessageId: "Este turno não pode ser ramificado.",
       forkUnavailable: "Atualize o host para usar isto.",
       forkMissingWorkspace: "Este agente não está em um workspace.",
