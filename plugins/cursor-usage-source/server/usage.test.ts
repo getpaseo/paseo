@@ -3,8 +3,19 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, discoverSession, fetchUsage } from "./usage.js";
+import {
+  discover,
+  discoverSession,
+  fetchUsage,
+  readCursorAgentKeychainToken,
+  type CursorKeychainReader,
+  type SecurityCommandRunner,
+} from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
+
+// Discovery reads the macOS Keychain by default; tests pass this fake so they never
+// reach a developer's real Keychain.
+const noKeychain: CursorKeychainReader = async () => null;
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
 const testRequire = createRequire(import.meta.url);
@@ -254,7 +265,7 @@ describe("cursor usage source", () => {
     const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "state.vscdb"), "invalid database");
-    expect(await discover()).toEqual([]);
+    expect(await discover({ readKeychain: noKeychain })).toEqual([]);
   });
 
   describe("session discovery", () => {
@@ -279,7 +290,7 @@ describe("cursor usage source", () => {
       }
       writeCursorAuthJson(homeDir, token("user-a", "desktop"));
       writeCursorAuthJson(sessionHome, token("user-b", "session"));
-      const globalAccounts = await discover();
+      const globalAccounts = await discover({ readKeychain: noKeychain });
       const differentAccount = await discoverSession(cursorSession({}), "linux");
       expect(globalAccounts).toHaveLength(1);
       expect(differentAccount).toHaveLength(1);
@@ -294,7 +305,7 @@ describe("cursor usage source", () => {
     it("isolates logins without a readable subject by store and keeps their key across token rotation", async () => {
       writeCursorAuthJson(homeDir, "opaque-global-token");
       writeCursorAuthJson(sessionHome, "opaque-session-token");
-      const globalAccounts = await discover();
+      const globalAccounts = await discover({ readKeychain: noKeychain });
       const sessionAccounts = await discoverSession(cursorSession({}), "linux");
       expect(sessionAccounts).toHaveLength(1);
       expect(globalAccounts).toHaveLength(1);
@@ -385,7 +396,7 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
       return new Response(null, { status: 401 });
     });
     expect(requested).toBe(true);
-    expect(await discover()).toEqual([
+    expect(await discover({ readKeychain: noKeychain })).toEqual([
       {
         key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
         input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
@@ -407,7 +418,7 @@ describe("account discovery", () => {
       process.env.HOME = directory;
       process.env.USERPROFILE = directory;
       if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
-      expect(await discover()).toEqual([]);
+      expect(await discover({ readKeychain: noKeychain })).toEqual([]);
     } finally {
       for (const key of Object.keys(process.env)) delete process.env[key];
       Object.assign(process.env, original);
@@ -417,7 +428,7 @@ describe("account discovery", () => {
 });
 
 async function fetchFirst(fetchApi: typeof fetch) {
-  const accounts = await discover();
+  const accounts = await discover({ readKeychain: noKeychain });
   const account = accounts[0];
   if (!account) throw new Error("No configured account");
   return fetchUsage(account.input as Parameters<typeof fetchUsage>[0], fetchApi);
@@ -436,4 +447,147 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;
   }
+});
+
+describe("encrypted Cursor desktop tokens and the cursor-agent Keychain login", () => {
+  const encrypted = "cursor-safe-storage:v1:Y2lwaGVydGV4dA==";
+  let homeDir: string;
+  let originalEnv: Record<string, string | undefined>;
+  let authorizations: Array<string | null>;
+  const recordingFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    authorizations.push(
+      (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+    );
+    return jsonResponse({
+      planUsage: { totalPercentUsed: 20, autoPercentUsed: 19, apiPercentUsed: 42 },
+      billingCycleStart: null,
+      billingCycleEnd: null,
+    });
+  }) as unknown as typeof fetch;
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "usage-encrypted-home-"));
+    originalEnv = { ...process.env };
+    process.env["HOME"] = homeDir;
+    process.env["USERPROFILE"] = homeDir;
+    for (const key of ["APPDATA", "CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"]) delete process.env[key];
+    authorizations = [];
+  });
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    for (const key in originalEnv) process.env[key] = originalEnv[key];
+  });
+
+  async function fetchDiscovered(options: Parameters<typeof discover>[0]) {
+    const [account] = await discover(options);
+    if (!account) throw new Error("No configured account");
+    return fetchUsage(
+      account.input as Parameters<typeof fetchUsage>[0],
+      recordingFetch,
+      options?.readKeychain,
+    );
+  }
+
+  it.each([
+    [
+      "the modern state.vscdb key",
+      () => writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted }),
+    ],
+    [
+      "the legacy cursorAuthStatus blob",
+      () =>
+        writeCursorStateDb(homeDir, {
+          cursorAuthStatus: JSON.stringify({ accessToken: encrypted }),
+        }),
+    ],
+    ["cursor-agent auth.json", () => writeCursorAuthJson(homeDir, encrypted)],
+    ["CURSOR_ACCESS_TOKEN", () => (process.env["CURSOR_ACCESS_TOKEN"] = encrypted)],
+  ])("discovers no account when the only token, in %s, is encrypted", async (_store, write) => {
+    write();
+    expect(await discover({ platform: "linux", readKeychain: noKeychain })).toEqual([]);
+  });
+
+  it("skips an encrypted desktop token and uses the cursor-agent auth.json login", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    writeCursorAuthJson(homeDir, "cursor_cli_jwt");
+
+    const report = await fetchDiscovered({ platform: "linux", readKeychain: noKeychain });
+
+    expect(authorizations).toEqual(["Bearer cursor_cli_jwt"]);
+    expect(report.status).toBe("available");
+  });
+
+  it("never sends an encrypted token from a previously discovered locator", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    const locator = join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+
+    await expect(fetchUsage({ store: "sqlite", locator }, recordingFetch)).rejects.toThrow(
+      "Cursor login store no longer exists",
+    );
+    expect(authorizations).toEqual([]);
+  });
+
+  it("uses the cursor-agent Keychain login on macOS when the desktop token is encrypted", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    const services: string[] = [];
+    const readKeychain: CursorKeychainReader = async (service) => {
+      services.push(service);
+      return "cursor_keychain_jwt";
+    };
+
+    const report = await fetchDiscovered({ platform: "darwin", readKeychain });
+
+    expect(services).toEqual(["cursor-access-token", "cursor-access-token"]);
+    expect(authorizations).toEqual(["Bearer cursor_keychain_jwt"]);
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 20 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 19 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 42 }),
+      ],
+    });
+  });
+
+  it("keeps a plaintext desktop token ahead of the Keychain login", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_desktop_jwt" });
+    const services: string[] = [];
+    const readKeychain: CursorKeychainReader = async (service) => {
+      services.push(service);
+      return "cursor_keychain_jwt";
+    };
+
+    await fetchDiscovered({ platform: "darwin", readKeychain });
+
+    expect(services).toEqual([]);
+    expect(authorizations).toEqual(["Bearer cursor_desktop_jwt"]);
+  });
+
+  it("only reads the Keychain on macOS", async () => {
+    const services: string[] = [];
+    const readKeychain: CursorKeychainReader = async (service) => {
+      services.push(service);
+      return "cursor_keychain_jwt";
+    };
+
+    expect(await discover({ platform: "linux", readKeychain })).toEqual([]);
+    expect(services).toEqual([]);
+  });
+
+  it("reads cursor-agent's Keychain item with the security CLI", async () => {
+    const calls: string[][] = [];
+    const run: SecurityCommandRunner = async (args) => {
+      calls.push(args);
+      return calls.length === 1 ? "cursor_keychain_jwt" : null;
+    };
+
+    expect(await readCursorAgentKeychainToken("cursor-access-token", run)).toBe(
+      "cursor_keychain_jwt",
+    );
+    expect(await readCursorAgentKeychainToken("cursor-access-token", run)).toBeNull();
+    expect(calls).toEqual([
+      ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"],
+      ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"],
+    ]);
+  });
 });

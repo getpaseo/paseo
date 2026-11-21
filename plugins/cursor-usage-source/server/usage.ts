@@ -1,9 +1,11 @@
 import type { UsageInput } from "../shared/input.js";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   toneFromUsedPct,
@@ -28,14 +30,53 @@ function toIsoStringOrNull(timestampMs: number): string | null {
 }
 
 // Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
-// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
-// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
+// the access token under `cursorAuth/accessToken`; older builds kept a JSON blob under
+// `cursorAuthStatus`. Read it with node:sqlite so we don't
 // depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
 // Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
 // Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
 // ~/.config/cursor/auth.json instead.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+
+// With `cursor.storage.authTokenEncryptionAtRest`, Cursor desktop stores the token as
+// `cursor-safe-storage:v1:<Electron safeStorage ciphertext>`. Only Cursor can decrypt it,
+// so it is never a usable bearer token: skip it and let discovery reach the next store.
+const ENCRYPTED_CURSOR_TOKEN_PREFIX = "cursor-safe-storage:";
+
+// On macOS, cursor-agent keeps its login in the user's Keychain by default rather than
+// in auth.json (see cursorAgentAuthPath below).
+const CURSOR_AGENT_KEYCHAIN_SERVICE = "cursor-access-token";
+const CURSOR_AGENT_KEYCHAIN_ACCOUNT = "cursor-user";
+const KEYCHAIN_TIMEOUT_MS = 2_000;
+
+const execFileAsync = promisify(execFile);
+
+/** Runs `security` with the given arguments; resolves to trimmed stdout, or null on failure. */
+export type SecurityCommandRunner = (args: string[]) => Promise<string | null>;
+export type CursorKeychainReader = (service: string) => Promise<string | null>;
+
+async function runSecurityCommand(args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("security", args, { timeout: KEYCHAIN_TIMEOUT_MS });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function readCursorAgentKeychainToken(
+  service: string,
+  run: SecurityCommandRunner = runSecurityCommand,
+): Promise<string | null> {
+  return run(["find-generic-password", "-s", service, "-a", CURSOR_AGENT_KEYCHAIN_ACCOUNT, "-w"]);
+}
+
+function usableCursorToken(value: string | null | undefined): string | null {
+  const token = value?.trim();
+  if (!token || token.startsWith(ENCRYPTED_CURSOR_TOKEN_PREFIX)) return null;
+  return token;
+}
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -107,14 +148,15 @@ function readItemTableValue(db: CursorStateDatabase, key: string): string | null
 }
 
 function cursorTokenFromDb(db: CursorStateDatabase): string | null {
-  const modern = readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY)?.trim();
+  const modern = usableCursorToken(readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY));
   if (modern) return modern;
 
   const legacy = readItemTableValue(db, CURSOR_LEGACY_AUTH_KEY);
   if (legacy) {
     try {
       const parsed = CursorAuthStatusSchema.parse(JSON.parse(legacy));
-      if (parsed.accessToken) return parsed.accessToken;
+      const token = usableCursorToken(parsed.accessToken);
+      if (token) return token;
     } catch {
       // ignore a malformed legacy blob
     }
@@ -149,7 +191,7 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
   if (!existsSync(path)) return null;
   try {
     const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    return parsed.accessToken?.trim() || null;
+    return usableCursorToken(parsed.accessToken);
   } catch {
     return null;
   }
@@ -158,8 +200,9 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
+  readKeychain: CursorKeychainReader = readCursorAgentKeychainToken,
 ): Promise<UsageReport> {
-  const token = await readToken(input);
+  const token = await readToken(input, readKeychain);
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const res = await fetchApi(
@@ -229,13 +272,20 @@ export async function fetchUsage(
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
-  if (input.store === "env") return process.env[input.locator];
-  const token =
-    input.store === "sqlite"
-      ? await readCursorTokenFromSqlite(input.locator)
-      : await readCursorTokenFromAuthJson(input.locator);
-  return token ?? undefined;
+async function readToken(
+  input: UsageInput,
+  readKeychain: CursorKeychainReader = readCursorAgentKeychainToken,
+): Promise<string | undefined> {
+  switch (input.store) {
+    case "env":
+      return usableCursorToken(process.env[input.locator]) ?? undefined;
+    case "sqlite":
+      return (await readCursorTokenFromSqlite(input.locator)) ?? undefined;
+    case "file":
+      return (await readCursorTokenFromAuthJson(input.locator)) ?? undefined;
+    case "keychain":
+      return usableCursorToken(await readKeychain(input.locator)) ?? undefined;
+  }
 }
 
 const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
@@ -258,7 +308,13 @@ function cursorAccount(token: string, input: UsageInput): UsageAccount {
   return { key: `store-${key}`, input };
 }
 
-export async function discover(): Promise<UsageAccount[]> {
+export async function discover({
+  platform = process.platform,
+  readKeychain = readCursorAgentKeychainToken,
+}: {
+  platform?: NodeJS.Platform;
+  readKeychain?: CursorKeychainReader;
+} = {}): Promise<UsageAccount[]> {
   const home = homedir();
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
     store: "env",
@@ -284,8 +340,10 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
+  if (platform === "darwin")
+    candidates.push({ store: "keychain", locator: CURSOR_AGENT_KEYCHAIN_SERVICE });
   for (const input of candidates) {
-    const token = await readToken(input);
+    const token = await readToken(input, readKeychain);
     if (token) return [cursorAccount(token, input)];
   }
   return [];
