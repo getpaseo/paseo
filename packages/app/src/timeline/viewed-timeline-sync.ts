@@ -545,6 +545,8 @@ export function createViewedTimelineOwner(input: {
   };
 }
 
+const MAX_HIDDEN_CATCH_UPS = 2;
+
 type CatchUpStatus = "running" | "complete" | "error";
 
 interface CatchUpState {
@@ -597,7 +599,9 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const sources = new Map<string, string[]>();
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
-  // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or parked.
+  // Fetches can outlive their catch-up generation when superseded or when a tab closes.
+  const inFlightCatchUps = new Set<{ agentId: string }>();
+  // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or queued.
   // Membership acknowledgement and catch-up completion drain parked requests.
   const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const visibilityCatchUpPending = new Set<string>();
@@ -754,20 +758,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         throw new Error(`Timeline page for ${agentId} hasNewer without an end cursor`);
       }
       catchUps.set(agentId, { generation, status: "complete" });
-      const pendingCatchUp = pendingCatchUps.get(agentId);
-      if (pendingCatchUp) {
-        startCatchUp(agentId, { request: pendingCatchUp, supersede: true });
-        return;
-      }
-      setVisibilityCatchUpReady(agentId);
+      if (!pendingCatchUps.has(agentId)) setVisibilityCatchUpReady(agentId);
     } catch (error) {
       if (catchUps.get(agentId)?.generation === generation) {
         catchUps.set(agentId, { generation, status: "error", request });
         setVisibilityCatchUpError([agentId], error);
         ports.reportError(error);
       }
-    } finally {
-      startAcknowledgedCatchUps();
     }
   };
 
@@ -798,6 +795,16 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     );
   };
 
+  const hiddenCatchUpSlotsAreFull = (agentId: string) => {
+    const visible = new Set(visibleAgentIds());
+    if (visible.has(agentId)) return false;
+    let hidden = 0;
+    for (const attempt of inFlightCatchUps) {
+      if (!visible.has(attempt.agentId)) hidden += 1;
+    }
+    return hidden >= MAX_HIDDEN_CATCH_UPS;
+  };
+
   const startCatchUp = (
     agentId: string,
     options: {
@@ -806,15 +813,11 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     } = {},
   ) => {
     const { request, supersede = false } = options;
-    if (freshnessChecks.has(agentId)) {
-      if (request) pendingCatchUps.set(agentId, request);
-      return;
-    }
-    if (!canCatchUp(agentId)) {
-      if (request) pendingCatchUps.set(agentId, request);
-      return;
-    }
-    if (shouldWaitForVisibleCatchUp(agentId)) {
+    if (
+      freshnessChecks.has(agentId) ||
+      !canCatchUp(agentId) ||
+      shouldWaitForVisibleCatchUp(agentId)
+    ) {
       if (request) pendingCatchUps.set(agentId, request);
       return;
     }
@@ -836,18 +839,32 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (decision === "keep") {
       return;
     }
+    if (hiddenCatchUpSlotsAreFull(agentId)) {
+      if (request) pendingCatchUps.set(agentId, request);
+      return;
+    }
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingCatchUps.delete(agentId);
     // A gap recovery pages forward to keep the coverage it extends. Without coverage there is
     // nothing to keep, so an overflowing page falls back to the latest tail, as a resume does.
+    const attempt = { agentId };
+    inFlightCatchUps.add(attempt);
+    if (current?.status === "error" && !manualRetries.has(agentId)) {
+      visibilityCatchUpErrors.delete(agentId);
+      markCatchUpOwed(agentId);
+      notifyListeners();
+    }
     void fetchUntilCurrent(
       agentId,
       generation,
       nextRequest,
       nextRequest.direction === "after" && (request === undefined || applied === undefined),
-    );
+    ).finally(() => {
+      inFlightCatchUps.delete(attempt);
+      startAcknowledgedCatchUps();
+    });
   };
 
   const startAcknowledgedCatchUps = () => {
@@ -859,13 +876,23 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     for (const agentId of ordered) {
       const pendingCatchUp = pendingCatchUps.get(agentId);
       const current = catchUps.get(agentId);
+      const retryQueued = current?.status === "error" && manualRetries.has(agentId);
       // Completion of a different chat must not bypass a failed chat's error or
       // supersede an in-flight tail that owns its parked gap recovery.
-      if (current && !(current.status === "complete" && pendingCatchUp)) continue;
+      if (current && !(pendingCatchUp && (current.status === "complete" || retryQueued))) {
+        continue;
+      }
       startCatchUp(agentId, {
         request: pendingCatchUp,
         supersede: Boolean(pendingCatchUp),
       });
+    }
+  };
+
+  const retryFailedCatchUp = (agentId: string) => {
+    const catchUp = catchUps.get(agentId);
+    if (catchUp?.status === "error") {
+      startCatchUp(agentId, { request: catchUp.request, supersede: true });
     }
   };
 
@@ -975,9 +1002,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       void reconcileMembership();
       return;
     }
-    if (catchUp?.status === "error") {
-      startCatchUp(agentId, { request: catchUp.request, supersede: true });
-    }
+    retryFailedCatchUp(agentId);
   };
 
   const commitDesiredMembership = (
@@ -1068,11 +1093,17 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       publishVisibleMembership();
     },
     replaceVisibleAgentIds(sourceId, agentIds) {
+      const previouslyVisible = new Set(visibleAgentIds());
       const normalized = normalizeAgentIds(agentIds);
       if (normalized.length === 0) sources.delete(sourceId);
       else sources.set(sourceId, normalized);
       rememberOpenedAgentIds(normalized);
       publishVisibleMembership();
+      if (active) {
+        for (const agentId of normalized) {
+          if (!previouslyVisible.has(agentId)) retryFailedCatchUp(agentId);
+        }
+      }
       startAcknowledgedCatchUps();
     },
     setActive(nextActive) {
@@ -1085,7 +1116,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       }
       const canCheck = connected && ports.canCheckFreshness();
       for (const agentId of visibleAgentIds()) {
-        if (visibilityCatchUpErrors.has(agentId)) continue;
+        if (visibilityCatchUpErrors.has(agentId)) {
+          retryFailedCatchUp(agentId);
+          continue;
+        }
         markCatchUpOwed(agentId);
         if (
           canCheck &&
