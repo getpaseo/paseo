@@ -1,25 +1,130 @@
 #!/usr/bin/env npx tsx
 
 import assert from "node:assert";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { test } from "node:test";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
+import { acquirePidLock, releasePidLock } from "../../server/src/server/pid-lock.js";
+import { createTestPaseoDaemon } from "../../server/dist/server/server/test-utils/paseo-daemon.js";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 import { startTestDaemon } from "./helpers/test-daemon.ts";
 
 console.log("=== Daemon Status Auth ===\n");
 
-const daemon = await startTestDaemon({
-  env: { PASEO_PASSWORD: "shared-secret" },
-});
+const fixtureRoot = await mkdtemp(join(tmpdir(), "paseo-cli-status-"));
+const paseoHome = join(fixtureRoot, ".paseo");
+const fixtureWorkDir = join(fixtureRoot, "work");
+const previousHome = process.env.HOME;
+const previousUserProfile = process.env.USERPROFILE;
+let fixture: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+const cliEntry = join(import.meta.dirname, "..", "dist", "index.js");
 
+interface DiagnosticCliInput {
+  args: string[];
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
+
+interface DiagnosticCliResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+// Execute argv directly: a Windows Node path must not pass through Bash string quoting.
+function runDiagnosticCli(input: DiagnosticCliInput): Promise<DiagnosticCliResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [cliEntry, ...input.args],
+      {
+        cwd: fixtureWorkDir,
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+          ),
+          PASEO_HOME: paseoHome,
+          ...input.env,
+          HOME: fixtureRoot,
+          USERPROFILE: fixtureRoot,
+        },
+        encoding: "utf8",
+        timeout: input.timeoutMs ?? 30_000,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve({ exitCode: 0, stdout, stderr });
+        } else if (!error.killed && typeof error.code === "number") {
+          resolve({ exitCode: error.code, stdout, stderr });
+        } else {
+          reject(error);
+        }
+      },
+    );
+  });
+}
+
+const providers = Object.fromEntries(
+  BUILTIN_PROVIDER_IDS.map((provider) => [
+    provider,
+    {
+      enabled: false,
+      command: { mode: "replace", argv: [join(paseoHome, "missing-provider")] },
+    },
+  ]),
+);
 try {
+  process.env.HOME = fixtureRoot;
+  process.env.USERPROFILE = fixtureRoot;
+  await mkdir(paseoHome);
+  await mkdir(fixtureWorkDir);
+  const password = hashDaemonPassword("shared-secret");
+  await writeFile(
+    join(paseoHome, "config.json"),
+    JSON.stringify({
+      version: 1,
+      daemon: {
+        listen: "127.0.0.1:0",
+        auth: { password },
+        relay: { enabled: false },
+        usage: { enabled: false },
+      },
+      agents: { providers },
+      features: {
+        dictation: { enabled: false },
+        voiceMode: { enabled: false },
+      },
+    }),
+  );
+  const disabledSpeech = { provider: "local", explicit: false, enabled: false } as const;
+  fixture = await createTestPaseoDaemon({
+    paseoHomeRoot: fixtureRoot,
+    staticDir: fixtureWorkDir,
+    cleanup: false,
+    auth: { password },
+    providerOverrides: providers,
+    mcpEnabled: false,
+    speech: {
+      providers: {
+        dictationStt: disabledSpeech,
+        voiceTurnDetection: disabledSpeech,
+        voiceStt: disabledSpeech,
+        voiceTts: disabledSpeech,
+      },
+    },
+  });
+  const daemon = fixture;
+  await acquirePidLock(paseoHome, `127.0.0.1:${daemon.port}`);
   {
     console.log("Test 1: local status uses the daemon's local credential");
-    const result = await runLocalPaseo(["daemon", "status", "--json"], {
-      PASEO_HOME: daemon.paseoHome,
-      PASEO_HOST: "",
-      PASEO_PASSWORD: "",
+    const result = await runDiagnosticCli({
+      args: ["daemon", "status", "--json"],
+      env: { PASEO_PASSWORD: "" },
     });
 
     assert.strictEqual(result.exitCode, 0, "status should still succeed");
@@ -35,10 +140,9 @@ try {
 
   {
     console.log("Test 2: status reports rejected supplied password separately");
-    const result = await runLocalPaseo(["daemon", "status", "--json"], {
-      PASEO_HOME: daemon.paseoHome,
-      PASEO_HOST: "",
-      PASEO_PASSWORD: "wrong-secret",
+    const result = await runDiagnosticCli({
+      args: ["daemon", "status", "--json"],
+      env: { PASEO_PASSWORD: "wrong-secret" },
     });
 
     assert.strictEqual(result.exitCode, 0, "status should still succeed");
@@ -53,10 +157,9 @@ try {
 
   {
     console.log("Test 3: status reaches the same daemon when password is supplied");
-    const result = await runLocalPaseo(["daemon", "status", "--json"], {
-      PASEO_HOME: daemon.paseoHome,
-      PASEO_HOST: "",
-      PASEO_PASSWORD: "shared-secret",
+    const result = await runDiagnosticCli({
+      args: ["daemon", "status", "--json"],
+      env: { PASEO_PASSWORD: "shared-secret" },
     });
 
     assert.strictEqual(result.exitCode, 0, "status should succeed with password");
@@ -68,8 +171,86 @@ try {
     assert(!("idleAgents" in status), "status should not fetch agent counts");
     console.log("✓ password-authenticated status remains reachable\n");
   }
+
+  await test("workspace ls returns an authenticated empty list", async () => {
+    const result = await runDiagnosticCli({
+      args: ["workspace", "ls", "--json"],
+      env: { PASEO_PASSWORD: "shared-secret" },
+    });
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    assert.strictEqual(result.stderr, "");
+    assert.deepStrictEqual(JSON.parse(result.stdout), []);
+  });
+
+  await test("workspace ls preserves authentication errors in JSON and human output", async () => {
+    const env = {
+      PASEO_HOME: daemon.paseoHome,
+      PASEO_HOST: "",
+      PASEO_PASSWORD: "wrong-secret",
+    };
+    const json = await runDiagnosticCli({ args: ["workspace", "ls", "--json"], env });
+    const human = await runDiagnosticCli({ args: ["workspace", "ls", "--no-color"], env });
+
+    assert.strictEqual(json.exitCode, 1);
+    assert.strictEqual(human.exitCode, 1);
+    assert.strictEqual(json.stdout, "");
+    assert.strictEqual(human.stdout, "");
+    assert.doesNotMatch(json.stderr + human.stderr, /shared-secret|wrong-secret/);
+    const message = `Cannot connect to daemon at home ${daemon.paseoHome}: Incorrect password`;
+    const details = "The daemon rejected the password. Check PASEO_PASSWORD and retry.";
+    assert.deepStrictEqual(
+      { json: JSON.parse(json.stderr), human: human.stderr.trim() },
+      {
+        json: { error: { code: "AUTH_FAILED", message, details } },
+        human: `Error: ${message}\n${details}`,
+      },
+    );
+  });
+
+  await test("workspace ls preserves unreachable errors in JSON and human output", async () => {
+    const home = await mkdtemp(join(tmpdir(), "paseo-unreachable-"));
+    const pipe = `pipe://\\\\.\\pipe\\${basename(home)}-missing`;
+    const socket = `unix://${join(home, "missing.sock")}`;
+    const endpoint = process.platform === "win32" ? pipe : socket;
+    const env = { PASEO_HOME: home, PASEO_HOST: "", PASEO_PASSWORD: "" };
+    try {
+      const json = await runDiagnosticCli({
+        args: ["workspace", "ls", "--host", endpoint, "--json"],
+        env,
+      });
+      const human = await runDiagnosticCli({
+        args: ["workspace", "ls", "--host", endpoint, "--no-color"],
+        env,
+      });
+      assert.strictEqual(json.exitCode, 1);
+      assert.strictEqual(human.exitCode, 1);
+      assert.strictEqual(json.stdout, "");
+      assert.strictEqual(human.stdout, "");
+      const { error } = JSON.parse(json.stderr);
+      const details =
+        "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.";
+      assert.strictEqual(error.code, "DAEMON_UNREACHABLE");
+      assert.strictEqual(error.details, details);
+      assert.strictEqual(
+        error.message,
+        `Cannot connect to daemon at ${endpoint}: Transport closed`,
+      );
+      assert.strictEqual(human.stderr.trim(), `Error: ${error.message}\n${details}`);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 } finally {
-  await daemon.stop();
+  try {
+    await fixture?.close();
+  } finally {
+    await releasePidLock(paseoHome);
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 // POSIX executable probing executes --version; Windows resolves executables differently.
@@ -146,4 +327,4 @@ import('node:fs').then(({appendFileSync}) => {
   }
 }
 
-console.log("=== Daemon Status Auth Tests Passed ===");
+console.log("=== Daemon Status Auth Checks Finished ===");

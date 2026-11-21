@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
-import type { CommandError, ListResult } from "../../output/index.js";
+import { connectToDaemon } from "../../utils/client.js";
+import type { ListResult } from "../../output/index.js";
 import {
   toWorkspaceRow,
   workspaceSchema,
@@ -19,14 +19,7 @@ export async function runLsCommand(
   options: WorkspaceLsOptions,
   _command: Command,
 ): Promise<ListResult<WorkspaceRow>> {
-  const host = getDaemonHost({ target: options.daemonTarget });
-  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    throw {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-    } satisfies CommandError;
-  });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const workspaces: WorkspaceRow[] = [];
     let cursor: string | undefined;
