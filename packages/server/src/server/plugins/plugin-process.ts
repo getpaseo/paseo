@@ -292,6 +292,7 @@ export function createPluginWorker(options: {
           }
         : undefined,
       command: provider.command,
+      launchWrap: provider.launchWrap,
     };
   }
 

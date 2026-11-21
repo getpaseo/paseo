@@ -81,6 +81,7 @@ import {
   formatProviderDiagnostic,
   type DiagnosticEntry,
 } from "./providers/diagnostic-utils.js";
+import { LaunchWrapUnsupportedError } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -294,6 +295,11 @@ class ProviderRuntime {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  /** The live connection's capabilities, connecting first when no connection exists yet. */
+  async connectedCapabilities(): Promise<readonly string[]> {
+    return (await this.getConnection()).capabilities;
   }
 
   get isClosed(): boolean {
@@ -1052,6 +1058,7 @@ function createPluginProviderDefinition(
     defaultModeId: null,
     modes: [],
     supportsExactMcpPreapproval: true,
+    supportsLaunchWrap: registration.launchWrap === true,
     createClient,
   };
 }
@@ -1099,6 +1106,15 @@ class PluginAgentClient implements AgentClient {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
+  }
+
+  async requireLaunchWrap(): Promise<void> {
+    if (!(await this.runtime.connectedCapabilities()).includes("session.launch_wrap")) {
+      throw new LaunchWrapUnsupportedError(
+        this.provider,
+        `Provider '${this.provider}' declares launch wrap support, but its connection does not offer session.launch_wrap`,
+      );
+    }
   }
 
   async createSession(
@@ -2143,6 +2159,7 @@ function mapSessionConfig(
     providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,
+    ...(launchContext?.wrap ? { wrap: launchContext.wrap } : {}),
   };
 }
 

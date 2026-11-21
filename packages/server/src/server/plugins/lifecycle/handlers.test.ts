@@ -398,3 +398,109 @@ test("session-open instructions compose, survive old hooks, and are ignored for 
   );
   expect(history).not.toHaveProperty("appendSystemPrompt");
 });
+
+const openInput = {
+  agentId: "agent",
+  workspaceId: null,
+  provider: "codex",
+  cwd: "/project",
+  reason: "resume",
+  purpose: "interactive",
+  env: {},
+  title: null,
+  labels: {},
+  metadata: {},
+  tools: [],
+  mcpServers: {},
+};
+
+test("a session-open hook can select a launch wrap", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: ["/usr/local/bin/sandbox", "--profile", "a b"],
+  }));
+  const output = await hooks.invoke("open", "agent.open.before", openInput, paseo);
+  expect(output).toMatchObject({ wrap: ["/usr/local/bin/sandbox", "--profile", "a b"] });
+});
+
+test("a session-open hook result with an unknown key fails the open", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    notAHookField: true,
+  }));
+  await expect(hooks.invoke("open", "agent.open.before", openInput, paseo)).rejects.toThrow(
+    /notAHookField/,
+  );
+});
+
+test("a later session-open hook that omits the wrap keeps the earlier one", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: ["/usr/local/bin/sandbox"],
+  }));
+  hooks.addHook("agent.open.before", async ({ request }) => {
+    const { wrap: _wrap, ...rest } = request;
+    return { ...rest, env: { ...rest.env, LATER: "1" } };
+  });
+  expect(await hooks.invoke("open", "agent.open.before", openInput, paseo)).toMatchObject({
+    wrap: ["/usr/local/bin/sandbox"],
+    env: { LATER: "1" },
+  });
+});
+
+test("a later session-open hook may repeat the same wrap", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  for (let index = 0; index < 2; index++) {
+    hooks.addHook("agent.open.before", async ({ request }) => ({
+      ...request,
+      wrap: ["/usr/local/bin/sandbox", "--profile", "a b"],
+    }));
+  }
+  expect(await hooks.invoke("open", "agent.open.before", openInput, paseo)).toMatchObject({
+    wrap: ["/usr/local/bin/sandbox", "--profile", "a b"],
+  });
+});
+
+test("a later session-open hook that returns a different wrap fails the open", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: ["/usr/local/bin/sandbox"],
+  }));
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: ["/usr/local/bin/other"],
+  }));
+  await expect(hooks.invoke("open", "agent.open.before", openInput, paseo)).rejects.toThrow(
+    "cannot change a wrap",
+  );
+});
+
+test("a session-open wrap needs an absolute executable", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({ ...request, wrap: ["sandbox"] }));
+  await expect(hooks.invoke("open", "agent.open.before", openInput, paseo)).rejects.toThrow(
+    "must be absolute",
+  );
+});
+
+test("a history open keeps the wrap while tools and MCP servers are stripped", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: ["/usr/local/bin/sandbox"],
+    mcpServers: { extra: { type: "stdio", command: "/bin/server" } },
+    appendSystemPrompt: ["history"],
+  }));
+  const history = await hooks.invoke(
+    "history",
+    "agent.open.before",
+    { ...openInput, purpose: "history" },
+    paseo,
+  );
+  expect(history).toMatchObject({ wrap: ["/usr/local/bin/sandbox"], tools: [], mcpServers: {} });
+  expect(history).not.toHaveProperty("appendSystemPrompt");
+});

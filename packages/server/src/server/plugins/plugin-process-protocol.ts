@@ -24,6 +24,7 @@ export interface PluginProviderMetadata {
   hasStatus?: boolean;
   installation?: PluginProviderInstallationMetadata;
   command?: readonly [string, ...string[]];
+  launchWrap?: boolean;
   id: string;
   label: string;
   description?: string;
@@ -193,6 +194,7 @@ const providerMetadataSchema = z
       .strict()
       .optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
+    launchWrap: z.boolean().optional(),
   })
   .strict();
 const usageSourceMetadataSchema = z

@@ -78,6 +78,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   applyToolPolicy: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -101,6 +102,7 @@ export interface RegisteredProviderDefinition extends AgentProviderDefinition {
   requiresConfiguration?: boolean;
   iconSvg?: string;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
 }
 
@@ -148,12 +150,14 @@ interface ResolvedProvider {
 
 interface ProviderContract {
   supportsExactMcpPreapproval: boolean;
+  /** Sessions spawn their harness behind an `agent.open.before` wrap. */
+  supportsLaunchWrap?: boolean;
   applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
 }
 
 const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
   claude: { supportsExactMcpPreapproval: true },
-  codex: { supportsExactMcpPreapproval: true },
+  codex: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
   opencode: { supportsExactMcpPreapproval: true },
 };
 
@@ -626,6 +630,7 @@ function wrapClientProvider(
       ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
       : undefined,
     resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
+    requireLaunchWrap: inner.requireLaunchWrap?.bind(inner),
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
@@ -670,6 +675,7 @@ function createRegistryEntry(
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
+    supportsLaunchWrap: resolved.contract.supportsLaunchWrap === true,
     applyToolPolicy: (config, toolPolicy) => {
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
         throw new ToolPolicyUnsupportedError(provider);
@@ -740,7 +746,7 @@ function createResolvedProviderClient(
   const inner = resolved.createBaseClient(logger);
   const profileModels = resolveConfiguredModels(provider, inner, resolved.profileModels);
   const additionalModels = resolveConfiguredModels(provider, inner, resolved.additionalModels);
-  return wrapClientProvider(
+  const client = wrapClientProvider(
     provider,
     inner,
     profileModels,
@@ -748,6 +754,8 @@ function createResolvedProviderClient(
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
   );
+  client.supportsLaunchWrap = resolved.contract.supportsLaunchWrap === true;
+  return client;
 }
 
 interface RegisteredProvider {
@@ -962,6 +970,7 @@ export function buildProviderRegistry(
         createClient: definition.createClient,
         contract: {
           supportsExactMcpPreapproval: definition.supportsExactMcpPreapproval,
+          supportsLaunchWrap: definition.supportsLaunchWrap,
         },
       }),
     );
