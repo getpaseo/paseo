@@ -40,7 +40,17 @@ describe("native terminal typed input", () => {
     expect(input.receiveKeyPress("p")).toEqual({ data: "p", shouldClear: false });
     expect(input.receiveKeyPress("w")).toEqual({ data: "w", shouldClear: false });
     expect(input.receiveKeyPress("d")).toEqual({ data: "d", shouldClear: false });
-    expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
+  });
+
+  it("waits for native submit instead of submitting Return keypresses", () => {
+    const input = createTerminalTextInputState();
+    input.receiveTextChange("한글");
+
+    for (const key of ["Enter", "Return", "return"]) {
+      expect(input.receiveKeyPress(key)).toEqual({ data: "", shouldClear: false });
+    }
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
   });
 
   it("does not duplicate printable keypresses when the native text change also arrives", () => {
@@ -97,7 +107,7 @@ describe("native terminal typed input", () => {
     for (const key of "echo hello") {
       input.receiveKeyPress(key);
     }
-    expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
 
     input.reset();
 
@@ -105,17 +115,37 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("y")).toEqual({ data: "y", shouldClear: false });
   });
 
-  it("ignores late newline text change after Return keypress submits", () => {
+  it("clears a late newline text change without submitting the command again", () => {
     const input = createTerminalTextInputState();
 
     for (const key of "echo hello") {
       input.receiveKeyPress(key);
     }
-    expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
 
     input.reset();
 
-    expect(input.receiveTextChange("echo hello\n")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("echo hello\n")).toEqual({ data: "", shouldClear: true });
+  });
+
+  it("clears a late submit update before the next Hangul composition starts", () => {
+    const input = createTerminalTextInputState();
+    input.receiveTextChange("echo hello");
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
+    input.reset();
+
+    // Gboard sends this after the Enter handler clears the native input.
+    // Leaving it in the editor makes the next ㅎ arrive as "echo hello\nㅎ",
+    // which is discarded as multiline input instead of starting 한글.
+    expect(input.receiveTextChange("echo hello\n")).toEqual({ data: "", shouldClear: true });
+    input.reset();
+
+    expect(input.receiveTextChange("ㅎ").data).toBe("ㅎ");
+    expect(input.receiveTextChange("하").data).toBe("\x7f하");
+    expect(input.receiveTextChange("한").data).toBe("\x7f한");
+    expect(input.receiveTextChange("한ㄱ").data).toBe("ㄱ");
+    expect(input.receiveTextChange("한그").data).toBe("\x7f그");
+    expect(input.receiveTextChange("한글").data).toBe("\x7f글");
   });
 
   it("accepts the same long keyboard clipboard item twice", () => {
@@ -133,9 +163,7 @@ describe("native terminal typed input", () => {
     const input = createTerminalTextInputState();
 
     expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
-    expect(input.receiveKeyPress("Enter")).toEqual({ data: "\r", shouldClear: true });
-    expect(input.receiveKeyPress("Return")).toEqual({ data: "\r", shouldClear: true });
-    expect(input.receiveKeyPress("return")).toEqual({ data: "\r", shouldClear: true });
+    expect(input.receiveSubmit()).toEqual({ data: "\r", shouldClear: true });
     expect(input.receiveTextChange("hello\n")).toEqual({ data: "", shouldClear: true });
   });
 
