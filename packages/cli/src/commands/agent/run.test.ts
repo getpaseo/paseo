@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
+  awaitStructuredTurn,
+  fetchStructuredOutput,
   resolveExistingRunWorkspace,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
+  type StructuredTurnClient,
 } from "./run";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
@@ -167,5 +170,98 @@ describe("runRunCommand option validation", () => {
       { newWorkspace: "worktree", worktreeMode: "container" },
       /Unsupported worktree mode/,
     );
+  });
+
+  it.each([
+    ["--output-schema with --no-wait", { outputSchema: "{}", wait: false }, "INVALID_OPTIONS"],
+    ["--max-retries without --output-schema", { maxRetries: "0" }, "INVALID_OPTIONS"],
+    [
+      "a --max-retries that is not a count",
+      { outputSchema: "{}", maxRetries: "-1" },
+      "INVALID_MAX_RETRIES",
+    ],
+  ])("rejects %s", async (_name, options, code) => {
+    await expect(
+      runRunCommand("do something", { ...options, daemonTarget }, {} as never),
+    ).rejects.toMatchObject({ code });
+  });
+});
+
+describe("structured output retries", () => {
+  const schema = {
+    type: "object",
+    properties: { summary: { type: "string" } },
+    required: ["summary"],
+    additionalProperties: false,
+  };
+
+  it("fails on the first mismatch with --max-retries 0 and hands back the evidence", async () => {
+    const caller = vi.fn().mockResolvedValue('{"summary":1}');
+
+    await expect(fetchStructuredOutput(caller, "describe it", schema, 0)).rejects.toMatchObject({
+      code: "OUTPUT_SCHEMA_FAILED",
+      details: {
+        validationErrors: [expect.stringContaining("/summary")],
+        lastResponse: '{"summary":1}',
+      },
+    });
+    expect(caller).toHaveBeenCalledTimes(1);
+  });
+
+  it("succeeds on a retry and sends the errors back with the schema", async () => {
+    const caller = vi
+      .fn()
+      .mockResolvedValueOnce('{"summary":1}')
+      .mockResolvedValueOnce('{"summary":"fixed"}');
+
+    await expect(fetchStructuredOutput(caller, "describe it", schema, 1)).resolves.toEqual({
+      summary: "fixed",
+    });
+    expect(caller).toHaveBeenCalledTimes(2);
+    expect(caller.mock.calls[1]?.[0]).toContain("/summary");
+  });
+});
+
+describe("awaitStructuredTurn", () => {
+  function clientFinishing(state: Record<string, unknown>, timelineText?: string) {
+    return {
+      waitForFinish: vi.fn().mockResolvedValue(state),
+      fetchAgentTimeline: vi.fn().mockResolvedValue({
+        entries: timelineText ? [{ item: { type: "assistant_message", text: timelineText } }] : [],
+      }),
+    } as unknown as StructuredTurnClient;
+  }
+
+  it("reads the timeline under the resolved id when the daemon sent no last message", async () => {
+    const client = clientFinishing(
+      { status: "idle", lastMessage: null, final: { id: "agent-full-id" } },
+      '{"a":2}',
+    );
+
+    await expect(awaitStructuredTurn(client, "agent", 1000)).resolves.toBe('{"a":2}');
+    expect(client.fetchAgentTimeline).toHaveBeenCalledWith("agent-full-id", expect.anything());
+  });
+
+  it("with a mark, takes only replies after it and only from the same epoch", async () => {
+    const turn = (epoch: string, seq: number) =>
+      awaitStructuredTurn(
+        {
+          waitForFinish: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "old" }),
+          fetchAgentTimeline: vi.fn().mockResolvedValue({
+            epoch,
+            entries: [
+              { seqStart: 1, item: { type: "assistant_message", text: "old" } },
+              { seqStart: 3, item: { type: "assistant_message", text: "new" } },
+            ],
+          }),
+        } as unknown as StructuredTurnClient,
+        "agent-1",
+        1000,
+        { epoch: "e1", seq },
+      );
+
+    await expect(turn("e1", 2)).resolves.toBe("new");
+    await expect(turn("e1", 3)).rejects.toMatchObject({ kind: "empty" });
+    await expect(turn("e2", 2)).rejects.toMatchObject({ kind: "empty" });
   });
 });
