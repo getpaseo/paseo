@@ -1328,7 +1328,8 @@ export const ru: TranslationResources = {
       title: "Настроить скрипты worktree",
       description:
         "Добавьте команды настройки для автоматической установки зависимостей и подготовки новых worktree.",
-      openProjectSettings: "Открыть настройки проекта",
+      askAgent: "Поручить агенту",
+      addManually: "Добавить вручную",
     },
     project: {
       actions: {
