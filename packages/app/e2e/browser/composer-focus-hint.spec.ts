@@ -73,6 +73,34 @@ async function placeholderOverlaps(input: Locator, hint: Locator): Promise<boole
   }, hintBox);
 }
 
+async function recordFirstVisibleHint(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    function sample() {
+      const root = document.querySelector('[data-testid="message-input-root"]');
+      const input = root?.querySelector("textarea");
+      const hint = Array.from(root?.querySelectorAll("div") ?? []).find(
+        (element) => !element.childElementCount && element.textContent?.endsWith("pour saisir"),
+      );
+      if (!input || !hint || Number(getComputedStyle(hint).opacity) === 0) {
+        requestAnimationFrame(sample);
+        return;
+      }
+
+      const inputRight = input.getBoundingClientRect().right;
+      const textRight = inputRight - parseFloat(getComputedStyle(input).paddingRight);
+      const hintLeft = hint.getBoundingClientRect().left;
+      Reflect.set(window, "__firstVisibleHintHasSpace", textRight <= hintLeft + 1);
+    }
+    requestAnimationFrame(sample);
+  });
+}
+
+async function expectFirstVisibleHintHasSpace(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "__firstVisibleHintHasSpace")))
+    .toBe(true);
+}
+
 const FRENCH_LAYOUTS = [
   { name: "phone width", width: 390, placeholder: "Message, @fichiers, /commandes" },
   {
@@ -95,16 +123,18 @@ for (const layout of FRENCH_LAYOUTS) {
 
       try {
         await useLanguage(page, "fr");
+        await recordFirstVisibleHint(page);
         await openAgentRoute(page, agent);
         const input = page.getByRole("textbox", { name: "Écrire à l’agent…" }).first();
         await expect(input).toBeVisible();
         await expect(input).toHaveAttribute("placeholder", layout.placeholder);
-        await input.evaluate((element) => (element as HTMLTextAreaElement).blur());
+        await input.blur();
 
         const hint = page.getByText(/pour saisir$/).first();
         await expect(hint).toBeVisible();
         // The input takes the hint's width on the render after the hint lays out.
         await expect.poll(() => placeholderOverlaps(input, hint)).toBe(false);
+        await expectFirstVisibleHintHasSpace(page);
       } finally {
         await agent.cleanup();
       }

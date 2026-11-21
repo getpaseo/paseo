@@ -677,20 +677,6 @@ function MessageInputOverlay({
   return null;
 }
 
-function FocusHint({
-  label,
-  onLayout,
-}: {
-  label: string;
-  onLayout: (event: LayoutChangeEvent) => void;
-}) {
-  return (
-    <Text style={styles.focusHintText} pointerEvents="none" onLayout={onLayout}>
-      {label}
-    </Text>
-  );
-}
-
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -742,23 +728,30 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
     [onRenderedLinesChange],
   );
   const { isActiveComposer } = useComposerKeyboardScope();
-  const [focusHintWidth, setFocusHintWidth] = useState(0);
-  const handleFocusHintLayout = useCallback((event: LayoutChangeEvent) => {
-    setFocusHintWidth(event.nativeEvent.layout.width);
-  }, []);
-  const isFocusHintShown =
+  const { focusHintLabel, focusHintVisible, focusInputKeys } = props;
+  const [focusHintLayout, setFocusHintLayout] = useState<{ label: string; width: number }>();
+  const handleFocusHintLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setFocusHintLayout({ label: focusHintLabel, width: event.nativeEvent.layout.width });
+    },
+    [focusHintLabel],
+  );
+  const shouldShowFocusHint =
     isActiveComposer &&
-    props.focusHintVisible &&
-    Boolean(props.focusInputKeys) &&
-    props.focusHintLabel.trim().length > 0;
-  // The hint sits over the input's top-right corner, so the placeholder wraps
-  // before it instead of running underneath.
+    focusHintVisible &&
+    Boolean(focusInputKeys) &&
+    focusHintLabel.trim().length > 0;
+  const focusHintWidth =
+    shouldShowFocusHint && focusHintLayout?.label === focusHintLabel
+      ? focusHintLayout.width
+      : undefined;
+  // Make room for the hint in the same render that reveals it.
   const textInputStyle = useMemo(
     () =>
-      isFocusHintShown
-        ? [props.textInputStyle, { paddingRight: focusHintWidth }]
-        : props.textInputStyle,
-    [focusHintWidth, isFocusHintShown, props.textInputStyle],
+      focusHintWidth === undefined
+        ? props.textInputStyle
+        : [props.textInputStyle, { paddingRight: focusHintWidth }],
+    [focusHintWidth, props.textInputStyle],
   );
   if (props.readOnly) {
     return (
@@ -800,8 +793,15 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      {isFocusHintShown ? (
-        <FocusHint label={props.focusHintLabel} onLayout={handleFocusHintLayout} />
+      {shouldShowFocusHint ? (
+        <Text
+          key={focusHintLabel}
+          style={[styles.focusHintText, focusHintWidth === undefined && styles.unmeasuredFocusHint]}
+          pointerEvents="none"
+          onLayout={handleFocusHintLayout}
+        >
+          {focusHintLabel}
+        </Text>
       ) : null}
     </View>
   );
@@ -2478,6 +2478,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
   },
+  unmeasuredFocusHint: { opacity: 0 },
   textInput: {
     // Preserve the controls when an ancestor constrains an overlong draft.
     flexShrink: 1,
