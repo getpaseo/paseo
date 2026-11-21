@@ -2375,8 +2375,9 @@ export const it: TranslationResources = {
       resetsIn: "si azzera tra {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "si esaurisce ora",
-      runsOutIn: "si esaurisce tra {{duration}}",
+      limitReached: "Limite raggiunto",
+      mayHaveRunOut: "La quota potrebbe essere esaurita",
+      runsOutAt: "si esaurisce {{time}}",
       justNow: "proprio ora",
       daysAgo: "{{value}} g fa",
       hoursAgo: "{{value}} h fa",
@@ -2988,7 +2989,7 @@ export const it: TranslationResources = {
         updateTitle: "Aggiornare le skill di Paseo?",
         uninstallTitle: "Disinstallare le skill di Paseo?",
         uninstallMessage:
-          "Rimuove tutte le skill di orchestrazione di Paseo da ~/.agents, ~/.claude, ~/.codex su questo host.",
+          "Rimuove tutte le skill di orchestrazione di Paseo da ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config su questo host.",
         choose: "Scegli skill",
         chooseAll: "Tutte le skill",
         chooseAllHint:
@@ -2997,7 +2998,7 @@ export const it: TranslationResources = {
         chooseEmpty: "Questo host non include skill.",
         removeTitle: "Rimuovere le skill deselezionate?",
         removeMessage:
-          "{{skills}} verranno eliminate da ~/.agents, ~/.claude e ~/.codex su questo host. Verrà eliminato anche tutto ciò che hai aggiunto nelle cartelle di queste skill.",
+          "{{skills}} verranno eliminate da ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config su questo host. Verrà eliminato anche tutto ciò che hai aggiunto nelle cartelle di queste skill.",
         saveFailed: "Impossibile salvare la selezione delle skill.",
         actions: {
           update: "Aggiorna",
