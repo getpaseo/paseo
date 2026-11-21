@@ -2406,6 +2406,60 @@ async function getUntrackedDiffText(
   };
 }
 
+export type CheckoutIdentity =
+  | { isGit: false }
+  | {
+      isGit: true;
+      repoRoot: string;
+      mainRepoRoot: string | null;
+      currentBranch: string | null;
+      remoteUrl: string | null;
+      isPaseoOwnedWorktree: boolean;
+    };
+
+/**
+ * What a checkout is, without the state of its files. Reports the same identity fields as
+ * `getCheckoutStatus` but never scans the working tree (`status`), compares against a base, or
+ * counts commits, so reading many checkouts in the background stays cheap.
+ */
+export async function getCheckoutIdentity(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<CheckoutIdentity> {
+  const inspected = await inspectCheckoutContext(cwd, context);
+  if (!inspected) {
+    return { isGit: false };
+  }
+  const { worktreeRoot, currentBranch, remoteUrl, paseoWorktree } = inspected;
+  const mainRepoRoot = await getMainRepoRootFromCommonDir(
+    cwd,
+    inspected.gitCommonDir,
+    context,
+  ).catch(() => null);
+  // `getCheckoutStatus` reports a worktree as Paseo-owned only when it also resolves a base.
+  const isPaseoOwnedWorktree =
+    paseoWorktree.isPaseoOwnedWorktree &&
+    Boolean(
+      storedBaseRefFromMetadata(await readPaseoWorktreeMetadata(worktreeRoot)) ??
+      (await resolveBaseRef(cwd, context)),
+    );
+  const isLinkedCheckout = mainRepoRoot !== null && resolve(mainRepoRoot) !== resolve(worktreeRoot);
+  let reportedMainRepoRoot: string | null = null;
+  if (isPaseoOwnedWorktree) {
+    reportedMainRepoRoot = mainRepoRoot ?? worktreeRoot;
+  } else if (isLinkedCheckout) {
+    reportedMainRepoRoot = mainRepoRoot;
+  }
+  return {
+    isGit: true,
+    repoRoot: worktreeRoot,
+    mainRepoRoot: reportedMainRepoRoot,
+    currentBranch,
+    remoteUrl,
+    isPaseoOwnedWorktree,
+  };
+}
+
 export async function getCheckoutStatus(
   cwd: string,
   context?: CheckoutContext,
