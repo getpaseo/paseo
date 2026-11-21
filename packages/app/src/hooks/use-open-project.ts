@@ -56,13 +56,16 @@ export function useOpenProject(
   );
 }
 
+export interface CloneGithubProjectRequest {
+  repo: string;
+  targetDirectory: string;
+  cloneProtocol?: ProjectGithubCloneProtocol;
+  directoryName?: string;
+}
+
 export function useCloneGithubProject(
   serverId: string | null,
-): (
-  repo: string,
-  targetDirectory: string,
-  cloneProtocol?: ProjectGithubCloneProtocol,
-) => Promise<OpenProjectResult> {
+): (request: CloneGithubProjectRequest) => Promise<OpenProjectResult> {
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
@@ -78,12 +81,10 @@ export function useCloneGithubProject(
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
-    async (repo: string, targetDirectory: string, cloneProtocol?: ProjectGithubCloneProtocol) => {
+    async (request: CloneGithubProjectRequest) => {
       return cloneGithubProjectDirectly({
         serverId: normalizedServerId,
-        repo,
-        targetDirectory,
-        ...(cloneProtocol ? { cloneProtocol } : {}),
+        ...request,
         isConnected,
         client,
         upsertProject,

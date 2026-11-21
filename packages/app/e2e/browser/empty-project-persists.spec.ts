@@ -5,6 +5,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import {
   addProjectFlowInput,
   chooseAddProjectMethod,
+  confirmAddProjectName,
   openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
 import { expectOpenedProject } from "../support/helpers/project-picker-ui";
@@ -58,6 +59,7 @@ async function addProjectFromPicker(page: Page, projectPath: string): Promise<st
   const input = addProjectFlowInput(page);
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
+  await confirmAddProjectName(page);
 
   const projectRow = page
     .locator('[data-testid^="sidebar-project-row-"]')
@@ -93,6 +95,7 @@ test.describe("Project picker search", () => {
     const suggestion = page.getByText(projectPickerFixture.projectName, { exact: false }).first();
     await expect(suggestion).toBeVisible({ timeout: 30_000 });
     await suggestion.click();
+    await confirmAddProjectName(page);
 
     const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
     projectPickerFixture.rememberProjectId(projectId);

@@ -32,6 +32,7 @@ interface RecordedClone {
   repo: string;
   targetDirectory: string;
   cloneProtocol?: "https" | "ssh";
+  directoryName?: string;
 }
 
 function createFakeSession() {
@@ -199,6 +200,32 @@ describe("cloneGithubProjectDirectly", () => {
       },
     ]);
     expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
+  });
+
+  it("clones into the named directory when one is given", async () => {
+    const session = createFakeSession();
+    const github = createFakeGithubCloneClient(buildProjectPayload());
+
+    await cloneGithubProjectDirectly({
+      serverId: SERVER_ID,
+      repo: "vitejs/devtools",
+      targetDirectory: "~/dev",
+      cloneProtocol: "https",
+      directoryName: "vite-devtools",
+      isConnected: true,
+      client: github,
+      upsertProject: session.upsertProject,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+    });
+
+    expect(github.clones).toEqual([
+      {
+        repo: "vitejs/devtools",
+        targetDirectory: "~/dev",
+        cloneProtocol: "https",
+        directoryName: "vite-devtools",
+      },
+    ]);
   });
 
   it("does not register a project when cloning fails", async () => {

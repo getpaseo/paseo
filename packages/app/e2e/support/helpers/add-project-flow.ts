@@ -7,7 +7,8 @@ export type AddProjectFlowPage =
   | "github-search"
   | "github-location"
   | "new-directory-parent"
-  | "new-directory-name";
+  | "new-directory-name"
+  | "project-name";
 
 export type AddProjectMethod = "directory-search" | "browse" | "github" | "new-directory";
 
@@ -68,6 +69,12 @@ export async function chooseAddProjectMethod(page: Page, method: AddProjectMetho
   if (method !== "browse") {
     await expectAddProjectPage(page, METHOD_DESTINATIONS[method]);
   }
+}
+
+export async function confirmAddProjectName(page: Page): Promise<void> {
+  await expectAddProjectPage(page, "project-name");
+  await expect(addProjectFlowInput(page)).toBeFocused();
+  await page.keyboard.press("Enter");
 }
 
 export async function expectNewWorkspaceForAddedProject(
