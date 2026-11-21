@@ -1,4 +1,4 @@
-import { en, type TranslationResources } from "./en";
+import type { TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
@@ -446,7 +446,7 @@ export const fr: TranslationResources = {
     },
   },
   importSession: {
-    chooseHostTitle: en.importSession.chooseHostTitle,
+    chooseHostTitle: "Importer depuis un hôte",
     title: "Importer une session",
     searchPlaceholder: "Rechercher des sessions…",
     scope: {
@@ -1303,6 +1303,9 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    workspaces: {
+      title: "Espaces de travail",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d’hôte",
@@ -1512,7 +1515,25 @@ export const fr: TranslationResources = {
       detail: "Arrêt du daemon local.",
     },
     daemon: {
-      lifecycle: en.desktop.daemon.lifecycle,
+      lifecycle: {
+        owned: "Lancé par cette session de l’application de bureau",
+        attached: "Rattaché à un daemon existant",
+        ownedMessage: "Ce daemon a été lancé par cette session de l’application de bureau.",
+        attachedMessage:
+          "Ce daemon n’a pas été lancé par cette session de l’application de bureau.",
+        stopTitle: "Arrêter le daemon local ?",
+        stopMessage:
+          "{{ownership}}\nRépertoire Paseo : {{home}}\nPID du superviseur : {{pid}}\nLe travail des agents en cours sera interrompu.",
+        stop: "Arrêter le daemon",
+        stopping: "Arrêt…",
+        stopFailed: "Impossible d’arrêter le daemon",
+        pauseAttached:
+          "Suspendre la gestion automatique du daemon ? Le daemon rattaché continuera de tourner.",
+        pause: "Suspendre la gestion",
+        workerUpdated: "Worker mis à jour vers la version {{version}}",
+        supervisorRefresh:
+          "Le superviseur en cours d’exécution conserve son code d’origine. Son lanceur doit l’arrêter puis le redémarrer pour le mettre à jour.",
+      },
       title: "Daemon",
       status: {
         title: "Statut",
@@ -2403,7 +2424,49 @@ export const fr: TranslationResources = {
       diagnostics: "Diagnostic",
       about: "À propos",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "Emplacement d’ouverture",
+        destinations: {
+          main: "Panneau principal",
+          side: "Sur le côté",
+          explorer: "Barre latérale de l’explorateur",
+        },
+        sources: {
+          explorerFiles: {
+            label: "Clic sur un fichier dans la barre latérale de l’explorateur",
+            description:
+              "Ouvrir les fichiers sélectionnés dans la barre latérale de l’explorateur à côté de votre travail",
+          },
+          diffs: {
+            label: "Clic sur une modification dans l’explorateur ou une conversation",
+            description:
+              "Ouvrir les diffs de l’explorateur et des conversations d’agent à côté de votre travail",
+          },
+          chatFiles: {
+            label: "Clic sur un fichier dans une conversation d’agent",
+            description:
+              "Ouvrir les liens de fichiers et les fichiers des appels d’outils à côté de la conversation",
+          },
+          diffFiles: {
+            label: "Clic sur un fichier dans un diff",
+            description:
+              "Ouvrir les fichiers source sélectionnés depuis un diff à côté de celui-ci",
+          },
+          subagents: {
+            label: "Clic sur un sous-agent dans une conversation d’agent",
+            description: "Ouvrir les sous-agents à côté de leur agent parent",
+          },
+          pullRequests: {
+            label: "Clic sur une pull request dans la barre latérale de l’explorateur",
+            description: "Ouvrir les détails de la pull request à côté de Modifications",
+          },
+          serviceUrls: {
+            label: "Clic sur l’URL de service d’un script",
+          },
+        },
+      },
+    },
     editor: {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
@@ -2517,7 +2580,7 @@ export const fr: TranslationResources = {
         extracting: "Extraction...",
         delete: "Supprimer",
         deleteAction: "Supprimer {{label}}",
-        deleteTitle: "Supprimer {{label}} ?",
+        deleteTitle: "Supprimer {{label}} ?",
         deleteMessage: "Cela libère {{size}}. Vous pourrez le retélécharger plus tard.",
         languages: "Langues de {{label}}",
         moreLanguages: "{{languages}} et {{count}} autres",
@@ -2914,10 +2977,13 @@ export const fr: TranslationResources = {
         rowHint: "Scannez un QR code ou copiez un lien pour connecter votre téléphone à cet hôte",
       },
       skills: {
-        ...en.settings.host.skills,
         sectionTitle: "Skills d’orchestration",
         title: "Skills d’orchestration",
         description: "Apprenez à vos agents à utiliser les outils Paseo",
+        docs: "Skills",
+        openDocs: "Ouvrir la documentation des skills",
+        unavailable: "Connectez-vous à cet hôte pour gérer les skills d’orchestration",
+        unsupported: "Mettez à jour cet hôte pour gérer les skills d’orchestration",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les skills Paseo ?",
         uninstallTitle: "Désinstaller les skills Paseo ?",

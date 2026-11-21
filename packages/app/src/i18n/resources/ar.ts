@@ -1273,6 +1273,9 @@ export const ar: TranslationResources = {
     pinned: {
       title: "المثبتة",
     },
+    workspaces: {
+      title: "مساحات العمل",
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",
