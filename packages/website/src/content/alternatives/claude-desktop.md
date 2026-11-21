@@ -7,9 +7,9 @@ order: 55
 
 # Paseo vs Claude Desktop
 
-Claude Desktop is Anthropic's app for Claude Chat, Cowork, and Claude Code on macOS, Windows, and Linux.
+Claude Desktop is Anthropic's app for Claude Chat, Cowork, and Claude Code on macOS, Windows, and Linux. Claude Code itself is available in Claude Desktop, terminal, IDE, web, and mobile Remote Control workflows.
 
-Paseo is an open source agentic development environment. Run parallel agents in separate worktrees, edit files, review diffs and pull requests, and test your app with terminals and a built-in desktop browser. Available on desktop, mobile, web, and CLI under Apache-2.0.
+Paseo is a GUI-based open source agentic development environment. Run parallel agents from different providers in separate worktrees, edit files, review diffs and pull requests, and test your app with terminals and a built-in desktop browser. Available on desktop, mobile, web, and CLI under Apache-2.0.
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -90,7 +90,7 @@ Paseo also gives each worktree its own dev server URL. Two agents running their 
 
 Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-speech can run locally on your device.
 
-Claude supports voice in Claude's own mobile and app surfaces. Claude Code itself is available in Claude Desktop, terminal, IDE, web, and mobile Remote Control workflows.
+Claude supports voice in Claude's own mobile and app surfaces.
 
 ## Comparison
 
