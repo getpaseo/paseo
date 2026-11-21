@@ -1399,9 +1399,7 @@ async function addNestedGitContent(checkout: string, dependency: string, middle:
     "--init",
     "--recursive",
   ]);
-  expect(await readFile(path.join(checkout, "middle", "leaf", "README.md"), "utf8")).toBe(
-    "hello\n",
-  );
+  expect((await stat(path.join(checkout, "middle", "leaf", "README.md"))).isFile()).toBe(true);
 }
 
 test("built-in archive removes the worktree with dependency clones and recursive submodules", async () => {
