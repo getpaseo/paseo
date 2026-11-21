@@ -87,6 +87,7 @@
 - Fixed an error toast that never closed when marking a chat as read failed ([#9837](https://github.com/getpaseo/paseo/pull/9837))
 - Fixed wait results and finish notifications after a daemon restart joining an agent's self-started reply to the reply before it ([#9846](https://github.com/getpaseo/paseo/pull/9846))
 - Fixed Codex chats staying loaded in the daemon until restart when a client opened them only to read their history ([#9859](https://github.com/getpaseo/paseo/pull/9859) by [@Spshulem](https://github.com/Spshulem))
+- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8269](https://github.com/getpaseo/paseo/pull/8269))
 
 ## 0.16.0 - 2026-11-16
 
