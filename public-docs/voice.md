@@ -142,7 +142,18 @@ Keys and base URLs follow the fallback rule above.
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs
 - `PASEO_DICTATION_LANGUAGE`, dictation STT language
 - `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset
+- `PASEO_DICTATION_TRANSCRIPTION_PROMPT`, optional OpenAI dictation transcription prompt (including compatible servers). Unset by default; empty or whitespace-only is treated as unset
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
+
+## Transcription Prompt
+
+With the OpenAI provider, including compatible servers, Paseo sends no transcription prompt by default. Whisper-family models use `prompt` as transcript context, so instruction text can distort the transcript or bias its language. Omitting it does not prevent every hallucination on silence or noise.
+
+For OpenAI dictation, set `PASEO_DICTATION_TRANSCRIPTION_PROMPT` to send a prompt explicitly, for example to bias toward project vocabulary. An empty or whitespace-only value means no prompt. Local providers ignore this setting, and voice mode never sends a prompt.
+
+```bash
+PASEO_DICTATION_TRANSCRIPTION_PROMPT="Vocabulary: Paseo, TypeScript."
+```
 
 ## Operational Notes
 

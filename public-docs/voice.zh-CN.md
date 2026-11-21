@@ -120,7 +120,18 @@ Paseo 在配置的 OpenAI base URL 下使用以下路径：
 - `PASEO_VOICE_LOCAL_STT_MODEL`、`PASEO_VOICE_LOCAL_TTS_MODEL`：本地语音 STT/TTS 模型 ID
 - `PASEO_DICTATION_LANGUAGE`：口述 STT 语言（仅限 OpenAI STT；本地 Parakeet 会忽略）
 - `PASEO_VOICE_LANGUAGE`：语音模式 STT 语言；未设置时退回到 `PASEO_DICTATION_LANGUAGE`（仅限 OpenAI STT；本地 Parakeet 会忽略）
+- `PASEO_DICTATION_TRANSCRIPTION_PROMPT`：可选的 OpenAI 口述转录提示词（包括兼容服务器）。默认不设置；空值或仅含空白字符的值视为未设置
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`、`PASEO_VOICE_LOCAL_TTS_SPEED`：可选的本地语音 TTS 调优
+
+## 转录提示词 {#transcription-prompt}
+
+使用 OpenAI Provider（包括兼容服务器）进行口述时，Paseo 默认不发送转录提示词。Whisper 系列模型把 `prompt` 当作转录上下文，因此指令文本可能使转录失真或影响输出语言。不发送提示词也无法消除静音或噪声中的所有幻觉。
+
+对于 OpenAI 口述，可以设置 `PASEO_DICTATION_TRANSCRIPTION_PROMPT` 来显式发送提示词，例如提示项目术语。空值或仅含空白字符的值表示不发送提示词。本地 Provider 会忽略此设置，语音模式也不会发送提示词。
+
+```bash
+PASEO_DICTATION_TRANSCRIPTION_PROMPT="Vocabulary: Paseo, TypeScript."
+```
 
 ## 使用须知 {#operational-notes}
 
