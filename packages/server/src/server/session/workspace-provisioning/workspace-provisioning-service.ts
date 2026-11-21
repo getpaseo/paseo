@@ -43,6 +43,15 @@ export interface ImportWorkspaceResult<T> {
   createdWorkspace: PersistedWorkspaceRecord | null;
 }
 
+interface CreateDirectoryWorkspaceContext {
+  expectsInitialAgent?: boolean;
+  workspaceId?: string;
+  metadata?: Record<string, JsonValue>;
+  background?: boolean;
+  callerWorkspaceId?: string;
+  inheritWorktreeProject?: boolean;
+}
+
 export interface CreateWorktreeWorkspaceInput {
   sourceCwd: string;
   projectId?: string;
@@ -72,13 +81,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: {
-      expectsInitialAgent?: boolean;
-      workspaceId?: string;
-      metadata?: Record<string, JsonValue>;
-      background?: boolean;
-      callerWorkspaceId?: string;
-    },
+    context?: CreateDirectoryWorkspaceContext,
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -255,20 +258,30 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: {
-      expectsInitialAgent?: boolean;
-      workspaceId?: string;
-      metadata?: Record<string, JsonValue>;
-      background?: boolean;
-      callerWorkspaceId?: string;
-    },
+    context?: CreateDirectoryWorkspaceContext,
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
-    const project = projectId
-      ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
-      : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
-        await findOrCreateProjectForDirectory(normalizedCwd);
+    let project: PersistedProjectRecord;
+    if (projectId) {
+      project = await refreshProjectKind(
+        await requireActiveProject(projectId),
+        normalizedCwd,
+        checkout,
+      );
+    } else if (
+      context?.inheritWorktreeProject &&
+      checkout.isPaseoOwnedWorktree &&
+      checkout.mainRepoRoot
+    ) {
+      project = await resolveSourceProjectForWorktree({
+        sourceCwd: normalizedCwd,
+        repoRoot: checkout.mainRepoRoot,
+      });
+    } else {
+      // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
+      project = await findOrCreateProjectForDirectory(normalizedCwd);
+    }
     const create = async () => {
       const baseMetadata =
         checkout.isGit && checkout.isPaseoOwnedWorktree

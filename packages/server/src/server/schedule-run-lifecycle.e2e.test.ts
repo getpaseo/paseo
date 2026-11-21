@@ -275,6 +275,47 @@ test("archiveOnFinish=true scheduled run emits a workspace remove", async () => 
   events.stop();
 });
 
+test("a local schedule run in an existing Paseo worktree stays in its project", async () => {
+  const repoDir = createGitRepo();
+  const source = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repoDir, action: "branch-off" },
+  });
+  if (source.error || !source.workspace?.workspaceDirectory) {
+    throw new Error(source.error ?? "workspace/create returned no workspace directory");
+  }
+  const { id: sourceWorkspaceId, projectId, workspaceDirectory: cwd } = source.workspace;
+  const schedule = await createNewAgentSchedule({
+    prompt: "Say done.",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: { ...getFullAccessConfig("codex"), cwd, isolation: "local" },
+    },
+    runOnCreate: false,
+  });
+  await ctx.client.fetchWorkspaces({ subscribe: {} });
+  const events = collectLifecycleUpdates();
+
+  try {
+    const ran = await runScheduleOnce(schedule.id);
+    const agent = await archivedAgent(requireCompletedAgentId(ran));
+    const runWorkspaceId = agent.workspaceId!;
+    expect(runWorkspaceId).not.toBe(sourceWorkspaceId);
+    expect(agent.cwd).toBe(cwd);
+    await waitForWorkspaceUpsert(events.workspaceUpdates, runWorkspaceId);
+    expect(requireWorkspaceUpsert(events.workspaceUpdates, runWorkspaceId).projectId).toBe(
+      projectId,
+    );
+    await waitForWorkspaceRemove(events.workspaceUpdates, runWorkspaceId);
+    expect((await ctx.client.fetchWorkspaces()).entries.map(({ id }) => id)).toContain(
+      sourceWorkspaceId,
+    );
+    expect(existsSync(cwd)).toBe(true);
+  } finally {
+    events.stop();
+  }
+});
+
 test("worktree isolation creates a run worktree and archiveOnFinish removes it", async () => {
   const repoDir = createGitRepo();
   const expectedRoot = await getPaseoWorktreesRoot(
