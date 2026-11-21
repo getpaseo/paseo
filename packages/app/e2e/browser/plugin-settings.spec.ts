@@ -26,6 +26,219 @@ import {
   openTabbedSettingsLink,
   expectNamedPluginRow,
 } from "../support/helpers/plugin-settings";
+import { test as serialTest, expect } from "../support/fixtures";
+import {
+  installBrowserSerial,
+  openBrowserSerial,
+  openBrowserSerialFromSidebar,
+  startSerialAgentTool,
+} from "../support/helpers/browser-serial";
+
+serialTest(
+  "browser serial loads its production adapter without opening a device",
+  async ({ page }, testInfo) => {
+    const plugin = await installBrowserSerial("browser");
+    try {
+      await openBrowserSerialFromSidebar(page);
+      await expect(page.getByText("No device selected", { exact: true })).toBeVisible();
+      await expect(page.getByText(/^Host TCP:/)).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath("serial-idle.png") });
+    } finally {
+      await plugin.cleanup();
+    }
+  },
+);
+
+for (const viewport of [
+  { name: "wide", width: 1440, height: 1000 },
+  { name: "compact", width: 390, height: 844 },
+]) {
+  serialTest.describe(`browser serial ${viewport.name}`, () => {
+    serialTest.use({ viewport: { width: viewport.width, height: viewport.height } });
+    serialTest(
+      "browser serial hands the same device and endpoint between host tools",
+      async ({ page }, testInfo) => {
+        const plugin = await installBrowserSerial("echo");
+        let tool: Awaited<ReturnType<typeof startSerialAgentTool>> | undefined;
+        const tools: Awaited<ReturnType<typeof startSerialAgentTool>>[] = [];
+        try {
+          await page.emulateMedia({ colorScheme: "dark" });
+          await openBrowserSerialFromSidebar(page, viewport.name === "compact");
+          await page
+            .getByRole("button", { name: "Choose and forward device", exact: true })
+            .click();
+          await expect(page.getByText(/^Host TCP: 127\.0\.0\.1:/)).toBeVisible();
+          tool = await startSerialAgentTool(page);
+          tools.push(tool);
+          await expect(
+            page.getByText("Host tool connected. Binary data flows in both directions."),
+          ).toBeVisible();
+          await page.screenshot({ path: testInfo.outputPath("serial-dark.png") });
+          const endpoint = await page.getByText(/^Host TCP:/).textContent();
+          if (!endpoint) throw new Error("Missing serial TCP endpoint");
+          await tool.release();
+          await tool.expectDisconnected();
+          await expect(
+            page.getByText("Waiting for an agent tool to connect to this TCP endpoint."),
+          ).toBeVisible();
+          await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+          tool = await startSerialAgentTool(page, endpoint, false);
+          tools.push(tool);
+          await expect(
+            page.getByText("Host tool connected. Binary data flows in both directions."),
+          ).toBeVisible();
+          await page.getByRole("button", { name: "Release host tool", exact: true }).click();
+          await tool.expectDisconnected();
+          await expect(
+            page.getByText("Waiting for an agent tool to connect to this TCP endpoint."),
+          ).toBeVisible();
+          await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+          await page.screenshot({ path: testInfo.outputPath("handoff-waiting.png") });
+          tool = await startSerialAgentTool(page, endpoint, false);
+          tools.push(tool);
+          await expect(
+            page.getByText("Host tool connected. Binary data flows in both directions."),
+          ).toBeVisible();
+          await page.screenshot({ path: testInfo.outputPath("handoff-connected.png") });
+          await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+          await tool.expectDisconnected();
+          await expect(page.getByText(/^Host TCP:/)).toHaveCount(0);
+          await expect(
+            page.getByRole("button", { name: "Choose and forward device", exact: true }),
+          ).toBeEnabled();
+          await page.getByRole("button", { name: "Forget device", exact: true }).click();
+          await expect(page.getByText("No device selected", { exact: true })).toBeVisible();
+          await page.emulateMedia({ colorScheme: "light" });
+          await page.screenshot({ path: testInfo.outputPath("serial-light.png") });
+        } finally {
+          for (const owned of tools) await owned.cleanup();
+          await plugin.cleanup();
+        }
+      },
+    );
+  });
+}
+
+serialTest(
+  "browser serial keeps the device usable after a host release failure",
+  async ({ page }, testInfo) => {
+    const plugin = await installBrowserSerial("echo", true);
+    let tool: Awaited<ReturnType<typeof startSerialAgentTool>> | undefined;
+    try {
+      await openBrowserSerial(page);
+      await page.getByRole("button", { name: "Choose and forward device", exact: true }).click();
+      tool = await startSerialAgentTool(page);
+      await expect(
+        page.getByText("Host tool connected. Binary data flows in both directions."),
+      ).toBeVisible();
+      const release = page.getByRole("button", { name: "Release host tool", exact: true });
+      await release.click();
+      await expect(page.getByText(/Host tool release failed\./)).toBeVisible();
+      await expect(release).toBeEnabled();
+      await expect(page.getByText(/^Host TCP:/)).toBeVisible();
+      await expect(
+        page.getByText("Host tool connected. Binary data flows in both directions."),
+      ).toBeVisible();
+      await release.click();
+      await expect(page.getByText(/Host tool release failed\./)).toBeVisible();
+      await expect(release).toBeEnabled();
+      await page.screenshot({ path: testInfo.outputPath("handoff-release-error.png") });
+      await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+      await tool.expectDisconnected();
+    } finally {
+      await tool?.cleanup();
+      await plugin.cleanup();
+    }
+  },
+);
+
+serialTest(
+  "browser serial keeps forwarding while away and restores its session on return",
+  async ({ page }, testInfo) => {
+    const plugin = await installBrowserSerial("echo");
+    let tool: Awaited<ReturnType<typeof startSerialAgentTool>> | undefined;
+    try {
+      await openBrowserSerial(page);
+      await page.getByRole("button", { name: "Baud rate: 115200", exact: true }).click();
+      await page.getByRole("menuitem", { name: "9600", exact: true }).click();
+      await page.getByRole("button", { name: "Choose and forward device", exact: true }).click();
+      const endpoint = await page.getByText(/^Host TCP: 127\.0\.0\.1:/).textContent();
+      if (!endpoint) throw new Error("Missing serial TCP endpoint");
+      await page.getByRole("button", { name: "Back to plugins", exact: true }).click();
+      await page.getByTestId("settings-back-to-workspace").click();
+      await expect(page.getByRole("button", { name: "USB serial", exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("serial-sidebar.png") });
+      // Connect and transfer bytes while the device screen is unmounted.
+      tool = await startSerialAgentTool(page, endpoint);
+      await page.getByRole("button", { name: "USB serial", exact: true }).click();
+      await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+      await expect(page.getByText("USB 1209:0001", { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Baud rate: 9600", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        page.getByText("Host tool connected. Binary data flows in both directions."),
+      ).toBeVisible();
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await expect(page.getByText(endpoint, { exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("serial-return.png") });
+      await page.reload();
+      await tool.expectDisconnected();
+      await expect(page.getByText(/^Host TCP:/)).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Choose and forward device", exact: true }),
+      ).toBeEnabled();
+    } finally {
+      await tool?.cleanup();
+      await plugin.cleanup();
+    }
+  },
+);
+
+serialTest(
+  "browser serial releases the host tool when the plugin is disabled",
+  async ({ page }) => {
+    const plugin = await installBrowserSerial("echo");
+    let tool: Awaited<ReturnType<typeof startSerialAgentTool>> | undefined;
+    try {
+      await openBrowserSerial(page);
+      await page.getByRole("button", { name: "Choose and forward device", exact: true }).click();
+      tool = await startSerialAgentTool(page);
+      await plugin.disable();
+      await tool.expectDisconnected();
+      await expectSettingsUnavailable(page);
+    } finally {
+      await tool?.cleanup();
+      await plugin.cleanup();
+    }
+  },
+);
+
+for (const failure of [
+  { hardware: "cancel", message: "No port selected." },
+  { hardware: "open-failure", message: "The serial device is already in use." },
+] as const) {
+  serialTest(`browser serial shows ${failure.hardware} and allows retry`, async ({ page }) => {
+    const plugin = await installBrowserSerial(failure.hardware);
+    try {
+      await openBrowserSerial(page);
+      const choose = page.getByRole("button", { name: "Choose and forward device", exact: true });
+      await choose.click();
+      await expect(page.getByText(failure.message, { exact: true })).toBeVisible();
+      await expect(page.getByText(/^Host TCP:/)).toHaveCount(0);
+      await expect(choose).toBeEnabled();
+      await choose.click();
+      await expect(page.getByText(failure.message, { exact: true })).toBeVisible();
+      await expect(choose).toBeEnabled();
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+}
 
 test("display preferences survive a reload", async ({ page }) => {
   await openDisplaySettings(page);
