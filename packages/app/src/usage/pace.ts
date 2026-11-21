@@ -25,13 +25,15 @@ export function usagePace(window: UsageWindow, observedAt: string | null, now: n
   const duration = (window.durationSeconds ?? 0) * 1_000;
   const sampled = Date.parse(observedAt);
   const elapsed = sampled - (reset - duration);
+  // Wait for an initial sample without holding back multi-day forecasts for several hours.
+  const minimumElapsed = Math.max(60_000, Math.min(duration * 0.01, 3_600_000));
   if (
     used == null ||
     !Number.isFinite(used) ||
     used < 0 ||
     !Number.isFinite(elapsed) ||
     sampled >= reset ||
-    elapsed < Math.max(60_000, duration * 0.01)
+    elapsed < minimumElapsed
   ) {
     return { kind: "unknown" };
   }

@@ -111,11 +111,20 @@ describe("reset countdown", () => {
   });
 
   it("says two units, dropping a unit that is zero", () => {
-    expect(countdown(DAY + 30 * MINUTE)).toBe("resets in 1d");
     expect(countdown(4 * HOUR + 59 * MINUTE)).toBe("resets in 4h 59m");
     expect(countdown(HOUR)).toBe("resets in 1h");
     expect(countdown(37 * MINUTE)).toBe("resets in 37m");
     expect(countdown(59 * 1000)).toBe("resets in 0m");
+  });
+
+  it("shows a single day as 24 hours in reset and exhaustion countdowns", () => {
+    expect(countdown(DAY)).toBe("resets in 24h");
+    expect(countdown(DAY + 30 * MINUTE)).toBe("resets in 24h");
+    expect(formatRunsOutLabel(new Date(NOW + DAY + 30 * MINUTE).toISOString(), NOW)).toBe(
+      "runs out in 24h",
+    );
+    expect(countdown(DAY + HOUR)).toBe("resets in 1d 1h");
+    expect(countdown(2 * DAY)).toBe("resets in 2d");
   });
 
   it("joins the at-risk countdown the same way", () => {

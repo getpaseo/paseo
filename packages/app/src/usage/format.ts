@@ -79,6 +79,7 @@ function relativeDuration(iso: string, now: number): RelativeDuration | null {
   const days = Math.floor(diffMs / DAY_MS);
   const hours = Math.floor((diffMs % DAY_MS) / HOUR_MS);
   const minutes = Math.floor((diffMs % HOUR_MS) / MINUTE_MS);
+  if (days === 1 && hours === 0) return remaining({ unit: "hours", count: 24 });
   if (days > 0) return remaining({ unit: "days", count: days }, { unit: "hours", count: hours });
   if (hours > 0)
     return remaining({ unit: "hours", count: hours }, { unit: "minutes", count: minutes });

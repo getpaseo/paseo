@@ -48,6 +48,11 @@ function accountKey(env: ProviderLaunch["env"]): string {
   );
 }
 
+function formatWindowLabel(name: string, window: string): string {
+  if (window.trim().toLowerCase() === "5h") return "5h";
+  return name.trim().replace(/(?:\s+Limit)?\s+Remaining$/i, "");
+}
+
 function shortWindow(window: string): string {
   const trimmed = window.trim();
   const normalized = trimmed.toLowerCase();
@@ -136,7 +141,7 @@ export class Usage {
             return [
               windowFromUsedPct({
                 id: bucket.id,
-                label: `${group.name} · ${bucket.name}${bucket.disabled ? " · Disabled" : ""}`,
+                label: `${group.name} · ${formatWindowLabel(bucket.name, bucket.window)}${bucket.disabled ? " · Disabled" : ""}`,
                 shortLabel: formatShortLabel(group.name, bucket.window, includeGroup),
                 summary: !bucket.disabled && bucket.window === "weekly",
                 utilizationPct: used,

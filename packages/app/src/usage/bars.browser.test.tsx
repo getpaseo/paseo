@@ -5,6 +5,7 @@ import { i18n } from "@/i18n/i18next";
 import { UsageWindowBar } from "./window-bar";
 import type { UsageBalance, UsageWindow } from "./types";
 import { UsageBalanceBar } from "./balance-bar";
+import { UsageMeter } from "./meter";
 
 const window: UsageWindow = { id: "session", label: "Session", usedPct: 70 };
 const balance: UsageBalance = { id: "credits", label: "Credits", unit: "usd", remaining: 12 };
@@ -51,6 +52,31 @@ it("translates mounted usage rows when the language changes", async () => {
   });
   expect(container.textContent).toContain("セッション70% 使用済み");
   expect(container.textContent).toContain("クレジット");
+});
+
+it("colors healthy quota bars green and keeps the warning and danger colors", () => {
+  act(() =>
+    root.render(
+      <>
+        <UsageMeter percent={20} tone="default" />
+        <UsageMeter percent={20} tone="ok" />
+        <UsageMeter percent={20} tone="warning" />
+        <UsageMeter percent={20} tone="danger" />
+        <UsageMeter percent={20} tone="danger" quiet />
+      </>,
+    ),
+  );
+  const colors = Array.from(
+    container.children,
+    (track) => getComputedStyle(track.firstElementChild!).backgroundColor,
+  );
+  expect(colors).toEqual([
+    "rgb(21, 128, 61)",
+    "rgb(21, 128, 61)",
+    "rgb(217, 119, 6)",
+    "rgb(185, 28, 28)",
+    "rgb(212, 212, 216)",
+  ]);
 });
 
 const narrowReadingMs = Date.now();
