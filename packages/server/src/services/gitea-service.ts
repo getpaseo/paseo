@@ -36,6 +36,7 @@ import type {
   CurrentPullRequestStatus,
   DisablePullRequestAutoMergeOptions,
   EnablePullRequestAutoMergeOptions,
+  MarkPullRequestReadyOptions,
   ForgeReadOptions,
   ForgeService,
   GetCheckDetailsOptions,
@@ -2170,6 +2171,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       return notSupported("disablePullRequestAutoMerge");
     },
 
+    markPullRequestReady(_input: MarkPullRequestReadyOptions): never {
+      return notSupported("markPullRequestReady");
+    },
     changeRequests,
 
     invalidate(input: { cwd: string }): void {
