@@ -814,6 +814,79 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   });
 
+  test("resuming an agent whose OpenCode session is gone continues in a new session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const execution = new TestOpenCodeClient();
+    execution.sessionGetResponse = {
+      error: { name: "NotFoundError", data: { message: "Session not found: ses_lost" } },
+    };
+    execution.sessionCreateResponse = { data: { id: "ses_fresh" } };
+    execution.sessionPromptAsyncImplementation = async (parameters) => {
+      const { sessionID } = parameters as { sessionID: string };
+      if (sessionID === "ses_lost") {
+        return {
+          error: { name: "NotFoundError", data: { message: "Session not found: ses_lost" } },
+        };
+      }
+      execution.emitEvent({ type: "session.idle", properties: { sessionID } });
+      return {};
+    };
+    runtime.enqueueClient(execution);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const cwd = tmpCwd();
+    try {
+      const session = await client.resumeSession({
+        provider: "opencode",
+        sessionId: "ses_lost",
+        metadata: { cwd },
+      });
+      try {
+        const turn = await collectTurnEvents(streamSession(session, "Are you there?"));
+
+        expect(turn.turnCompleted).toBe(true);
+        expect(session.describePersistence()?.sessionId).toBe("ses_fresh");
+        expect(session.persistenceUpdatedOnResume).toBe(true);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loading history of an agent whose OpenCode session is gone creates no session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const execution = new TestOpenCodeClient();
+    execution.sessionGetResponse = {
+      error: { name: "NotFoundError", data: { message: "Session not found: ses_lost" } },
+    };
+    runtime.enqueueClient(execution);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const cwd = tmpCwd();
+    try {
+      const session = await client.resumeSession(
+        { provider: "opencode", sessionId: "ses_lost", metadata: { cwd } },
+        undefined,
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        expect(execution.calls.sessionCreate).toEqual([]);
+        expect(session.describePersistence()?.sessionId).toBe("ses_lost");
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("fetchCatalog returns models with required fields", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
