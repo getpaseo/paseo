@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonAuthenticationError, DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { exportPublicKey, generateKeyPair } from "@getpaseo/relay/e2ee";
 import { readLocalCredentialForTarget } from "./local-credential.js";
 
 const originalEnv = { ...process.env };
@@ -274,6 +275,65 @@ describe("daemon bearer auth", () => {
     try {
       await client.connect();
       expect(client.getLastServerInfoMessage()?.serverId).toBe(daemonHandle.daemon.getServerId());
+    } finally {
+      await client.close();
+      await daemonHandle.close();
+    }
+  });
+
+  test("authenticates a learned direct connection before sending its password", async () => {
+    const daemonHandle = await createTestPaseoDaemon({ auth: { password: CORRECT_PASSWORD_HASH } });
+    const storedKey = JSON.parse(
+      await readFile(join(daemonHandle.paseoHome, "daemon-keypair.json"), "utf8"),
+    ) as { publicKeyB64: string };
+    const upgrades: Array<{
+      headers: Record<string, string> | undefined;
+      protocols: string[] | undefined;
+    }> = [];
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws?secure=1`,
+      clientId: "learned-direct-test",
+      clientType: "browser",
+      password: "correct-password",
+      e2ee: {
+        enabled: true,
+        daemonPublicKeyB64: storedKey.publicKeyB64,
+        minimumMode: "protected",
+      },
+      webSocketFactory: (url, options) => {
+        upgrades.push({ headers: options?.headers, protocols: options?.protocols });
+        return new WebSocket(url, options?.protocols, { headers: options?.headers });
+      },
+      reconnect: { enabled: false },
+    });
+    try {
+      await client.connect();
+      expect(client.getLastServerInfoMessage()?.serverId).toBe(daemonHandle.daemon.getServerId());
+      expect(upgrades).toEqual([{ headers: undefined, protocols: undefined }]);
+    } finally {
+      await client.close();
+      await daemonHandle.close();
+    }
+  });
+
+  test("rejects a learned direct connection with the wrong daemon key", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws?secure=1`,
+      clientId: "wrong-learned-key",
+      clientType: "browser",
+      e2ee: {
+        enabled: true,
+        daemonPublicKeyB64: exportPublicKey(generateKeyPair().publicKey),
+        minimumMode: "protected",
+      },
+      webSocketFactory: (url, options) =>
+        new WebSocket(url, options?.protocols, { headers: options?.headers }),
+      reconnect: { enabled: false },
+    });
+    try {
+      await expect(client.connect()).rejects.toThrow();
+      expect(client.getLastServerInfoMessage()).toBeNull();
     } finally {
       await client.close();
       await daemonHandle.close();

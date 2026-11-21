@@ -188,6 +188,28 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
   });
 
+  it("pins a learned direct probe to the paired daemon key", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const { client } = await connectToDaemon(
+      {
+        id: "direct:100.100.1.5:6767",
+        type: "directTcp",
+        endpoint: "100.100.1.5:6767",
+        learnedFromConnectionId: "relay:example:443",
+        daemonPublicKeyB64: "paired-key",
+      },
+      undefined,
+      probe.deps,
+    );
+    expect(client.config.url).toBe("ws://100.100.1.5:6767/ws?secure=1");
+    expect(client.config.e2ee).toEqual({
+      enabled: true,
+      daemonPublicKeyB64: "paired-key",
+      minimumMode: "protected",
+    });
+    await client.close();
+  });
+
   it("keeps the bundle cache factory on a probe client that the host runtime can adopt", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const createPluginClientBundleStore = () => ({
