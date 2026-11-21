@@ -97,6 +97,9 @@ buildNpmPackage {
   buildPhase = ''
     runHook preBuild
 
+    # Apply monorepo patches (bypassed by --ignore-scripts in npm config hook)
+    npm run postinstall
+
     # Native deps (terminal emulation; libuv-linked on Linux)
     npm rebuild node-pty
 
