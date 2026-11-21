@@ -197,6 +197,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
   "agent-input": [
     "focus-message-input",
+    "toggle-model-picker",
+    "cycle-effort",
     "cycle-agent-mode",
     "voice-toggle",
     "dictation-toggle",
@@ -244,6 +246,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
+  "toggle-model-picker": "settings.shortcuts.help.toggleModelPicker",
+  "cycle-effort": "settings.shortcuts.help.cycleEffort",
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
@@ -715,11 +719,37 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Tab relative navigation ---
+  // macOS desktop uses Cmd+Shift+brackets; the browser owns those keys, so
+  // macOS web keeps Alt+Shift alongside every non-mac platform.
+  {
+    id: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Shift+[",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-shift-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Shift+]",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
   {
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
       id: "workspace-tab-prev",
@@ -731,7 +761,31 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+]",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Alt+Shift+[",
+    when: { mac: true, desktopBindings: false, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Alt+Shift+]",
+    when: { mac: true, desktopBindings: false, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
       id: "workspace-tab-next",
@@ -1097,6 +1151,33 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "focus-message-input",
       section: "agent-input",
       label: "Focus message input",
+    },
+  },
+  {
+    id: "message-input-model-toggle-mod-slash",
+    action: "message-input.action",
+    combo: "Mod+/",
+    repeat: false,
+    // The handler checks that its composer or its own picker has focus.
+    when: { commandCenter: false, focusScope: ["message-input", "editable", "other"] },
+    payload: { type: "message-input", kind: "model-toggle" },
+    help: {
+      id: "toggle-model-picker",
+      section: "agent-input",
+      label: "Toggle model picker",
+    },
+  },
+  {
+    id: "message-input-effort-cycle-mod-shift-slash",
+    action: "message-input.action",
+    combo: "Mod+Shift+/",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "effort-cycle" },
+    help: {
+      id: "cycle-effort",
+      section: "agent-input",
+      label: "Cycle effort",
     },
   },
   {

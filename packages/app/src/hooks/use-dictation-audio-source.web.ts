@@ -1,3 +1,4 @@
+import { AudioCaptureStartError } from "@/audio";
 import { resampleToPcm16 } from "@/audio/pcm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePcm16Wav } from "@/utils/pcm16-wav";
@@ -133,6 +134,32 @@ async function finalizeRecorderStoppedPromise(input: {
   }
 }
 
+async function requestMicrophone(): Promise<MediaStream> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        noiseSuppression: true,
+        echoCancellation: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException) {
+      if (error.name === "NotAllowedError") {
+        throw new AudioCaptureStartError("permissionDenied", error.message, { cause: error });
+      }
+      if (error.name === "NotFoundError") {
+        throw new AudioCaptureStartError("noMicrophone", error.message, { cause: error });
+      }
+      if (error.name === "NotSupportedError") {
+        throw new AudioCaptureStartError("unsupported", error.message, { cause: error });
+      }
+    }
+    throw error;
+  }
+}
+
 export function useDictationAudioSource(config: DictationAudioSourceConfig): DictationAudioSource {
   const [volume, setVolume] = useState(0);
 
@@ -200,50 +227,19 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
   }, []);
 
   const start = useCallback(async () => {
-    const missingNavigator =
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices ||
-      typeof navigator.mediaDevices.getUserMedia !== "function";
-
-    const secureContext =
-      typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
-        ? window.isSecureContext
-        : true;
-    const currentOrigin =
-      typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
-    const isDesktopApp = isElectronRuntime();
-
-    if (missingNavigator) {
-      throw new Error("Microphone capture is not supported in this environment");
-    }
-    if (!secureContext && !isDesktopApp) {
-      throw new Error(
-        `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`,
-      );
-    }
-    if (!secureContext && isDesktopApp) {
-      console.warn(
-        "[DictationAudio][Web] Insecure context reported under Desktop; attempting getUserMedia anyway",
-        { currentOrigin },
+    if (!window.isSecureContext && !isElectronRuntime()) {
+      throw new AudioCaptureStartError(
+        "insecureContext",
+        `Microphone access requires HTTPS or localhost. Current origin: ${window.location.origin}`,
       );
     }
 
     const AudioContextCtor = getAudioContextCtor();
-    if (!AudioContextCtor) {
-      throw new Error("AudioContext unavailable");
+    if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
+      throw new AudioCaptureStartError("unsupported", "Browser audio capture is unavailable.");
     }
 
-    const rawStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        noiseSuppression: true,
-        echoCancellation: true,
-        autoGainControl: true,
-      },
-    });
-
-    const stream = rawStream;
-
+    const stream = await requestMicrophone();
     const context = new AudioContextCtor();
 
     try {
@@ -431,15 +427,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
 
   return useMemo(
     () => ({
-      start: async () => {
-        try {
-          await start();
-        } catch (err) {
-          const normalized = err instanceof Error ? err : new Error(String(err));
-          onErrorRef.current?.(normalized);
-          throw normalized;
-        }
-      },
+      start,
       stop,
       volume,
       isPaused: false,

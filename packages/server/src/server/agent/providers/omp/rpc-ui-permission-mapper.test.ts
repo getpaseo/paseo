@@ -136,6 +136,94 @@ describe("OMP rpc-ui permission mapper", () => {
     ).toEqual({ kind: "passthrough" });
   });
 
+  test("maps approvals that offer session and grant choices beside the one-call approval", () => {
+    const session = classifyOmpRpcUiPermissionRequest({
+      type: "extension_ui_request",
+      id: "session-write",
+      method: "select",
+      title: "Allow tool: write\nPath: cap.txt\nContent:\nhello",
+      options: ["Approve", "Approve write for this session", "Deny"],
+    });
+    if (session.kind !== "tool") throw new Error("Expected session approval to map as a tool");
+    expect(
+      session.request.actions?.map((action) => [action.id, action.label, action.behavior]),
+    ).toEqual([
+      ["deny", "Deny", "deny"],
+      ["approve", "Approve", "allow"],
+      ["approve-option-0", "Approve write for this session", "allow"],
+    ]);
+    expect(buildOmpRpcUiPermissionResponse(session.request, { behavior: "allow" })).toEqual({
+      value: "Approve",
+    });
+    expect(
+      buildOmpRpcUiPermissionResponse(session.request, {
+        behavior: "allow",
+        selectedActionId: "approve-option-0",
+      }),
+    ).toEqual({ value: "Approve write for this session" });
+    expect(
+      buildOmpRpcUiPermissionResponse(session.request, {
+        behavior: "deny",
+        selectedActionId: "approve-option-0",
+      }),
+    ).toEqual({ value: "Deny" });
+
+    const grants = classifyOmpRpcUiPermissionRequest({
+      type: "extension_ui_request",
+      id: "grant-edit",
+      method: "select",
+      title: "Allow tool: edit\nFile: src/a.ts",
+      options: ["Approve File", "Always Approve File", "Approve Once", "Deny"],
+    });
+    if (grants.kind !== "tool") throw new Error("Expected grant approval to map as a tool");
+    expect(buildOmpRpcUiPermissionResponse(grants.request, { behavior: "allow" })).toEqual({
+      value: "Approve Once",
+    });
+    expect(
+      buildOmpRpcUiPermissionResponse(grants.request, {
+        behavior: "allow",
+        selectedActionId: "approve-option-1",
+      }),
+    ).toEqual({ value: "Always Approve File" });
+  });
+
+  test("allows one call when a grant is labeled Approve beside Approve Once", () => {
+    // OMP names the one-call choice "Approve Once" whenever it offers grants. A grant for a
+    // target that is not a file is then labeled "Approve", which remembers more than one call.
+    const grants = classifyOmpRpcUiPermissionRequest({
+      type: "extension_ui_request",
+      id: "grant-target",
+      method: "select",
+      title: "Allow tool: edit\nFile: src/a.ts",
+      options: ["Approve", "Always Approve", "Approve Once", "Deny"],
+    });
+    if (grants.kind !== "tool") throw new Error("Expected grant approval to map as a tool");
+    expect(buildOmpRpcUiPermissionResponse(grants.request, { behavior: "allow" })).toEqual({
+      value: "Approve Once",
+    });
+  });
+
+  test("passes through selects whose extra choices are not approvals", () => {
+    expect(
+      classifyOmpRpcUiPermissionRequest({
+        type: "extension_ui_request",
+        id: "odd-choice",
+        method: "select",
+        title: "Allow tool: bash\nCommand: echo hi",
+        options: ["Approve", "Edit command", "Deny"],
+      }),
+    ).toEqual({ kind: "passthrough" });
+    expect(
+      classifyOmpRpcUiPermissionRequest({
+        type: "extension_ui_request",
+        id: "deny-first",
+        method: "select",
+        title: "Allow tool: bash\nCommand: echo hi",
+        options: ["Deny", "Approve"],
+      }),
+    ).toEqual({ kind: "passthrough" });
+  });
+
   test("responds to tool approvals with exact select values", () => {
     const request = toolApproval("bash");
 

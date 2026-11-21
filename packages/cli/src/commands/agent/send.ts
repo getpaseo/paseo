@@ -47,7 +47,7 @@ export function addSendOptions(cmd: Command): Command {
     .addOption(
       new Option(
         "--behavior <behavior>",
-        "Active-turn behavior (agent default: steer; otherwise: interrupt)",
+        "Active-turn behavior (agent default: steer waits for turn end; otherwise: interrupt). An agent's interrupt delivers the messages queued before it first",
       ).choices(["interrupt", "steer"]),
     )
     .option("--no-wait", "Return immediately without waiting for completion");
@@ -218,7 +218,7 @@ export async function runSendCommand(
           status: receipt.deliveryStatus ?? "sent",
           message:
             receipt.deliveryStatus === "queued"
-              ? "Message queued for delivery after two quiet seconds"
+              ? "Message queued for delivery after two quiet seconds and the current turn ends. An interrupt replaces the turn now, after the messages queued before it"
               : "Message sent, not waiting for completion",
         },
         schema: agentSendSchema,

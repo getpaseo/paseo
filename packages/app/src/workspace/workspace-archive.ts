@@ -1,3 +1,5 @@
+import { queryClient } from "@/data/query-client";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
   isWorkspaceArchiveIntentCurrent,
@@ -13,6 +15,30 @@ import { i18n } from "@/i18n/i18next";
 export interface WorkspaceArchiveTarget {
   serverId: string;
   workspaceId: string;
+}
+
+const pendingArchiveAttempts = new Set<string>();
+
+/** Checks and starts one archive at a time for a workspace. */
+export async function runWorkspaceArchiveAttempt(input: {
+  workspace: WorkspaceArchiveTarget;
+  confirm?: () => Promise<boolean>;
+  archive: () => Promise<void>;
+}): Promise<void> {
+  const { serverId, workspaceId } = input.workspace;
+  const key = JSON.stringify([serverId, workspaceId]);
+  if (pendingArchiveAttempts.has(key)) return;
+
+  pendingArchiveAttempts.add(key);
+  try {
+    if (input.confirm && !(await input.confirm())) return;
+    if (!isWorkspaceListed(input.workspace)) return;
+    // Archive hides the row synchronously. Undo can restore it and start a new
+    // archive while the previous daemon request is still settling.
+    return input.archive();
+  } finally {
+    pendingArchiveAttempts.delete(key);
+  }
 }
 
 interface WorkspaceArchiveClient {
@@ -96,6 +122,12 @@ function restoreOptimisticallyHiddenWorkspace(input: {
   }
 }
 
+/** History fetched before the archive still lists the workspace's agents as active. */
+function invalidateAgentHistory(serverId: string): void {
+  void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
+  void queryClient.invalidateQueries({ queryKey: allAgentHistoryQueryRootKey() });
+}
+
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
@@ -127,6 +159,8 @@ export function beginOptimisticWorkspaceArchive(input: {
       });
       if (outcome === "canceled") {
         restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });
+      } else {
+        invalidateAgentHistory(input.workspace.serverId);
       }
       return outcome;
     } catch (error) {

@@ -118,7 +118,7 @@ workspace the call creates is background too. With a `parent` and no value, the 
 
 ### Timeline handle
 
-`agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
+`agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, `wholeTurns`, and `requestId`. `wholeTurns: true` extends a `tail` or `before` page back to the start of the oldest turn it reaches, so `{ direction: "tail", limit: 1, wholeTurns: true }` returns the latest turn. It requires `features.wholeTurnTimeline`; older hosts ignore it and return a page of `limit` items.
 
 `agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. Delivery is live-only. Reconnect emits a local `subscription_restored` event; request missed history explicitly with `refetch()`. A live replacement invalidates the previous epoch. See the callback shapes, paging and failure behavior in [timeline events](./events.md#follow-timeline-events).
 
