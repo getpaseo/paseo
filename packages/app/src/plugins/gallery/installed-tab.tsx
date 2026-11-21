@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -13,7 +13,10 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/contexts/toast-api-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { usePluginEvaluationError } from "@/plugins/registry";
+import { useInstalledPlugin, usePluginEvaluationError } from "@/plugins/registry";
+import { PluginInstallationProvider } from "@/plugins/installation-provider";
+import { SurfaceErrorBoundary } from "@/plugins/surface-error-boundary";
+import type { InstalledPlugin } from "@/plugins/types";
 import { pluginDisplayName } from "@/plugins/plugin-list";
 import { settingsStyles } from "@/styles/settings";
 import { usePluginActions } from "./actions";
@@ -25,6 +28,10 @@ import { buildPluginPageRoute } from "./routes";
 
 function shortRevision(revision: string | undefined): string | undefined {
   return revision && /^[0-9a-f]{40,64}$/.test(revision) ? revision.slice(0, 7) : revision;
+}
+
+function renderNoIndicator() {
+  return null;
 }
 
 function matchesQuery(plugin: PluginListItem, query: string): boolean {
@@ -120,9 +127,7 @@ function UpdateRow({
 function InstalledRow({
   serverId,
   plugin,
-  listing,
-  pending,
-  onToggle,
+  ...props
 }: {
   serverId: string;
   plugin: PluginListItem;
@@ -130,7 +135,38 @@ function InstalledRow({
   pending: boolean;
   onToggle(plugin: PluginListItem, enabled: boolean): void;
 }) {
+  const installed = useInstalledPlugin(serverId, plugin.id);
+  return (
+    <InstalledRowContent serverId={serverId} plugin={plugin} installed={installed} {...props} />
+  );
+}
+
+function InstalledRowContent({
+  serverId,
+  plugin,
+  installed,
+  listing,
+  pending,
+  onToggle,
+}: {
+  serverId: string;
+  plugin: PluginListItem;
+  installed: InstalledPlugin | null;
+  listing?: PluginListing;
+  pending: boolean;
+  onToggle(plugin: PluginListItem, enabled: boolean): void;
+}) {
   const { t } = useTranslation();
+  const [indicatorState, setIndicatorState] = useState<{
+    installation: InstalledPlugin | null;
+    available: boolean;
+  }>({ installation: null, available: false });
+  const updateAvailable = indicatorState.installation === installed && indicatorState.available;
+  const setUpdateAvailable = useCallback(
+    (available: boolean) => setIndicatorState({ installation: installed, available }),
+    [installed],
+  );
+  const Indicator = plugin.status === "running" ? installed?.updateIndicators[0] : undefined;
   const name = pluginDisplayName(plugin);
   const error = usePluginEvaluationError(serverId, plugin.id) ?? plugin.error;
   const failed = error !== undefined || plugin.status === "failed";
@@ -147,27 +183,51 @@ function InstalledRow({
     [failed, t],
   );
   return (
-    <PluginRow
-      name={name}
-      icon={listing?.icon}
-      badge={badge}
-      description={plugin.description ?? listing?.description}
-      meta={installedMeta(plugin, listing)}
-      authorAvatar={listing && listingAuthorAvatar(listing)}
-      error={error}
-      onPress={open}
-      accessibilityLabel={name}
-      testID={`plugin-row-${plugin.id}`}
-    >
-      <Switch
-        value={plugin.enabled}
-        onValueChange={toggle}
-        disabled={pending}
-        accessibilityLabel={`${name}: ${t(
-          plugin.enabled ? "settings.plugins.actions.disable" : "settings.plugins.actions.enable",
-        )}`}
-      />
-    </PluginRow>
+    <>
+      {installed && Indicator ? (
+        <PluginInstallationProvider plugin={installed}>
+          <SurfaceErrorBoundary
+            installation={installed}
+            Surface={Indicator}
+            renderError={renderNoIndicator}
+          >
+            <Indicator hostId={serverId} onChange={setUpdateAvailable} />
+          </SurfaceErrorBoundary>
+        </PluginInstallationProvider>
+      ) : null}
+      <PluginRow
+        name={name}
+        icon={listing?.icon}
+        badge={
+          <>
+            {Indicator && updateAvailable ? (
+              <View testID={`plugin-update-indicator-${plugin.id}`} style={styles.updateDot} />
+            ) : null}
+            {badge}
+          </>
+        }
+        description={plugin.description ?? listing?.description}
+        meta={installedMeta(plugin, listing)}
+        authorAvatar={listing && listingAuthorAvatar(listing)}
+        error={error}
+        onPress={open}
+        accessibilityLabel={
+          Indicator && updateAvailable
+            ? `${name}, ${t("settings.host.skills.updateAvailable")}`
+            : name
+        }
+        testID={`plugin-row-${plugin.id}`}
+      >
+        <Switch
+          value={plugin.enabled}
+          onValueChange={toggle}
+          disabled={pending}
+          accessibilityLabel={`${name}: ${t(
+            plugin.enabled ? "settings.plugins.actions.disable" : "settings.plugins.actions.enable",
+          )}`}
+        />
+      </PluginRow>
+    </>
   );
 }
 
@@ -272,5 +332,6 @@ export function InstalledTab({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  updateDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.statusDanger },
   empty: { padding: theme.spacing[6], alignItems: "center", gap: theme.spacing[3] },
 }));

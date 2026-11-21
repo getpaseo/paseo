@@ -23,6 +23,7 @@ function plugin(input: {
     },
     cleanup: () => {},
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

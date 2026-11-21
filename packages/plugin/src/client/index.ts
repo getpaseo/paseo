@@ -1,5 +1,6 @@
 export type {
   PluginHostProps,
+  PluginUpdateIndicatorProps,
   PluginTab,
   PluginPanelProps,
   PluginWorkspacePanelParams,

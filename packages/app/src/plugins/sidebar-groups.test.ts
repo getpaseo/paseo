@@ -30,6 +30,7 @@ function installed(
       throw new Error("Subscriptions are not used here");
     },
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [{ id: "surface", title: "Surface", Component: () => null }],
     sidebarViews: [],
     sidebarItems: {

@@ -46,6 +46,7 @@ function installation(invoked: string[]): InstalledPlugin {
     queryClient: new QueryClient(),
     cleanup: () => undefined,
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

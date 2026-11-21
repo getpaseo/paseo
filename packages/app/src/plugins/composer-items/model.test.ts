@@ -30,6 +30,7 @@ function installed(): InstalledPlugin {
     },
     cleanup: () => {},
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
