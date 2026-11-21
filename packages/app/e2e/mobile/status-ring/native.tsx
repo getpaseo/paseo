@@ -1,9 +1,7 @@
 import { useCallback, useLayoutEffect, useState } from "react";
 import { Button, Text, View } from "react-native";
-import { useAnimatedReaction, useSharedValue } from "react-native-reanimated";
-import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import { RetainedPanel } from "@/components/retained-panel";
-import { useStatusRingRotation } from "@/components/status-ring/clock";
+import { useStatusRingProgress } from "@/components/status-ring/clock";
 import { StatusRing } from "@/components/status-ring";
 
 interface Sample {
@@ -16,33 +14,26 @@ declare global {
   var __ringReaders: Record<string, () => void>;
 }
 
-function recordSample(name: string, value: { updates: number; rotation: number }) {
-  globalThis.__ringSamples[name] = value;
-}
-
 function Probe({ name }: { name: string }) {
-  const rotation = useStatusRingRotation();
-  const updates = useSharedValue(0);
-  useAnimatedReaction(
-    () => rotation.value,
-    () => {
-      updates.value += 1;
-    },
-  );
-  // Read the real UI runtime, without scheduling a continuous JS observer.
+  const progress = useStatusRingProgress();
+  // The native driver only reports values to JS while a listener is attached, which is what
+  // lets this probe count updates; production rings attach none.
   useLayoutEffect(() => {
     globalThis.__ringSamples ??= {};
     globalThis.__ringReaders ??= {};
-    globalThis.__ringReaders[name] = () =>
-      scheduleOnUI(() => {
-        "worklet";
-        const sample = { updates: updates.value, rotation: rotation.value };
-        scheduleOnRN(recordSample, name, sample);
-      });
+    const sample: Sample = { updates: 0, rotation: 0 };
+    const id = progress.addListener(({ value }) => {
+      sample.updates += 1;
+      sample.rotation = (value % 1) * 360;
+    });
+    globalThis.__ringReaders[name] = () => {
+      globalThis.__ringSamples[name] = { ...sample };
+    };
     return () => {
+      progress.removeListener(id);
       delete globalThis.__ringReaders[name];
     };
-  }, [name, rotation, updates]);
+  }, [name, progress]);
   return <StatusRing />;
 }
 
