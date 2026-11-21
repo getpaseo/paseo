@@ -12,6 +12,8 @@ export class ClaudeRuntimeSafety {
   // has neither been sent a prompt nor reported init (a resumed chat that only answered
   // control requests) owns no background work.
   private turnSeen = false;
+  /** Whether this process ever announced a turn of its own. */
+  private initSeen = false;
   private liveTasks: readonly ClaudeBackgroundTask[] = [];
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
@@ -29,6 +31,7 @@ export class ClaudeRuntimeSafety {
     this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
     this.turnSeen = false;
+    this.initSeen = false;
     this.liveTasks = [];
     this.published = undefined;
     this.awaitingNotifications.clear();
@@ -45,6 +48,19 @@ export class ClaudeRuntimeSafety {
   /** Called before a prompt is written to this process. */
   notePromptSent(): void {
     this.turnSeen = true;
+  }
+
+  /**
+   * Called when a cancel withdrew every prompt it had sent to a process that never answered.
+   *
+   * `notePromptSent` marks a turn seen because a prompt Claude dequeued can start background work.
+   * A prompt it never took back starts nothing, and an interrupt on such a process leaves it with
+   * no turn and no roster, so `canStopRuntime` must go back to its untouched answer. Otherwise a
+   * prompt cancelled before Claude started keeps the runtime and its MCP servers alive for ever.
+   */
+  notePromptWithdrawn(): void {
+    if (this.initSeen) return;
+    this.turnSeen = false;
   }
 
   /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
@@ -122,6 +138,7 @@ export class ClaudeRuntimeSafety {
     }
     if (message.subtype === "init") {
       this.turnSeen = true;
+      this.initSeen = true;
       const version = parseClaudeCodeVersion(message.claude_code_version ?? "");
       if (
         version &&

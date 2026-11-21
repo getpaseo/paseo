@@ -4941,6 +4941,9 @@ class ClaudeAgentSession implements AgentSession {
         this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
       }
     }
+    // Claude took none of them, so the turn this process was sent a prompt for never started.
+    // Nothing else will arrive for it: no init, no lifecycle, no result.
+    if (withdrewAll) this.runtimeSafety.notePromptWithdrawn();
     return withdrewAll;
   }
 
