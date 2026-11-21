@@ -69,19 +69,13 @@ function getImageExtension(mimeType: string): string {
 export const MAX_PROVIDER_IMAGE_BYTES = 128 * 1024 * 1024;
 const BASE64_CHUNK_CHARACTERS = 1024 * 1024; // Multiple of four; decode units stay aligned.
 const DECODE_SLICE_MS = 10;
-let decodeSliceDeadline = performance.now() + DECODE_SLICE_MS;
+let decodeBudgetMs = DECODE_SLICE_MS;
 let pendingDecodeYield: Promise<void> | undefined;
 
-function yieldForDecodeBudget(): Promise<void> | undefined {
-  if (performance.now() >= decodeSliceDeadline) {
-    // Promise reactions resume in arrival order. Decoders that exhaust the
-    // next slice wait again before taking another chunk.
-    pendingDecodeYield ??= setImmediate().then(() => {
-      decodeSliceDeadline = performance.now() + DECODE_SLICE_MS;
-      pendingDecodeYield = undefined;
-    });
-  }
-  return pendingDecodeYield;
+async function refillDecodeBudget(): Promise<void> {
+  await setImmediate();
+  decodeBudgetMs = DECODE_SLICE_MS;
+  pendingDecodeYield = undefined;
 }
 
 export async function materializeProviderImage(image: {
@@ -182,11 +176,13 @@ async function* decodeImage(data: string): AsyncGenerator<Buffer> {
   let carry = "";
   let decodedBytes = 0;
   for (let offset = 0; offset < data.length; offset += BASE64_CHUNK_CHARACTERS) {
-    let pause = yieldForDecodeBudget();
+    let pause = pendingDecodeYield;
     while (pause) {
       await pause;
-      pause = yieldForDecodeBudget();
+      pause = pendingDecodeYield;
     }
+    // Charge synchronous work across decoders. File I/O and idle time leave the budget intact.
+    const startedAt = performance.now();
     // Buffer.from ignores non-base64 characters. Carry incomplete quartets so
     // line-wrapped payloads decode identically across chunk boundaries.
     const chunk =
@@ -195,6 +191,8 @@ async function* decodeImage(data: string): AsyncGenerator<Buffer> {
     const finalChunk = offset + BASE64_CHUNK_CHARACTERS >= data.length || chunk.includes("=");
     const end = finalChunk ? chunk.length : chunk.length - (chunk.length % 4);
     const bytes = Buffer.from(chunk.slice(0, end), "base64");
+    decodeBudgetMs -= performance.now() - startedAt;
+    if (decodeBudgetMs <= 0) pendingDecodeYield = refillDecodeBudget();
     carry = chunk.slice(end);
     decodedBytes += bytes.length;
     if (decodedBytes > MAX_PROVIDER_IMAGE_BYTES)

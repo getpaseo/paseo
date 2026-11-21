@@ -333,3 +333,29 @@ test("six concurrent 8 MiB images share the main-thread CPU budget", async () =>
     clearInterval(probe);
   }
 });
+
+test("a busy event loop does not spend the image decode budget", async () => {
+  const count = 8;
+  let turns = 0;
+  let probe = setImmediate(function tick() {
+    turns++;
+    // Simulate unrelated work that exceeds a 10 ms decode slice.
+    const end = performance.now() + 20;
+    while (performance.now() < end) {
+      // Keep this event-loop turn busy.
+    }
+    probe = setImmediate(tick);
+  });
+  const paths: string[] = [];
+  try {
+    for (let index = 0; index < count; index++) {
+      const data = Buffer.from(`attachment on a busy loop ${index}`).toString("base64");
+      const image = await materializeProviderImage({ data, mimeType: "image/png" });
+      paths.push(image.path);
+    }
+  } finally {
+    clearImmediate(probe);
+    for (const image of paths) rmSync(image, { force: true });
+  }
+  expect(turns).toBeLessThanOrEqual(7 * count);
+});
