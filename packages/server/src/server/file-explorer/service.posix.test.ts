@@ -77,6 +77,29 @@ describe.skipIf(isPlatform("win32"))("service POSIX-only", () => {
     }
   });
 
+  it("lists symlinked directories inside the workspace as expandable directories", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      const target = path.join(root, "shared");
+      await mkdir(target);
+      await writeFile(path.join(target, "inner.txt"), "inner\n", "utf-8");
+      await symlink("shared", path.join(root, "shared-link"));
+
+      const listing = await listDirectoryEntries({ root });
+      const link = listing.entries.find((entry) => entry.name === "shared-link");
+
+      expect(link?.kind).toBe("directory");
+
+      const expanded = await listDirectoryEntries({ root, relativePath: "shared-link" });
+
+      expect(expanded.path).toBe("shared-link");
+      expect(expanded.entries.map((entry) => entry.name)).toContain("inner.txt");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses canonical paths for downloadable symlink targets inside the workspace", async () => {
     const root = await createTempDir("paseo-file-explorer-");
 
