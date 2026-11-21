@@ -105,3 +105,15 @@ A binding on a key the platform already uses for editing, such as Cmd/Ctrl+Z for
 workspace archive undo, declares `editable: false` and registers its handler with
 `isActive` true only while it has work. An inactive handler leaves the key
 unhandled, so the pipeline skips `preventDefault` and the platform's own undo runs.
+
+## Linux input service recovery
+
+Before GTK initializes, Desktop selects the running IBus portal so libibus can
+reconnect after service restarts or private socket deletion. An explicit
+`IBUS_USE_PORTAL` setting takes precedence. Without a portal, session bus, or
+`gdbus`, Desktop keeps the existing input method; the probe times out after one
+second.
+
+`test:e2e:input-method` tests native X11 input after socket deletion and IBus
+restart in a private D-Bus session. It requires `ibus`, `dbus-x11`, `python3`,
+`libxtst6`, and Xvfb.
