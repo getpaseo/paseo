@@ -119,6 +119,7 @@ function workspace(
     changeRequestNumber: null,
     activityAt,
     agents: [],
+    untitledAgents: [],
     matchedAgent: null,
     archived: false,
     background: false,

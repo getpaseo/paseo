@@ -27,6 +27,28 @@ function parseChangeRequestQuery(query: string): number | null {
   return Number.isSafeInteger(number) ? number : null;
 }
 
+/** An agent-ID query: hex digits and dashes only. */
+const AGENT_ID_QUERY = /^[0-9a-f-]+$/i;
+/** Shortest agent-ID prefix that counts as an ID query. */
+const MIN_AGENT_ID_PREFIX = 4;
+/**
+ * Shortest agent-ID fragment matched anywhere in the ID. Longer than a prefix, because a short
+ * hex word ("face", "dead", "beef") would otherwise match random UUIDs.
+ */
+const MIN_AGENT_ID_SUBSTRING = 6;
+
+const ID_PREFIX = 0;
+const ID_SUBSTRING = 1;
+
+/** How an agent ID matches an ID-shaped query, or null. IDs are lowercase UUIDs. */
+function agentIdMatchRank(query: string, agentId: string): number | null {
+  if (!AGENT_ID_QUERY.test(query)) return null;
+  const id = agentId.toLowerCase();
+  if (query.length >= MIN_AGENT_ID_PREFIX && id.startsWith(query)) return ID_PREFIX;
+  if (query.length >= MIN_AGENT_ID_SUBSTRING && id.includes(query)) return ID_SUBSTRING;
+  return null;
+}
+
 /** Within a match class, a match on the workspace's own text ranks ahead of one through an agent. */
 const OWN_MATCH = 0;
 const AGENT_MATCH = 1;
@@ -46,6 +68,8 @@ interface ScoredWorkspace {
   candidate: Candidate | null;
   agent: CommandCenterWorkspaceAgent | null;
   changeRequestHit: boolean;
+  /** Set when an agent's ID matched the query: prefix ahead of substring. Null otherwise. */
+  idRank: number | null;
 }
 
 function ownSearchFields(workspace: CommandCenterWorkspaceResult) {
@@ -80,6 +104,11 @@ function compareCandidates(left: Candidate, right: Candidate): number {
 function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace): number {
   if (left.changeRequestHit !== right.changeRequestHit) {
     return left.changeRequestHit ? -1 : 1;
+  }
+  if (left.idRank !== right.idRank) {
+    if (left.idRank === null) return 1;
+    if (right.idRank === null) return -1;
+    return left.idRank - right.idRank;
   }
   if ((left.via === HOST_MATCH) !== (right.via === HOST_MATCH)) {
     return left.via === HOST_MATCH ? 1 : -1;
@@ -116,6 +145,21 @@ function agentMatch(workspace: CommandCenterWorkspaceResult, query: string): Age
   return best;
 }
 
+interface AgentIdMatch {
+  agent: CommandCenterWorkspaceAgent;
+  rank: number;
+}
+
+/** The workspace's agent whose ID matches best, titled or not. A tie keeps the newer one. */
+function agentIdMatch(workspace: CommandCenterWorkspaceResult, query: string): AgentIdMatch | null {
+  let best: AgentIdMatch | null = null;
+  for (const agent of [...workspace.agents, ...workspace.untitledAgents]) {
+    const rank = agentIdMatchRank(query, agent.id);
+    if (rank !== null && (!best || rank < best.rank)) best = { agent, rank };
+  }
+  return best;
+}
+
 export type WorkspaceRanker = (
   workspaces: readonly CommandCenterWorkspaceResult[],
   query: string,
@@ -127,7 +171,9 @@ export type WorkspaceRanker = (
  * branch and change request, or on those together with the title of one of its agents. It is
  * matched through an agent only when the agent matches in a closer class than its own text
  * (see `MatchClass`), never on a change-request hit; such a match comes back naming that agent,
- * and opens it. Each row ranks by the match it shows.
+ * and opens it. A query of hex digits and dashes also finds the workspace of an agent, titled or
+ * not, whose ID starts with it (4+ characters) or contains it (6+); that row names the agent and
+ * ranks ahead of text matches, prefix hits first. Each row ranks by the match it shows.
  *
  * An empty query lists every workspace, most recent first. `keepUnmatched` keeps rows nothing
  * here matches, ranked last: archived rows come from the host's own search, which is
@@ -163,10 +209,23 @@ export function createWorkspaceRanker(): WorkspaceRanker {
     if (!query.trim()) return [...workspaces].sort(compareByRecency);
 
     const changeRequestNumber = parseChangeRequestQuery(query);
+    const idQuery = query.trim().toLowerCase();
     const matches: ScoredWorkspace[] = [];
     for (const workspace of workspaces) {
       const changeRequestHit =
         changeRequestNumber !== null && workspace.changeRequestNumber === changeRequestNumber;
+      const idMatch = agentIdMatch(workspace, idQuery);
+      if (idMatch) {
+        matches.push({
+          workspace,
+          via: AGENT_MATCH,
+          candidate: null,
+          agent: idMatch.agent,
+          changeRequestHit,
+          idRank: idMatch.rank,
+        });
+        continue;
+      }
       const own = scoreCandidate(query, ownSearchFields(workspace));
       // A change-request hit is the workspace's own answer to the query.
       const throughAgent = changeRequestHit ? null : agentMatch(workspace, query);
@@ -181,9 +240,17 @@ export function createWorkspaceRanker(): WorkspaceRanker {
           candidate: throughAgent,
           agent: throughAgent.agent,
           changeRequestHit,
+          idRank: null,
         });
       } else if (own || changeRequestHit) {
-        matches.push({ workspace, via: OWN_MATCH, candidate: own, agent: null, changeRequestHit });
+        matches.push({
+          workspace,
+          via: OWN_MATCH,
+          candidate: own,
+          agent: null,
+          changeRequestHit,
+          idRank: null,
+        });
       } else if (options.keepUnmatched) {
         matches.push({
           workspace,
@@ -191,6 +258,7 @@ export function createWorkspaceRanker(): WorkspaceRanker {
           candidate: null,
           agent: null,
           changeRequestHit,
+          idRank: null,
         });
       }
     }

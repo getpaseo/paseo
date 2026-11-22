@@ -9,6 +9,7 @@ function workspace(input: {
   changeRequestNumber?: number | null;
   activityAt?: Date | null;
   agents?: readonly CommandCenterWorkspaceAgent[];
+  untitledAgents?: readonly CommandCenterWorkspaceAgent[];
   opened?: string[];
 }): CommandCenterWorkspaceResult {
   return {
@@ -22,6 +23,7 @@ function workspace(input: {
     changeRequestNumber: input.changeRequestNumber ?? null,
     activityAt: input.activityAt ?? null,
     agents: input.agents ?? [],
+    untitledAgents: input.untitledAgents ?? [],
     matchedAgent: null,
     archived: false,
     background: false,
@@ -316,5 +318,87 @@ describe("workspace ranking", () => {
     const rank = createWorkspaceRanker();
     expect(rank([row], "billign")).toEqual([]);
     expect(rank([row], "billign", { keepUnmatched: true })).toEqual([row]);
+  });
+});
+
+describe("agent ID search", () => {
+  const AGENT_ID = "54b15a51-1111-4222-8333-444455556666";
+  const rank = (rows: readonly CommandCenterWorkspaceResult[], query: string) =>
+    createWorkspaceRanker()(rows, query);
+
+  function withAgent(id: string, agentId = AGENT_ID, title = "Some work") {
+    return workspace({ id, title: "Unrelated", agents: [agent(agentId, title)] });
+  }
+
+  it("matches the start of an ID from 4 characters, case-insensitively", () => {
+    const hit = withAgent("hit");
+    const other = withAgent("other", "99999999-1111-4222-8333-444455556666");
+    for (const query of ["54b1", "54B15A51", " 54b15a51-1111 ", AGENT_ID]) {
+      expect(rank([other, hit], query).map((row) => row.id)).toEqual(["hit"]);
+    }
+  });
+
+  it("does not match a prefix shorter than 4 characters", () => {
+    expect(rank([withAgent("hit")], "54b")).toEqual([]);
+  });
+
+  it("matches inside an ID from 6 characters, not 5", () => {
+    const hit = withAgent("hit");
+    expect(rank([hit], "5a51-1").map((row) => row.id)).toEqual(["hit"]);
+    expect(rank([hit], "15a51-").map((row) => row.id)).toEqual(["hit"]);
+    expect(rank([hit], "15a51")).toEqual([]);
+    expect(rank([hit], "5a51")).toEqual([]);
+  });
+
+  it("leaves a query with non-hex characters to ordinary text matching", () => {
+    expect(rank([withAgent("hit")], "54b1x")).toEqual([]);
+    const titled = workspace({ id: "t", title: "Zebra crossing" });
+    expect(rank([titled], "zebra").map((row) => row.id)).toEqual(["t"]);
+  });
+
+  it("finds an untitled agent and shows it by its ID", () => {
+    const opened: string[] = [];
+    const untitled = workspace({
+      id: "untitled",
+      title: "Unrelated",
+      untitledAgents: [{ id: AGENT_ID, title: AGENT_ID, provider: "mock" }],
+      opened,
+    });
+    const [row] = rank([untitled], "54b15a51");
+    expect(row.matchedAgent?.id).toBe(AGENT_ID);
+    expect(row.matchedAgent?.title).toBe(AGENT_ID);
+    row.run();
+    expect(opened).toEqual([AGENT_ID]);
+  });
+
+  it("names the matched agent and opens it", () => {
+    const opened: string[] = [];
+    const hit = workspace({
+      id: "hit",
+      title: "Unrelated",
+      agents: [agent("11111111-0000-4000-8000-000000000000", "First"), agent(AGENT_ID, "Second")],
+      opened,
+    });
+    const [row] = rank([hit], "54b1");
+    expect(row.matchedAgent?.id).toBe(AGENT_ID);
+    row.run();
+    expect(opened).toEqual([AGENT_ID]);
+  });
+
+  it("ranks ID hits ahead of text matches, prefix hits ahead of substring hits", () => {
+    const text = workspace({ id: "text", title: "54b15a51 notes" });
+    const substring = withAgent("substring", "aaaaaaaa-54b15a51-0000-0000-000000000000");
+    const prefix = withAgent("prefix");
+    expect(rank([text, substring, prefix], "54b15a51").map((row) => row.id)).toEqual([
+      "prefix",
+      "substring",
+      "text",
+    ]);
+  });
+
+  it("still ranks a change-request hit ahead of an ID hit", () => {
+    const changeRequest = workspace({ id: "pr", title: "Other", changeRequestNumber: 5432 });
+    const idHit = withAgent("id", "5432abcd-1111-4222-8333-444455556666");
+    expect(rank([idHit, changeRequest], "5432").map((row) => row.id)).toEqual(["pr", "id"]);
   });
 });

@@ -74,6 +74,11 @@ export interface CommandCenterWorkspaceResult {
   activityAt: Date | null;
   /** The workspace's agents, most recent first. Part of what the workspace matches on. */
   agents: readonly CommandCenterWorkspaceAgent[];
+  /**
+   * The workspace's agents that have no title, so title matching never sees them. Only an agent-ID
+   * query finds them; their `title` is their ID, which is what a row matched through one shows.
+   */
+  untitledAgents: readonly CommandCenterWorkspaceAgent[];
   /** The agent the query matched better than the workspace's own text. Drawn as a third line. */
   matchedAgent: CommandCenterWorkspaceAgent | null;
   archived: boolean;

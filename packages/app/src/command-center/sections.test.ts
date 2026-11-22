@@ -30,6 +30,7 @@ function workspace(
     agents: options.agentTitle
       ? [{ id: `${id}-agent`, title: options.agentTitle, provider: "mock" }]
       : [],
+    untitledAgents: [],
     matchedAgent: null,
     archived: options.archived ?? false,
     background: options.background ?? false,

@@ -134,21 +134,30 @@ function createAgentResultAction(serverId: string) {
 
 const NO_WORKSPACE_AGENTS: readonly CommandCenterWorkspaceAgent[] = [];
 
-/** Each workspace's titled agents, most recent first, keyed `serverId:workspaceId`. */
+interface WorkspaceAgentGroup {
+  titled: CommandCenterWorkspaceAgent[];
+  untitled: CommandCenterWorkspaceAgent[];
+}
+
+/**
+ * Each workspace's agents, most recent first, keyed `serverId:workspaceId`. Untitled agents are
+ * kept apart: only an agent-ID query finds them, and they show their ID.
+ */
 function groupWorkspaceAgents(
   agents: readonly AggregatedAgent[],
-): Map<string, CommandCenterWorkspaceAgent[]> {
-  const byWorkspace = new Map<string, CommandCenterWorkspaceAgent[]>();
+): Map<string, WorkspaceAgentGroup> {
+  const byWorkspace = new Map<string, WorkspaceAgentGroup>();
   const newestFirst = [...agents].sort(
     (left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime(),
   );
   for (const agent of newestFirst) {
+    if (!agent.workspaceId) continue;
     const title = resolveAgentLabel(agent.title);
-    if (!agent.workspaceId || !title) continue;
     const key = `${agent.serverId}:${agent.workspaceId}`;
-    const list = byWorkspace.get(key) ?? [];
-    list.push({ id: agent.id, title, provider: agent.provider });
-    byWorkspace.set(key, list);
+    const group = byWorkspace.get(key) ?? { titled: [], untitled: [] };
+    if (title) group.titled.push({ id: agent.id, title, provider: agent.provider });
+    else group.untitled.push({ id: agent.id, title: agent.id, provider: agent.provider });
+    byWorkspace.set(key, group);
   }
   return byWorkspace;
 }
@@ -168,6 +177,16 @@ function titledAgents(
     const title = resolveAgentLabel(agent.title);
     return title ? [{ id: agent.id, title, provider: agent.provider }] : [];
   });
+}
+
+function untitledAgents(
+  agents: readonly { id: string; title: string | null; provider: string }[],
+): CommandCenterWorkspaceAgent[] {
+  return agents.flatMap((agent) =>
+    resolveAgentLabel(agent.title)
+      ? []
+      : [{ id: agent.id, title: agent.id, provider: agent.provider }],
+  );
 }
 
 interface WorkspaceRows {
@@ -254,7 +273,8 @@ function useWorkspaceRows(
               project: workspaceProject,
               changeRequestNumber: workspace.changeRequestNumber,
               activityAt: workspace.statusEnteredAt,
-              agents: agentsByWorkspace.get(key) ?? NO_WORKSPACE_AGENTS,
+              agents: agentsByWorkspace.get(key)?.titled ?? NO_WORKSPACE_AGENTS,
+              untitledAgents: agentsByWorkspace.get(key)?.untitled ?? NO_WORKSPACE_AGENTS,
               matchedAgent: null,
               archived: false,
               background: workspace.background,
@@ -302,6 +322,7 @@ function useWorkspaceRows(
           changeRequestNumber: null,
           activityAt: workspace.archivedAt,
           agents: titledAgents(workspace.agents),
+          untitledAgents: untitledAgents(workspace.agents),
           matchedAgent: null,
           archived: true,
           background: false,
