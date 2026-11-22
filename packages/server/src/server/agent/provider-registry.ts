@@ -502,6 +502,7 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   configuredOptions: ProviderOptions | undefined,
+  supportsLaunchWrap: boolean,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -521,6 +522,7 @@ function wrapClientProvider(
     get capabilities() {
       return inner.capabilities;
     },
+    supportsLaunchWrap,
     shutdown: inner.shutdown?.bind(inner),
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
@@ -746,16 +748,15 @@ function createResolvedProviderClient(
   const inner = resolved.createBaseClient(logger);
   const profileModels = resolveConfiguredModels(provider, inner, resolved.profileModels);
   const additionalModels = resolveConfiguredModels(provider, inner, resolved.additionalModels);
-  const client = wrapClientProvider(
+  return wrapClientProvider(
     provider,
     inner,
     profileModels,
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.contract.supportsLaunchWrap === true,
   );
-  client.supportsLaunchWrap = resolved.contract.supportsLaunchWrap === true;
-  return client;
 }
 
 interface RegisteredProvider {

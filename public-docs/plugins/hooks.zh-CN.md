@@ -29,7 +29,7 @@ export default function contribute(server: PluginServerContext) {
 
 所有处理函数都必须为异步函数。轮次完成包括成功、失败和取消，请查看 `outcome`。权限完成包括所有处理结果，请查看 `resolution`。
 
-创建 Agent 会发生一次，`agent.create.before` 修改已保存的配置。打开 Agent 指启动 Provider 进程，包括首次运行、daemon 重启后恢复、读取历史、导入外部会话和重新加载。`agent.open.before` 为每次启动提供临时的环境变量、指令、工具和 MCP 服务器。创建会打开 Agent；打开已有 Agent 不会创建它；关闭会结束运行中的实例。在应用中打开标签页不属于此操作。
+创建 Agent 会发生一次，`agent.create.before` 修改已保存的配置。打开 Agent 指启动 Provider 进程，包括首次运行、daemon 重启后恢复、读取历史、导入外部会话和重新加载。`agent.open.before` 为每次启动提供临时的环境变量、指令、工具、MCP 服务器和启动包装。创建会打开 Agent；打开已有 Agent 不会创建它；关闭会结束运行中的实例。在应用中打开标签页不属于此操作。
 
 `worktree.create.after` 在工作区注册前运行，随后是 `workspace.create.after`，两者都早于第一个 Agent 的 `agent.create.before` / `agent.open.before`。
 
@@ -48,7 +48,7 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 ## 钩子一览 {#hooks}
 
 | 钩子                      | 等待 | 载荷                                      | 可修改                                                                  |
-|---------------------------|------|-------------------------------------------|-------------------------------------------------------------------------|
+| ------------------------- | ---- | ----------------------------------------- | ----------------------------------------------------------------------- |
 | `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                                                            |
 | `workspace.create.after`  | 否   | `{ workspace }`                           |                                                                         |
 | `workspace.archive.after` | 否   | `{ workspace }`                           |                                                                         |

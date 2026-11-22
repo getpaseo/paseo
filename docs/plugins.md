@@ -462,8 +462,8 @@ Server entries register async handlers with `server.addHook(name, handler)`, ret
 function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
 registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
 owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
-configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
-every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, `mcpServers`, and a
+[launch wrap](#launch-wrap) on every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
 
 ### Launch wrap
 
@@ -618,6 +618,10 @@ Agent refresh closes the current provider session and opens it again with curren
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
 daemon launch from `connect` and the per-session env and MCP servers from `session.open`. There is
 no provider reload input.
+
+Declare `ProviderRegistration.launchWrap: true` when every session spawns its own harness and can
+run it as `[...config.wrap, command, ...args]`; offer `session.launch_wrap` on the connection. See
+[Launch wrap](#launch-wrap). `runAcpProvider({ command })` does both.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. The shim builds the standard row for each ACP tool `kind`

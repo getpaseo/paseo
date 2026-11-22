@@ -6,7 +6,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,11 @@ import {
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
-import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
+import {
+  CodexAppServerAgentClient,
+  CodexAppServerAgentSession,
+} from "./providers/codex-app-server-agent.js";
+import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
@@ -16392,5 +16396,82 @@ test("a supporting provider receives the wrap at launch and the record never sto
   expect(client.launchContexts[0]?.wrap).toEqual(["/opt/sandbox/bin/run", "--profile", "a b"]);
   await manager.flush();
   expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+// Records its argv, then answers as the Codex app server, so the provider command is only an
+// argument: a Windows script name there must reach the wrapper as is.
+const RECORDING_CODEX_APP_SERVER = `
+const { appendFileSync } = require("node:fs");
+const [log, ...rest] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify(rest) + "\\n");
+const results = {
+  "collaborationMode/list": { data: [] },
+  "config/read": { config: {} },
+  getUserSavedConfig: { config: {} },
+  "model/list": { data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }] },
+  "skills/list": { data: [] },
+  "thread/start": { thread: { id: "thread-1" } },
+  "thread/resume": { thread: { id: "thread-1" } },
+  "thread/loaded/list": { data: [] },
+  "thread/backgroundTerminals/list": { data: [], nextCursor: null },
+};
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (let index = buffer.indexOf("\\n"); index !== -1; index = buffer.indexOf("\\n")) {
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (message.id === undefined || !message.method) continue;
+    process.stdout.write(JSON.stringify({ id: message.id, result: results[message.method] ?? {} }) + "\\n");
+  }
+});
+`;
+
+test("a wrapped refresh passes a Windows script provider command to the wrapper through the real spawn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-refresh-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const launcher = join(workdir, "recording-app-server.cjs");
+  const launches = join(workdir, "launches.jsonl");
+  writeFileSync(launcher, RECORDING_CODEX_APP_SERVER);
+  // The version probes run `node --version`; sessions spawn through the production spawnProcess.
+  const codex = new CodexAppServerAgentClient(
+    logger,
+    { command: { mode: "replace", argv: [process.execPath] } },
+    {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "C:\\codex\\codex.cmd", args: [] }),
+        spawn: ({ command, args, options }) => spawnProcess(command, args, options),
+      },
+    },
+  );
+  const client: AgentClient = Object.assign(codex, { supportsLaunchWrap: true });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.open.before"
+          ? { ...request, wrap: [process.execPath, launcher, launches] }
+          : request,
+    },
+  });
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.reloadAgentSession(created.id);
+
+  const argv = readFileSync(launches, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(argv).toHaveLength(2);
+  for (const launched of argv)
+    expect(launched.slice(0, 2)).toEqual(["C:\\codex\\codex.cmd", "app-server"]);
+  expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
   await manager.closeAgent(created.id);
 });

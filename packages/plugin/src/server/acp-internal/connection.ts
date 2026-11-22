@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { applyLaunchWrap, spawnProcess, terminateProcess } from "../process.js";
+import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -501,7 +501,13 @@ class AcpRuntime {
         args: options.options.command.slice(1),
         env: process.env,
       };
-      const spawned = options.wrap ? applyLaunchWrap(options.wrap, launch) : launch;
+      // spawnProcess starts a Windows script wrapper through cmd.exe, as for any launcher.
+      const spawned = options.wrap
+        ? {
+            command: options.wrap[0],
+            args: [...options.wrap.slice(1), launch.command, ...launch.args],
+          }
+        : launch;
       child = spawnProcess(spawned.command, spawned.args, {
         cwd: options.cwd,
         env: { ...launch.env, ...options.env },

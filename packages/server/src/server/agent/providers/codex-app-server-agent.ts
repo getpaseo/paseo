@@ -1,4 +1,3 @@
-import { applyLaunchWrap } from "@getpaseo/plugin/server";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
@@ -8270,7 +8269,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
     // Every spawn from this closure, including reconnects and startup retries, carries the wrap.
     const { command, args } = options.wrap
-      ? applyLaunchWrap(options.wrap, { command: resolvedPrefix.command, args: appServerArgs })
+      ? {
+          command: options.wrap[0],
+          args: [...options.wrap.slice(1), resolvedPrefix.command, ...appServerArgs],
+        }
       : { command: resolvedPrefix.command, args: appServerArgs };
     return () => {
       this.logger.trace(

@@ -1069,10 +1069,12 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
   readonly installation?: AgentClientInstallation;
+  readonly supportsLaunchWrap: boolean;
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
     this.label = registration.label;
+    this.supportsLaunchWrap = registration.launchWrap === true;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
