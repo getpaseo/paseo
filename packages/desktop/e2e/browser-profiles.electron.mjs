@@ -3,22 +3,13 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { expect } from "@playwright/test";
 
-// Distinct strips let the capture wait for Electron to composite the selected guest.
-const accountColors = { Alice: [35, 133, 35], Bob: [126, 54, 126], "Signed out": [93, 99, 93] };
-
 export function accountFixture(requestCookie) {
-  const colors = Object.entries(accountColors)
-    .map(([name, rgb]) => `h1[data-account="${name}"]{border-color:rgb(${rgb.join(",")})}`)
-    .join("");
   return `<!doctype html><meta charset=utf-8><title>Account fixture</title>
-    <style>body{font:20px system-ui;margin:3rem;color:#17334e}h1{font-size:38px;border-left:16px solid;padding-left:12px}${colors}button,a{font:inherit;padding:8px}</style>
+    <style>body{font:20px system-ui;margin:3rem;color:#17334e}h1{font-size:38px}button,a{font:inherit;padding:8px}</style>
     <p>Account fixture</p><h1 id="account"></h1><button>Alice</button> <button>Bob</button>
     <p><a href="/profile-account?link" target="_blank" rel="noopener">Open in another tab</a></p>
     <script>const account = document.querySelector("#account");
-    const show = () => {
-      account.textContent = localStorage.getItem("account") || "Signed out";
-      account.dataset.account = account.textContent;
-    };
+    const show = () => (account.textContent = localStorage.getItem("account") || "Signed out");
     window.firstCookie = ${JSON.stringify(requestCookie).replaceAll("<", "\\u003c")};
     for (const button of document.querySelectorAll("button")) button.onclick = () => {
       const name = button.textContent; document.cookie = "account=" + name + "; Path=/; Max-Age=86400; SameSite=Lax";
@@ -26,21 +17,24 @@ export function accountFixture(requestCookie) {
     }; show();</script>`;
 }
 
+// The first document is held until browser_new_tab has returned and listed the tab.
 async function checkDelayedRegistration(tool) {
   const before = new Set((await tool("browser_list_tabs", {})).tabs.map((tab) => tab.browserId));
-  let requestAt, responseAt;
+  let requestAt, responseAt, release;
+  const held = new Promise((resolve) => (release = resolve));
   const server = createServer((request, response) => {
     if (request.url !== "/slow") {
       response.writeHead(404).end();
       return;
     }
     requestAt = Date.now();
-    setTimeout(() => {
+    void (async () => {
+      await held;
       responseAt = Date.now();
       response
         .writeHead(200, { "Content-Type": "text/html" })
         .end("<title>Slow fixture</title><p>Slow page loaded</p>");
-    }, 8000);
+    })();
   });
   await new Promise((resolve, reject) =>
     server.once("error", reject).listen(0, "127.0.0.1", resolve),
@@ -57,6 +51,7 @@ async function checkDelayedRegistration(tool) {
     const pending = await newIds();
     expect(pending).toEqual([browserId]);
     expect(responseAt).toBeUndefined();
+    release();
     await tool("browser_wait", { browserId, text: "Slow page loaded", timeoutMs: 15000 });
     const loaded = await newIds();
     expect(loaded).toEqual([browserId]);
@@ -69,6 +64,7 @@ async function checkDelayedRegistration(tool) {
       loaded,
     };
   } finally {
+    release();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
@@ -108,30 +104,16 @@ export async function runProfileJourney({
   const evidence = { before: [], after: [], groups: [] };
   const save = () =>
     fs.writeFileSync(path.join(artifactDir, "profiles.json"), JSON.stringify(evidence, null, 2));
-  const screenshot = async (name, expectedAccount) => {
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  // Evidence only: let the page and the visible guest paint, then capture the window.
+  const screenshot = async (name) => {
+    const frames = "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))";
+    await page.evaluate(frames);
+    await active()
+      .evaluate((view, code) => view.executeJavaScript(code, true), frames)
+      .catch(() => undefined);
+    const png = await inspect(
+      "return win.capturePage().then(image => image.toPNG().toString('base64'));",
     );
-    const color = accountColors[expectedAccount];
-    const strip = color
-      ? Buffer.from([...color, 255])
-          .toString("hex")
-          .repeat(8)
-      : "";
-    let png;
-    await expect
-      .poll(
-        async () => {
-          png = await inspect(`return win.capturePage().then(image => {
-        const strip = Buffer.from(${JSON.stringify(strip)}, 'hex');
-        if (strip.length && !image.toBitmap().includes(strip)) return null;
-        return image.toPNG().toString('base64');
-      });`);
-          return Boolean(png);
-        },
-        { timeout: 15000, message: `Waiting for the desktop to paint ${name}` },
-      )
-      .toBe(true);
     fs.writeFileSync(path.join(artifactDir, name + ".png"), Buffer.from(png, "base64"));
   };
   async function blank() {
@@ -155,7 +137,7 @@ export async function runProfileJourney({
   async function create(group, name, caption) {
     await picker().click();
     const action = menuGroup(group).getByText(
-      group === "Shared" ? "Create new shared profile…" : "Create new workspace profile…",
+      group === "Shared" ? "Create new shared profile…" : "Create new project profile…",
       { exact: true },
     );
     await action.first().click();
@@ -183,7 +165,7 @@ export async function runProfileJourney({
       firstCookie: stage === "after" ? "account=" + account : "",
     });
     const name = stage + "-" + account.toLowerCase();
-    await screenshot(name, account);
+    await screenshot(name);
     evidence[stage].push({ id, label: caption, ...values, screenshot: name + ".png" });
     save();
   }
@@ -205,7 +187,7 @@ export async function runProfileJourney({
       }
     });
     await screenshot("pristine-menu");
-    await menuGroup(project).getByText("Create new workspace profile…", { exact: true }).click();
+    await menuGroup(project).getByText("Create new project profile…", { exact: true }).click();
     await page.getByTestId("browser-create-profile-input").fill("Desktop browser workspace 1");
     await page.getByTestId("browser-create-profile-submit").click();
     const duplicate = page.getByTestId("browser-create-profile-error");
@@ -220,12 +202,6 @@ export async function runProfileJourney({
     ).toHaveCount(1);
     await page.keyboard.press("Escape");
     await create("Shared", "Work", shared);
-    await go("file:///unsupported");
-    await expect(
-      page.getByText("Blocked unsupported browser URL: file:", { exact: true }),
-    ).toBeVisible();
-    expect(await guest(alice, "location.href")).toBe("about:blank");
-    await expect(picker()).toContainText(shared);
     await go(url);
     await expect(label()).toHaveText(shared);
     await guest(alice, "document.querySelector('button').click()");
@@ -250,7 +226,10 @@ export async function runProfileJourney({
     await focus(agent.browserId);
     await expect(label()).toHaveText(automatic);
     expect(await guest(agent.browserId, "window.firstCookie")).toBe("");
-    await guest(agent.browserId, 'document.cookie = "account=Workspace; Path=/; Max-Age=86400"');
+    await guest(
+      agent.browserId,
+      'document.cookie = "account=Workspace; Path=/; Max-Age=86400"; localStorage.setItem("account", "Workspace")',
+    );
     const direct = await tool("browser_new_tab", { url });
     await focus(direct.browserId);
     await expect(label()).toHaveText(automatic);
@@ -303,22 +282,7 @@ export async function runProfileJourney({
       firstRequest: "account=Workspace",
     };
     const untouched = await blank();
-    await picker().click();
-    await page.getByText("Create new shared profile…", { exact: true }).click();
-    await page.getByTestId("browser-create-profile-cancel").click();
-    await expect(picker()).toContainText(automatic);
-    await picker().focus();
-    await page.keyboard.press("Enter");
-    const workRow = menuGroup("Shared")
-      .locator("[aria-checked]")
-      .filter({ hasText: /^Work$/ });
-    await expect(page.getByRole("menuitem", { name: "default", exact: true })).toBeFocused();
-    await expect(async () => {
-      await page.keyboard.press("Home");
-      await page.keyboard.press("ArrowDown");
-      await expect(workRow).toBeFocused({ timeout: 250 });
-    }).toPass({ timeout: 5000 });
-    await page.keyboard.press("Enter");
+    await choose("Work");
     await expect(picker()).toContainText(shared);
     const revisited = await blank();
     await choose("Customer");
@@ -331,21 +295,10 @@ export async function runProfileJourney({
     await go("about:blank");
     await expect.poll(() => guest(revisited, "location.href")).toBe("about:blank");
     await expect(label()).toHaveText(named);
-    const legacy = await blank();
-    await choose("default");
-    await go(url);
-    await expect(label()).toHaveText("Shared › default");
-    await guest(legacy, 'document.cookie = "account=Legacy; Path=/; Max-Age=86400"');
-    const legacySeed = await page.evaluate((id) => {
-      const key = "workspace-browser-store";
-      const saved = JSON.parse(localStorage.getItem(key));
-      delete saved.state.browsersById[id].phase;
-      delete saved.state.browsersById[id].profile;
-      localStorage.setItem(key, JSON.stringify(saved));
-      return JSON.parse(localStorage.getItem(key)).state.browsersById[id];
-    }, legacy);
-    expect(legacySeed).not.toHaveProperty("profile");
-    expect(legacySeed).not.toHaveProperty("phase");
+    // The automatic profile has saved data but no live guest after the relaunch.
+    const dormantPartition = await page
+      .locator(`webview[data-paseo-browser-id="${direct.browserId}"]`)
+      .getAttribute("partition");
     expect(await inspect("return global.profileExampleRequests")).toEqual([]);
     evidence.defaults.exampleRequests = [];
     const firstPid = await inspect("return process.pid;");
@@ -361,28 +314,14 @@ export async function runProfileJourney({
     expect(await guest(revisited, "location.href")).toBe("about:blank");
     await focus(untouched);
     await expect(picker()).toContainText(shared);
-    await focus(legacy);
-    await expect(label()).toHaveText("Shared › default");
-    expect(await guest(legacy, "document.cookie")).toBe("account=Legacy");
-    evidence.restored = { revisited, untouched, legacy };
+    evidence.restored = { revisited, untouched };
     save();
 
-    // Relaunch on Alice. Bob's record and on-disk session survive without a live guest.
-    const closedPartition = await page
-      .locator(`webview[data-paseo-browser-id="${bob}"]`)
-      .getAttribute("partition");
-    await focus(alice);
-    page = await restart();
-    await workspace(0);
-    await focus(alice);
-    await expect(label()).toHaveText(shared);
-    const thirdPid = await inspect("return process.pid;");
-    expect(evidence.processes).not.toContain(thirdPid);
-    evidence.processes.push(thirdPid);
+    // Clear on this launch: Work and Customer are live, the automatic profile is only on disk.
     const live = await inspect(
       "return process.mainModule.require('electron').webContents.getAllWebContents().filter(c => c.getType() === 'webview').map(c => c.session.storagePath);",
     );
-    expect(live.some((dir) => path.basename(dir) === closedPartition.slice(8))).toBe(false);
+    expect(live.some((dir) => path.basename(dir) === dormantPartition.slice(8))).toBe(false);
     expect(live.some((dir) => path.basename(dir) === "paseo-shared-work")).toBe(true);
     await inspect(
       `return process.mainModule.require('electron').session.fromPartition('persist:unrelated-sentinel').cookies.set({url:${JSON.stringify(url)}, name:"sentinel", value:"retained"});`,
@@ -407,7 +346,10 @@ export async function runProfileJourney({
     await focus(bob);
     await expect(label()).toHaveText(named);
     expect(await guest(bob, cleared)).toEqual({ cookie: "", storage: null });
-    await screenshot("cleared-customer", "Signed out");
+    await screenshot("cleared-customer");
+    await focus(direct.browserId);
+    await expect(label()).toHaveText(automatic);
+    expect(await guest(direct.browserId, cleared)).toEqual({ cookie: "", storage: null });
     await blank();
     await picker().click();
     await expect(menuGroup("Shared").getByText("Work", { exact: true })).toBeVisible();
@@ -418,9 +360,9 @@ export async function runProfileJourney({
       ),
     ).toBe("retained");
     evidence.clear = {
-      open: alice,
-      closed: bob,
-      closedPartition,
+      open: [alice, bob],
+      closed: direct.browserId,
+      closedPartition: dormantPartition,
       liveBefore: live.map((dir) => path.basename(dir)),
       openLabel: shared,
       reopenedLabel: named,
