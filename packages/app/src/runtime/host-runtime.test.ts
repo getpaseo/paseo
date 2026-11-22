@@ -583,6 +583,52 @@ it("learns advertised addresses only from a paired relay connection", async () =
   await controller.stop();
 });
 
+it("learns address updates after an adaptive switch to another relay", async () => {
+  useHostRuntimeClock();
+  const host = makeHost({
+    connections: [relayPrimary, relayAlternate],
+    preferredConnectionId: relayPrimary.id,
+  });
+  const clients: FakeDaemonClient[] = [];
+  const latencies: Record<string, number | Error> = {
+    [relayPrimary.id]: 300,
+    [relayAlternate.id]: 320,
+  };
+  const baseDeps = makeDeps(latencies, clients);
+  const learned: Array<{ sourceConnectionId: string; endpoints: string[] }> = [];
+  const controller = new HostRuntimeController({
+    host,
+    deps: {
+      ...baseDeps,
+      createClient: (input) => {
+        const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+        if (input.connection.id === relayAlternate.id) {
+          client.advertisedDirectEndpoints = ["100.100.1.5:6767"];
+        }
+        return client as unknown as DaemonClient;
+      },
+    },
+    onLearnedDirectEndpoints: ({ sourceConnectionId, endpoints }) =>
+      learned.push({ sourceConnectionId, endpoints }),
+  });
+
+  await controller.start({ autoProbe: false });
+  (controller.getSnapshot().client as unknown as FakeDaemonClient).heartbeatReportsRtt(300);
+  latencies[relayAlternate.id] = 100;
+  for (let index = 0; index < 3; index += 1) {
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+  }
+
+  expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+  expect(learned).toEqual([
+    { sourceConnectionId: relayAlternate.id, endpoints: ["100.100.1.5:6767"] },
+  ]);
+  (controller.getSnapshot().client as unknown as FakeDaemonClient).advertiseDirectEndpoints([]);
+  expect(learned.at(-1)).toEqual({ sourceConnectionId: relayAlternate.id, endpoints: [] });
+  await controller.stop();
+});
+
 function createDeferred<T>() {
   let resolve: ((value: T | PromiseLike<T>) => void) | null = null;
   let reject: ((reason?: unknown) => void) | null = null;

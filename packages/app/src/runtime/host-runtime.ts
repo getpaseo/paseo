@@ -1738,7 +1738,7 @@ export class HostRuntimeController {
       if (message.type !== "status") return;
       if (this.activeClient !== client) return;
       const serverInfo = parseServerInfoStatusPayload(message.payload);
-      if (serverInfo) this.learnDirectEndpoints(serverInfo);
+      if (serverInfo) this.learnDirectEndpoints(serverInfo, connection.id);
     });
     const unsubscribeMounted = this.unsubscribeClientHandlers;
     this.unsubscribeClientHandlers = () => {
@@ -1758,7 +1758,7 @@ export class HostRuntimeController {
       if (state.status === "connected") {
         this.learnRelaySecurity(client, connection.id);
         const serverInfo = client.getLastServerInfoMessage();
-        if (serverInfo) this.learnDirectEndpoints(serverInfo);
+        if (serverInfo) this.learnDirectEndpoints(serverInfo, connection.id);
       }
       // Switch evidence belongs to the socket it was measured against.
       if (state.status !== "connected") {
@@ -1819,9 +1819,9 @@ export class HostRuntimeController {
     }
   }
 
-  private learnDirectEndpoints(info: ServerInfoStatusPayload): void {
+  private learnDirectEndpoints(info: ServerInfoStatusPayload, connectionId: string): void {
     if (info.features?.learnedDirectEndpoints !== true || !info.directEndpoints) return;
-    const active = findConnectionById(this.host, this.snapshot.activeConnectionId);
+    const active = findConnectionById(this.host, connectionId);
     let source: { id: string; key: string } | null = null;
     if (active?.type === "relay") {
       source = { id: active.id, key: active.daemonPublicKeyB64 };
