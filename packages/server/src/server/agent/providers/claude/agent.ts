@@ -179,6 +179,13 @@ import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
+import { ToolFreeAgentError, assertToolFreeRequest, isToolFreeConfig } from "../../tool-free.js";
+import {
+  applyClaudeToolFreeOptions,
+  assertClaudeToolFreeLaunchable,
+  assertClaudeToolFreePrompt,
+  verifyClaudeToolFreeSurface,
+} from "./tool-free.js";
 
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
@@ -186,6 +193,40 @@ const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
   "project",
   "local",
 ];
+
+interface VerifiedToolFreeQuery {
+  query: Query;
+  input: AsyncMessageInput<SDKUserMessage>;
+}
+
+type SdkUserContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: {
+        type: "base64";
+        media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        data: string;
+      };
+    };
+
+function sdkMessageRequestsTool(message: SDKMessage): boolean {
+  if (message.type !== "assistant") return false;
+  const content: unknown = message.message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some(
+      (block: unknown) =>
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        typeof block.type === "string" &&
+        (block.type === "tool_use" ||
+          block.type === "server_tool_use" ||
+          block.type === "mcp_tool_use"),
+    )
+  );
+}
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
@@ -2001,6 +2042,14 @@ export class ClaudeAgentClient implements AgentClient {
     const model = config.model?.trim();
     const providerOptions =
       validateProviderOptions("claude", ClaudeProviderOptionsSchema, config.providerOptions) ?? {};
+    if (isToolFreeConfig(config)) {
+      assertToolFreeRequest(config);
+      assertClaudeToolFreeLaunchable({
+        provider: config.provider,
+        runtimeSettings: this.runtimeSettings,
+        providerOptions,
+      });
+    }
     return {
       ...config,
       provider: "claude",
@@ -2729,6 +2778,8 @@ class ClaudeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    // Before any command handling: a command such as /rewind acts without a prompt.
+    if (isToolFreeConfig(this.config)) this.assertToolFreePrompt(prompt);
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
@@ -2787,20 +2838,23 @@ class ClaudeAgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
     try {
-      await this.ensureQuery();
+      // A tool-free prompt goes only to the process it was checked on, bound below.
+      const verified = isToolFreeConfig(this.config)
+        ? await this.ensureVerifiedToolFreeQuery()
+        : null;
+      if (!verified) await this.ensureQuery();
       if (cancelIssued) {
         // Stopped while Claude was still starting up: withdrawn by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
         return { turnId };
       }
-      if (!this.input) {
-        throw new Error("Claude session input stream not initialized");
-      }
-      this.activeForegroundQuery = this.query;
-      this.activeForegroundInput = this.input;
+      // Synchronous from here to the push: no other caller can replace the process in between.
+      const { query, input } = this.bindPromptInput(verified);
+      this.activeForegroundQuery = query;
+      this.activeForegroundInput = input;
       this.startQueryPump();
       this.runtimeSafety.notePromptSent();
-      this.input.push(sdkMessage);
+      input.push(sdkMessage);
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           void this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId).catch(
@@ -2820,10 +2874,70 @@ class ClaudeAgentSession implements AgentSession {
     return { turnId };
   }
 
+  /** Judged on the content exactly as Claude Code receives it, where the last block is the command. */
+  private assertToolFreePrompt(prompt: AgentPromptInput): void {
+    const last = this.buildSdkUserContent(prompt).at(-1);
+    assertClaudeToolFreePrompt({
+      provider: this.config.provider,
+      commandText: last?.type === "text" ? last.text : null,
+    });
+  }
+
+  /**
+   * The process and input a prompt goes to. A checked process must still be the session's: another
+   * caller can replace it in the moment between the check returning and this call.
+   */
+  private bindPromptInput(verified: VerifiedToolFreeQuery | null): {
+    query: Query | null;
+    input: AsyncMessageInput<SDKUserMessage>;
+  } {
+    if (verified && (this.query !== verified.query || this.input !== verified.input)) {
+      throw new ToolFreeAgentError(
+        "surface_unverified",
+        "The Claude Code process changed after the tool-free check; the prompt was not sent",
+        this.config.provider,
+      );
+    }
+    const input = verified?.input ?? this.input;
+    if (!input) throw new Error("Claude session input stream not initialized");
+    return { query: verified?.query ?? this.query, input };
+  }
+
+  /**
+   * Returns the process that passed the check together with its input. The caller sends only to
+   * that input, and only after confirming, with no await in between, that the process is still
+   * the session's. Another caller can replace the process while a check runs, as a command
+   * listing that starts one does, so the check repeats on whatever process is current. A failed
+   * check retires the process, so the prompt is never sent to it.
+   */
+  private async ensureVerifiedToolFreeQuery(): Promise<VerifiedToolFreeQuery> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const query = await this.ensureQuery();
+      const input = this.input;
+      try {
+        await verifyClaudeToolFreeSurface({ provider: this.config.provider, probe: query });
+      } catch (error) {
+        this.logger.error({ err: error }, "Claude tool-free surface check failed");
+        if (this.query === query) await this.retireQuery();
+        throw error;
+      }
+      if (input && this.query === query && this.input === input) return { query, input };
+    }
+    throw new ToolFreeAgentError(
+      "surface_unverified",
+      "The Claude Code process kept changing during the tool-free check; the prompt was not sent",
+      this.config.provider,
+    );
+  }
+
   async steerActiveTurn(
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
+    // A tool-free prompt is sent only by startTurn, right after the tool surface check.
+    if (isToolFreeConfig(this.config)) {
+      return { status: "unavailable" };
+    }
     if (this.resolveSlashCommandInvocation(prompt)) {
       return { status: "unavailable" };
     }
@@ -3136,6 +3250,14 @@ class ClaudeAgentSession implements AgentSession {
         ClaudeProviderOptionsSchema,
         applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
       ) ?? {};
+    if (isToolFreeConfig(this.config)) {
+      // Checked before anything changes, so a refused patch is neither applied nor stored.
+      assertClaudeToolFreeLaunchable({
+        provider: this.config.provider,
+        runtimeSettings: this.runtimeSettings,
+        providerOptions,
+      });
+    }
     if (providerOptions.fast_mode === true && !claudeModelSupportsFastMode(this.config.model)) {
       throw new Error(
         `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,
@@ -4126,7 +4248,13 @@ class ClaudeAgentSession implements AgentSession {
         ...this.runtimeSettings.disallowedTools,
       ];
     }
-    return base;
+    if (!isToolFreeConfig(this.config)) return base;
+    assertClaudeToolFreeLaunchable({
+      provider: this.config.provider,
+      runtimeSettings: this.runtimeSettings,
+      providerOptions: this.config.providerOptions,
+    });
+    return applyClaudeToolFreeOptions(base);
   }
 
   private async buildSettingsOptions(
@@ -4188,17 +4316,25 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
-    const content: Array<
-      | { type: "text"; text: string }
-      | {
-          type: "image";
-          source: {
-            type: "base64";
-            media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-            data: string;
-          };
-        }
-    > = [];
+    const content = this.buildSdkUserContent(prompt);
+    const messageId = randomUUID();
+    this.rememberUserMessageId(messageId);
+
+    return {
+      type: "user",
+      message: {
+        role: "user",
+        content,
+      },
+      parent_tool_use_id: null,
+      uuid: messageId,
+      session_id: this.claudeSessionId ?? "",
+    };
+  }
+
+  /** The content Claude Code receives for a prompt, in the order it reads it. Pure. */
+  private buildSdkUserContent(prompt: AgentPromptInput): SdkUserContentBlock[] {
+    const content: SdkUserContentBlock[] = [];
     // Claude Code expands a slash command only when it is the last content block of the user
     // message. buildAgentPrompt places the typed text ahead of images and rendered attachments,
     // so a "/command" sent with a pasted link or a screenshot would otherwise reach the model as
@@ -4235,20 +4371,7 @@ class ClaudeAgentSession implements AgentSession {
       const [slashCommand] = content.splice(typedSlashCommandIndex, 1);
       content.push(slashCommand);
     }
-
-    const messageId = randomUUID();
-    this.rememberUserMessageId(messageId);
-
-    return {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-      parent_tool_use_id: null,
-      uuid: messageId,
-      session_id: this.claudeSessionId ?? "",
-    };
+    return content;
   }
 
   private transitionTurnState(next: TurnState, reason: string): void {
@@ -4601,6 +4724,14 @@ class ClaudeAgentSession implements AgentSession {
         consecutiveInterruptAbortRecoveries = 0;
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
         if (!this.ownsQuery(activeQuery)) return true;
+        if (isToolFreeConfig(this.config) && sdkMessageRequestsTool(message)) {
+          // Defence in depth only: a checked tool-free process has no tool to run.
+          this.logger.error("Tool-free Claude session produced a tool call; stopping it");
+          this.queryRestartNeeded = true;
+          void activeQuery.interrupt().catch(() => undefined);
+          this.failActiveTurns("A tool-free agent attempted to call a tool");
+          return true;
+        }
         await this.routeSdkMessageFromPump(message);
         if (!this.ownsQuery(activeQuery)) return true;
         if (backgroundWork && this.runtimeSafety.isCurrentInventory(backgroundWork))

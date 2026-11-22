@@ -31,6 +31,9 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
         preapproved: z.array(
           z.object({ kind: z.literal("mcp"), server: z.string(), tool: z.string() }).strict(),
         ),
+        // Strict like the rest of toolPolicy: a daemon that predates the field skips the record
+        // rather than reopening a tool-free agent with tools.
+        toolFree: z.literal(true).optional(),
       })
       .strict()
       .nullable()

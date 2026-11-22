@@ -1,4 +1,5 @@
 import { isSameOrDescendantPath } from "../path-utils.js";
+import { isToolFreeConfig, type ToolPolicyCarrier } from "./tool-free.js";
 import type {
   AgentListItemPayload,
   AgentSnapshotPayload,
@@ -169,6 +170,7 @@ export function toAgentPayload(
     archivedAt: options?.archivedAt ?? null,
     ...visibilityFlags(agent),
     ...projectSessionMetrics(agent.sessionMetrics),
+    ...toolFreeFlag(agent.config),
   };
 
   const usageScopeKey = projectUsageScopeKey(agent);
@@ -239,6 +241,13 @@ function visibilityFlags(agent: {
     ...(agent.internal ? { internal: true } : {}),
     ...(agent.background ? { background: true } : {}),
   };
+}
+
+/** The wire carries `toolFree` only on tool-free agents, so older payloads keep their shape. */
+function toolFreeFlag(
+  config: ToolPolicyCarrier | null | undefined,
+): Pick<AgentSnapshotPayload, "toolFree"> {
+  return isToolFreeConfig(config) ? { toolFree: true } : {};
 }
 
 /** The options an agent runs with, given the options it owns; see `toAgentPayload`. */
@@ -328,6 +337,7 @@ export function buildStoredAgentPayload(
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
     ...visibilityFlags(record),
+    ...toolFreeFlag(record.config),
     labels: normalizeLabels(record.labels),
     metadata: record.metadata,
     ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
@@ -456,6 +466,7 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.toolPolicy) {
     serializable.toolPolicy = {
       preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
+      ...(config.toolPolicy.toolFree ? { toolFree: true as const } : {}),
     };
   }
   if (config.systemPrompt) {

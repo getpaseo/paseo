@@ -148,6 +148,7 @@ export interface ProviderSnapshotEntry {
   docsUrl?: string;
   defaultModeId?: string | null;
   launchWrap?: boolean;
+  supportsToolFree?: boolean;
 }
 
 export interface AgentCreateConfigParent {

@@ -559,6 +559,31 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("no provider reports tool-free support, before or after its catalog loads", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        zai: { extends: "claude", label: "Z.AI", env: { ANTHROPIC_BASE_URL: "https://z.invalid" } },
+        "custom-claude": { extends: "claude", label: "Custom", command: ["/opt/claude"] },
+      },
+      extraClients: {
+        claude: createExtraClient("claude", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+        }),
+      },
+    });
+    try {
+      const loading = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      expect(loading.filter((entry) => entry.supportsToolFree)).toEqual([]);
+      const ready = await manager.getProvider({ provider: "claude", wait: true });
+      expect(ready.status).toBe("ready");
+      expect(ready).not.toHaveProperty("supportsToolFree");
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("providerOverrides with enabled:false marks the provider as unavailable without probing", async () => {
     const isAvailable = vi.fn(async () => true);
     const fetchCatalog = vi.fn(async () => ({

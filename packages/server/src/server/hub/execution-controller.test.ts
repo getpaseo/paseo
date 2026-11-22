@@ -235,6 +235,46 @@ describe("HubExecutionController", () => {
   });
 });
 
+test("a Hub execution cannot create a tool-free agent, since it always carries a prompt", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  let created = false;
+  const controller = new HubExecutionController({
+    agents: {
+      create: async () => {
+        created = true;
+        throw new Error("create must not run");
+      },
+      control: async () => {},
+      subscribe: () => () => {},
+      invalidateAuthority: async () => {},
+    },
+    validateAgentConfiguration: async () => [],
+    send: (message) => messages.push(message),
+  });
+
+  await controller.createAgent({
+    type: "hub.execution.agent.create.request",
+    requestId: "tool-free-create",
+    executionId: "tool-free-execution",
+    provider: "claude",
+    cwd: "/tmp/paseo",
+    prompt: "Translate: canary-hub",
+    toolPolicy: { preapproved: [], toolFree: true },
+  });
+
+  expect(created).toBe(false);
+  expect(messages).toEqual([
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          message: expect.stringContaining("cannot create a tool-free agent"),
+        }),
+      }),
+    }),
+  ]);
+});
+
 test("Hub observation is acquired and released explicitly without closing its RPC controller", async () => {
   const agents = new ControlledHubExecutionAgents();
   const messages: SessionOutboundMessage[] = [];

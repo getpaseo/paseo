@@ -14,6 +14,7 @@ import {
 
 import type { HubExecutionAgents, OwnedAgentEvent } from "./daemon-executions.js";
 import { foldFeatureValues } from "../agent/option-controls.js";
+import { assertNotToolFree } from "../agent/tool-free.js";
 
 interface HubExecutionControllerOptions {
   agents: HubExecutionAgents;
@@ -160,6 +161,10 @@ export class HubExecutionController {
       requireNonBlankHubAgentField("executionId", message.executionId);
       requireNonBlankHubAgentField("prompt", message.prompt);
       requireNonBlankHubAgentField("cwd", message.cwd);
+      assertNotToolFree({
+        config: { provider: message.provider, toolPolicy: message.toolPolicy },
+        surface: "A Hub execution",
+      });
       if (!isAbsolute(message.cwd)) throw new Error("Hub agent cwd must be absolute");
       const result = await this.agents.create({
         executionId: message.executionId,
