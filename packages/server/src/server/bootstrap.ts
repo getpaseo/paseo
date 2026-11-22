@@ -157,6 +157,7 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { createAgentProviderRuntime } from "./agent/provider-runtime.js";
+import { PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS } from "./agent/provider-refresh-schedule.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import {
@@ -1017,6 +1018,7 @@ export async function createPaseoDaemon(
       managedProcesses,
       isDev: config.isDev === true,
       extraClients: config.agentClients,
+      backgroundRefresh: { intervalMs: PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS },
     },
   });
   const providerSnapshotManager = agentProviderRuntime.snapshotManager;

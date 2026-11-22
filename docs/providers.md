@@ -225,7 +225,16 @@ aborts the shared refresh signal at the deadline. Providers name active catalog 
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 
-Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
+Providers change their model lists on the server without a CLI update, so the daemon refreshes
+each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
+`30 min / enabled providers` apart, and each tick refreshes at most the provider refreshed longest
+ago, so provider CLIs never start in a burst. Any forced refresh, configuration change, or newly
+enabled provider counts as a refresh and pushes that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with three differences:
+it joins discovery already in flight, an unchanged catalogue keeps the published record and its
+`fetchedAt` so idle clients receive no update, and a failure keeps a ready catalogue instead of
+publishing the error. A manual refresh still publishes failures.
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 
