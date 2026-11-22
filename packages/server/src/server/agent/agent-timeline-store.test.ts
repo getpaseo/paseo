@@ -360,6 +360,23 @@ describe("turn metrics", () => {
     expect(rows[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
   });
 
+  it("keeps the stats on a tool card whose updates the projection merges", () => {
+    const store = new InMemoryAgentTimelineStore();
+    const at = "2026-11-22T00:00:00.000Z";
+    store.initialize("a", {
+      rows: [
+        { seq: 1, timestamp: at, item: { type: "user_message", text: "go" } },
+        { seq: 2, timestamp: at, item: { ...tool, status: "running" } },
+        { seq: 3, timestamp: at, item: { ...tool, status: "completed" }, turnMetrics: metrics },
+      ],
+    });
+
+    const rows = store.fetch("a").rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { status: "completed" }, turnMetrics: metrics });
+  });
+
   it("restores stamped rows when a timeline is seeded from stored rows", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("live");

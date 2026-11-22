@@ -157,6 +157,7 @@ function mergeIdentityEntries(existing: WorkingEntry, entry: WorkingEntry): Work
         item: mergeToolCallItems(existing.item, entry.item),
         timestamp: entry.timestamp,
         seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
+        ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
         ...mergeIdentityMetadata(existing, entry, "tool_lifecycle"),
       };
     case "plugin":
