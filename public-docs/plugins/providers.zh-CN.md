@@ -351,6 +351,48 @@ export default function contribute(client: PluginClientContext) {
 
 同一个渲染器可以显示由 Provider、客户端时间线转换器或 daemon 时间线追加发出的条目。渲染器并不需要 Provider 实现。
 
+## 报告指标 {#report-metrics}
+
+把 Provider 测量到的数据以 `label` 和 `value` 的形式报告。Paseo 会原样显示每个值，所以请把它格式化成便于阅读的形式：写 `12.4s`，不要写 `12431`。哪些指标适合你的 Agent，由你决定。
+
+在 `completed` 轮次事件中添加 `metrics`。Paseo 会在该轮次的页脚显示它们：
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+对于覆盖整个会话的总计，发布 `session.metrics`。Paseo 会在上下文窗口详情中显示它们。每个事件都会替换之前的列表，空列表会清除它。把 `session.metrics` 加入你支持的能力，并且只在协商成功时发布该事件：
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+不支持会话指标的旧版 Paseo 不会提供这项能力，并且会关闭发送该事件的连接。它会忽略轮次上的 `metrics`，所以轮次指标不需要检查。
+
+把 `tone` 设为 `"ok"`、`"warning"` 或 `"danger"`，可以给值着色。如果已完成的轮次没有 `Model` 指标，Paseo 会添加会话的模型。
+
+当 `history` 为 `"replay"` 时，请在每个旧轮次的条目之后发布该轮次的 `completed` 事件。Paseo 会把指标放回该轮次的页脚。
+
 ## 报告安装与更新 {#report-installation-and-updates}
 
 在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：

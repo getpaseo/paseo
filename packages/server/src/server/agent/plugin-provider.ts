@@ -1642,6 +1642,14 @@ class PluginAgentSession implements AgentSession {
             turnId: event.turnId,
           },
         ];
+      case "session.metrics":
+        return [
+          {
+            type: "session_metrics_updated",
+            provider: this.provider,
+            metrics: event.metrics.map((metric) => ({ ...metric })),
+          },
+        ];
       case "timeline.item":
         return this.translateTimeline(event);
       case "session.permission":
@@ -1668,7 +1676,12 @@ class PluginAgentSession implements AgentSession {
     }
     if (this.currentTurnId === event.turnId) this.currentTurnId = null;
     if (event.state === "completed") {
-      return { type: "turn_completed", provider: this.provider, turnId: event.turnId };
+      return {
+        type: "turn_completed",
+        provider: this.provider,
+        turnId: event.turnId,
+        ...(event.metrics ? { metrics: event.metrics.map((metric) => ({ ...metric })) } : {}),
+      };
     }
     if (event.state === "canceled") {
       return {

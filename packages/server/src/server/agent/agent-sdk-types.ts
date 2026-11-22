@@ -1,4 +1,5 @@
 import type {
+  AgentMetric,
   AgentOptionControl,
   AgentOptionSelectControl,
   AgentOptionToggleControl,
@@ -19,6 +20,7 @@ import type {
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
+  AgentMetric,
   AgentOptionControl,
   AgentOptionSelectControl,
   AgentOptionToggleControl,
@@ -421,8 +423,17 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      /** Shown on the completed turn's footer. */
+      metrics?: AgentMetric[];
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  /** Full replacement of the metrics shown for the session. An empty list clears them. */
+  | { type: "session_metrics_updated"; provider: AgentProvider; metrics: AgentMetric[] }
   | {
       type: "mode_changed";
       provider: AgentProvider;

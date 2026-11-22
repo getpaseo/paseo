@@ -427,6 +427,54 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report metrics
+
+Report what your provider measured as `label` and `value` pairs. Paseo shows each value as given,
+so format it for reading: `12.4s`, not `12431`. You choose which metrics make sense for your agent.
+
+Add `metrics` to the `completed` turn event. Paseo shows them from the footer of that turn:
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+Publish `session.metrics` for totals that cover the whole session. Paseo shows them in the context
+window details. Each event replaces the previous list, and an empty list clears it. Add
+`session.metrics` to your supported capabilities and publish the event only when it was negotiated:
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+A Paseo from before session metrics does not offer the capability and closes a connection that
+sends the event. It ignores `metrics` on a turn, so turn metrics need no check.
+
+Set `tone` to `"ok"`, `"warning"`, or `"danger"` to color a value. When a completed turn has no
+`Model` metric, Paseo adds the session's model.
+
+When `history` is `"replay"`, publish each old turn's `completed` event after that turn's items.
+Paseo puts the metrics back on the turn's footer.
+
 ## Report installation and updates
 
 Add `installation` to your registration and the provider's settings show an **Installation**

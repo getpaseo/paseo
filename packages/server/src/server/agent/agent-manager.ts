@@ -57,6 +57,7 @@ import {
   type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentMetric,
   type AgentUsage,
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
@@ -66,6 +67,7 @@ import {
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import { sanitizeAgentMetrics, withModelMetric } from "./agent-metrics.js";
 import {
   applyProviderOptionsPatch,
   exposeFeatureValuesToHook,
@@ -510,6 +512,8 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  /** Provider-owned session metrics, replaced whole on every provider update. */
+  sessionMetrics?: AgentMetric[];
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -590,6 +594,37 @@ type ActiveManagedAgent =
 type LiveManagedAgent = ActiveManagedAgent;
 type AgentLabelPatch = Record<string, string | null>;
 type AgentMetadata = Record<string, JsonValue>;
+
+/**
+ * What a provider replay contributes: timeline rows, the metrics of the turn that
+ * wrote the rows before them, and the session's metrics as they stood at that point.
+ */
+type ProviderHistoryEntry =
+  | { type: "row"; event: Extract<AgentStreamEvent, { type: "timeline" }> }
+  | { type: "turn_metrics"; metrics: AgentMetric[] }
+  | { type: "session_metrics"; metrics: AgentMetric[] };
+
+interface ReplayedTimelineRow {
+  event: Extract<AgentStreamEvent, { type: "timeline" }>;
+  row: AgentTimelineRow;
+}
+
+function providerHistoryEntries(event: AgentStreamEvent): ProviderHistoryEntry[] {
+  if (event.type === "timeline") {
+    return projectAgentMessages(event.item).map((item) => ({
+      type: "row",
+      event: { ...event, item },
+    }));
+  }
+  if (event.type === "turn_completed") {
+    const metrics = sanitizeAgentMetrics(event.metrics);
+    return metrics.length > 0 ? [{ type: "turn_metrics", metrics }] : [];
+  }
+  if (event.type === "session_metrics_updated") {
+    return [{ type: "session_metrics", metrics: sanitizeAgentMetrics(event.metrics) }];
+  }
+  return [];
+}
 
 function attachManagedTurnIdentity(
   agent: ActiveManagedAgent,
@@ -1788,7 +1823,14 @@ export class AgentManager {
       ...options,
       // The caller read its metadata and attention before this turn in the lane; a setMetadata
       // or attention clear queued ahead of it has saved a newer record, the one the open hooks saw.
-      ...(record ? { metadata: record.metadata, attention: extractAttention(record) } : {}),
+      ...(record
+        ? {
+            metadata: record.metadata,
+            attention: extractAttention(record),
+            // Shown until the reopened session reports its own.
+            sessionMetrics: record.sessionMetrics,
+          }
+        : {}),
       workspaceId,
       launchEnv,
       persistence:
@@ -1926,6 +1968,7 @@ export class AgentManager {
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
+    const preservedSessionMetrics = existing.sessionMetrics;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
@@ -2012,6 +2055,7 @@ export class AgentManager {
         lastUserMessageAt: existing.lastUserMessageAt,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
+        sessionMetrics: preservedSessionMetrics,
         lastError: preservedLastError,
         attention: preservedAttention,
         restoring: true,
@@ -2469,6 +2513,7 @@ export class AgentManager {
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
+        sessionMetrics: record.sessionMetrics,
         lastError: record.lastError ?? undefined,
         attention,
         internal: record.internal,
@@ -4459,6 +4504,7 @@ export class AgentManager {
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
+      sessionMetrics?: AgentMetric[];
       lastError?: string;
       attention?: AttentionState;
       /**
@@ -4669,6 +4715,7 @@ export class AgentManager {
           metadata?: AgentMetadata;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
+          sessionMetrics?: AgentMetric[];
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
@@ -4722,6 +4769,7 @@ export class AgentManager {
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
+      sessionMetrics: options?.sessionMetrics,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
@@ -5077,16 +5125,14 @@ export class AgentManager {
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const historyEntries: ProviderHistoryEntry[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
-      if (event.type === "timeline") {
-        for (const item of projectAgentMessages(event.item)) {
-          historyEvents.push({ ...event, item });
-        }
-      } else if (event.type === "provider_subagent") {
+      if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
+      } else {
+        historyEntries.push(...providerHistoryEntries(event));
       }
     }
 
@@ -5107,22 +5153,43 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
-      if (broadcastTimeline) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
+    for (const entry of historyEntries) {
+      const replayed = this.replayProviderHistoryEntry(agent, entry);
+      if (replayed && broadcastTimeline) {
+        this.dispatchStream(agent.id, replayed.event, {
+          seq: replayed.row.seq,
           epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
+          timestamp: replayed.row.timestamp,
         });
       }
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  /**
+   * Returns the row a replayed timeline event wrote. Metrics write no row: turn
+   * metrics land on one already written, session metrics on the agent.
+   */
+  private replayProviderHistoryEntry(
+    agent: ActiveManagedAgent,
+    entry: ProviderHistoryEntry,
+  ): ReplayedTimelineRow | null {
+    if (entry.type === "turn_metrics") {
+      this.stampTurnMetrics(agent.id, entry.metrics);
+      return null;
+    }
+    if (entry.type === "session_metrics") {
+      agent.sessionMetrics = entry.metrics;
+      return null;
+    }
+    const { event } = entry;
+    const row = this.recordTimeline(
+      agent.id,
+      event.item,
+      event.timestamp ? { timestamp: event.timestamp } : undefined,
+    );
+    return { event, row };
   }
 
   private async primeTimelineFromLegacyProviderHistory(
@@ -5133,7 +5200,7 @@ export class AgentManager {
       | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
     const deferredBroadcast = typeof broadcast === "function";
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const historyEntries: ProviderHistoryEntry[] = [];
     const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = false;
     try {
@@ -5146,12 +5213,7 @@ export class AgentManager {
           historySubagentEvents.push(event);
           continue;
         }
-        if (event.type !== "timeline") {
-          continue;
-        }
-        for (const item of projectAgentMessages(event.item)) {
-          historyEvents.push({ ...event, item });
-        }
+        historyEntries.push(...providerHistoryEntries(event));
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
@@ -5162,10 +5224,7 @@ export class AgentManager {
     // Keeping them would leave getTimelineRows reading one copy per hydration.
     await this.deleteCommittedTimeline(agent.id);
 
-    const timelineEvents: Array<{
-      event: Extract<AgentStreamEvent, { type: "timeline" }>;
-      row: AgentTimelineRow;
-    }> = [];
+    const timelineEvents: ReplayedTimelineRow[] = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
     for (const event of historySubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -5176,23 +5235,23 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+    for (const entry of historyEntries) {
+      const replayed = this.replayProviderHistoryEntry(agent, entry);
+      if (!replayed) continue;
       if (deferredBroadcast) {
-        timelineEvents.push({ event, row });
+        timelineEvents.push(replayed);
       } else if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
+        this.dispatchStream(agent.id, replayed.event, {
+          seq: replayed.row.seq,
           epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
+          timestamp: replayed.row.timestamp,
         });
       }
     }
     agent.historyPrimed = true;
+    if (historyEntries.some((entry) => entry.type === "session_metrics")) {
+      this.emitState(agent);
+    }
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;
@@ -5271,6 +5330,8 @@ export class AgentManager {
         options?.fromHistory === true,
       );
     }
+
+    event = this.settleTurnMetrics({ agent, event, options, terminalDisposition });
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
@@ -5380,6 +5441,23 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  private onStreamThinkingOptionChanged(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "thinking_option_changed" }>;
+    flags: StreamEventFlags;
+  }): void {
+    const { agent, event, flags } = params;
+    agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = {
+        ...agent.runtimeInfo,
+        thinkingOptionId: event.thinkingOptionId,
+      };
+    }
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
   private dispatchStreamEventByType(params: {
     agent: ActiveManagedAgent;
     event: AgentStreamEvent;
@@ -5397,6 +5475,12 @@ export class AgentManager {
         return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
+        this.emitState(agent);
+        return undefined;
+      case "session_metrics_updated":
+        // Clients read these from the agent snapshot; the event itself is not on the wire.
+        agent.sessionMetrics = sanitizeAgentMetrics(event.metrics);
+        flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
       case "mode_changed":
@@ -5421,15 +5505,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "thinking_option_changed":
-        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = {
-            ...agent.runtimeInfo,
-            thinkingOptionId: event.thinkingOptionId,
-          };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.onStreamThinkingOptionChanged({ agent, event, flags });
         return undefined;
       case "options_changed":
         this.onStreamOptionsChanged({ agent, patch: event.patch, flags });
@@ -5528,6 +5604,36 @@ export class AgentManager {
       }
       flags.shouldNotifyWaiters = true;
     }
+  }
+
+  /**
+   * Decides what a completed turn shows and records it on the turn's footer row, so
+   * the live event and a later timeline fetch agree.
+   */
+  private settleTurnMetrics(params: {
+    agent: ActiveManagedAgent;
+    event: AgentStreamEvent;
+    options: HandleStreamEventOptions | undefined;
+    terminalDisposition: ActiveTurnTerminalDisposition;
+  }): AgentStreamEvent {
+    if (params.event.type !== "turn_completed") return params.event;
+    const { agent } = params;
+    const { metrics: reported, ...event } = params.event;
+    // A replayed turn may have run on another model than the agent has now.
+    const model = params.options?.fromHistory
+      ? null
+      : (agent.runtimeInfo?.model ?? agent.config.model);
+    const metrics = withModelMetric(sanitizeAgentMetrics(reported), model);
+    if (metrics.length === 0) return event;
+    if (params.terminalDisposition !== "stale") {
+      this.stampTurnMetrics(agent.id, metrics, event.turnId);
+    }
+    return { ...event, metrics };
+  }
+
+  private stampTurnMetrics(agentId: string, metrics: AgentMetric[], turnId?: string): void {
+    const row = this.timelineStore.stampTurnMetrics(agentId, metrics, { turnId });
+    if (row) this.enqueueDurableTimelineUpdate(agentId, row);
   }
 
   private onStreamTurnCompleted(params: {

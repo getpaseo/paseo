@@ -2219,6 +2219,73 @@ describe("PluginAgentClientRegistry", () => {
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
 
+  test("carries a plugin's session and turn metrics into the agent stream", async () => {
+    const turnMetrics = [
+      { label: "Model", value: "plugin-model" },
+      { label: "Cache", value: "82%", tone: "ok" as const },
+    ];
+    const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "turn-1" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "started",
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "completed",
+          metrics: turnMetrics,
+        });
+        emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("hello", { clientMessageId: "client-message" });
+
+      expect(eventsOfType(events, "turn_completed")).toEqual([
+        {
+          type: "turn_completed",
+          provider: "plugin-direct",
+          turnId: "turn-1",
+          metrics: turnMetrics,
+        },
+      ]);
+      expect(eventsOfType(events, "session_metrics_updated")).toEqual([
+        { type: "session_metrics_updated", provider: "plugin-direct", metrics: sessionMetrics },
+      ]);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(eventsOfType(history, "turn_completed")).toContainEqual({
+        type: "turn_completed",
+        provider: "plugin-direct",
+        turnId: "turn-1",
+        metrics: turnMetrics,
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("delivers a supported steer to the active turn", async () => {
     const harness = createProviderHarness({
       capabilities: [...CAPABILITIES, "prompt.steer"],
