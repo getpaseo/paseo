@@ -149,6 +149,8 @@ export function createAntigravityProvider(): ProviderRegistration {
     },
     async status({ launch }) {
       if (!launch) return { available: false, diagnostic: "Install Antigravity 1.5.0 or later." };
+      // A sign-in problem can stop ACP from starting, so the report says which sign-in either way.
+      const signIn = describeSignIn(launch.env);
       try {
         const connection = await provider.connect({
           launch,
@@ -156,12 +158,11 @@ export function createAntigravityProvider(): ProviderRegistration {
           capabilities: [],
         });
         await connection.close();
-        return { available: true, diagnostic: describeSignIn(launch.env) };
+        return { available: true, diagnostic: signIn };
       } catch {
         return {
           available: false,
-          diagnostic:
-            "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+          diagnostic: `Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.\n${signIn}`,
         };
       }
     },

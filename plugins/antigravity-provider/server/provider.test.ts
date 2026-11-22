@@ -68,6 +68,19 @@ describe("diagnostic", () => {
       });
     },
   );
+
+  it("says whether agy runs in an SSH session when ACP does not start", async () => {
+    const { launch } = await launchAgent(`process.exit(1);`);
+    const env = { ...launch.env, SSH_CONNECTION: "set" };
+    expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
+      available: false,
+      diagnostic: [
+        "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        "SSH session: yes (SSH_CONNECTION)",
+        "Sign-in: can differ from agy outside SSH",
+      ].join("\n"),
+    });
+  });
 });
 
 it("publishes Antigravity skills separately from built-in commands", async () => {

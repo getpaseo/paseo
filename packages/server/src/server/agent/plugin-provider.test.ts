@@ -2615,20 +2615,19 @@ describe("plugin provider launch and status", () => {
     registry.replace([registration]);
     try {
       const client = registry.clients()[registration.id]!;
-      expect(await client.getDiagnostic!()).toEqual({
-        diagnostic: [
-          "Plugin direct",
-          "  Command source: default",
-          `  Configured command: ${process.execPath} agent`,
-          `  Daemon PATH: ${process.env.PATH}`,
-          `  Daemon shell: ${process.env.SHELL ?? "/bin/sh"}`,
-          "  PATH matches: not checked",
-          `  Resolved path: ${process.execPath}`,
-          "  Version: 1.2.3",
-          "  Sign-in: work account",
-          "  Plan: Pro",
-        ].join("\n"),
-      });
+      const { diagnostic } = await client.getDiagnostic!();
+      // The daemon's PATH and shell rows depend on the host; the formatter's own tests cover them.
+      const hostRows = /^ {2}Daemon (PATH|shell): /;
+      expect(diagnostic.split("\n").filter((row) => !hostRows.test(row))).toEqual([
+        "Plugin direct",
+        "  Command source: default",
+        `  Configured command: ${process.execPath} agent`,
+        "  PATH matches: not checked",
+        `  Resolved path: ${process.execPath}`,
+        "  Version: 1.2.3",
+        "  Sign-in: work account",
+        "  Plan: Pro",
+      ]);
     } finally {
       await registry.shutdown();
     }
