@@ -51,4 +51,16 @@ describe("desktop workspace navigation", () => {
     expect(inbox.windowReady(7)).toBeNull();
     expect(inbox.deliverOrQueue(7, target)).toEqual(target);
   });
+
+  it("flushes a link queued after an earlier cancellation", () => {
+    const inbox = new WorkspaceNavigationInbox();
+    const older = { serverId: "srv_devbox", path: "/old" };
+    const newer = { ...older, path: "/new" };
+    inbox.deliverOrQueue(7, older);
+    inbox.cancel(7);
+    expect(inbox.deliverOrQueue(7, newer)).toBeNull();
+
+    expect(inbox.windowReady(7)).toEqual(newer);
+    expect(inbox.windowReady(7)).toBeNull();
+  });
 });

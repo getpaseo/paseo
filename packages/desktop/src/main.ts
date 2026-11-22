@@ -404,7 +404,9 @@ ipcMain.handle("paseo:agent-navigation:ready", (event) => {
 });
 
 ipcMain.handle("paseo:workspace-navigation:ready", (event) => {
-  return workspaceNavigationInbox.windowReady(event.sender.id);
+  const pending = workspaceNavigationInbox.windowReady(event.sender.id);
+  // Keep startup delivery on the same IPC stream as cancellations and later links.
+  if (pending) event.sender.send("paseo:event:open-workspace", pending);
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
@@ -862,7 +864,7 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
   agentRoute: buildAgentDeepLinkRoute,
   deliverAgent: (webContentsId, target) => {
     workspaceNavigationInbox.cancel(webContentsId);
-    webContents.fromId(webContentsId)?.send("paseo:event:cancel-workspace-navigation");
+    webContents.fromId(webContentsId)?.send("paseo:event:open-workspace", null);
     return agentNavigationInbox.deliverOrQueue(webContentsId, target);
   },
 });

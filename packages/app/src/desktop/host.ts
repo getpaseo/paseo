@@ -182,7 +182,7 @@ export interface DesktopHostBridge {
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
   workspaceNavigation?: {
-    ready?: () => Promise<{ serverId: string; path: string } | null>;
+    ready?: () => Promise<void>;
   };
   events?: DesktopEventsBridge;
   window?: DesktopWindowModuleBridge;

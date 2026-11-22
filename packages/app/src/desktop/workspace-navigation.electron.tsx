@@ -153,9 +153,13 @@ export function WorkspaceNavigationListener() {
     if (typeof host?.events?.on !== "function" || typeof ready !== "function") return;
 
     let disposed = false;
-    const subscriptions: Array<() => void> = [];
-    let receivedLiveUpdate = false;
+    let unsubscribe: (() => void) | undefined;
     const accept = (payload: unknown) => {
+      if (disposed) return;
+      if (payload === null) {
+        updateTarget(null);
+        return;
+      }
       const next = readWorkspaceDeepLinkTarget(payload);
       if (!next) return;
       const current = currentTarget.current;
@@ -163,28 +167,19 @@ export function WorkspaceNavigationListener() {
       updateTarget(next);
     };
 
-    const subscribe = async (event: string, handler: (payload: unknown) => void) => {
-      const unsubscribe = await listenToDesktopEvent(event, (payload) => {
-        if (disposed) return;
-        receivedLiveUpdate = true;
-        handler(payload);
-      });
-      if (disposed) unsubscribe();
-      else subscriptions.push(unsubscribe);
-    };
     void (async () => {
-      await Promise.all([
-        subscribe("open-workspace", accept),
-        subscribe("cancel-workspace-navigation", () => updateTarget(null)),
-      ]);
-      if (disposed) return;
-      const pending = await ready();
-      if (!disposed && !receivedLiveUpdate) accept(pending);
+      const dispose = await listenToDesktopEvent("open-workspace", accept);
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unsubscribe = dispose;
+      await ready();
     })().catch(() => undefined);
 
     return () => {
       disposed = true;
-      for (const unsubscribe of subscriptions) unsubscribe();
+      unsubscribe?.();
       const request = connectionRequest.current;
       connectionRequest.current = null;
       currentTarget.current = null;

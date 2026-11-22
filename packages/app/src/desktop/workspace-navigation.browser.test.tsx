@@ -39,6 +39,7 @@ vi.mock("@/contexts/toast-context", () => ({ useToast: () => ({ error: vi.fn() }
 
 const target = { serverId: "srv_saved", path: "/checkout" };
 const listeners = new Map<string, (payload: unknown) => void>();
+const ready = vi.fn(async () => {});
 let root: Root;
 let container: HTMLDivElement;
 
@@ -46,6 +47,7 @@ beforeEach(() => {
   runtime.connected = false;
   runtime.session.hasLiveWorkspaceDirectory = false;
   runtime.navigate.mockReset();
+  ready.mockReset();
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("paseoDesktop", {
@@ -55,7 +57,7 @@ beforeEach(() => {
         return Promise.resolve(() => listeners.delete(event));
       },
     },
-    workspaceNavigation: { ready: async () => null },
+    workspaceNavigation: { ready },
   });
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -78,13 +80,30 @@ it("keeps a newer agent link selected when the old workspace's host comes online
   await act(async () => listeners.get("open-workspace")!(target));
   expect(runtime.navigate).not.toHaveBeenCalled();
 
-  await act(async () => listeners.get("cancel-workspace-navigation")!(undefined));
+  await act(async () => listeners.get("open-workspace")!(null));
   runtime.connected = true;
   runtime.session.hasLiveWorkspaceDirectory = true;
   await renderListener();
 
   expect(runtime.navigate).not.toHaveBeenCalled();
   await act(async () => listeners.get("open-workspace")!(target));
+  expect(runtime.navigate).toHaveBeenCalledExactlyOnceWith({
+    serverId: target.serverId,
+    workspaceId: "workspace-1",
+  });
+});
+
+it("opens a newer queued workspace after a startup cancellation", async () => {
+  runtime.connected = true;
+  runtime.session.hasLiveWorkspaceDirectory = true;
+  ready.mockImplementationOnce(async () => {
+    const deliver = listeners.get("open-workspace")!;
+    deliver(null);
+    deliver(target);
+  });
+
+  await renderListener();
+
   expect(runtime.navigate).toHaveBeenCalledExactlyOnceWith({
     serverId: target.serverId,
     workspaceId: "workspace-1",
