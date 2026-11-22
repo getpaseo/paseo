@@ -603,6 +603,8 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    // React Native Web preserves trailing spaces at line wraps by default.
+    ...(isWeb ? { whiteSpace: "normal" } : {}),
   },
   overlappingLabel: {
     marginLeft: "-100%",
