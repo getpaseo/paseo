@@ -225,6 +225,35 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
+  test("shutdown waits for a startup still allocating its port and kills it", async () => {
+    const { runtime } = createTestManager([4478], { autoAnnounce: false });
+    let releasePort!: () => void;
+    const portHeld = new Promise<void>((resolve) => {
+      releasePort = resolve;
+    });
+    const manager = new OpenCodeServerManager({
+      logger: createTestLogger(),
+      managedProcesses: runtime.managedProcesses,
+      portAllocator: async () => {
+        await portHeld;
+        return runtime.allocatePort();
+      },
+      resolveCommandPrefix: runtime.resolveCommandPrefix,
+      spawnServerProcess: runtime.spawnServerProcess,
+      terminateProcess: runtime.terminateProcess,
+    });
+
+    const acquisition = manager.acquireCurrent();
+    const shutdown = manager.shutdown();
+    releasePort();
+    await shutdown;
+
+    await expect(acquisition).rejects.toThrow("OpenCode server exited with code null");
+    expect(runtime.launchedPorts).toEqual([4478]);
+    expect(runtime.terminatedPorts).toEqual([4478]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
   test("dedicated server startup is protected from retired cleanup", async () => {
     const { manager, runtime } = createTestManager([4473, 4474], { autoAnnounce: false });
 
