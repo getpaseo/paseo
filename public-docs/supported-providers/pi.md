@@ -8,24 +8,23 @@ category: Providers
 
 # Pi
 
-Run Pi in Paseo with your existing `pi` installation, credentials, and settings.
+Paseo runs Pi through your installed `pi` CLI. It uses your existing credentials and settings.
 
 ## Getting started
+
+Pi is built into Paseo and enabled by default.
 
 1. Install [Pi](https://pi.dev) on your daemon host.
 2. Connect Pi to a model provider, and make sure that `pi` runs in a terminal.
 3. In Paseo, choose **Pi** when you start an agent.
 
-Pi appears in Paseo when the daemon can launch `pi`. If `pi` is outside your daemon's PATH, use a [command override](/docs/custom-providers#custom-binary).
+Pi appears in Paseo when the daemon can launch `pi`. If `pi` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary).
 
-## Modes and sessions
+## Modes, sessions, and timeouts
 
 - Pi has no permission modes, so Paseo shows no mode selector for a Pi agent.
 - Paseo can import sessions that you started in a terminal. It reads them from `~/.pi/agent/sessions`, or from the session directory that you configured in Pi.
-
-## Timeouts
-
-Paseo waits 60 seconds for Pi to answer a control request, such as a request for the model list. If Pi needs longer on your host, raise `rpcTimeoutMs` in [Provider options](/docs/custom-providers#provider-options).
+- Paseo waits 60 seconds for Pi to answer a control request, such as a request for the model list. If Pi needs longer on your host, raise `rpcTimeoutMs` in [Provider options](/docs/custom-providers#provider-options).
 
 ## See also
 

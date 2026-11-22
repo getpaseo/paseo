@@ -1,6 +1,6 @@
 ---
 title: Antigravity
-description: Install and configure Antigravity for Paseo.
+description: Run Antigravity in Paseo through the official agy CLI over ACP.
 nav: Antigravity
 order: 23
 category: Providers
@@ -8,44 +8,38 @@ category: Providers
 
 # Antigravity
 
-Run Antigravity in Paseo with your installed `agy` CLI and sign-in. This integration is not endorsed by Google.
+Paseo runs Antigravity through the official Agent Client Protocol (`agy acp`) on your installed `agy` CLI. Paseo drives your local CLI with your existing sign-in instead of calling Google endpoints directly.
 
 ## Getting started
 
-Install Antigravity CLI (`agy`) 1.5.0 or later on your daemon host, then run `agy` once to sign in. In Paseo, select **Antigravity**. The provider ships with Paseo, so you do not install a plugin.
+Antigravity is built into Paseo and enabled by default. You do not need a plugin or extra configuration.
 
-If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env` for provider-specific environment variables:
+1. Install the [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) version 1.5.0 or later on your daemon host.
+2. Run `agy` in a terminal and sign in.
+3. In Paseo, choose **Antigravity** when you start an agent.
 
-```json
-{
-  "agents": {
-    "providers": {
-      "antigravity": {
-        "command": ["/absolute/path/to/agy", "acp", "--disable-telemetry"],
-        "env": { "EXAMPLE_VARIABLE": "value" }
-      }
-    }
-  }
-}
-```
-
-If you already override the command, add `acp` to the command arguments. See [Custom providers](/docs/custom-providers) for command and environment overrides.
-
-After the upgrade, a Hub trigger saved with an older model ID that includes the thinking level reports that its model is unavailable. In Hub, select the model and thinking level again.
+If `agy` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` in the arguments.
 
 ## Permissions
 
-Paseo connects to `agy acp` and shows the permission modes the CLI offers. In **Default**, Paseo shows approval requests for edits and commands that Antigravity policy requires you to approve. In **Accept edits**, Antigravity approves workspace edits and still asks about commands that require approval. **Plan** lets Antigravity plan before it acts.
+Paseo connects to `agy acp` and shows the permission modes that the CLI provides. **Full access** is the default mode.
 
-**Full access** is the default. Paseo approves tool requests that offer a single **Allow once** action. Antigravity still enforces its own tool policy. Existing chats saved in **Full access** keep that mode, and scheduled runs can use it without a person to approve each tool call.
+| Mode         | Effect                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Full access  | Paseo approves tool requests that offer a single **Allow once** action. Antigravity still enforces its own tool policy. |
+| Default      | Paseo shows approval requests for edits and commands that Antigravity policy requires you to approve.                   |
+| Accept edits | Antigravity approves workspace edits automatically and still asks about commands that require approval.                 |
+| Plan         | Antigravity plans before it acts.                                                                                       |
 
-Finish or stop the current turn before you switch to or from **Full access**.
+Scheduled runs can use **Full access** without a person to approve each tool call. Finish or stop the current turn before you switch to or from **Full access**.
 
 ## Sessions and tools
 
-Paseo can import CLI sessions and restore conversation history when it reopens a chat. Antigravity publishes slash commands and accepts image attachments through ACP. It also receives the MCP servers configured for the agent.
+- Paseo can import CLI sessions and restore conversation history when it reopens a chat.
+- Antigravity publishes slash commands and skills, accepts image attachments, and receives the MCP servers configured for the agent.
+- Send a follow-up after the current turn finishes, or interrupt the turn to change direction.
 
-Send a follow-up after the current turn finishes, or interrupt the turn to change direction.
+After an upgrade, an older Hub trigger can report that its Antigravity model is unavailable. Open the trigger in Hub and select the model and thinking level again.
 
 ## Troubleshooting
 

@@ -6,9 +6,11 @@ nav: Pi
 
 # Pi {#pi}
 
-使用你现有的 `pi` 安装、凭据和设置，在 Paseo 中运行 Pi。
+Paseo 通过你已安装的 `pi` CLI 运行 Pi。它使用你现有的凭据和设置。
 
 ## 开始使用 {#getting-started}
+
+Pi 内置于 Paseo 且默认启用。
 
 1. 在 daemon 主机上安装 [Pi](https://pi.dev)。
 2. 为 Pi 配置模型 Provider，并确认 `pi` 可以在终端中运行。
@@ -16,14 +18,11 @@ nav: Pi
 
 daemon 能够启动 `pi` 时，Pi 就会出现在 Paseo 中。如果 `pi` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)。
 
-## 模式和会话 {#modes-and-sessions}
+## 模式、会话和超时 {#modes-sessions-and-timeouts}
 
 - Pi 没有权限模式，所以 Paseo 不会为 Pi Agent 显示模式选择器。
 - Paseo 可以导入你在终端中启动的会话。它从 `~/.pi/agent/sessions` 读取，或者从你在 Pi 中配置的会话目录读取。
-
-## 超时 {#timeouts}
-
-Paseo 等待 Pi 响应控制请求（例如获取模型列表）的时间上限为 60 秒。如果 Pi 在你的主机上需要更长时间，请在 [Provider 选项](/docs/custom-providers#provider-options)中调高 `rpcTimeoutMs`。
+- Paseo 等待 Pi 响应控制请求（例如获取模型列表）的时间上限为 60 秒。如果 Pi 在你的主机上需要更长时间，请在 [Provider 选项](/docs/custom-providers#provider-options)中调高 `rpcTimeoutMs`。
 
 ## 另请参阅 {#see-also}
 
