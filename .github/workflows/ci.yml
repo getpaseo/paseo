@@ -180,9 +180,16 @@ jobs:
       - name: Install website test browsers
         run: |
           mkdir -p ~/website-browser-debs
-          sudo cp ~/website-browser-debs/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          shopt -s nullglob
+          cached_debs=(~/website-browser-debs/*.deb)
+          if (( ${#cached_debs[@]} > 0 )); then
+            sudo cp "${cached_debs[@]}" /var/cache/apt/archives/
+          fi
           npx playwright install --with-deps chromium webkit
-          cp /var/cache/apt/archives/*.deb ~/website-browser-debs/
+          archive_debs=(/var/cache/apt/archives/*.deb)
+          if (( ${#archive_debs[@]} > 0 )); then
+            cp "${archive_debs[@]}" ~/website-browser-debs/
+          fi
 
       - name: Verify website mockups
         run: npm run test:e2e --workspace=@getpaseo/website
@@ -480,11 +487,11 @@ jobs:
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          E2E_WORKERS: "3"
+          E2E_WORKERS: "2"
           # File groups are weighted by observed reporter durations.
-          # Share of the test list per shard, rebalanced from the median Playwright
-          # step minutes of five eight-shard main runs so the slowest and fastest shards meet.
-          PWTEST_SHARD_WEIGHTS: "86:112:107:111:110:108:111:85"
+          # Share of the test list per shard, rebalanced from main and PR eight-shard
+          # durations so the slowest and fastest shards meet.
+          PWTEST_SHARD_WEIGHTS: "90:114:100:104:108:112:112:90"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
