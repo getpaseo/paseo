@@ -237,8 +237,6 @@ function mergeReasoningChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       seqEnd: entry.seqEnd,
       sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
       collapsed: Array.from(collapsedKinds),
-      // The turn's stats ride on its last row, which is the later chunk of a merged message.
-      ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
     };
   }
 
@@ -299,6 +297,8 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       seqEnd: entry.seqEnd,
       sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
       collapsed: Array.from(collapsedKinds),
+      // The turn's stats ride on its last row, which is the later chunk of a merged message.
+      ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
     };
   }
 

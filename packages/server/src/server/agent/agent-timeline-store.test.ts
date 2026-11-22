@@ -340,16 +340,24 @@ describe("turn metrics", () => {
 
   it("keeps the stats on a message whose chunks the projection merges", () => {
     const store = new InMemoryAgentTimelineStore();
-    store.initialize("a");
-    store.append("a", { type: "user_message", text: "go" }, { turnId: "turn-1" });
-    store.append("a", { type: "assistant_message", text: "Do" }, { turnId: "turn-1" });
-    store.append("a", { type: "assistant_message", text: "ne" }, { turnId: "turn-1" });
-    store.stampTurnMetrics("a", metrics, { turnId: "turn-1" });
+    const at = "2026-11-22T00:00:00.000Z";
+    store.initialize("a", {
+      rows: [
+        { seq: 1, timestamp: at, item: { type: "user_message", text: "go" } },
+        { seq: 2, timestamp: at, item: { type: "assistant_message", text: "Do" } },
+        {
+          seq: 3,
+          timestamp: at,
+          item: { type: "assistant_message", text: "ne" },
+          turnMetrics: metrics,
+        },
+      ],
+    });
 
-    const projected = store.fetch("a").rows;
+    const rows = store.fetch("a").rows;
 
-    expect(projected).toHaveLength(2);
-    expect(projected[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
   });
 
   it("restores stamped rows when a timeline is seeded from stored rows", () => {
