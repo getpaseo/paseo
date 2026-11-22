@@ -15,6 +15,8 @@ export interface UsageSource {
   id: string;
   label: string;
   icon?: string;
+  /** Provider IDs associated with this source, used as a hint for default visibility. */
+  providers?: readonly string[];
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
 }
@@ -22,6 +24,7 @@ export interface UsageSource {
 interface Login {
   input: unknown;
   harness: string;
+  provider?: string;
 }
 
 interface KnownReport {
@@ -36,6 +39,8 @@ export interface AgentUsageLookup {
   resolveLaunch?(
     provider: string,
   ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
+  /** Whether the provider (or a custom provider derived from it) is installed and enabled. */
+  isProviderActive?(provider: string): Promise<boolean>;
 }
 
 export interface ListUsageReportsOptions {
@@ -104,18 +109,70 @@ export class UsageSourceRegistry {
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
+    const uniqueIds = [...new Set(ids)];
+    const activeProviders =
+      options.agentId === undefined
+        ? await this.resolveProviderActivity(uniqueIds, reports)
+        : undefined;
     return Promise.all(
-      [...new Set(ids)].flatMap((id) => {
+      uniqueIds.flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
+        const defaultEnabled = activeProviders
+          ? this.resolveDefaultEnabled(known, activeProviders)
+          : undefined;
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
-            options.onReport?.(entry);
-            return entry;
+            const stamped = defaultEnabled === false ? { ...entry, defaultEnabled: false } : entry;
+            options.onReport?.(stamped);
+            return stamped;
           }),
         ];
       }),
     );
+  }
+
+  private hintedProviders(known: KnownReport): string[] {
+    const fromLogins = [
+      ...new Set(known.logins.flatMap((login) => (login.provider ? [login.provider] : []))),
+    ];
+    if (fromLogins.length > 0) return fromLogins;
+    return known.source.providers ? [...new Set(known.source.providers)] : [];
+  }
+
+  private async resolveProviderActivity(
+    ids: readonly string[],
+    reports: ReadonlyMap<string, KnownReport>,
+  ): Promise<Map<string, boolean> | undefined> {
+    const isProviderActive = this.agents.isProviderActive;
+    if (!isProviderActive) return undefined;
+    const providerIds = new Set<string>();
+    for (const id of ids) {
+      const known = reports.get(id);
+      if (!known) continue;
+      for (const provider of this.hintedProviders(known)) providerIds.add(provider);
+    }
+    if (providerIds.size === 0) return undefined;
+    const results = await Promise.all(
+      [...providerIds].map(async (provider) => {
+        try {
+          return [provider, await isProviderActive(provider)] as const;
+        } catch (error) {
+          this.logger.warn({ provider, err: error }, "Usage provider availability hint failed");
+          return [provider, true] as const;
+        }
+      }),
+    );
+    return new Map(results);
+  }
+
+  private resolveDefaultEnabled(
+    known: KnownReport,
+    activeProviders: ReadonlyMap<string, boolean>,
+  ): boolean | undefined {
+    const hinted = this.hintedProviders(known);
+    if (hinted.length === 0) return undefined;
+    return hinted.some((provider) => activeProviders.get(provider) !== false) ? undefined : false;
   }
 
   private pruneAgents(): void {
@@ -197,6 +254,7 @@ export class UsageSourceRegistry {
                 key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
                 label: z.string().optional(),
                 harness: z.string().min(1).optional(),
+                provider: z.string().min(1).optional(),
                 input: z.json(),
               }),
             )
@@ -205,7 +263,11 @@ export class UsageSourceRegistry {
             const id = `${source.id}:${account.key}`;
             const known = reports.get(id);
             // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
-            const login = { input: account.input, harness: account.harness ?? source.label };
+            const login: Login = {
+              input: account.input,
+              harness: account.harness ?? source.label,
+              ...(account.provider ? { provider: account.provider } : {}),
+            };
             if (known) {
               if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
                 known.logins.push(login);

@@ -529,6 +529,48 @@ export class ProviderSnapshotManager {
     return this.ensureClient(provider, definition).resolveUsageLaunch?.();
   }
 
+  /**
+   * Whether `provider` (or a custom provider derived from it) is enabled and installed on this
+   * host. Used as a hint for whether discovered usage accounts start shown.
+   */
+  async isProviderActiveForUsage(provider: string): Promise<boolean> {
+    const matching = this.generation.order
+      .map((id) => ({ id, definition: this.generation.definitions[id] }))
+      .filter(
+        (candidate): candidate is { id: AgentProvider; definition: ProviderDefinition } =>
+          candidate.definition !== undefined &&
+          candidate.definition.enabled &&
+          (candidate.id === provider || candidate.definition.derivedFromProviderId === provider),
+      );
+    if (matching.length === 0) return false;
+
+    const homeTarget = this.targets.get(resolveProviderSnapshotTarget().snapshotCwd);
+    const unresolved: Array<{ id: AgentProvider; definition: ProviderDefinition }> = [];
+    for (const candidate of matching) {
+      const entry = homeTarget?.snapshot.records.find(
+        (record) => record.entry.provider === candidate.id,
+      )?.entry;
+      if (entry?.status === "ready") return true;
+      if (entry?.status === "unavailable") continue;
+      unresolved.push(candidate);
+    }
+    if (unresolved.length === 0) return false;
+
+    const results = await Promise.all(
+      unresolved.map(async ({ id, definition }) => {
+        try {
+          return await this.ensureClient(id, definition).isAvailable(AbortSignal.timeout(5_000), {
+            scope: "global",
+            force: false,
+          });
+        } catch {
+          return false;
+        }
+      }),
+    );
+    return results.some(Boolean);
+  }
+
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
     const target = resolveProviderSnapshotTarget(input.cwd);
     if (input.wait) {

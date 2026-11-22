@@ -226,7 +226,10 @@ export function createPluginWorker(options: {
       typeof source.fetch !== "function" ||
       typeof source.discover !== "function" ||
       !source.input ||
-      typeof source.input.parseAsync !== "function"
+      typeof source.input.parseAsync !== "function" ||
+      (source.providers !== undefined &&
+        (!Array.isArray(source.providers) ||
+          source.providers.some((provider) => typeof provider !== "string" || !provider.trim())))
     ) {
       throw new Error(`Invalid usage source: ${source.id}`);
     }
@@ -486,6 +489,7 @@ export function createPluginWorker(options: {
           id: source.id,
           label: source.label,
           provider: source.provider,
+          providers: source.providers ? [...source.providers] : undefined,
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,

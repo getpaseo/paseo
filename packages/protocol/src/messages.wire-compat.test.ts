@@ -535,6 +535,9 @@ test("usage entries accept older failures and additive successful snapshots", ()
     successfulAt: "2026-10-17T10:00:15Z",
   };
   expect(UsageReportEntrySchema.parse(available)).toEqual(available);
+  const hintedOff = { ...available, defaultEnabled: false };
+  expect(UsageReportEntrySchema.parse(hintedOff)).toEqual(hintedOff);
+  expect(UsageReportEntrySchema.omit({ defaultEnabled: true }).parse(hintedOff)).toEqual(available);
   expect(
     UsageReportEntrySchema.omit({ lastSuccessful: true, successfulAt: true }).parse(available),
   ).toEqual({ ...oldEntry, report: available.report });
