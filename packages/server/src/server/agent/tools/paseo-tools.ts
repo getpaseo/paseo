@@ -1982,7 +1982,7 @@ function createToolCatalog(
       title: "Send agent prompt",
       description:
         scope === "agent"
-          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them; a later message does not cancel an earlier one. Completion reports include the target’s last response by default. Paseo supplies caller identity."
+          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them. A steer the recipient has not read is lost if its turn stops or is interrupted, along with the messages it carried. Completion reports include the target’s last response by default. Paseo supplies caller identity."
           : "Send a prompt to an agent. A running turn is interrupted unless activeTurnBehavior is steer.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
