@@ -79,15 +79,19 @@ type RecentSessionsResponse = Awaited<
 
 type SessionsQueryKey = ReadonlyArray<string | number | null>;
 
+function buildSessionsQueryRoot(serverId: string | null, cwd: string | null) {
+  return ["recent-provider-sessions", serverId, cwd] as const;
+}
+
 function buildSessionsQueryKey(input: {
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
   provider?: string;
 }): SessionsQueryKey {
   return [
-    "recent-provider-sessions",
-    input.cwd,
+    ...buildSessionsQueryRoot(input.serverId, input.cwd),
     input.query,
     input.limit,
     ...(input.provider === undefined ? [] : [input.provider]),
@@ -110,18 +114,19 @@ function buildSessionsQueriesConfig(args: {
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { queryClient, providersToFetch, visible, client, cwd, query, limit } = args;
+  const { queryClient, providersToFetch, visible, client, serverId, cwd, query, limit } = args;
   const { hostDisconnectedMessage } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   const previousLimit = previousPageLimit(limit);
   return providersToFetch.map((provider) => ({
-    queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
+    queryKey: buildSessionsQueryKey({ serverId, cwd, query, limit, provider }),
     enabled,
     retry: false as const,
     // While Load more fetches the next page, keep showing the page it grew from. React Query's
@@ -131,7 +136,7 @@ function buildSessionsQueriesConfig(args: {
       previousLimit === null
         ? undefined
         : queryClient.getQueryData<RecentSessionsResponse>(
-            buildSessionsQueryKey({ cwd, query, limit: previousLimit, provider }),
+            buildSessionsQueryKey({ serverId, cwd, query, limit: previousLimit, provider }),
           ),
     queryFn: async () => {
       if (!client) {
@@ -537,7 +542,10 @@ export function ImportSessionSheet({
     [snapshotEntries],
   );
 
-  const sessionsQueryRoot = useMemo(() => ["recent-provider-sessions", scopeCwd], [scopeCwd]);
+  const sessionsQueryRoot = useMemo(
+    () => buildSessionsQueryRoot(serverId, scopeCwd),
+    [serverId, scopeCwd],
+  );
 
   const queriesConfig = useMemo(
     () =>
@@ -546,12 +554,13 @@ export function ImportSessionSheet({
         providersToFetch,
         visible,
         client,
+        serverId,
         cwd: scopeCwd,
         query,
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [queryClient, providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [queryClient, providersToFetch, visible, client, serverId, scopeCwd, query, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -733,10 +742,16 @@ export function ImportSessionSheet({
   const handleRetryProvider = useCallback(
     (provider: string) => {
       void queryClient.refetchQueries({
-        queryKey: buildSessionsQueryKey({ cwd: scopeCwd, query, limit: pageLimit, provider }),
+        queryKey: buildSessionsQueryKey({
+          serverId,
+          cwd: scopeCwd,
+          query,
+          limit: pageLimit,
+          provider,
+        }),
       });
     },
-    [pageLimit, query, queryClient, scopeCwd],
+    [pageLimit, query, queryClient, scopeCwd, serverId],
   );
 
   const handleShowAll = useCallback(() => setIsShowingAllDirectories(true), []);

@@ -169,6 +169,13 @@ export class ImportSessionFlow {
     await this.page.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0);
   }
+  async chooseHostForImport(hostLabel: string) {
+    const panel = await openCommandCenter(this.page);
+    await panel.getByTestId("command-center-input").fill("import");
+    await panel.getByText("Import session", { exact: true }).click();
+    await this.page.getByRole("button", { name: hostLabel }).click();
+    await this.expectScope(`Sessions on ${hostLabel}`);
+  }
   async expectCommandCenterMatch() {
     const panel = await openCommandCenter(this.page);
     await panel.getByTestId("command-center-input").fill("import");

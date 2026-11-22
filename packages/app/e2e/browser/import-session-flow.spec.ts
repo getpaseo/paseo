@@ -6,7 +6,9 @@ import path from "node:path";
 import type { TestInfo } from "@playwright/test";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { expect, test, type Page } from "../support/fixtures";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { ImportSessionFlow } from "../support/helpers/import-session";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import {
   connectNewWorkspaceDaemonClient,
   loadSessionMessageReaders,
@@ -22,18 +24,22 @@ const SCREENSHOT_DIRECTORY = path.join(
 const claudeConfigDirectory = mkdtempSync(path.join(tmpdir(), "paseo-import-flow-claude-"));
 const brokenProvider = "broken-acp";
 
+const disabledProviders = {
+  codex: { enabled: false },
+  copilot: { enabled: false },
+  omp: { enabled: false },
+  opencode: { enabled: false },
+  pi: { enabled: false },
+  antigravity: { enabled: false },
+  muse: { enabled: false },
+};
+
 test.use({
   e2eDaemonConfig: {
     version: 1,
     agents: {
       providers: {
-        codex: { enabled: false },
-        copilot: { enabled: false },
-        omp: { enabled: false },
-        opencode: { enabled: false },
-        pi: { enabled: false },
-        antigravity: { enabled: false },
-        muse: { enabled: false },
+        ...disabledProviders,
         [brokenProvider]: {
           extends: "acp",
           label: "Broken ACP",
@@ -189,6 +195,46 @@ test("shows listing failure details beside healthy sessions and retries the fail
     await expect(healthySession).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`listing-failure-retry-${width}.png`) });
     await flow.close();
+  }
+});
+
+test("Import Session shows the selected host's listing error after switching hosts", async ({
+  page,
+}) => {
+  const secondaryHost = await startIsolatedHostDaemon("import-session-secondary", {
+    config: {
+      agents: {
+        providers: {
+          ...disabledProviders,
+          claude: { enabled: false },
+          [brokenProvider]: {
+            extends: "acp",
+            label: "Broken ACP",
+            command: ["missing-secondary-command", "acp"],
+          },
+        },
+      },
+    },
+  });
+  try {
+    const flow = new ImportSessionFlow(page);
+    await flow.openWorkspace(scenario.project.workspaceId, { width: 1280, height: 844 });
+    await addConnectedHostAndReload(page, {
+      serverId: secondaryHost.serverId,
+      port: secondaryHost.port,
+      label: "Second import host",
+      primaryLabel: "First import host",
+    });
+
+    await flow.chooseHostForImport("First import host");
+    await expect(page.getByText(/missing-agent-command/)).toBeVisible();
+    await flow.close();
+
+    await flow.chooseHostForImport("Second import host");
+    await expect(page.getByText(/missing-secondary-command/)).toBeVisible();
+    await expect(page.getByText(/missing-agent-command/)).toHaveCount(0);
+  } finally {
+    await secondaryHost.close();
   }
 });
 
