@@ -48,6 +48,7 @@ interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<TooltipTriggerElement | null>;
+  triggerRect: Rect | null;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
@@ -251,6 +252,7 @@ export function Tooltip({
   enabledOnMobile?: boolean;
 }>): ReactElement {
   const triggerRef = useRef<TooltipTriggerElement>(null);
+  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -268,16 +270,60 @@ export function Tooltip({
     if (!active && isOpen) setIsOpen(false);
   }, [active, isOpen, setIsOpen]);
 
+  useEffect(() => {
+    const trigger = triggerRef.current;
+    const shouldMeasure = isOpen && enabled && trigger !== null;
+    if (!shouldMeasure) {
+      setTriggerRect(null);
+      return;
+    }
+
+    let cancelled = false;
+    const measureTrigger = (element: TooltipTriggerElement) => {
+      void measureElement(element).then((rect) => {
+        if (!cancelled) setTriggerRect(rect);
+        return undefined;
+      });
+    };
+    measureTrigger(trigger);
+
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const element = triggerRef.current;
+      const containsTrigger = element instanceof HTMLElement && target.contains(element);
+      if (!containsTrigger) return;
+
+      // The browser may scroll the trigger into view after the first measurement.
+      const focused = element.ownerDocument.activeElement;
+      const hasKeyboardFocus = focused?.matches(":focus-visible") && element.contains(focused);
+      if (hasKeyboardFocus) {
+        measureTrigger(element);
+      } else {
+        setIsOpen(false);
+      }
+    };
+
+    // Element scroll events do not bubble.
+    const canListenForScroll = isWeb && typeof window !== "undefined";
+    if (canListenForScroll) window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      cancelled = true;
+      if (canListenForScroll) window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [enabled, isOpen, setIsOpen]);
+
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
       setOpen: setIsOpen,
       triggerRef,
+      triggerRect,
       enabled,
       openOnPress: opensOnPress,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, opensOnPress, delayDuration],
+    [isOpen, setIsOpen, triggerRect, enabled, opensOnPress, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -474,28 +520,15 @@ export function TooltipContent({
   maxWidth?: number;
 }>): ReactElement | null {
   const ctx = useTooltipContext("TooltipContent");
-  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
+  const { triggerRect } = ctx;
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<SurfacePosition | null>(null);
 
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {
-      setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return () => {};
     }
-
-    let cancelled = false;
-
-    void measureElement(ctx.triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect(rect);
-      return undefined;
-    });
-
-    return () => {
-      cancelled = true;
-    };
   }, [ctx.enabled, ctx.open, ctx.triggerRef]);
 
   useEffect(() => {
