@@ -25,6 +25,7 @@ import {
   type ProviderSnapshot,
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
+import { raceProviderRefreshAbort } from "./provider-refresh-deadline.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { getClaudeModels } from "./providers/claude/models.js";
 
@@ -2842,9 +2843,9 @@ test.each(["configuration", "shutdown", "destroy"])(
           async isAvailable() {
             return true;
           },
-          async fetchCatalog(options) {
+          async fetchCatalog(options, context) {
             if (options.scope === "workspace") calls.push(options.cwd);
-            await pending;
+            await raceProviderRefreshAbort(context?.signal, pending);
             return { models: [], modes: [] };
           },
         }),
