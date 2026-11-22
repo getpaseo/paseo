@@ -497,6 +497,36 @@ describe("observed workspace placement", () => {
     observed.dispose();
   });
 
+  test("updates nested projects and workspaces when a parent directory becomes a Git repository", async () => {
+    const observed = new ObservedPlacements([
+      { id: "parent", root: "repo", workspaces: [{ id: "parent-ws", cwd: "repo" }] },
+      { id: "nested", root: "repo/sub", workspaces: [{ id: "nested-ws", cwd: "repo/sub" }] },
+      { id: "outside", root: "outside", workspaces: [{ id: "attached-ws", cwd: "repo/sub" }] },
+      { id: "unrelated", root: "repo-other" },
+    ]);
+    await observed.start();
+    try {
+      observed.makeProjectGit("parent");
+      observed.makeProjectGit("nested");
+
+      observed.change("repo", ".git");
+      await observed.advanceBy(DEBOUNCE_MS);
+
+      expect(observed.projectUpdates).toContainEqual({
+        kind: "upsert",
+        project: expect.objectContaining({ projectId: "nested", kind: "git" }),
+      });
+      expect(await observed.placement("nested-ws")).toMatchObject({ kind: "local_checkout" });
+      expect(await observed.placement("attached-ws")).toMatchObject({ kind: "local_checkout" });
+      expect(observed.workspaceBatches.map((batch) => batch.sort())).toEqual([
+        ["attached-ws", "nested-ws", "parent-ws"],
+      ]);
+      expect(observed.takeCheckoutReads()).toEqual(["outside", "repo", "repo/sub"]);
+    } finally {
+      observed.dispose();
+    }
+  });
+
   test("turns Git changes under several roots into one read per changed root", async () => {
     const observed = new ObservedPlacements(threeProjects(1));
     await observed.start();

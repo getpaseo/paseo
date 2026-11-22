@@ -11,7 +11,7 @@ import type {
   PersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { areEquivalentPaths } from "../utils/path.js";
+import { areEquivalentPaths, isPathInsideRoot } from "../utils/path.js";
 import {
   deriveProjectKind,
   reconcileWorkspacePlacement,
@@ -216,7 +216,7 @@ export class WorkspaceReconciliationService {
 
   /**
    * Reconciles mutable Git facts only; never archives missing records. With
-   * `rootPaths`, only the projects rooted there and their workspaces are read.
+   * `rootPaths`, read projects and workspaces whose checkouts can change under those paths.
    */
   async reconcileGitMetadata(options?: { rootPaths?: string[] }): Promise<ReconciliationResult> {
     const start = Date.now();
@@ -226,15 +226,22 @@ export class WorkspaceReconciliationService {
       this.workspaceRegistry.listActive(),
     ]);
     const rootPaths = options?.rootPaths;
-    const projects = rootPaths
-      ? allProjects.filter((project) =>
-          rootPaths.some((rootPath) => areEquivalentPaths(rootPath, project.rootPath)),
-        )
-      : allProjects;
-    const projectIds = new Set(projects.map((project) => project.projectId));
+    const isAffectedDirectory = (cwd: string) =>
+      rootPaths?.some((rootPath) => isPathInsideRoot(rootPath, cwd)) ?? true;
+    // A nested project can gain or lose its Git checkout when a parent .git changes.
+    const affectedProjectIds = new Set(
+      allProjects
+        .filter((project) => !project.archivedAt && isAffectedDirectory(project.rootPath))
+        .map((project) => project.projectId),
+    );
+    // An explicitly chosen project can own a workspace outside its root.
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     const workspaceStates = await mapBounded(
-      workspaces.filter((w) => !w.archivedAt && (!rootPaths || projectIds.has(w.projectId))),
+      workspaces.filter(
+        (workspace) =>
+          !workspace.archivedAt &&
+          (affectedProjectIds.has(workspace.projectId) || isAffectedDirectory(workspace.cwd)),
+      ),
       async (workspace) => ({ workspace, state: await this.inspectDirectory(workspace.cwd) }),
     );
     for (const { workspace, state } of workspaceStates) {
@@ -245,7 +252,11 @@ export class WorkspaceReconciliationService {
       workspacesByProject.set(workspace.projectId, siblings);
     }
     const projectStates = await mapBounded(
-      projects.filter((p) => !p.archivedAt),
+      allProjects.filter(
+        (project) =>
+          !project.archivedAt &&
+          (affectedProjectIds.has(project.projectId) || workspacesByProject.has(project.projectId)),
+      ),
       async (project) => ({ project, state: await this.inspectDirectory(project.rootPath) }),
     );
     await this.reconcileGitMetadataForProjects(
