@@ -424,6 +424,7 @@ describe("Claude fork point", () => {
     const fork = await realClaudeRewindSdk.forkSession(sessionId, {
       upToMessageId: toolCall,
       transcriptPath,
+      forkProjectFolder: projectDir,
     });
 
     expect(readMessageTexts(path.join(projectDir, `${fork.sessionId}.jsonl`))).toEqual([
@@ -445,6 +446,7 @@ describe("Claude fork point", () => {
     const fork = await realClaudeRewindSdk.forkSession(sessionId, {
       upToMessageId,
       transcriptPath,
+      forkProjectFolder: projectDir,
     });
 
     expect(fork.sessionId).not.toBe(sessionId);
@@ -454,6 +456,26 @@ describe("Claude fork point", () => {
       "first reply",
     ]);
     expect(readMessageTexts(transcriptPath)).toContain("second reply");
+  });
+
+  test("writes a branch into the project folder of another directory", async () => {
+    const { projectDir, sessionId, transcriptPath } = writeConversation();
+    const upToMessageId = await findAssistantMessageEnd(transcriptPath, "msg_first");
+    if (!upToMessageId) throw new Error("fork point not found");
+    const worktreeProjectDir = path.join(path.dirname(projectDir), "-worktree");
+
+    const fork = await realClaudeRewindSdk.forkSession(sessionId, {
+      upToMessageId,
+      transcriptPath,
+      forkProjectFolder: worktreeProjectDir,
+    });
+
+    expect(readMessageTexts(path.join(worktreeProjectDir, `${fork.sessionId}.jsonl`))).toEqual([
+      "first",
+      "thinking",
+      "first reply",
+    ]);
+    expect(readdirSync(projectDir)).toEqual([`${sessionId}.jsonl`]);
   });
 });
 

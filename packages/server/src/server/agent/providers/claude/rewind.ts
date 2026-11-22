@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -12,28 +12,30 @@ import {
 export interface ClaudeRewindSdk {
   forkSession(
     sessionId: string,
-    options: { upToMessageId: string; transcriptPath: string },
+    options: { upToMessageId: string; transcriptPath: string; forkProjectFolder: string },
   ): Promise<{ sessionId: string }>;
 }
 
 // On its own, the SDK looks for the session under the daemon's CLAUDE_CONFIG_DIR, while a
-// provider can point Claude Code at another one. Forking through a store rooted at the
-// transcript's folder reads the session where Claude Code wrote it and writes the fork beside it.
+// provider can point Claude Code at another one. Forking through a store reads the session where
+// Claude Code wrote it and writes the fork into the project folder the caller names.
 export const realClaudeRewindSdk: ClaudeRewindSdk = {
   forkSession: (sessionId, options) =>
     claudeForkSession(sessionId, {
       upToMessageId: options.upToMessageId,
-      sessionStore: projectFolderSessionStore(path.dirname(options.transcriptPath)),
+      sessionStore: forkSessionStore({
+        readFrom: path.dirname(options.transcriptPath),
+        writeTo: options.forkProjectFolder,
+      }),
     }),
 };
 
-function projectFolderSessionStore(projectFolder: string): SessionStore {
-  const transcriptPath = (sessionId: string) => path.join(projectFolder, `${sessionId}.jsonl`);
+function forkSessionStore(folders: { readFrom: string; writeTo: string }): SessionStore {
   return {
     async load({ sessionId }) {
       let text: string;
       try {
-        text = await readFile(transcriptPath(sessionId), "utf8");
+        text = await readFile(path.join(folders.readFrom, `${sessionId}.jsonl`), "utf8");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw error;
@@ -42,7 +44,8 @@ function projectFolderSessionStore(projectFolder: string): SessionStore {
     },
     async append({ sessionId }, entries) {
       const lines = entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
-      await appendFile(transcriptPath(sessionId), lines, "utf8");
+      await mkdir(folders.writeTo, { recursive: true });
+      await appendFile(path.join(folders.writeTo, `${sessionId}.jsonl`), lines, "utf8");
     },
   };
 }
@@ -208,6 +211,7 @@ export async function revertClaudeConversation(input: {
   const fork = await input.sdk.forkSession(input.sessionId, {
     upToMessageId: messageId,
     transcriptPath: input.transcriptPath,
+    forkProjectFolder: path.dirname(input.transcriptPath),
   });
   await input.setSessionId(fork.sessionId);
 }

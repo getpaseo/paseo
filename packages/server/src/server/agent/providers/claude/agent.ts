@@ -98,7 +98,12 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  claudeConfigDir,
+  claudeProjectDir,
+  claudeProjectDirSync,
+  claudeTranscriptPath,
+} from "./project-dir.js";
 import {
   compareWithLatestRelease,
   fetchHomebrewCaskVersion,
@@ -3465,9 +3470,16 @@ class ClaudeAgentSession implements AgentSession {
           : `Claude fork target ${input.messageId} is not in the transcript`,
       );
     }
-    // The copy is written beside the source transcript. Claude Code resumes a session by id from
-    // any working directory, so a fork into another directory still finds it.
-    const fork = await this.rewindSdk.forkSession(sessionId, { upToMessageId, transcriptPath });
+    // The copy goes into the project folder of the branch's directory, where Claude Code keeps a
+    // session started there.
+    const forkProjectFolder = await claudeProjectDir(input.cwd, {
+      configDir: claudeConfigDir(this.harnessEnvironment),
+    });
+    const fork = await this.rewindSdk.forkSession(sessionId, {
+      upToMessageId,
+      transcriptPath,
+      forkProjectFolder,
+    });
     return this.persistenceHandle(fork.sessionId, input.cwd);
   }
 

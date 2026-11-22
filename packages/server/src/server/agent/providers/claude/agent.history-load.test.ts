@@ -242,6 +242,38 @@ describe("ClaudeAgentSession persisted history load", () => {
     }
   }, 60_000);
 
+  test("branches into the project folder of the branch's directory", async () => {
+    const entries = [
+      { type: "user", uuid: "u1", message: { content: "first" } },
+      { type: "assistant", uuid: "a1", message: { content: "first reply" } },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+    const worktree = path.join(tempRoot, "worktree");
+    mkdirSync(worktree, { recursive: true });
+    const forks: unknown[] = [];
+    const session = await resume(undefined, {
+      async forkSession(sessionId, options) {
+        forks.push({ sessionId, ...options });
+        return { sessionId: "branch-session" };
+      },
+    });
+    try {
+      await session.forkConversation!({ messageId: "a1", cwd: worktree });
+
+      expect(forks).toEqual([
+        {
+          sessionId: SESSION_ID,
+          upToMessageId: "a1",
+          transcriptPath: transcriptPath(),
+          forkProjectFolder: claudeProjectDirSync(worktree, { configDir }),
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("rebinds ordered history before returning from rewind and accepts a live turn", async () => {
     const entries = [
       { type: "user", uuid: "u1", message: { content: "first" } },
@@ -357,7 +389,12 @@ describe("ClaudeAgentSession persisted history load", () => {
         },
       ]);
       expect(forks).toEqual([
-        { sessionId: SESSION_ID, upToMessageId: "a1", transcriptPath: transcriptPath() },
+        {
+          sessionId: SESSION_ID,
+          upToMessageId: "a1",
+          transcriptPath: transcriptPath(),
+          forkProjectFolder: path.dirname(transcriptPath()),
+        },
       ]);
       expect(session.id).toBe(forkId);
       const [history, secondRead] = await Promise.all([reading, readingAgain]);
