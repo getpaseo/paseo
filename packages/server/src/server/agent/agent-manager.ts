@@ -3,6 +3,7 @@ import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
+import { AgentTurnChangedError } from "./agent-prompt.js";
 import { continuesAssistantMessage, projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -1142,6 +1143,14 @@ export class AgentManager {
 
   hasPendingPermissions(agentId: string): boolean {
     return (this.agents.get(agentId)?.pendingPermissions.size ?? 0) > 0;
+  }
+
+  /**
+   * The agent's session can take a prompt into a running turn. A session declares it by offering
+   * steerActiveTurn. A provider can still refuse one steer; the prompt then replaces the turn.
+   */
+  canSteer(agentId: string): boolean {
+    return Boolean(this.agents.get(agentId)?.session?.steerActiveTurn);
   }
 
   hasInFlightRun(agentId: string): boolean {
@@ -3594,7 +3603,7 @@ export class AgentManager {
     // An unavailable answer is only safe to fall back from while this admission
     // still owns the active turn. Never let an A admission replace a later B.
     if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
-      throw new Error("Active turn changed before steering could be delivered");
+      throw new AgentTurnChangedError("Active turn changed before steering could be delivered");
     }
     return result;
   }
@@ -3658,7 +3667,7 @@ export class AgentManager {
 
   private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {
     if (agent.activeTurnId !== expectedTurnId) {
-      throw new Error("Active turn changed before steering could be delivered");
+      throw new AgentTurnChangedError("Active turn changed before steering could be delivered");
     }
   }
 

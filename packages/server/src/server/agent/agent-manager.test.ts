@@ -1224,6 +1224,37 @@ test("starts its own turn when the previous turn fails to start under a steer se
   }
 });
 
+test("answers whether an agent's session can steer a running turn", async () => {
+  const steering = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const plain = new TestAgentSession({ provider: "claude", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-can-steer-"));
+  const clientFor = (session: AgentSession) =>
+    new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+  const manager = new AgentManager({
+    clients: { codex: clientFor(steering), claude: clientFor(plain) },
+    logger,
+  });
+  try {
+    const steerable = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const unsteerable = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(manager.canSteer(steerable.id)).toBe(true);
+    expect(manager.canSteer(unsteerable.id)).toBe(false);
+    expect(manager.canSteer("00000000-0000-4000-8000-000000000000")).toBe(false);
+    await manager.closeAgent(steerable.id);
+    await manager.closeAgent(unsteerable.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders an accepted steer before output emitted while acknowledgement is pending", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();

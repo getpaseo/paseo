@@ -1396,14 +1396,19 @@ class PluginAgentSession implements AgentSession {
     return { turnId };
   }
 
-  async steerActiveTurn(
+  /** Offered only when the provider negotiated prompt.steer, so callers can ask before steering. */
+  get steerActiveTurn():
+    | ((prompt: AgentPromptInput, options: SteerActiveTurnOptions) => Promise<SteerResult>)
+    | undefined {
+    if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) return undefined;
+    return (prompt, options) => this.steer(prompt, options);
+  }
+
+  private async steer(
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
     this.assertReplayComplete();
-    if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
-      return { status: "unavailable" };
-    }
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",

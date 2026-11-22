@@ -2,6 +2,8 @@ import {
   AgentStreamEventPayloadSchema,
   AgentTimelineEntryPayloadSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageResponseMessageSchema,
+  SendAgentMessageSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -26,6 +28,46 @@ describe("send_agent_message_request active-turn behavior", () => {
         text: "Keep the old behavior",
       }).activeTurnBehavior,
     ).toBeUndefined();
+  });
+});
+
+describe("agent sender active-turn behaviors", () => {
+  it("accepts queue on a send request and reports the applied behavior in the response", () => {
+    expect(
+      SendAgentMessageRequestSchema.parse({
+        type: "send_agent_message_request",
+        requestId: "request-3",
+        agentId: "agent-1",
+        text: "Report when you are done",
+        sourceAgentId: "parent",
+        activeTurnBehavior: "queue",
+      }).activeTurnBehavior,
+    ).toBe("queue");
+    expect(
+      SendAgentMessageResponseMessageSchema.parse({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: "request-3",
+          agentId: "agent-1",
+          accepted: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior: "queue",
+          guidance: "Queued.",
+          error: null,
+        },
+      }).payload,
+    ).toMatchObject({ activeTurnBehavior: "queue", guidance: "Queued." });
+  });
+
+  it("keeps a person's send_agent_message to interrupt and steer", () => {
+    expect(
+      SendAgentMessageSchema.safeParse({
+        type: "send_agent_message",
+        agentId: "agent-1",
+        text: "hello",
+        activeTurnBehavior: "queue",
+      }).success,
+    ).toBe(false);
   });
 });
 
