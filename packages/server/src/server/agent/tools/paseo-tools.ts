@@ -1452,7 +1452,7 @@ function createToolCatalog(
         structuredContent: ensureValidJson(await instructions.outbox.cancel(id)),
       }),
     );
-    if (callerAgentId) {
+    if (scope === "agent") {
       registerTool(
         "reply_host_instruction",
         {
@@ -1465,12 +1465,19 @@ function createToolCatalog(
             text: z.string().min(1).max(32768),
           },
         },
-        async ({ id, sourceId, text }) => ({
-          content: [],
-          structuredContent: ensureValidJson(
-            await instructions.reply(callerAgentId, sourceId, id, text),
-          ),
-        }),
+        async ({ id, sourceId, text }) => {
+          if (!callerAgentId) {
+            throw new PaseoToolInputError(
+              "reply_host_instruction requires an agent-scoped session",
+            );
+          }
+          return {
+            content: [],
+            structuredContent: ensureValidJson(
+              await instructions.reply(callerAgentId, sourceId, id, text),
+            ),
+          };
+        },
       );
     }
   }
