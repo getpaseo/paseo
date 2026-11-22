@@ -102,7 +102,7 @@ Leave `activeTurnBehavior` out unless the message cannot wait. The default for a
 - `steer`: the message joins the running turn, and the recipient reads it at its next step. If the recipient's provider cannot steer, `steer` interrupts the turn instead.
 - `interrupt`: the running turn stops, and a new turn starts with the message.
 
-The recipient reads your messages in the order you sent them. A `steer` or `interrupt` carries the messages you queued before it, so a later message never cancels an earlier one. To withdraw an earlier instruction, say so in the new message.
+The recipient reads your messages in the order you sent them. A `steer` or `interrupt` carries the messages you queued before it, so sending one does not skip or cancel them. To withdraw an earlier instruction, say so in the new message.
 
 ### Read the response
 
@@ -110,7 +110,7 @@ The response gives the applied `activeTurnBehavior` and a `guidance` sentence. T
 
 If a queued message cannot wait after all, do not send it again. The recipient reads a resent message twice. Send a short follow-up with `steer` or `interrupt` instead, such as "Read my queued message now." The follow-up carries the queued message ahead of it.
 
-A steer that the recipient has not read yet is lost when the turn stops or is interrupted. If the recipient must act on the message no matter what, use `queue` or `interrupt`.
+A steer that the recipient has not read yet is lost when the turn stops or is interrupted, together with the queued messages it carried. This includes your own later `interrupt`. If the recipient must act on the message no matter what, use `queue` or `interrupt`.
 
 ### What else changes delivery
 
