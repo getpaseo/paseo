@@ -24,7 +24,9 @@ import { useMarkdownSource, type MarkdownImageContext } from "./images";
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
-const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
+// The library parses LaTeX (and ships KaTeX) by default; keep it on so `$...$` and
+// `$$...$$` reach the LatexMath renderers instead of falling through as source text.
+const MD4C_FLAGS = { latexMath: true, hardSoftBreaks: true, admonitions: true };
 // A README is written for its forge, where the lines of a paragraph join into one.
 const EXTERNAL_MD4C_FLAGS = { ...MD4C_FLAGS, hardSoftBreaks: false };
 

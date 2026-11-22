@@ -7,9 +7,11 @@
 // beats both RN-web's base font and Unistyles' generated classes (0,1,0) — no reliance
 // on stylesheet order. Code/diff/terminal surfaces carry `data-pmono` (and have their
 // subtree excluded via `:not([data-pmono] *)`) so they keep their monospace font.
+// KaTeX math containers carry `role="math"` and are likewise excluded so browser native
+// `font-family: math` applies to MathML instead of the UI font.
 const STYLE_ID = "paseo-ui-font";
 const RULE =
-  ":is(#root, #overlay-root) *:not([data-pmono]):not([data-pmono] *){font-family:var(--paseo-ui-font);}";
+  ':is(#root, #overlay-root) *:not([data-pmono]):not([data-pmono] *):not([role="math"]):not([role="math"] *){font-family:var(--paseo-ui-font);}';
 
 export function applyRootUiFont(uiFontStack: string): void {
   if (typeof document === "undefined") return;
