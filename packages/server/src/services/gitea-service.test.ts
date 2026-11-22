@@ -5,6 +5,8 @@ import {
   type CreateGiteaServiceOptions,
   createGiteaService,
   detectGiteaFamilySoftware,
+  extractCandidateHost,
+  findTeaLoginNameForHost,
   TeaAuthenticationError,
   TeaCommandError,
   type TeaCommandResult,
@@ -520,7 +522,9 @@ describe("createGiteaService", () => {
     expect(calls[0]).toContain("--fields");
     expect(calls[0]).toContain("-o");
     expect(calls[0]).toContain("json");
-    expect(calls[1]).toEqual(["pr", "5", "-o", "json"]);
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("example-user/sample-repo");
+    expect(calls[1]).toEqual(["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"]);
     expect(calls[2]).toEqual([
       "api",
       "repos/example-user/sample-repo/commits/3333333333333333333333333333333333333333/status",
@@ -1661,8 +1665,10 @@ describe("createGiteaService", () => {
         "50",
         "--page",
         "1",
+        "--repo",
+        "example-user/sample-repo",
       ],
-      ["pr", "5", "-o", "json"],
+      ["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", `repos/example-user/sample-repo/commits/${STATUS_PR_VIEW.headSha}/status`],
     ]);
   });
@@ -1699,7 +1705,7 @@ describe("createGiteaService", () => {
 
     expect(details).toMatchObject({ checkRunId: 2, name: "ci/lint", status: "pending" });
     expect(calls).toEqual([
-      ["pr", "8", "-o", "json"],
+      ["pr", "8", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", `repos/example-user/sample-repo/commits/${headSha}/status`],
     ]);
   });
@@ -2316,6 +2322,8 @@ describe("createGiteaService", () => {
       "open",
       "-o",
       "json",
+      "--repo",
+      "example-user/sample-repo",
     ]);
   });
 
@@ -2340,7 +2348,7 @@ describe("createGiteaService", () => {
     expect(pr.number).toBe(6);
     expect(pr.headRefName).toBe("feat/conflict");
     // Fetched by number directly, not by scanning the recent-PR list.
-    expect(calls).toContainEqual(["pr", "6", "-o", "json"]);
+    expect(calls).toContainEqual(["pr", "6", "-o", "json", "--repo", "example-user/sample-repo"]);
   });
 
   it("maps a same-repo pull request to a checkout target", async () => {
@@ -2642,7 +2650,15 @@ describe("createGiteaService", () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(calls[0]).toEqual(["pr", "merge", "5", "--style", "squash"]);
+    expect(calls[0]).toEqual([
+      "pr",
+      "merge",
+      "5",
+      "--style",
+      "squash",
+      "--repo",
+      "example-user/sample-repo",
+    ]);
   });
 
   it("refuses to merge a pull request Gitea does not report as mergeable", async () => {
@@ -2686,7 +2702,7 @@ describe("createGiteaService", () => {
     });
 
     expect(calls).toEqual([
-      ["pr", "1", "-o", "json"],
+      ["pr", "1", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", "repos/example-user/sample-repo/issues/1/comments?page=1&limit=50"],
       ["api", "repos/example-user/sample-repo/pulls/1/reviews?page=1&limit=50"],
       ["api", "repos/example-user/sample-repo/pulls/1/reviews/2002/comments?page=1&limit=50"],
@@ -3141,6 +3157,8 @@ describe("createGiteaService", () => {
       "json",
       "--limit",
       "10",
+      "--repo",
+      "example-user/sample-repo",
     ]);
     expect(calls.find((args) => args[0] === "pr")).toEqual([
       "pr",
@@ -3153,6 +3171,8 @@ describe("createGiteaService", () => {
       "json",
       "--limit",
       "10",
+      "--repo",
+      "example-user/sample-repo",
     ]);
   });
 
@@ -3224,6 +3244,8 @@ describe("createGiteaService", () => {
         "open",
         "-o",
         "json",
+        "--repo",
+        "example-user/sample-repo",
       ],
     ]);
   });
@@ -3302,5 +3324,217 @@ describe("detectGiteaFamilySoftware", () => {
       runTea: async () => ({ stdout: "[]", stderr: "" }),
     });
     expect(software).toBe("gitea");
+  });
+
+  it("resolves gitea when tea login has an ssh_host with port", async () => {
+    const runTea = async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
+      if (args[0] === "login") {
+        return {
+          stdout: JSON.stringify([
+            {
+              name: "example-user",
+              url: "https://git.example.com",
+              ssh_host: "ssh.example.internal:222",
+              user: "example-user",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      return { stdout: "Not found.", stderr: "HTTP/1.1 404 Not Found\nServer: Caddy\n" };
+    };
+    const software = await detectGiteaFamilySoftware("ssh.example.internal", {
+      runTea,
+    });
+    expect(software).toBe("gitea");
+  });
+});
+
+describe("findTeaLoginNameForHost & extractCandidateHost", () => {
+  it("extracts hostname from candidate strings with ports, users, or protocols", () => {
+    expect(extractCandidateHost("ssh.example.internal:222")).toBe("ssh.example.internal");
+    expect(extractCandidateHost("git@ssh.example.internal:222")).toBe("ssh.example.internal");
+    expect(extractCandidateHost("https://git.example.com:8443")).toBe("git.example.com");
+    expect(extractCandidateHost("[::1]:222")).toBe("::1");
+    expect(extractCandidateHost("plain-host")).toBe("plain-host");
+    expect(extractCandidateHost(undefined)).toBeNull();
+    expect(extractCandidateHost("   ")).toBeNull();
+  });
+
+  it("matches tea login entries when ssh_host has a port suffix", () => {
+    const stdout = JSON.stringify([
+      {
+        name: "example-user",
+        url: "https://git.example.com",
+        ssh_host: "ssh.example.internal:222",
+        user: "example-user",
+        default: "true",
+      },
+    ]);
+
+    expect(findTeaLoginNameForHost(stdout, "ssh.example.internal")).toBe("example-user");
+    expect(findTeaLoginNameForHost(stdout, "git.example.com")).toBe("example-user");
+    expect(findTeaLoginNameForHost(stdout, "other.host.com")).toBeNull();
+  });
+
+  it("matches tea login entries by IPv6 with port", () => {
+    const stdout = JSON.stringify([
+      {
+        name: "local_ipv6",
+        url: "http://[::1]:3000",
+        ssh_host: "[::1]:2222",
+        user: "git",
+      },
+    ]);
+
+    expect(findTeaLoginNameForHost(stdout, "::1")).toBe("local_ipv6");
+  });
+});
+
+describe("merged pull request head resolution", () => {
+  it("resolves head branch from head.label when head.ref is refs/pull/<index>/head", async () => {
+    const mergedPrApi = {
+      number: 79,
+      html_url: "https://gitea.com/example-user/sample-repo/pulls/79",
+      title: "Fix issue 78",
+      body: "Resolves #78",
+      state: "closed",
+      merged: true,
+      mergeable: true,
+      updated_at: "2026-09-23T13:14:52Z",
+      labels: [],
+      head: {
+        label: "feat/fix-issue-78",
+        ref: "refs/pull/79/head",
+        sha: "12c46a31dcbe9ecd0274fb6e0687fc200fd74649",
+        repo: {
+          owner: { login: "example-user" },
+          name: "sample-repo",
+        },
+      },
+      base: {
+        ref: "develop",
+        repo: {
+          owner: { login: "example-user" },
+          name: "sample-repo",
+        },
+      },
+    };
+
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return ok("[]");
+      }
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([mergedPrApi]));
+      }
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify({ state: "success", statuses: [], total_count: 0 }));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/fix-issue-78",
+    });
+
+    expect(status).not.toBeNull();
+    expect(status).toMatchObject({
+      number: 79,
+      title: "Fix issue 78",
+      state: "merged",
+      isMerged: true,
+      headRefName: "feat/fix-issue-78",
+      baseRefName: "develop",
+    });
+  });
+
+  it("passes explicit --repo to tea pr list and pr view when remote URL has embedded token credentials", async () => {
+    const customPr = {
+      ...OPEN_PR,
+      index: "156",
+      url: "https://git.example.com/example-org/sample-repo/pulls/156",
+      head: "feat/sample-branch",
+    };
+    const customView = {
+      ...STATUS_PR_VIEW,
+      number: 156,
+      headSha: "60d3c50baeb4b78c9d4b1a43a6d482591605ec10",
+      headRef: "feat/sample-branch",
+    };
+    const { service, calls } = makeService(
+      (args) => {
+        if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([customPr]));
+        if (args[0] === "pr" && args[1] === "156") return ok(JSON.stringify(customView));
+        if (args[0] === "api" && args[1].includes("/commits/")) {
+          return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+        }
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      },
+      {
+        resolveRemoteUrl: async () =>
+          "https://example-user:example-token-placeholder@git.example.com/example-org/sample-repo.git",
+      },
+    );
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-branch",
+    });
+
+    expect(status).toMatchObject({
+      number: 156,
+      repoOwner: "example-org",
+      repoName: "sample-repo",
+      projectPath: "example-org/sample-repo",
+      headRefName: "feat/sample-branch",
+    });
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("example-org/sample-repo");
+    expect(calls[1]).toEqual(["pr", "156", "-o", "json", "--repo", "example-org/sample-repo"]);
+  });
+
+  it("omits --repo flag when origin remote URL cannot be resolved", async () => {
+    const { service, calls } = makeService(
+      (args) => {
+        if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
+        if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+        if (args[0] === "api" && args[1].includes("/commits/")) {
+          return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+        }
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      },
+      { resolveRemoteUrl: async () => null },
+    );
+
+    await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(calls[0]).not.toContain("--repo");
+    expect(calls[1]).toEqual(["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"]);
+  });
+
+  it("passes --repo when creating a pull request", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://gitea.com/example-user/sample-repo/pulls/10"),
+    );
+
+    const result = await service.createPullRequest({
+      cwd: "/repo",
+      title: "New feature",
+      head: "feat/new",
+      base: "main",
+      body: "Body",
+    });
+
+    expect(result).toEqual({
+      url: "https://gitea.com/example-user/sample-repo/pulls/10",
+      number: 10,
+    });
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("example-user/sample-repo");
   });
 });

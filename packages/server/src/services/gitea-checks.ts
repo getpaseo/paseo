@@ -236,6 +236,36 @@ export function findTeaLoginNameForBaseUrl(stdout: string, baseUrl: string): str
   return match?.name ?? null;
 }
 
+export function extractCandidateHost(candidate: string | undefined): string | null {
+  if (!candidate) {
+    return null;
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.includes("://")) {
+    try {
+      return normalizeHost(new URL(trimmed).hostname);
+    } catch {
+      // ignore malformed login url
+    }
+  }
+  const withoutUser = trimmed.includes("@") ? trimmed.slice(trimmed.indexOf("@") + 1) : trimmed;
+  const hostAndPort = withoutUser.split("/")[0] ?? "";
+  if (hostAndPort.startsWith("[")) {
+    const closing = hostAndPort.indexOf("]");
+    if (closing > 0) {
+      return normalizeHost(hostAndPort.slice(1, closing));
+    }
+  }
+  const parts = hostAndPort.split(":");
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return normalizeHost(parts[0]);
+  }
+  return normalizeHost(hostAndPort);
+}
+
 export function findTeaLoginNameForHost(stdout: string, host: string): string | null {
   const targetHost = normalizeHost(host);
   const match = parseTeaLogins(stdout).find((login) => {
@@ -247,7 +277,15 @@ export function findTeaLoginNameForHost(stdout: string, host: string): string | 
         // ignore malformed login url
       }
     }
-    return candidates.some((candidate) => candidate && normalizeHost(candidate) === targetHost);
+    return candidates.some((candidate) => {
+      if (!candidate) {
+        return false;
+      }
+      if (candidate.toLowerCase() === targetHost) {
+        return true;
+      }
+      return extractCandidateHost(candidate) === targetHost;
+    });
   });
   return match?.name ?? null;
 }
