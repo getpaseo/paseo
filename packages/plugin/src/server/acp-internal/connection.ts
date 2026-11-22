@@ -46,6 +46,7 @@ import {
   type ProviderEvent,
   type ProviderInput,
   type ProviderLaunch,
+  type ProviderModel,
   type ProviderPermissionResponse,
   type ProviderPersistence,
   type ProviderSessionConfig,
@@ -694,7 +695,10 @@ class AcpRuntime {
     this.nativeSessionId = response.sessionId;
     this.modes = response.modes ?? null;
     this.configOptions = response.configOptions ?? [];
-    const catalog = toProviderCatalog(this.modes, this.configOptions);
+    let catalog = toProviderCatalog(this.modes, this.configOptions);
+    if (this.options.options.acpOptions?.perModelThinkingOptions) {
+      catalog = { ...catalog, models: await this.modelsWithOwnThinkingOptions(catalog) };
+    }
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
     if (!autoAcceptMode) return catalog;
     return {
@@ -702,6 +706,33 @@ class AcpRuntime {
       modes: [...catalog.modes, { ...autoAcceptMode.mode, isUnattended: true }],
       defaultMode: autoAcceptMode.default ? autoAcceptMode.mode.id : catalog.defaultMode,
     };
+  }
+
+  /**
+   * Selects each model in the discovery session to read the thinking options the agent lists for
+   * it, then selects the opening model again for the transformers that run after discovery.
+   */
+  private async modelsWithOwnThinkingOptions(catalog: ProviderCatalog): Promise<ProviderModel[]> {
+    const models: ProviderModel[] = [];
+    for (const model of catalog.models) {
+      await this.selectModel(model.id);
+      const { thinkingOptions, thinkingOption } = toProviderConfigState(
+        this.modes,
+        this.configOptions,
+      );
+      models.push({
+        ...model,
+        thinkingOptions: [...thinkingOptions],
+        defaultThinkingOptionId: thinkingOption,
+      });
+    }
+    if (catalog.defaultModel) await this.selectModel(catalog.defaultModel);
+    return models;
+  }
+
+  private async selectModel(model: string): Promise<void> {
+    if (selectedValue(modelOption(this.configOptions)) === model) return;
+    await this.applyNativeConfigChange({ target: "model", value: model });
   }
 
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {

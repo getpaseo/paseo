@@ -60,6 +60,24 @@ interface ProviderHarnessOptions {
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
+interface ModelThinking {
+  id: string;
+  thinkingOptions?: readonly { id: string }[];
+  defaultThinkingOptionId?: string;
+}
+
+function modelThinking(model: ModelThinking) {
+  return {
+    id: model.id,
+    thinkingOptions: model.thinkingOptions?.map(optionId),
+    defaultThinkingOptionId: model.defaultThinkingOptionId,
+  };
+}
+
+function optionId(option: { id: string }): string {
+  return option.id;
+}
+
 function controlKey(control: { key: string }): string {
   return control.key;
 }
@@ -2126,6 +2144,48 @@ describe("PluginAgentClientRegistry", () => {
       expect(isStaleProviderSessionError(failure)).toBe(true);
       expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(false);
       expect(isStaleProviderSessionError(new Error("boom"))).toBe(false);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("keeps a model's own thinking options and default instead of the catalog's", async () => {
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (input.type !== "catalog") return false;
+        emit({
+          type: "catalog",
+          requestId: input.requestId,
+          catalog: {
+            models: [
+              { id: "shared", label: "Shared" },
+              {
+                id: "fast",
+                label: "Fast",
+                thinkingOptions: [{ id: "light", label: "Light" }],
+                defaultThinkingOptionId: "light",
+              },
+              { id: "planner", label: "Planner", thinkingOptions: [] },
+            ],
+            modes: [],
+            thinkingOptions: [{ id: "deep", label: "Deep" }],
+            defaultModel: "shared",
+            defaultThinkingOption: "deep",
+          },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const catalog = await client.fetchCatalog({ scope: "global", force: false });
+      expect(catalog.models.map(modelThinking)).toEqual([
+        { id: "shared", thinkingOptions: ["deep"], defaultThinkingOptionId: "deep" },
+        { id: "fast", thinkingOptions: ["light"], defaultThinkingOptionId: "light" },
+        { id: "planner", thinkingOptions: [], defaultThinkingOptionId: undefined },
+      ]);
     } finally {
       await registry.shutdown();
     }
