@@ -1366,10 +1366,318 @@ index 1c49b41..921a946 100644
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-@@ -1,14 +1,19 @@
+@@ -1,14 +1,327 @@
 +import createMd4c from './wasm/md4c';
  "use strict";
  
++const CJK_RE = /[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
++const MATH_HINT_RE = /[\\^_{}=<>+*~]/;
++const PURE_NUM_PIPE_RE = /^\d+(?:[.,]\d+)?\s*\|\s*\d+(?:[.,]\d+)?$/;
++
++function pickUnusedPuaChars(src, count) {
++  const out = [];
++  for (let cp = 0xe000; cp <= 0xe0ff && out.length < count; cp += 1) {
++    const ch = String.fromCharCode(cp);
++    if (!src.includes(ch)) out.push(ch);
++  }
++  return out.length === count ? out : null;
++}
++function stripBlockquotePrefix(line) {
++  return line.replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
++}
++function delimiterColumns(line) {
++  const s = stripBlockquotePrefix(line).trim();
++  if (!s.includes('|') || !s.includes('-')) return 0;
++  let body = s;
++  if (body.startsWith('|')) body = body.slice(1);
++  if (body.endsWith('|')) body = body.slice(0, -1);
++  if (!body) return 0;
++  const cells = body.split('|');
++  for (let i = 0; i < cells.length; i += 1) {
++    if (!/^[ \t]*:?-+:?[ \t]*$/.test(cells[i])) return 0;
++  }
++  return cells.length;
++}
++function hasEvenBackslashes(str, idx) {
++  let count = 0;
++  for (let i = idx - 1; i >= 0 && str.charCodeAt(i) === 92; i -= 1) count += 1;
++  return (count & 1) === 0;
++}
++function codeSpanEnd(line, start) {
++  let ticks = 0;
++  while (start + ticks < line.length && line.charCodeAt(start + ticks) === 96) ticks += 1;
++  let i = start + ticks;
++  while (i < line.length) {
++    if (line.charCodeAt(i) === 96) {
++      let run = 0;
++      while (i + run < line.length && line.charCodeAt(i + run) === 96) run += 1;
++      if (run === ticks) return i + run;
++      i += run;
++    } else {
++      i += 1;
++    }
++  }
++  return -1;
++}
++function countInnerPipes(line) {
++  let s = stripBlockquotePrefix(line).trim();
++  if (!s.includes('|')) return 0;
++  if (s.startsWith('|')) s = s.slice(1);
++  if (s.endsWith('|') && hasEvenBackslashes(s, s.length - 1)) s = s.slice(0, -1);
++  let count = 0;
++  for (let i = 0; i < s.length; i += 1) {
++    const ch = s.charCodeAt(i);
++    if (ch === 96) {
++      const end = codeSpanEnd(s, i);
++      if (end !== -1) {
++        i = end - 1;
++        continue;
++      }
++    }
++    if (ch === 124 && hasEvenBackslashes(s, i)) count += 1;
++  }
++  return count;
++}
++function hasBareCjk(inner) {
++  let depth = 0;
++  for (let i = 0; i < inner.length; i += 1) {
++    const ch = inner[i];
++    if (ch === '\\' && i + 1 < inner.length) {
++      i += 1;
++      continue;
++    }
++    if (ch === '{') depth += 1;
++    else if (ch === '}' && depth > 0) depth -= 1;
++    else if (depth === 0 && CJK_RE.test(ch)) return true;
++  }
++  return false;
++}
++function prepareMathLine(line, protectPipe, pipeChar, leftChar, rightChar) {
++  let out = '';
++  let changed = false;
++  let i = 0;
++  const n = line.length;
++  while (i < n) {
++    const ch = line.charCodeAt(i);
++    if (ch === 96) {
++      const end = codeSpanEnd(line, i);
++      if (end !== -1) {
++        out += line.slice(i, end);
++        i = end;
++        continue;
++      }
++      let run = i;
++      while (run < n && line.charCodeAt(run) === 96) run += 1;
++      out += line.slice(i, run);
++      i = run;
++      continue;
++    }
++    if (ch === 36 && hasEvenBackslashes(line, i)) {
++      const isDouble = i + 1 < n && line.charCodeAt(i + 1) === 36;
++      if (isDouble) {
++        if (protectPipe) {
++          let j = i + 2;
++          let found = -1;
++          while (j + 1 < n) {
++            if (line.charCodeAt(j) === 36 && line.charCodeAt(j + 1) === 36 && hasEvenBackslashes(line, j)) {
++              found = j;
++              break;
++            }
++            j += 1;
++          }
++          if (found > i + 2) {
++            const inner = line.slice(i + 2, found);
++            let rep = '';
++            let pipeChanged = false;
++            for (let k = 0; k < inner.length; k += 1) {
++              if (inner.charCodeAt(k) === 124 && hasEvenBackslashes(inner, k)) {
++                rep += pipeChar;
++                pipeChanged = true;
++              } else {
++                rep += inner[k];
++              }
++            }
++            if (pipeChanged) changed = true;
++            out += `$$${rep}$$`;
++            i = found + 2;
++            continue;
++          }
++        }
++        let run = i;
++        while (run < n && line.charCodeAt(run) === 36) run += 1;
++        out += line.slice(i, run);
++        i = run;
++        continue;
++      }
++      const nextCh = i + 1 < n ? line[i + 1] : '';
++      if (!nextCh || nextCh === ' ' || nextCh === '\t' || nextCh === '$') {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      let j = i + 1;
++      let closeIdx = -1;
++      while (j < n) {
++        if (line.charCodeAt(j) === 96) {
++          const cEnd = codeSpanEnd(line, j);
++          if (cEnd !== -1) break;
++        }
++        if (line.charCodeAt(j) === 36 && hasEvenBackslashes(line, j)) {
++          if (j + 1 < n && line.charCodeAt(j + 1) === 36) break;
++          const prevC = line[j - 1];
++          const afterC = j + 1 < n ? line[j + 1] : '';
++          if (prevC !== ' ' && prevC !== '\t' && !(afterC >= '0' && afterC <= '9')) closeIdx = j;
++          break;
++        }
++        j += 1;
++      }
++      if (closeIdx === -1) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      const inner = line.slice(i + 1, closeIdx);
++      const beforeC = i > 0 ? line[i - 1] : '';
++      const afterC = closeIdx + 1 < n ? line[closeIdx + 1] : '';
++      if (hasBareCjk(inner)) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      const needLeft = Boolean(beforeC) && CJK_RE.test(beforeC);
++      const afterIsAsciiLetter = (afterC >= 'A' && afterC <= 'Z') || (afterC >= 'a' && afterC <= 'z');
++      const afterIsCjk = Boolean(afterC) && CJK_RE.test(afterC);
++      const allowAfterAscii = afterIsAsciiLetter && !inner.endsWith('/') && !inner.endsWith(':') && !inner.endsWith('=') && (MATH_HINT_RE.test(inner) || inner.length === 1);
++      const needRight = afterIsCjk || allowAfterAscii;
++      if (afterIsAsciiLetter && !allowAfterAscii) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      if (beforeC && /[A-Za-z0-9_]/.test(beforeC)) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      let repInner = inner;
++      if (protectPipe && inner.includes('|') && !PURE_NUM_PIPE_RE.test(inner)) {
++        let buf = '';
++        for (let k = 0; k < inner.length; k += 1) {
++          if (inner.charCodeAt(k) === 124 && hasEvenBackslashes(inner, k)) {
++            buf += pipeChar;
++            changed = true;
++          } else {
++            buf += inner[k];
++          }
++        }
++        repInner = buf;
++      }
++      if (needLeft) {
++        out += `${leftChar} `;
++        changed = true;
++      }
++      out += `$${repInner}$`;
++      if (needRight) {
++        out += ` ${rightChar}`;
++        changed = true;
++      }
++      i = closeIdx + 1;
++      continue;
++    }
++    out += line[i];
++    i += 1;
++  }
++  return changed ? out : line;
++}
++function prepareMathMarkdown(src) {
++  if (typeof src !== 'string' || !src.includes('$')) return null;
++  const chars = pickUnusedPuaChars(src, 3);
++  if (!chars) return null;
++  const [pipeChar, leftChar, rightChar] = chars;
++  const lines = src.split('\n');
++  let fenceChar = '';
++  let fenceLen = 0;
++  let inDisplayMath = false;
++  let tableCols = 0;
++  let anyChanged = false;
++  for (let idx = 0; idx < lines.length; idx += 1) {
++    const raw = lines[idx];
++    const hasCR = raw.endsWith('\r');
++    const line = hasCR ? raw.slice(0, -1) : raw;
++    const stripped = stripBlockquotePrefix(line);
++    const trimmed = stripped.trim();
++    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(stripped);
++    if (fenceChar) {
++      if (fenceMatch && fenceMatch[1][0] === fenceChar && fenceMatch[1].length >= fenceLen && /^[ \t]*$/.test(stripped.slice(fenceMatch[0].length))) {
++        fenceChar = '';
++        fenceLen = 0;
++      }
++      tableCols = 0;
++      continue;
++    }
++    if (fenceMatch && (fenceMatch[1][0] === '~' || !stripped.slice(fenceMatch[0].length).includes('`'))) {
++      fenceChar = fenceMatch[1][0];
++      fenceLen = fenceMatch[1].length;
++      tableCols = 0;
++      continue;
++    }
++    if (/^[ \t]*\$\$[ \t]*$/.test(stripped)) {
++      inDisplayMath = !inDisplayMath;
++      tableCols = 0;
++      continue;
++    }
++    if (inDisplayMath) {
++      tableCols = 0;
++      continue;
++    }
++    let isTableRow = false;
++    let rowCols = 0;
++    if (tableCols > 0) {
++      if (!trimmed || !stripped.includes('|') || /^[ \t]{0,3}#{1,6}(?:[ \t]|$)/.test(stripped)) tableCols = 0;
++      else {
++        isTableRow = true;
++        rowCols = tableCols;
++      }
++    }
++    if (!isTableRow && idx + 1 < lines.length) {
++      const nextRaw = lines[idx + 1];
++      const nextLine = nextRaw.endsWith('\r') ? nextRaw.slice(0, -1) : nextRaw;
++      const dCols = delimiterColumns(nextLine);
++      if (dCols > 0 && stripped.includes('|')) {
++        isTableRow = true;
++        rowCols = dCols;
++        tableCols = dCols;
++      }
++    }
++    if (!line.includes('$')) continue;
++    const protectPipe = isTableRow && countInnerPipes(line) > rowCols - 1;
++    const next = prepareMathLine(line, protectPipe, pipeChar, leftChar, rightChar);
++    if (next !== line) {
++      lines[idx] = hasCR ? `${next}\r` : next;
++      anyChanged = true;
++    }
++  }
++  return anyChanged ? { markdown: lines.join('\n'), pipeChar, leftChar, rightChar } : null;
++}
++function restoreMathMarkdown(node, ctx) {
++  if (!node || typeof node !== 'object') return;
++  const { pipeChar, leftChar, rightChar } = ctx;
++  const walk = current => {
++    if (!current || typeof current !== 'object') return;
++    if (typeof current.content === 'string') {
++      let s = current.content;
++      if (s.includes(pipeChar)) s = s.split(pipeChar).join('|');
++      if (s.includes(leftChar)) s = s.split(`${leftChar} `).join('').split(leftChar).join('');
++      if (s.includes(rightChar)) s = s.split(` ${rightChar}`).join('').split(rightChar).join('');
++      current.content = s;
++    }
++    if (Array.isArray(current.children)) {
++      for (let i = 0; i < current.children.length; i += 1) walk(current.children[i]);
++    }
++  };
++  walk(node);
++}
++
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
 +let readyParser = null;
@@ -1387,7 +1695,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMar
        parserPromise = null;
        throw error;
      });
-@@ -18,7 +23,7 @@
+@@ -18,7 +331,7 @@ function initializeParser() {
  function isASTNode(value) {
    return typeof value === 'object' && value !== null && 'type' in value && typeof value.type === 'string';
  }
@@ -1396,17 +1704,20 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMar
    underline = false,
    latexMath = true,
    superscript = false,
-@@ -28,11 +33,16 @@
+@@ -28,11 +341,18 @@ export async function parseMarkdown(markdown, {
    preserveBlankLines = false,
    admonitions = true
  } = {}) {
 -  const parse = await initializeParser();
+-  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0, superscript ? 1 : 0, subscript ? 1 : 0, highlight ? 1 : 0, hardSoftBreaks ? 1 : 0, preserveBlankLines ? 1 : 0, admonitions ? 1 : 0));
 +  const parse = readyParser;
 +  if (!parse) return null;
-   const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0, superscript ? 1 : 0, subscript ? 1 : 0, highlight ? 1 : 0, hardSoftBreaks ? 1 : 0, preserveBlankLines ? 1 : 0, admonitions ? 1 : 0));
++  const mathPrep = latexMath ? prepareMathMarkdown(markdown) : null;
++  const result = JSON.parse(parse(mathPrep ? mathPrep.markdown : markdown, underline ? 1 : 0, latexMath ? 1 : 0, superscript ? 1 : 0, subscript ? 1 : 0, highlight ? 1 : 0, hardSoftBreaks ? 1 : 0, preserveBlankLines ? 1 : 0, admonitions ? 1 : 0));
    if (!isASTNode(result)) {
      throw new Error('WASM parser returned invalid AST');
    }
++  if (mathPrep) restoreMathMarkdown(result, mathPrep);
    return result;
  }
 +export async function parseMarkdown(markdown, flags = {}) {
@@ -2431,8 +2742,398 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
  import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
  
-@@ -15,14 +16,15 @@
+@@ -13,16 +14,405 @@ type ParseFn = (
+   admonitions: number
+ ) => string;
  
++interface MathPrepContext {
++  markdown: string;
++  pipeChar: string;
++  leftChar: string;
++  rightChar: string;
++}
++
++const CJK_RE = /[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
++const MATH_HINT_RE = /[\\^_{}=<>+*~]/;
++const PURE_NUM_PIPE_RE = /^\d+(?:[.,]\d+)?\s*\|\s*\d+(?:[.,]\d+)?$/;
++
++function pickUnusedPuaChars(src: string, count: number): string[] | null {
++  const out: string[] = [];
++  for (let cp = 0xe000; cp <= 0xe0ff && out.length < count; cp += 1) {
++    const ch = String.fromCharCode(cp);
++    if (!src.includes(ch)) {
++      out.push(ch);
++    }
++  }
++  return out.length === count ? out : null;
++}
++
++function stripBlockquotePrefix(line: string): string {
++  return line.replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
++}
++
++function delimiterColumns(line: string): number {
++  const s = stripBlockquotePrefix(line).trim();
++  if (!s.includes('|') || !s.includes('-')) return 0;
++  let body = s;
++  if (body.startsWith('|')) body = body.slice(1);
++  if (body.endsWith('|')) body = body.slice(0, -1);
++  if (!body) return 0;
++  const cells = body.split('|');
++  for (let i = 0; i < cells.length; i += 1) {
++    if (!/^[ \t]*:?-+:?[ \t]*$/.test(cells[i] ?? '')) return 0;
++  }
++  return cells.length;
++}
++
++function hasEvenBackslashes(str: string, idx: number): boolean {
++  let count = 0;
++  for (let i = idx - 1; i >= 0 && str.charCodeAt(i) === 92; i -= 1) {
++    count += 1;
++  }
++  return (count & 1) === 0;
++}
++
++function codeSpanEnd(line: string, start: number): number {
++  let ticks = 0;
++  while (start + ticks < line.length && line.charCodeAt(start + ticks) === 96) {
++    ticks += 1;
++  }
++  let i = start + ticks;
++  while (i < line.length) {
++    if (line.charCodeAt(i) === 96) {
++      let run = 0;
++      while (i + run < line.length && line.charCodeAt(i + run) === 96) {
++        run += 1;
++      }
++      if (run === ticks) return i + run;
++      i += run;
++    } else {
++      i += 1;
++    }
++  }
++  return -1;
++}
++
++function countInnerPipes(line: string): number {
++  let s = stripBlockquotePrefix(line).trim();
++  if (!s.includes('|')) return 0;
++  if (s.startsWith('|')) s = s.slice(1);
++  if (s.endsWith('|') && hasEvenBackslashes(s, s.length - 1)) {
++    s = s.slice(0, -1);
++  }
++  let count = 0;
++  for (let i = 0; i < s.length; i += 1) {
++    const ch = s.charCodeAt(i);
++    if (ch === 96) {
++      const end = codeSpanEnd(s, i);
++      if (end !== -1) {
++        i = end - 1;
++        continue;
++      }
++    }
++    if (ch === 124 && hasEvenBackslashes(s, i)) {
++      count += 1;
++    }
++  }
++  return count;
++}
++
++function hasBareCjk(inner: string): boolean {
++  let depth = 0;
++  for (let i = 0; i < inner.length; i += 1) {
++    const ch = inner[i] ?? '';
++    if (ch === '\\' && i + 1 < inner.length) {
++      i += 1;
++      continue;
++    }
++    if (ch === '{') {
++      depth += 1;
++    } else if (ch === '}' && depth > 0) {
++      depth -= 1;
++    } else if (depth === 0 && CJK_RE.test(ch)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++function prepareMathLine(
++  line: string,
++  protectPipe: boolean,
++  pipeChar: string,
++  leftChar: string,
++  rightChar: string
++): string {
++  let out = '';
++  let changed = false;
++  let i = 0;
++  const n = line.length;
++
++  while (i < n) {
++    const ch = line.charCodeAt(i);
++    if (ch === 96) {
++      const end = codeSpanEnd(line, i);
++      if (end !== -1) {
++        out += line.slice(i, end);
++        i = end;
++        continue;
++      }
++      let run = i;
++      while (run < n && line.charCodeAt(run) === 96) run += 1;
++      out += line.slice(i, run);
++      i = run;
++      continue;
++    }
++
++    if (ch === 36 && hasEvenBackslashes(line, i)) {
++      const isDouble = i + 1 < n && line.charCodeAt(i + 1) === 36;
++      if (isDouble) {
++        if (protectPipe) {
++          let j = i + 2;
++          let found = -1;
++          while (j + 1 < n) {
++            if (
++              line.charCodeAt(j) === 36 &&
++              line.charCodeAt(j + 1) === 36 &&
++              hasEvenBackslashes(line, j)
++            ) {
++              found = j;
++              break;
++            }
++            j += 1;
++          }
++          if (found > i + 2) {
++            const inner = line.slice(i + 2, found);
++            let rep = '';
++            let pipeChanged = false;
++            for (let k = 0; k < inner.length; k += 1) {
++              if (inner.charCodeAt(k) === 124 && hasEvenBackslashes(inner, k)) {
++                rep += pipeChar;
++                pipeChanged = true;
++              } else {
++                rep += inner[k] ?? '';
++              }
++            }
++            if (pipeChanged) changed = true;
++            out += `$$${rep}$$`;
++            i = found + 2;
++            continue;
++          }
++        }
++        let run = i;
++        while (run < n && line.charCodeAt(run) === 36) run += 1;
++        out += line.slice(i, run);
++        i = run;
++        continue;
++      }
++
++      const nextCh = i + 1 < n ? (line[i + 1] ?? '') : '';
++      if (!nextCh || nextCh === ' ' || nextCh === '\t' || nextCh === '$') {
++        out += '$';
++        i += 1;
++        continue;
++      }
++
++      let j = i + 1;
++      let closeIdx = -1;
++      while (j < n) {
++        if (line.charCodeAt(j) === 96) {
++          const cEnd = codeSpanEnd(line, j);
++          if (cEnd !== -1) break;
++        }
++        if (line.charCodeAt(j) === 36 && hasEvenBackslashes(line, j)) {
++          if (j + 1 < n && line.charCodeAt(j + 1) === 36) break;
++          const prevC = line[j - 1] ?? '';
++          const afterC = j + 1 < n ? (line[j + 1] ?? '') : '';
++          if (prevC !== ' ' && prevC !== '\t' && !(afterC >= '0' && afterC <= '9')) {
++            closeIdx = j;
++          }
++          break;
++        }
++        j += 1;
++      }
++
++      if (closeIdx === -1) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++
++      const inner = line.slice(i + 1, closeIdx);
++      const beforeC = i > 0 ? (line[i - 1] ?? '') : '';
++      const afterC = closeIdx + 1 < n ? (line[closeIdx + 1] ?? '') : '';
++
++      if (hasBareCjk(inner)) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++
++      const needLeft = Boolean(beforeC) && CJK_RE.test(beforeC);
++      const afterIsAsciiLetter =
++        (afterC >= 'A' && afterC <= 'Z') || (afterC >= 'a' && afterC <= 'z');
++      const afterIsCjk = Boolean(afterC) && CJK_RE.test(afterC);
++      const allowAfterAscii =
++        afterIsAsciiLetter &&
++        !inner.endsWith('/') &&
++        !inner.endsWith(':') &&
++        !inner.endsWith('=') &&
++        (MATH_HINT_RE.test(inner) || inner.length === 1);
++      const needRight = afterIsCjk || allowAfterAscii;
++
++      if (afterIsAsciiLetter && !allowAfterAscii) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++      if (beforeC && /[A-Za-z0-9_]/.test(beforeC)) {
++        out += '$';
++        i += 1;
++        continue;
++      }
++
++      let repInner = inner;
++      if (protectPipe && inner.includes('|') && !PURE_NUM_PIPE_RE.test(inner)) {
++        let buf = '';
++        for (let k = 0; k < inner.length; k += 1) {
++          if (inner.charCodeAt(k) === 124 && hasEvenBackslashes(inner, k)) {
++            buf += pipeChar;
++            changed = true;
++          } else {
++            buf += inner[k] ?? '';
++          }
++        }
++        repInner = buf;
++      }
++
++      if (needLeft) {
++        out += `${leftChar} `;
++        changed = true;
++      }
++      out += `$${repInner}$`;
++      if (needRight) {
++        out += ` ${rightChar}`;
++        changed = true;
++      }
++      i = closeIdx + 1;
++      continue;
++    }
++
++    out += line[i] ?? '';
++    i += 1;
++  }
++
++  return changed ? out : line;
++}
++
++function prepareMathMarkdown(src: string): MathPrepContext | null {
++  if (!src.includes('$')) return null;
++  const chars = pickUnusedPuaChars(src, 3);
++  if (!chars) return null;
++  const [pipeChar, leftChar, rightChar] = chars as [string, string, string];
++  const lines = src.split('\n');
++  let fenceChar = '';
++  let fenceLen = 0;
++  let inDisplayMath = false;
++  let tableCols = 0;
++  let anyChanged = false;
++
++  for (let idx = 0; idx < lines.length; idx += 1) {
++    const raw = lines[idx] ?? '';
++    const hasCR = raw.endsWith('\r');
++    const line = hasCR ? raw.slice(0, -1) : raw;
++    const stripped = stripBlockquotePrefix(line);
++    const trimmed = stripped.trim();
++
++    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(stripped);
++    if (fenceChar) {
++      if (
++        fenceMatch &&
++        fenceMatch[1]?.[0] === fenceChar &&
++        fenceMatch[1].length >= fenceLen &&
++        /^[ \t]*$/.test(stripped.slice(fenceMatch[0].length))
++      ) {
++        fenceChar = '';
++        fenceLen = 0;
++      }
++      tableCols = 0;
++      continue;
++    }
++    if (
++      fenceMatch &&
++      fenceMatch[1] &&
++      (fenceMatch[1][0] === '~' || !stripped.slice(fenceMatch[0].length).includes('`'))
++    ) {
++      fenceChar = fenceMatch[1][0] ?? '';
++      fenceLen = fenceMatch[1].length;
++      tableCols = 0;
++      continue;
++    }
++
++    if (/^[ \t]*\$\$[ \t]*$/.test(stripped)) {
++      inDisplayMath = !inDisplayMath;
++      tableCols = 0;
++      continue;
++    }
++    if (inDisplayMath) {
++      tableCols = 0;
++      continue;
++    }
++
++    let isTableRow = false;
++    let rowCols = 0;
++    if (tableCols > 0) {
++      if (!trimmed || !stripped.includes('|') || /^[ \t]{0,3}#{1,6}(?:[ \t]|$)/.test(stripped)) {
++        tableCols = 0;
++      } else {
++        isTableRow = true;
++        rowCols = tableCols;
++      }
++    }
++    if (!isTableRow && idx + 1 < lines.length) {
++      const nextRaw = lines[idx + 1] ?? '';
++      const nextLine = nextRaw.endsWith('\r') ? nextRaw.slice(0, -1) : nextRaw;
++      const dCols = delimiterColumns(nextLine);
++      if (dCols > 0 && stripped.includes('|')) {
++        isTableRow = true;
++        rowCols = dCols;
++        tableCols = dCols;
++      }
++    }
++
++    if (!line.includes('$')) continue;
++    const protectPipe = isTableRow && countInnerPipes(line) > rowCols - 1;
++    const next = prepareMathLine(line, protectPipe, pipeChar, leftChar, rightChar);
++    if (next !== line) {
++      lines[idx] = hasCR ? `${next}\r` : next;
++      anyChanged = true;
++    }
++  }
++
++  return anyChanged ? { markdown: lines.join('\n'), pipeChar, leftChar, rightChar } : null;
++}
++
++function restoreMathMarkdown(node: ASTNode, ctx: MathPrepContext): void {
++  const { pipeChar, leftChar, rightChar } = ctx;
++  const walk = (current: ASTNode) => {
++    if (typeof current.content === 'string') {
++      let s = current.content;
++      if (s.includes(pipeChar)) s = s.split(pipeChar).join('|');
++      if (s.includes(leftChar)) s = s.split(`${leftChar} `).join('').split(leftChar).join('');
++      if (s.includes(rightChar)) s = s.split(` ${rightChar}`).join('').split(rightChar).join('');
++      current.content = s;
++    }
++    if (Array.isArray(current.children)) {
++      for (let i = 0; i < current.children.length; i += 1) {
++        const child = current.children[i];
++        if (child) walk(child);
++      }
++    }
++  };
++  walk(node);
++}
++
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
 +let readyParser: ParseFn | null = null;
@@ -2449,7 +3150,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
        .then((wasmModule) =>
          wasmModule.cwrap('parseMarkdown', 'string', [
            'string',
-@@ -36,6 +38,10 @@
+@@ -36,6 +426,10 @@ function initializeParser(): Promise<ParseFn> {
            'number',
          ])
        )
@@ -2460,7 +3161,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
        .catch((error) => {
          parserPromise = null;
          throw error;
-@@ -53,7 +59,7 @@
+@@ -53,7 +447,7 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
  
@@ -2469,7 +3170,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
    markdown: string,
    {
      underline = false,
-@@ -65,8 +71,9 @@
+@@ -65,12 +459,14 @@ export async function parseMarkdown(
      preserveBlankLines = false,
      admonitions = true,
    }: Md4cFlags = {}
@@ -2479,10 +3180,22 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
 +  const parse = readyParser;
 +  if (!parse) return null;
  
++  const mathPrep = latexMath ? prepareMathMarkdown(markdown) : null;
    const result: unknown = JSON.parse(
      parse(
-@@ -88,3 +95,11 @@
+-      markdown,
++      mathPrep ? mathPrep.markdown : markdown,
+       underline ? 1 : 0,
+       latexMath ? 1 : 0,
+       superscript ? 1 : 0,
+@@ -86,5 +482,17 @@ export async function parseMarkdown(
+     throw new Error('WASM parser returned invalid AST');
+   }
  
++  if (mathPrep) {
++    restoreMathMarkdown(result, mathPrep);
++  }
++
    return result;
  }
 +
