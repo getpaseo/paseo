@@ -45,18 +45,13 @@ function shouldUseWindowsShell(
 }
 
 /**
- * Put `wrap` in front of a launch as one direct argv exec. A Windows command script on either side
- * would need a shell to start, so it is rejected instead of being quoted into one.
+ * Put `wrap` in front of a launch. Spawn the result with `spawnProcess`, which runs a Windows
+ * command-script wrapper through cmd.exe with quoted arguments, as for any provider launcher.
  */
 export function applyLaunchWrap(
   wrap: readonly [string, ...string[]],
   launch: { command: string; args: readonly string[] },
 ): { command: string; args: string[] } {
-  for (const executable of [wrap[0], launch.command]) {
-    if (isWindowsCommandScript(executable)) {
-      throw new Error(`A launch wrap cannot start ${executable}: a command script needs a shell`);
-    }
-  }
   return { command: wrap[0], args: [...wrap.slice(1), launch.command, ...launch.args] };
 }
 

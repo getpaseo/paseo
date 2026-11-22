@@ -284,7 +284,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     const next = beforeSchemas["agent.open.before"].parse(result);
     if (changesSessionOpenTarget(previous, next)) {
       throw new Error(
-        "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
+        "agent.open.before hooks can only change env, tools, mcpServers, appendSystemPrompt, and wrap",
       );
     }
     // One wrap per open: a later hook may omit or repeat it, never replace it.

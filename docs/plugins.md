@@ -468,8 +468,10 @@ every open. Executable tool definitions stay in the plugin process; only metadat
 ### Launch wrap
 
 An `agent.open.before` result can carry `wrap: [executable, ...args]`. The provider then starts that
-session's harness as `[...wrap, command, ...args]`: one direct argv exec with `shell: false` and the
-final hook env, so an argument with spaces stays one element. `executable` must be an absolute path.
+session's harness as `[...wrap, command, ...args]` with the final hook env. It starts with no shell,
+except Windows script launchers, which go through cmd.exe like any provider launcher
+(`spawnProcess` quotes each argument). An argument with spaces stays one element. `executable` must
+be an absolute path.
 The wrap is never saved on the agent; every open asks the hooks again, and a plugin session reopen
 reuses the wrap it opened with.
 
@@ -482,11 +484,10 @@ reuses the wrap it opened with.
   registration metadata, so it is in the snapshot before the provider first connects.
 - **One wrap per open.** A later hook, in the same plugin or a later one, may omit the wrap or return
   the same value. A different value fails the open.
-- **Fail closed.** `buildLaunchContext` admits a wrapped open before anything starts. It throws
-  `LaunchWrapUnsupportedError` (`code: "launch_wrap_unsupported"`) when the provider does not declare
-  support, when a plugin provider's live connection lacks `session.launch_wrap`, or on Windows when the
-  wrap executable or provider command is a command script, which would need a shell. A host that
-  predates `wrap` rejects the key: the hook result schema is strict. A missing launcher fails the
+- **Fail closed.** `buildLaunchContext` admits a wrapped open before any session harness starts. It
+  throws `LaunchWrapUnsupportedError` (`code: "launch_wrap_unsupported"`) when the provider does not
+  declare support, or when a plugin provider's live connection lacks `session.launch_wrap`. A host
+  that predates `wrap` rejects the key: the hook result schema is strict. A missing launcher fails the
   spawn; nothing retries the bare command.
 
 Once an open selects a wrap, a supported provider runs that session's harness through it or fails

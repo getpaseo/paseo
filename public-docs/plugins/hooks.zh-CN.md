@@ -47,22 +47,22 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 
 ## 钩子一览 {#hooks}
 
-| 钩子                      | 等待 | 载荷                                      | 可修改                                                          |
-| ------------------------- | ---- | ----------------------------------------- | --------------------------------------------------------------- |
-| `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                                                    |
-| `workspace.create.after`  | 否   | `{ workspace }`                           |                                                                 |
-| `workspace.archive.after` | 否   | `{ workspace }`                           |                                                                 |
-| `worktree.create.before`  | 是   | `{ request }`                             | 创建选项和目标路径                                              |
-| `worktree.create.after`   | 是   | `{ worktree }`                            | worktree 中的文件；抛出错误中止创建                             |
-| `agent.create.before`     | 是   | `{ request: { config, env?, metadata } }` | 除 `cwd` 外的已保存配置；`env`；`metadata`                      |
-| `agent.create.after`      | 否   | `{ agent }`                               |                                                                 |
-| `agent.open.before`       | 是   | `{ request }`                             | 仅用于启动的 `env`、`appendSystemPrompt`、`tools`、`mcpServers` |
-| `agent.close.after`       | 否   | `{ agent }`                               |                                                                 |
-| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                                                 |
-| `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                                                 |
-| `agent.turn.after`        | 否   | `{ agent, turnId, outcome }`              |                                                                 |
-| `agent.permission.before` | 否   | `{ agent, request }`                      |                                                                 |
-| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                                                 |
+| 钩子                      | 等待 | 载荷                                      | 可修改                                                                  |
+|---------------------------|------|-------------------------------------------|-------------------------------------------------------------------------|
+| `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                                                            |
+| `workspace.create.after`  | 否   | `{ workspace }`                           |                                                                         |
+| `workspace.archive.after` | 否   | `{ workspace }`                           |                                                                         |
+| `worktree.create.before`  | 是   | `{ request }`                             | 创建选项和目标路径                                                      |
+| `worktree.create.after`   | 是   | `{ worktree }`                            | worktree 中的文件；抛出错误中止创建                                     |
+| `agent.create.before`     | 是   | `{ request: { config, env?, metadata } }` | 除 `cwd` 外的已保存配置；`env`；`metadata`                              |
+| `agent.create.after`      | 否   | `{ agent }`                               |                                                                         |
+| `agent.open.before`       | 是   | `{ request }`                             | 仅用于启动的 `env`、`appendSystemPrompt`、`tools`、`mcpServers`、`wrap` |
+| `agent.close.after`       | 否   | `{ agent }`                               |                                                                         |
+| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                                                         |
+| `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                                                         |
+| `agent.turn.after`        | 否   | `{ agent, turnId, outcome }`              |                                                                         |
+| `agent.permission.before` | 否   | `{ agent, request }`                      |                                                                         |
+| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                                                         |
 
 ## 共享载荷 {#shared-payloads}
 
@@ -279,7 +279,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before {#agentopenbefore}
 
-收到 `{ request }`，只能修改 `env`、`appendSystemPrompt`、`tools` 和 `mcpServers`，修改只用于此次启动。其他字段只读。抛出错误、无效返回或超时会让打开操作失败。
+收到 `{ request }`，只能修改 `env`、`appendSystemPrompt`、`tools`、`mcpServers` 和 `wrap`，修改只用于此次启动。其他字段只读。抛出错误、无效返回或超时会让打开操作失败。
 
 不要 await 对正在打开的 Agent 的写入，例如 `setMetadata`。该写入要等打开完成，而打开在等你的钩子，结果钩子超时，打开失败。启动写入但不要 await，它会在打开完成后立即执行：
 
@@ -312,18 +312,36 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 }
 ```
 
-| 字段          | 取值                                                                                                     |
-| ------------- | -------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | 字符串或 `null`                                                                                          |
-| `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
-| `background`  | 只读；[后台 Agent](#background-agents) 为 `true`。在创建时确定。                                         |
-| `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
-| `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                  |
-| `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
-| `mcpServers`  | 可编辑的服务器映射，仅用于启动且仅包含本插件的条目。参阅[注入 MCP 服务器](#inject-mcp-servers)。         |
-| `reason`      | `create`、`resume`、`refresh`、`import`                                                                  |
-| `purpose`     | `interactive`、`history`                                                                                 |
-| `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。                     |
+| 字段          | 取值                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | 字符串或 `null`                                                                                                           |
+| `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                                   |
+| `background`  | 只读；[后台 Agent](#background-agents) 为 `true`。在创建时确定。                                                          |
+| `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                                      |
+| `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                                   |
+| `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。                  |
+| `mcpServers`  | 可编辑的服务器映射，仅用于启动且仅包含本插件的条目。参阅[注入 MCP 服务器](#inject-mcp-servers)。                          |
+| `reason`      | `create`、`resume`、`refresh`、`import`                                                                                   |
+| `purpose`     | `interactive`、`history`                                                                                                  |
+| `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。                                      |
+| `wrap`        | 可选的 `[executable, ...args]`，用它启动 harness。参阅[通过启动包装运行 harness](#run-the-harness-behind-a-launch-wrap)。 |
+
+### 通过启动包装运行 harness {#run-the-harness-behind-a-launch-wrap}
+
+返回 `wrap`，让 Provider 的 harness 以 `[...wrap, command, ...args]` 启动，例如在沙盒中运行：
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  wrap: ["/usr/local/bin/sandbox-run", "--profile", "agent"],
+}));
+```
+
+- 可执行文件必须是绝对路径。Paseo 不经过 shell 运行它；Windows 脚本启动器例外，它和其他 Provider 启动器一样通过 cmd.exe 运行。每个元素保持为一个参数。
+- 只有 Provider 快照条目中 `launchWrap: true` 的 Provider 才会应用包装。在 `agent.create.before` 中用 `paseo.providers.snapshot()` 读取它，并在那里选择 Provider。为其他 Provider 返回包装会让打开失败，包装绝不会被丢弃。不支持包装的主机会拒绝该字段，同样让打开失败。
+- 后面的钩子可以省略 `wrap` 或返回相同的值。返回不同的值会让打开失败。
+- 读取历史的打开也保留包装。包装不会保存在 Agent 上，每次打开都会重新询问钩子。
+- 包装只覆盖会话的 harness 进程。Paseo 的主机终端工具、Provider 可用性和目录探测以及草稿发现都在包装之外运行。
 
 ### 在每次打开会话时追加指令 {#append-instructions-on-every-session-opening}
 

@@ -16394,21 +16394,3 @@ test("a supporting provider receives the wrap at launch and the record never sto
   expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
   await manager.closeAgent(created.id);
 });
-
-test("a supporting provider rejects a Windows command-script wrap before it starts", async () => {
-  const client = new LaunchWrapRecordingClient(true);
-  const { manager, workdir, hook } = createLaunchWrapManager(client);
-  hook.wrap = ["C:\\tools\\sandbox.cmd"];
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
-  try {
-    await expect(
-      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-        workspaceId: undefined,
-      }),
-    ).rejects.toMatchObject({ code: "launch_wrap_unsupported" });
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-  }
-  expect(client.calls.create).toBe(0);
-});

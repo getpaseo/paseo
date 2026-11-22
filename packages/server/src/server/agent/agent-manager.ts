@@ -14,7 +14,7 @@ import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/inde
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
-import { basename, extname, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
@@ -6585,7 +6585,7 @@ export class AgentManager {
   ): Promise<void> {
     if (!wrap) return;
     try {
-      await requireLaunchWrap(client, wrap);
+      await requireLaunchWrap(client);
     } catch (error) {
       this.detachPluginTools(agentId);
       throw error;
@@ -6753,18 +6753,7 @@ function pluginPromptContext(
   return appendSystemPrompt?.length ? { appendSystemPrompt } : {};
 }
 
-async function requireLaunchWrap(
-  client: AgentClient,
-  wrap: NonNullable<AgentLaunchContext["wrap"]>,
-): Promise<void> {
+async function requireLaunchWrap(client: AgentClient): Promise<void> {
   if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
-  // The wrap is one direct exec; a Windows command script would need a shell to start.
-  const extension = extname(wrap[0]).toLowerCase();
-  if (process.platform === "win32" && (extension === ".cmd" || extension === ".bat")) {
-    throw new LaunchWrapUnsupportedError(
-      client.provider,
-      `A launch wrap cannot start ${wrap[0]} on Windows: a command script needs a shell`,
-    );
-  }
   await client.requireLaunchWrap?.();
 }

@@ -229,7 +229,7 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }, { background: 
         paseo,
       ),
     ).rejects.toThrow(
-      "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
+      "agent.open.before hooks can only change env, tools, mcpServers, appendSystemPrompt, and wrap",
     );
   },
 );
