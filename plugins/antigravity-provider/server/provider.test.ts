@@ -888,7 +888,7 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
 });
 
 it("runs a wrapped session as [...wrap, agy, acp, --disable-telemetry] with the session env", async () => {
-  const { directory, launch } = await launchAgent(`
+  const { directory, launch: fixture } = await launchAgent(`
     const { createInterface } = require("node:readline");
     const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
     createInterface({ input: process.stdin }).on("line", (line) => {
@@ -916,6 +916,12 @@ child.on("exit", (code) => process.exit(code ?? 1));
   );
   const provider = createAntigravityProvider();
   expect(provider.launchWrap).toBe(true);
+  // The daemon resolves the registration's executable and passes its arguments as declared;
+  // Node running the fake agent stands in for the resolved `agy`.
+  const [executable, ...declaredArgs] = provider.command!;
+  expect(executable).toBe("agy");
+  const agentScript = fixture.args[0]!;
+  const launch = { ...fixture, args: [agentScript, ...declaredArgs] };
   const connection = await provider.connect({
     launch,
     versions: [1],
@@ -944,8 +950,10 @@ child.on("exit", (code) => process.exit(code ?? 1));
       )
       .toMatchObject({ type: "session.ready" });
     const launched = JSON.parse(await readFile(record, "utf8"));
-    expect(launched).toEqual({ argv: [record, launch.command, ...launch.args], hook: "final" });
-    expect(launched.argv.slice(-2)).toEqual(["acp", "--disable-telemetry"]);
+    expect(launched).toEqual({
+      argv: [record, process.execPath, agentScript, "acp", "--disable-telemetry"],
+      hook: "final",
+    });
   } finally {
     await connection.close();
   }

@@ -493,8 +493,7 @@ reuses the wrap it opened with.
 Once an open selects a wrap, a supported provider runs that session's harness through it or fails
 before starting the harness. The guarantee covers the harness process only:
 
-1. Paseo's host terminal tools (`create_terminal`, `send_terminal_keys`) run outside the wrap. A
-   sandbox that relies on the wrap must also keep the agent's daemon access off.
+1. Paseo's host terminal tools (`create_terminal`, `send_terminal_keys`) run outside the wrap.
 2. Work before the open hook runs unwrapped: draft command and control discovery, and the catalog
    lookup during create when no model is set.
 3. Host-side operations run unwrapped: availability and capability probes (the ACP connection's

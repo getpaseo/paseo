@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process";
+import diagnosticsChannel from "node:diagnostics_channel";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7272,19 +7274,27 @@ lines.on("line", (line) => {
 
   it("fails the open when the launcher is missing and never starts the bare command", async () => {
     const fixture = await wrapFixture();
+    const missing = path.join(path.dirname(fixture.agent), "missing-launcher");
     const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
+    // Node publishes every spawn attempt, a failed one included, before it fills in the fields.
+    const spawned: ChildProcess[] = [];
+    const onSpawn = (message: unknown) =>
+      spawned.push((message as { process: ChildProcess }).process);
+    diagnosticsChannel.subscribe("child_process", onSpawn);
     try {
-      await connection.send(
-        wrappedOpen("one", [path.join(path.dirname(fixture.agent), "missing-launcher")]),
-      );
+      await connection.send(wrappedOpen("one", [missing, "--profile", "a b"]));
       expect(await waitForEvent(events, (event) => event.type === "request.failed")).toMatchObject({
         requestId: "open-one",
         error: { message: expect.stringMatching(/ENOENT/u) },
       });
-      // The only start is the connection's capability probe.
+      expect(spawned.map((child) => child.spawnargs)).toEqual([
+        [missing, "--profile", "a b", process.execPath, fixture.agent],
+      ]);
+      // The only start of the agent is the connection's capability probe, before the open.
       expect(await fixture.agentStarts()).toEqual(["init:bare"]);
       expect(events.some((event) => event.type === "session.opened")).toBe(false);
     } finally {
+      diagnosticsChannel.unsubscribe("child_process", onSpawn);
       await connection.close();
     }
   });
