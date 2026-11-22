@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.3 - 2026-11-22
+
+### 修复
+
+- 修复 iPhone 上“Workspace 标签”等弹窗忽略主体滑动、无法展开、滚动或收起的问题 ([#10525](https://github.com/getpaseo/paseo/pull/10525))
+- 修复 Antigravity 将默认模型的思考级别套用到所有模型，导致无法打开 Orchestrator 对话的问题 ([#10524](https://github.com/getpaseo/paseo/pull/10524))
+- 修复通过窗口历史记录返回工作区后，`/` 和 `@` 选择器在刷新前一直消失的问题 ([#8954](https://github.com/getpaseo/paseo/pull/8954)，贡献者：[@viking1201](https://github.com/viking1201))
+
 ## 0.17.2 - 2026-11-22
 
 - **回合和会话统计**：查看 Claude、OpenCode v2、Pi、Oh My Pi 和插件 Provider 的单轮及会话耗时、token、缓存和费用指标。([#10496](https://github.com/getpaseo/paseo/pull/10496), [#10510](https://github.com/getpaseo/paseo/pull/10510))
