@@ -88,6 +88,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
   /** Startups that have not yet produced a generation; shutdown waits for them. */
   private readonly pendingStarts = new Set<Promise<OpenCodeServerGeneration>>();
+  /**
+   * Counts shutdowns. An operation that can start a server records the epoch it began in, and
+   * spawning refuses once a shutdown has passed, so no process starts after cleanup returns. The
+   * manager is a process-wide singleton, so operations that begin after shutdown still start.
+   */
+  private epoch = 0;
   private readonly logger: Logger;
   private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -175,7 +181,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startServer(env);
+    const server = await this.startServer({ launchEnv: env, epoch: this.epoch });
     server.retired = true;
     this.retiredServers.add(server);
     const acquisition = this.acquireServer(server);
@@ -250,10 +256,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.newServerPromise;
     }
 
+    const epoch = this.epoch;
     this.newServerPromise = Promise.resolve()
       .then(async () => {
         await this.rotateCurrentServer();
-        const server = await this.startServer();
+        const server = await this.startServer({ epoch });
         if (!server.retired) {
           this.currentServer = server;
         }
@@ -282,7 +289,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.currentServer;
     }
 
-    this.startPromise = this.startServer().then((server) => {
+    this.startPromise = this.startServer({ epoch: this.epoch }).then((server) => {
       if (!server.retired) {
         this.currentServer = server;
       }
@@ -317,15 +324,22 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
   }
 
-  private startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
-    const start = this.spawnServer(launchEnv);
+  private startServer(options: {
+    launchEnv?: Record<string, string>;
+    epoch: number;
+  }): Promise<OpenCodeServerGeneration> {
+    const start = this.spawnServer(options);
     this.pendingStarts.add(start);
     const forget = () => this.pendingStarts.delete(start);
     start.then(forget, forget);
     return start;
   }
 
-  private async spawnServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
+  private async spawnServer(options: {
+    launchEnv?: Record<string, string>;
+    epoch: number;
+  }): Promise<OpenCodeServerGeneration> {
+    const { launchEnv } = options;
     const port = await this.portAllocator();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
@@ -350,6 +364,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv, bridgeEnv],
     });
+    if (options.epoch !== this.epoch) throw new Error("OpenCode server manager shut down");
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,
       detached: process.platform !== "win32",
@@ -498,7 +513,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async shutdown(): Promise<void> {
-    // A startup still allocating its port spawns after this point; wait so its process is killed.
+    this.epoch += 1;
+    // Startups begun before this point either refuse to spawn or have spawned; collect them.
     const started = await Promise.allSettled(this.pendingStarts);
     const servers = new Set([
       ...(this.currentServer ? [this.currentServer] : []),
