@@ -349,6 +349,7 @@ export const zhCN: TranslationResources = {
       copyTurn: "复制回合",
       copyMessage: "复制消息",
       forkMenu: "分叉消息",
+      turnStats: "回合统计",
       forkInNewTab: "分叉到新标签页",
       forkInNewWorkspace: "分叉到新工作区",
       forkUnavailable: "请更新主机以使用此功能。",
