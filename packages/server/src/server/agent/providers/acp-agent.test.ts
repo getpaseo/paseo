@@ -38,6 +38,7 @@ import {
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
+import { AgentManager } from "../agent-manager.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -2999,22 +3000,52 @@ describe("ACPAgentClient import listing deadlines", () => {
     return { client, child, agentConnection, terminator, started, release, operations };
   }
 
+  function listSessionsThroughManager(client: ACPAgentClient) {
+    return new AgentManager({
+      clients: { [client.provider]: client },
+      logger: createTestLogger(),
+    }).listImportableSessions({ limit: 1 });
+  }
+
+  test("accepts a listing that finishes within the daemon's provider deadline", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("session/list");
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(88_000);
+      probe.release();
+
+      await expect(listing).resolves.toEqual({ sessions: [], providerErrors: [] });
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
   test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
     vi.useFakeTimers();
     const probe = createBlockedListing(phase);
-    const errors: unknown[] = [];
-    const listing = probe.client.listImportableSessions({ limit: 1 }).catch((error: unknown) => {
-      errors.push(error);
-      return [];
-    });
+    const listing = listSessionsThroughManager(probe.client);
 
     try {
       await probe.started;
       await vi.advanceTimersByTimeAsync(89_999);
+      expect(probe.terminator.terminated).toEqual([]);
 
-      expect(errors).toEqual([
-        expect.objectContaining({ message: expect.stringMatching(/timed out/i) }),
-      ]);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(listing).resolves.toEqual({
+        sessions: [],
+        providerErrors: [
+          {
+            provider: "test-acp",
+            message: "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+          },
+        ],
+      });
       expect(probe.terminator.terminated).toEqual([probe.child]);
       expect(probe.child.stdin.destroyed).toBe(true);
       expect(probe.child.stdout.destroyed).toBe(true);

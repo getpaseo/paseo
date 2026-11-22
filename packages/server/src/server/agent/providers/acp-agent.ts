@@ -343,8 +343,6 @@ const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
-// Reserve time for process-tree cleanup before the manager's 90s listing deadline.
-const ACP_IMPORT_LIST_TIMEOUT_MS = 85_000;
 
 /**
  * An ACP agent publishes its slash-command inventory incrementally. Wait this
@@ -1356,20 +1354,10 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
+    options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
     const history = new ACPImportHistoryCollector();
-    const deadline = new AbortController();
-    const timeout = setTimeout(
-      () =>
-        deadline.abort(
-          new Error(`ACP import listing timed out after ${ACP_IMPORT_LIST_TIMEOUT_MS}ms`),
-        ),
-      ACP_IMPORT_LIST_TIMEOUT_MS,
-    );
-    const signal = options?.signal
-      ? AbortSignal.any([deadline.signal, options.signal])
-      : deadline.signal;
+    const signal = options?.signal ?? new AbortController().signal;
     let probe: SpawnedACPProcess | undefined;
     try {
       signal.throwIfAborted();
@@ -1419,7 +1407,6 @@ export class ACPAgentClient implements AgentClient {
       signal.throwIfAborted();
       return sessions;
     } finally {
-      clearTimeout(timeout);
       if (probe) await this.closeProbe(probe);
     }
   }
