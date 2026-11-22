@@ -133,18 +133,18 @@ function findProjectCheckoutRoot(
   checkout: {
     cwd: string;
     worktreeRoot: string;
-    isPaseoOwnedWorktree: boolean;
     mainRepoRoot: string | null;
   },
 ): string | null {
   const hasCheckoutAtSelectedRoot =
     pathsReferToSameLocation(checkout.cwd, projectRootPath) ||
     pathsReferToSameLocation(checkout.worktreeRoot, projectRootPath);
-  const hasCorrespondingManagedWorktree =
-    checkout.isPaseoOwnedWorktree &&
+  // mainRepoRoot comes from Git's common directory and is authoritative regardless of whether
+  // Paseo owns the worktree's lifecycle.
+  const hasObservedMainRepoRoot =
     checkout.mainRepoRoot !== null &&
     pathsReferToSameLocation(checkout.mainRepoRoot, projectRootPath);
-  if (!hasCheckoutAtSelectedRoot && !hasCorrespondingManagedWorktree) return null;
+  if (!hasCheckoutAtSelectedRoot && !hasObservedMainRepoRoot) return null;
 
   const candidateRoots = [checkout.worktreeRoot, checkout.mainRepoRoot];
   return (
