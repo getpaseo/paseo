@@ -1,10 +1,5 @@
 import { selectionRectangles } from "./hit-testing";
-import {
-  DIFF_BODY_BORDER_HEIGHT,
-  expandedBodyBorderTop,
-  fragmentWidthForRange,
-  visibleRowRange,
-} from "./model";
+import { DIFF_BODY_BORDER_HEIGHT, expandedBodyBorderTop, visibleRowRange } from "./model";
 import { codeLineNumberTone, codeTextColor } from "./palette";
 import {
   DIFF_FILE_HEADER_CONTENT_HEIGHT,
@@ -346,24 +341,30 @@ function fragmentColorBands(
   fragment: DiffCell["fragments"][number],
   palette: DiffPalette,
 ): Array<{ x: number; width: number; color: string }> {
-  const ranges: Array<{ start: number; end: number; color: string }> = [];
+  const fallbackColor = cellForeground(cell, palette);
+  if (fragment.graphemes.length === 0) {
+    return [{ x: 0, width: Math.max(1, fragment.width), color: fallbackColor }];
+  }
+  if (cell.tokens.length === 0) {
+    return [{ x: 0, width: fragment.width, color: fallbackColor }];
+  }
+
+  const bands: Array<{ x: number; width: number; color: string }> = [];
+  let tokenIndex = 0;
+  let x = 0;
   for (const grapheme of fragment.graphemes) {
-    const syntaxRun = cell.tokens.find(
-      (run) => run.start <= grapheme.start && grapheme.start < run.end,
-    );
-    const color = syntaxRun?.color ?? cellForeground(cell, palette);
-    const previous = ranges.at(-1);
-    if (previous?.color === color) previous.end = grapheme.end;
-    else ranges.push({ start: grapheme.start, end: grapheme.end, color });
+    // The model emits ordered, non-overlapping token runs in source offsets.
+    let token = cell.tokens[tokenIndex];
+    while (token && token.end <= grapheme.start) {
+      token = cell.tokens[++tokenIndex];
+    }
+    const color = token && token.start <= grapheme.start ? token.color : fallbackColor;
+    const previous = bands.at(-1);
+    if (previous?.color === color) previous.width += grapheme.width;
+    else bands.push({ x, width: grapheme.width, color });
+    x += grapheme.width;
   }
-  if (ranges.length === 0) {
-    return [{ x: 0, width: Math.max(1, fragment.width), color: cellForeground(cell, palette) }];
-  }
-  return ranges.map((range) => ({
-    x: fragmentWidthForRange(fragment, fragment.start, range.start),
-    width: fragmentWidthForRange(fragment, range.start, range.end),
-    color: range.color,
-  }));
+  return bands;
 }
 
 function paintSelection(input: PaintWebViewportInput, selection: DiffSelection): void {
