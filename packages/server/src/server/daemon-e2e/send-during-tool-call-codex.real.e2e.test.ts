@@ -450,7 +450,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
           const item = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
           return item.text;
         });
-      expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(timeline.entries.some(({ item }) => item.type === "error")).toBe(false);
       expect(assistantTexts.some((text) => text.toUpperCase().includes("INTERRUPT_RECEIVED"))).toBe(
         true,
       );
@@ -527,7 +527,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
           const item = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
           return item.text;
         });
-      expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(timeline.entries.some(({ item }) => item.type === "error")).toBe(false);
       expect(
         assistantTexts.some((text) => text.toUpperCase().includes("QUICK_FOLLOW_UP_RECEIVED")),
       ).toBe(true);

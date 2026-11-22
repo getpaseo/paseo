@@ -29,6 +29,7 @@ interface FinishNotificationBodyInput {
   title: string;
   reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
+  error: string | null;
   permissionRequest?: AgentPermissionRequest;
 }
 
@@ -58,13 +59,15 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
       )}\n</permission-request>`,
     );
   }
-  let lastAssistantMessage = params.lastAssistantMessage?.trim();
-  if (lastAssistantMessage) {
-    if (lastAssistantMessage.length > FINISH_NOTIFICATION_MESSAGE_LIMIT) {
-      const omitted = lastAssistantMessage.length - FINISH_NOTIFICATION_MESSAGE_LIMIT;
-      lastAssistantMessage = `${lastAssistantMessage.slice(0, FINISH_NOTIFICATION_MESSAGE_LIMIT)}\n[truncated ${omitted} chars; use get_agent_activity for the full response]`;
+  const failed = params.reason === "errored";
+  let outcome = (failed ? params.error : params.lastAssistantMessage)?.trim();
+  if (outcome) {
+    if (outcome.length > FINISH_NOTIFICATION_MESSAGE_LIMIT) {
+      const omitted = outcome.length - FINISH_NOTIFICATION_MESSAGE_LIMIT;
+      outcome = `${outcome.slice(0, FINISH_NOTIFICATION_MESSAGE_LIMIT)}\n[truncated ${omitted} chars; use get_agent_activity for the full response]`;
     }
-    sections.push(`<agent-response>\n${lastAssistantMessage}\n</agent-response>`);
+    const tag = failed ? "agent-error" : "agent-response";
+    sections.push(`<${tag}>\n${outcome}\n</${tag}>`);
   }
   return sections.join("\n\n");
 }

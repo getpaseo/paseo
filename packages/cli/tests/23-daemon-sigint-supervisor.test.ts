@@ -187,7 +187,12 @@ try {
       if (agent?.status === "error" && agent.attentionReason === "error") return agent;
     }, "unexpected provider exit did not raise error attention");
     const failure = await daemon.client.fetchAgentTimeline(crashing.id, { limit: 20 });
-    assert.match(JSON.stringify(failure.entries), /\[System Error\].*ACP process exited/);
+    assert(
+      failure.entries.some(
+        ({ item }) => item.type === "error" && item.message.includes("ACP process exited"),
+      ),
+      "unexpected provider exit did not add an error row",
+    );
     console.log("Unexpected ACP exit raised error attention and added a timeline entry.");
 
     await daemon.client.sendMessage(running.id, "Hold the turn open.");

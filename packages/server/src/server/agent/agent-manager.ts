@@ -642,8 +642,6 @@ interface AgentMetadataPatch {
   metadata?: Record<string, JsonValue | null>;
 }
 
-const SYSTEM_ERROR_PREFIX = "[System Error]";
-
 function normalizePersistenceForConfig(
   handle: AgentPersistenceHandle | null,
   config: AgentSessionConfig,
@@ -5596,13 +5594,10 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
-    agent.lastError = event.error;
-    await this.appendSystemErrorTimelineMessage(
-      agent,
-      event.provider,
-      this.formatTurnFailedMessage(event),
-      options,
-    );
+    agent.lastError = this.formatTurnFailedMessage(event);
+    if (!options?.fromHistory) {
+      await this.recordTurnFailure(agent.id, event.provider, agent.lastError, eventTurnId);
+    }
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
   }
 
@@ -5832,42 +5827,17 @@ export class AgentManager {
     return existing;
   }
 
-  private async appendSystemErrorTimelineMessage(
-    agent: ActiveManagedAgent,
+  private async recordTurnFailure(
+    agentId: string,
     provider: AgentProvider,
     message: string,
-    options?: { fromHistory?: boolean },
+    turnId: string | undefined,
   ): Promise<void> {
-    if (options?.fromHistory) {
+    const lastItem = await this.getLastItemFromStores(agentId);
+    if (lastItem?.type === "error" && lastItem.message === message) {
       return;
     }
-
-    const normalized = message.trim();
-    if (!normalized) {
-      return;
-    }
-
-    const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
-    const lastItem = await this.getLastItemFromStores(agent.id);
-    if (lastItem?.type === "assistant_message" && lastItem.text === text) {
-      return;
-    }
-
-    const item: AgentTimelineItem = { type: "assistant_message", text };
-    const row = this.recordTimeline(agent.id, item);
-    this.dispatchStream(
-      agent.id,
-      {
-        type: "timeline",
-        item,
-        provider,
-      },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      },
-    );
+    this.recordAndDispatchTimelineItem(agentId, { type: "error", message }, provider, turnId);
   }
 
   private formatTurnFailedMessage(

@@ -374,7 +374,7 @@ test.each(["agent", "workspace"] as const)(
           clientMessageId: agent.clientMessageId,
           messageId: agent.clientMessageId,
         },
-        { type: "assistant_message", text: `[System Error] ${rejection}` },
+        { type: "error", message: rejection },
       ];
       expect(
         (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),

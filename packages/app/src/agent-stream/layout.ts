@@ -102,7 +102,10 @@ function findTurnFooterSource(input: {
       if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return toolFallback;
       }
-      if (item.kind === "assistant_message") {
+      if (
+        item.kind === "assistant_message" ||
+        (item.kind === "notification" && item.sourceType === "error")
+      ) {
         return { item, items, index };
       }
       laterItem = item;

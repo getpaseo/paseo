@@ -148,6 +148,35 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
+  it.each(["web", "android"] as const)(
+    "hosts failed response footers on the error row on %s",
+    (platform) => {
+      const error: StreamItem = {
+        kind: "notification",
+        sourceType: "error",
+        level: "error",
+        id: "error-1",
+        message: "Provider failed",
+        timestamp: timestamp(2),
+        timelineCursor: { epoch: "timeline-1", seq: 42 },
+      };
+      const user = userMessage("user-1", 1);
+      const latest = layoutFor({ platform, tail: [user, error] });
+      expect(latest.auxiliaryTurnFooter?.itemId).toBe(error.id);
+      const completed = layoutFor({
+        platform,
+        tail: [user, error, userMessage("user-2", 3)],
+        isTurnActive: true,
+      });
+      expect(findLayoutItem(completed, error.id).completedFooter?.itemId).toBe(error.id);
+      const afterReply = layoutFor({
+        platform,
+        tail: [user, assistantMessage("assistant-1", 2), error],
+      });
+      expect(afterReply.auxiliaryTurnFooter?.itemId).toBe(error.id);
+    },
+  );
+
   it("keeps separate footers for an assistant turn and an adjacent tool-only turn", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const nextTool = toolCall("next-tool", 2, "turn-2");

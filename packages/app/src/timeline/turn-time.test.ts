@@ -22,6 +22,31 @@ function assistant(id: string, timestamp: Date, text = id): StreamItem {
 }
 
 describe("deriveStreamTurnTiming", () => {
+  it("retains completed timing for a failed response with or without assistant text", () => {
+    const userAt = new Date("2026-05-15T00:00:00.000Z");
+    const failedAt = new Date("2026-05-15T00:00:07.000Z");
+    const error: StreamItem = {
+      kind: "notification",
+      sourceType: "error",
+      level: "error",
+      id: "error-1",
+      message: "Provider failed",
+      timestamp: failedAt,
+    };
+    for (const replies of [[], [assistant("assistant-1", new Date("2026-05-15T00:00:03.000Z"))]]) {
+      const timing = deriveStreamTurnTiming({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail: [user("user-1", userAt), ...replies, error],
+        head: [],
+      });
+      assert.deepEqual(timing.byItemId.get(error.id), {
+        completedAt: failedAt,
+        durationMs: 7000,
+      });
+    }
+  });
+
   it("starts elapsed time from the submitted prompt", () => {
     const submittedAt = new Date("2026-05-15T00:00:00.000Z");
 

@@ -190,6 +190,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           title,
           reason,
           lastAssistantMessage: result.lastMessage,
+          error: result.error,
           permissionRequest: request,
         }),
         source: {

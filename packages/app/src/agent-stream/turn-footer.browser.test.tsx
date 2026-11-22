@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
 import { i18n } from "@/i18n/i18next";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
@@ -40,14 +41,14 @@ const reply: StreamItem = {
   timestamp: FRIDAY_NIGHT,
 };
 
-function renderCompletedFooter(timing: TurnTiming): void {
+function renderCompletedFooter(timing: TurnTiming, items: StreamItem[] = [reply]): void {
   act(() =>
     root.render(
       <CompletedTurnFooterRow
         strategy={createNativeStreamStrategy()}
-        items={[reply]}
+        items={items}
         timing={timing}
-        startIndex={0}
+        startIndex={items.length - 1}
         supportsTimelineCursor={false}
       />,
     ),
@@ -91,4 +92,23 @@ it.each([
     [input.duration]: 1,
     "Friday 11:11 PM": 1,
   });
+});
+
+it("offers Copy turn for a reply followed by an error", async () => {
+  const error: StreamItem = {
+    kind: "notification",
+    sourceType: "error",
+    level: "error",
+    id: "failure",
+    message: "Provider failed",
+    timestamp: FRIDAY_NIGHT,
+    turnId: "failed-turn",
+  };
+  const timing = { completedAt: FRIDAY_NIGHT, durationMs: 26_000 };
+
+  renderCompletedFooter(timing, [{ ...reply, turnId: "failed-turn" }, error]);
+  await expect.element(page.getByRole("button", { name: "Copy turn" })).toBeVisible();
+
+  renderCompletedFooter(timing, [{ ...reply, turnId: "earlier-turn" }, error]);
+  await expect.element(page.getByRole("button", { name: "Copy turn" })).not.toBeInTheDocument();
 });

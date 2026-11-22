@@ -14,7 +14,7 @@ export interface StreamTurnTiming {
 interface OpenTurn {
   userAt: Date | null;
   lastItemAt: Date | null;
-  assistantIds: readonly string[];
+  responseIds: readonly string[];
   previousItem: StreamItem | null;
 }
 
@@ -32,7 +32,7 @@ interface TailTurnTiming {
 const EMPTY_OPEN_TURN: OpenTurn = {
   userAt: null,
   lastItemAt: null,
-  assistantIds: [],
+  responseIds: [],
   previousItem: null,
 };
 
@@ -44,7 +44,7 @@ function closeTurn(turn: OpenTurn, into: Map<string, TurnTiming>): void {
     completedAt: turn.lastItemAt,
     durationMs: turn.userAt ? Math.max(0, turn.lastItemAt.getTime() - turn.userAt.getTime()) : null,
   };
-  let footerIds = turn.assistantIds;
+  let footerIds = turn.responseIds;
   if (footerIds.length === 0 && turn.previousItem?.kind === "tool_call") {
     footerIds = [turn.previousItem.id];
   }
@@ -60,22 +60,25 @@ function walkTurns(
 ): OpenTurn {
   let userAt = from.userAt;
   let lastItemAt = from.lastItemAt;
-  let assistantIds = [...from.assistantIds];
+  let responseIds = [...from.responseIds];
   let previousItem = from.previousItem;
   for (const item of items) {
     if (startsNewTurn(item, previousItem)) {
-      closeTurn({ userAt, lastItemAt, assistantIds, previousItem }, into);
+      closeTurn({ userAt, lastItemAt, responseIds, previousItem }, into);
       userAt = isTurnTrigger(item) ? item.timestamp : null;
       lastItemAt = null;
-      assistantIds = [];
+      responseIds = [];
     }
     lastItemAt = item.timestamp;
-    if (item.kind === "assistant_message") {
-      assistantIds.push(item.id);
+    if (
+      item.kind === "assistant_message" ||
+      (item.kind === "notification" && item.sourceType === "error")
+    ) {
+      responseIds.push(item.id);
     }
     previousItem = item;
   }
-  return { userAt, lastItemAt, assistantIds, previousItem };
+  return { userAt, lastItemAt, responseIds, previousItem };
 }
 
 function areTimingsEqual(a: Map<string, TurnTiming>, b: Map<string, TurnTiming>): boolean {

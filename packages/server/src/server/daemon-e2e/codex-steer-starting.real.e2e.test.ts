@@ -63,12 +63,7 @@ test("keeps two concurrent startup steer messages in one real Codex turn", async
       expect(
         events.filter((event) => event.type === "turn_canceled" || event.type === "turn_failed"),
       ).toHaveLength(0);
-      expect(
-        timeline.entries.some(
-          (entry) =>
-            entry.item.type === "assistant_message" && entry.item.text.includes("[System Error]"),
-        ),
-      ).toBe(false);
+      expect(timeline.entries.some(({ item }) => item.type === "error")).toBe(false);
     }
   } finally {
     await Promise.all(subscriptions.map((subscription) => subscription.release()));

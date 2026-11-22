@@ -32,7 +32,12 @@ function assistantMessage(
 describe("resolveAssistantTurnForkBoundary", () => {
   it("forks a failed assistant turn from its Paseo timeline cursor without a provider message id", () => {
     const failedTurn = {
-      ...assistantMessage("assistant-error", 2),
+      kind: "notification" as const,
+      sourceType: "error" as const,
+      level: "error" as const,
+      message: "Provider failed",
+      id: "error-1",
+      timestamp: timestamp(2),
       timelineCursor: { epoch: "timeline-1", seq: 42 },
     };
 

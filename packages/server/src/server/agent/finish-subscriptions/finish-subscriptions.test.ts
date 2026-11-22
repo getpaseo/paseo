@@ -298,9 +298,18 @@ test("error and missing-child notifications never claim successful completion", 
   const state = await scenario();
   await state.service.register(intent);
   await until(() => state.observation.waits.length === 1);
-  state.observation.waits[0]!.result.resolve(outcome("error"));
+  const failed = outcome("error");
+  failed.error = "Provider failed: " + "x".repeat(4100);
+  state.observation.waits[0]!.result.resolve(failed);
   await until(() => state.delivery.prompts.length === 1);
   expect(state.delivery.prompts[0]).toContain("errored");
+  expect(state.delivery.prompts[0]).toContain(
+    `<agent-error>
+${failed.error.slice(0, 4000)}
+[truncated 117 chars; use get_agent_activity for the full response]
+</agent-error>`,
+  );
+  expect(state.delivery.prompts[0]).not.toContain("Partial work saved");
   await state.service.register({ ...intent, childAgentId: "missing-child" });
   await until(() => state.observation.waits.length === 2);
   state.observation.waits[1]!.result.resolve({
