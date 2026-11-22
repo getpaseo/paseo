@@ -29,6 +29,8 @@ nav: Antigravity
 
 如果你已覆盖命令，请在命令参数中加入 `acp`。命令和环境变量覆盖见[自定义 Provider](/docs/custom-providers)。
 
+升级后，如果 Hub 中保存的触发器使用了包含思考级别的旧模型 ID，会提示模型不可用。请在 Hub 中重新选择模型和思考级别。
+
 ## 权限 {#permissions}
 
 Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。在 **Default** 模式下，如果 Antigravity 的权限策略要求批准编辑或命令，Paseo 会显示审批请求。在 **Accept edits** 模式下，Antigravity 会自动批准工作区内的编辑，仍会询问是否批准需要审批的命令。**Plan** 模式让 Antigravity 先规划，再执行。
