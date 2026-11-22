@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
+import { withUnistyles } from "react-native-unistyles";
 import { SettingsDetailHeader } from "@/components/settings";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { FONT_SIZE, ICON_SIZE } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { ProviderDetail, useProviderDetail } from "./provider-detail";
 import { ProviderGlyph } from "./provider-glyph";
 
@@ -35,11 +36,10 @@ export function ProviderDetailPage({
   );
   const icon = useMemo(
     () => (
-      <ProviderGlyph
+      <ThemedProviderGlyph
         serverId={serverId}
         provider={provider}
-        // As large as the name beside it: the page title on wide layouts, a row title on compact.
-        size={isCompact ? ICON_SIZE.md : FONT_SIZE["4xl"]}
+        uniProps={isCompact ? rowTitleSize : pageTitleSize}
       />
     ),
     [isCompact, provider, serverId],
@@ -56,3 +56,8 @@ export function ProviderDetailPage({
     </View>
   );
 }
+
+// The glyph is as large as the name beside it. The page title scales with the interface size.
+const ThemedProviderGlyph = withUnistyles(ProviderGlyph);
+const pageTitleSize = (theme: Theme) => ({ size: theme.fontSize["4xl"] });
+const rowTitleSize = () => ({ size: ICON_SIZE.md });
