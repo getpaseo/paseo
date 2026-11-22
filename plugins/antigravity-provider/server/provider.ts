@@ -109,6 +109,8 @@ export function createAntigravityProvider(): ProviderRegistration {
     icon: "icon.svg",
     command: ["agy", "acp", "--disable-telemetry"],
     acpOptions: {
+      // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
+      perModelThinkingOptions: true,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
