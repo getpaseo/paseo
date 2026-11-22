@@ -50,15 +50,35 @@ class ListItemRenderer(
           taskIndex = taskIndex,
           isChecked = isChecked,
           drawsMarker = drawsMarker,
+          ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
+          markerExtraWidth = styleContext.listMarkerExtra,
+          parentMarkerWidth = styleContext.listItemMarkerWidth,
         )
       } else {
         when (listType) {
           BlockStyleContext.ListType.UNORDERED -> {
-            UnorderedListSpan(listStyle, depth, factory.context, factory.styleCache, drawsMarker)
+            UnorderedListSpan(
+              listStyle,
+              depth,
+              factory.context,
+              factory.styleCache,
+              drawsMarker,
+              ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
+              parentMarkerWidth = styleContext.listItemMarkerWidth,
+            )
           }
 
           BlockStyleContext.ListType.ORDERED -> {
-            OrderedListSpan(listStyle, depth, factory.context, factory.styleCache, drawsMarker).apply {
+            OrderedListSpan(
+              listStyle,
+              depth,
+              factory.context,
+              factory.styleCache,
+              drawsMarker,
+              markerExtraWidth = styleContext.listMarkerExtra,
+              ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
+              parentMarkerWidth = styleContext.listItemMarkerWidth,
+            ).apply {
               setItemNumber(styleContext.listItemNumber)
             }
           }
@@ -67,12 +87,18 @@ class ListItemRenderer(
 
     val markerSpan = makeSpan(drawsMarker = true)
 
+    val previousMarkerExtra = styleContext.listItemMarkerExtra
+    styleContext.listItemMarkerExtra = markerSpan.markerExtraWidth
+    val previousMarkerWidth = styleContext.listItemMarkerWidth
+    styleContext.listItemMarkerWidth = markerSpan.baselineMarkerWidth
     val prevIndent = styleContext.accumulatedIndent
     styleContext.accumulatedIndent = prevIndent + markerSpan.getLeadingMargin(false)
     try {
       factory.renderChildren(node, builder, onLinkPress, onLinkLongPress)
     } finally {
       styleContext.accumulatedIndent = prevIndent
+      styleContext.listItemMarkerExtra = previousMarkerExtra
+      styleContext.listItemMarkerWidth = previousMarkerWidth
     }
 
     if (builder.length == start || builder.substring(start).isBlank()) return

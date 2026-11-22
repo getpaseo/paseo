@@ -131,16 +131,31 @@ object TaskListTapUtils {
         taskIndex = targetIndex,
         isChecked = newChecked,
         drawsMarker = old.drawsMarker,
+        ancestorMarkerOffset = old.ancestorMarkerOffset,
+        markerExtraWidth = old.markerExtraWidth,
+        parentMarkerWidth = old.parentMarkerWidth,
       )
 
-    // Replace every segment of the item — spans are split around code blocks
-    for (old in targetSpans) {
-      val start = spannable.getSpanStart(old)
-      val end = spannable.getSpanEnd(old)
-      // Keep the original flags so the list item priority survives the toggle
-      val flags = spannable.getSpanFlags(old)
-      spannable.removeSpan(old)
-      spannable.setSpan(toggledCopy(old), start, end, flags)
+    // Layout draws leading margins in insertion order, and a re-added span moves to the end of it.
+    // Re-add the task's spans and everything attached after them (its ancestors) in their original
+    // order; the task's own nested items were attached first and stay where they are.
+    data class ListSpanState(
+      val span: BaseListSpan,
+      val start: Int,
+      val end: Int,
+      val flags: Int,
+    )
+
+    val coveringSpans = spannable.getSpans(spanStart, spanEnd, BaseListSpan::class.java)
+    val firstTarget = coveringSpans.indexOfFirst { it is TaskListSpan && it.taskIndex == targetIndex }
+    val listSpans =
+      coveringSpans.drop(firstTarget).map {
+        ListSpanState(it, spannable.getSpanStart(it), spannable.getSpanEnd(it), spannable.getSpanFlags(it))
+      }
+    listSpans.forEach { spannable.removeSpan(it.span) }
+    for ((old, start, end, flags) in listSpans) {
+      val replacement = if (old is TaskListSpan && old.taskIndex == targetIndex) toggledCopy(old) else old
+      spannable.setSpan(replacement, start, end, flags)
     }
 
     // The marker may be drawn by an anchor span wrapping an unattached copy

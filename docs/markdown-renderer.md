@@ -30,6 +30,13 @@ The package keeps the npm tarball's layout, including its build output:
 
 CI does not build native code or run the fork's Robolectric suites. Run `npm run test:android --workspace=@getpaseo/app` for Android changes. Native changes require a client rebuild; JavaScript refresh cannot enable compiled grammars.
 
+Some fork changes are backports. A sync past the upstream version drops them in favour of upstream's code:
+
+| Fork change                                                       | Upstream                                                                                                                                                     | Released in                              |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| Android measurements survive parent clones                        | [#924](https://github.com/software-mansion/enriched-markdown/pull/924)                                                                                       | after `1.2.0-nightly-20261019-926ef06f0` |
+| Android nested list items start their text after their own marker | [#1015](https://github.com/software-mansion/enriched-markdown/pull/1015), [#1023](https://github.com/software-mansion/enriched-markdown/pull/1023) (Android) | `1.2.0`                                  |
+
 ## Engine constraints
 
 Math and video are disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.

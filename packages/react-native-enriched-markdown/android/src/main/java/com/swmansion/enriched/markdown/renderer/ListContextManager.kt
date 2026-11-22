@@ -12,6 +12,8 @@ import com.swmansion.enriched.markdown.styles.ListStyle
  *   allowing each level to maintain its own counter while preserving parent's position.
  * - **Parent context restoration**: Restores parent list's style when exiting nested lists
  *   so subsequent parent items render correctly.
+ * - **Marker column**: An ordered list widens its `99.` column to fit its widest marker, and a
+ *   nested list inherits the widening of the item it sits in.
  */
 class ListContextManager(
   private val context: BlockStyleContext,
@@ -24,6 +26,8 @@ class ListContextManager(
     val previousDepth: Int,
     val parentListType: BlockStyleContext.ListType?,
     val wasNestedInOrderedList: Boolean,
+    val previousMarkerExtra: Float,
+    val previousMarkerOffset: Float,
   )
 
   /**
@@ -32,11 +36,13 @@ class ListContextManager(
    * - Incrementing list depth
    * - Setting the appropriate list style
    * - Resetting item number for the new list
+   * - Widening the marker column by [markerExtraWidth] and shifting a nested list by its parent item's widening
    */
   fun enterList(
     listType: BlockStyleContext.ListType,
     style: ListStyle,
     startNumber: Int = 1,
+    markerExtraWidth: Float = 0f,
   ): ListEntryState {
     val previousDepth = context.listDepth
     val isNested = previousDepth > 0
@@ -61,10 +67,19 @@ class ListContextManager(
     }
     context.resetListItemNumber(startNumber)
 
+    val previousMarkerExtra = context.listMarkerExtra
+    val previousMarkerOffset = context.ancestorMarkerOffset
+    if (isNested) {
+      context.ancestorMarkerOffset += context.listItemMarkerExtra
+    }
+    context.listMarkerExtra = markerExtraWidth
+
     return ListEntryState(
       previousDepth = previousDepth,
       parentListType = parentListType,
       wasNestedInOrderedList = isNested && parentIsOrdered,
+      previousMarkerExtra = previousMarkerExtra,
+      previousMarkerOffset = previousMarkerOffset,
     )
   }
 
@@ -74,6 +89,7 @@ class ListContextManager(
    * - Decrementing list depth back to previousDepth
    * - Restoring parent list item numbers from stack (if applicable)
    * - Restoring parent list metadata (if nested) so subsequent parent items render correctly
+   * - Restoring the parent list's marker column and offset
    */
   fun exitList(entryState: ListEntryState) {
     context.listDepth = entryState.previousDepth
@@ -86,5 +102,8 @@ class ListContextManager(
     if (entryState.previousDepth > 0) {
       context.listType = entryState.parentListType
     }
+
+    context.listMarkerExtra = entryState.previousMarkerExtra
+    context.ancestorMarkerOffset = entryState.previousMarkerOffset
   }
 }

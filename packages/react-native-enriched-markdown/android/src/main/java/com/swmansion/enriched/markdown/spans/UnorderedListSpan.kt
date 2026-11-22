@@ -14,6 +14,8 @@ class UnorderedListSpan(
   context: Context,
   styleCache: SpanStyleCache,
   drawsMarker: Boolean = true,
+  ancestorMarkerOffset: Float = 0f,
+  parentMarkerWidth: Float? = null,
 ) : BaseListSpan(
     depth = depth,
     context = context,
@@ -28,6 +30,8 @@ class UnorderedListSpan(
     marginLeft = listStyle.marginLeft,
     gapWidth = listStyle.gapWidth,
     drawsMarker = drawsMarker,
+    ancestorMarkerOffset = ancestorMarkerOffset,
+    parentMarkerWidth = parentMarkerWidth,
   ) {
   companion object {
     private val sharedBulletPaint =
@@ -65,7 +69,7 @@ class UnorderedListSpan(
     // it hugs the gap before the text — matches iOS behavior and stays
     // visually flush-left when the column width equals the bullet radius
     // (the default).
-    val bulletX = x + (depth * marginLeft + markerColumnWidth) * dir
+    val bulletX = x + (depth * marginLeft + ancestorMarkerOffset + markerColumnWidth) * dir
     val bulletY = baseline + (markerFontMetrics.ascent + markerFontMetrics.descent) / 2f
 
     when (depth) {
