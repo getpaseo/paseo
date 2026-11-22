@@ -105,6 +105,21 @@ export interface AcpConfigureContext extends AcpContext {
   apply(change: AcpConfigChange): Promise<void>;
 }
 
+export interface AcpContextWindowSource {
+  nativeSessionId: string;
+  agentVersion?: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string | undefined>>;
+  signal: AbortSignal;
+  refresh(): void;
+}
+
+export type AcpContextWindowReason = "config" | "usage" | "settled" | "refresh";
+export type AcpContextWindowReader = (
+  model: string | undefined,
+  reason: AcpContextWindowReason,
+) => number | undefined;
+
 export type AcpConfigChange =
   | { target: "model"; value: string | null }
   | { target: "mode"; value: string | null }
@@ -129,21 +144,6 @@ export type AcpVendorUpdate =
   | { type: "timeline"; item: ProviderTimelineItem }
   | { type: "notice"; notice: ProviderNotice };
 
-export interface AcpContextWindowSource {
-  nativeSessionId: string;
-  agentVersion?: string;
-  args: readonly string[];
-  env: Readonly<Record<string, string | undefined>>;
-  signal: AbortSignal;
-  refresh(): void;
-}
-
-export type AcpContextWindowReason = "config" | "usage" | "settled" | "refresh";
-export type AcpContextWindowReader = (
-  model: string | undefined,
-  reason: AcpContextWindowReason,
-) => number | undefined;
-
 export interface AcpTransformer {
   /** Decode an older saved session and supply extension metadata for session/new or session/load. */
   sessionOpen?(context: {
@@ -151,9 +151,6 @@ export interface AcpTransformer {
     systemPrompt?: string;
     agentMetadata: JsonValue;
   }): { sessionId?: string; metadata?: Readonly<Record<string, JsonValue>> };
-
-  /** Read a session's local effective context limit without changing ACP's tokens used. */
-  contextWindow?(context: AcpContextWindowSource): AcpContextWindowReader | undefined;
 
   discover?(
     catalog: ProviderCatalog,
@@ -164,6 +161,10 @@ export interface AcpTransformer {
   config?(state: ProviderConfigState, context: AcpContext): ProviderConfigState;
   /** Rewrites each advertised ACP slash command before Paseo sees it. */
   command?(command: ProviderCommand, context: AcpContext): ProviderCommand;
+
+  /** Read a session's local effective context limit without changing ACP's tokens used. */
+  contextWindow?(context: AcpContextWindowSource): AcpContextWindowReader | undefined;
+
   notification?(
     notification: { method: string; params: JsonValue },
     context: AcpContext,

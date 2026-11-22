@@ -1,15 +1,11 @@
 import type { AcpContextWindowReader, AcpContextWindowSource } from "@getpaseo/plugin/server/acp";
 import { conversationDbPath, readConversationDb } from "./conversation-db.js";
 
-// ChatStartMetadata.context_window_metadata.context_window_usage.max_context_tokens.
-// Field numbers [1, 9, 10, 4], encoded with their protobuf wire types.
-const windowTags = [10, 74, 82, 32];
 const maxRows = 32;
 const maxBlobBytes = 256 * 1024;
 const flushDelaysMs = [50, 150, 500];
 
-function windowFromMetadata(bytes: Uint8Array, depth = 0): number | undefined {
-  const wanted = windowTags[depth];
+function protobufField(bytes: Uint8Array, wanted: number): Uint8Array | number | undefined {
   let cursor = 0;
   const varint = () => {
     let value = 0;
@@ -21,7 +17,7 @@ function windowFromMetadata(bytes: Uint8Array, depth = 0): number | undefined {
     }
     return undefined;
   };
-  let result: number | undefined;
+  let result: Uint8Array | number | undefined;
   while (cursor < bytes.length) {
     const tag = varint();
     if (tag === undefined || tag <= 7 || tag > 0xffffffff) return undefined;
@@ -33,9 +29,7 @@ function windowFromMetadata(bytes: Uint8Array, depth = 0): number | undefined {
     } else if (wire === 2) {
       const length = varint();
       if (length === undefined || length > bytes.length - cursor) return undefined;
-      if (tag === wanted) {
-        result = windowFromMetadata(bytes.subarray(cursor, cursor + length), depth + 1) ?? result;
-      }
+      if (tag === wanted) result = bytes.subarray(cursor, cursor + length);
       cursor += length;
     } else if (wire === 1 || wire === 5) {
       cursor += wire === 1 ? 8 : 4;
@@ -47,12 +41,28 @@ function windowFromMetadata(bytes: Uint8Array, depth = 0): number | undefined {
   return result;
 }
 
+function effectiveWindow(data: Uint8Array, model: Buffer): number | undefined {
+  const chatStart = protobufField(data, 10); // [1]
+  if (!(chatStart instanceof Uint8Array)) return undefined;
+  // agy can report a newly selected model on load before generating with it. Check the
+  // requested model in the generation row ([1, 19]) before using that row's window.
+  const requestedModel = protobufField(chatStart, 154);
+  if (!(requestedModel instanceof Uint8Array) || !model.equals(requestedModel)) return undefined;
+  const metadata = protobufField(chatStart, 74); // [1, 9]
+  if (!(metadata instanceof Uint8Array)) return undefined;
+  const usage = protobufField(metadata, 82); // [1, 9, 10]
+  if (!(usage instanceof Uint8Array)) return undefined;
+  const limit = protobufField(usage, 32); // [1, 9, 10, 4]
+  return typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 ? limit : undefined;
+}
+
 export function createContextWindow(
   source: AcpContextWindowSource,
 ): AcpContextWindowReader | undefined {
   const file = conversationDbPath(source);
   if (!file) return undefined;
   let model: string | undefined;
+  let modelBytes: Buffer | undefined;
   let initialized = false;
   let latestIdx = -1;
   let modelFloor = -1;
@@ -72,7 +82,12 @@ export function createContextWindow(
   }
 
   return (currentModel, reason) => {
-    if (initialized && currentModel !== model) {
+    const changedModel = initialized && currentModel !== model;
+    if (!initialized || changedModel) {
+      model = currentModel;
+      modelBytes = model === undefined ? undefined : Buffer.from(model);
+    }
+    if (changedModel) {
       stop();
       // Establish the old model's high-water mark in the same DB before accepting any new rows.
       modelFloor =
@@ -81,9 +96,8 @@ export function createContextWindow(
           return typeof row?.idx === "number" ? row.idx : -1;
         }) ?? latestIdx;
       limit = undefined;
-      model = currentModel;
-    } else if (!initialized || reason !== "config") {
-      model = currentModel;
+    } else if (modelBytes && (!initialized || reason !== "config")) {
+      const expectedModel = modelBytes;
       readConversationDb(file, (db) => {
         const rows = db
           .prepare(`
@@ -95,8 +109,8 @@ export function createContextWindow(
           if (typeof idx !== "number") continue;
           latestIdx = Math.max(latestIdx, idx);
           if (!(data instanceof Uint8Array)) continue;
-          const value = windowFromMetadata(data);
-          if (value !== undefined && Number.isSafeInteger(value) && value > 0) {
+          const value = effectiveWindow(data, expectedModel);
+          if (value !== undefined) {
             limit = value;
             break;
           }

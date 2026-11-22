@@ -1267,16 +1267,19 @@ class AcpRuntime {
       (this.lastUsage.contextWindowUsedTokens === undefined || window === this.lastPublishedWindow)
     )
       return;
-    this.lastPublishedWindow = window;
     this.emit({
       type: "session.usage",
       sessionId: this.options.boundarySessionId,
       ...(turnId === undefined ? {} : { turnId }),
-      usage:
-        window === this.lastUsage.contextWindowMaxTokens
-          ? this.lastUsage
-          : { ...this.lastUsage, contextWindowMaxTokens: window },
+      usage: this.usageAtWindow(window),
     });
+  }
+
+  private usageAtWindow(window: number | undefined): ProviderUsage {
+    this.lastPublishedWindow = window;
+    return window === this.lastUsage.contextWindowMaxTokens
+      ? this.lastUsage
+      : { ...this.lastUsage, contextWindowMaxTokens: window };
   }
 
   private async restoreConfig(
@@ -1544,7 +1547,11 @@ class AcpRuntime {
         contextWindowMaxTokens: update.size,
         totalCostUsd: update.cost?.currency === "USD" ? update.cost.amount : undefined,
       };
-      this.publishUsage();
+      this.emit({
+        type: "session.usage",
+        sessionId: this.options.boundarySessionId,
+        usage: this.usageAtWindow(this.readContextWindow("usage")),
+      });
       this.noteDeferredUsageUpdate(wireSeq);
       return;
     }
@@ -1755,9 +1762,9 @@ class AcpRuntime {
     options?: { preserveQualifyingOpenTools?: boolean; suppressTrailingToolEcho?: boolean },
   ): void {
     this.fallbackChunkIds.clear();
-    if (this.contextWindows.length) this.publishUsage(undefined, "settled");
     this.terminalizeTransientItems(state, options);
     this.finishTurnPermissions(turnId);
+    if (this.contextWindows.length) this.publishUsage(undefined, "settled");
     if (state === "failed") {
       this.emit({
         type: "session.turn",
