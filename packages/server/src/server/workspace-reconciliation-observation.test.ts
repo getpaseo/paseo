@@ -325,7 +325,7 @@ class ObservedPlacements {
     return this.checkoutReadCount;
   }
 
-  /** Home-relative directories read since the last call, sorted. */
+  /** Home-relative directories read since the last call, with portable separators. */
   takeCheckoutReads(): string[] {
     return this.checkoutReadCwds.splice(0).sort();
   }
@@ -376,7 +376,7 @@ class ObservedPlacements {
 
   private async readCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
     this.checkoutReadCount += 1;
-    this.checkoutReadCwds.push(path.relative(this.home, cwd));
+    this.checkoutReadCwds.push(path.relative(this.home, cwd).split(path.sep).join("/"));
     const configured = [...this.checkoutByCwd.entries()].find(([root]) =>
       areEquivalentPaths(root, cwd),
     )?.[1];

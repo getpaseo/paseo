@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,13 +62,14 @@ describe("getCheckoutIdentity", () => {
         isPaseoOwnedWorktree: status.isPaseoOwnedWorktree,
       });
     }
+    const mainRepoRoot = await realpath(repoDir);
     expect(await getCheckoutIdentity(linkedDir, { paseoHome })).toMatchObject({
       currentBranch: "feature",
-      mainRepoRoot: repoDir,
+      mainRepoRoot,
     });
     expect(await getCheckoutIdentity(paseoWorktree.worktreePath, { paseoHome })).toMatchObject({
       isPaseoOwnedWorktree: true,
-      mainRepoRoot: repoDir,
+      mainRepoRoot,
     });
     expect(await getCheckoutIdentity(plainDir, { paseoHome })).toEqual({ isGit: false });
   });
