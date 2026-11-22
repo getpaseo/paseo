@@ -1123,12 +1123,10 @@ export default function contribute(plugin: unknown) {
   });
 
   it("rejects provider input while a connection is closing", async () => {
-    const releaseDirectory = await mkdtemp(path.join(tmpdir(), "paseo-provider-close-"));
-    const releaseFile = path.join(releaseDirectory, "release");
     const directory = await createPlugin(
       "closing-provider",
-      `import { readFile, writeFile } from "node:fs/promises";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+      `import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+const closeReleased = Promise.withResolvers<void>();
 const provider: ProviderRegistration = {
   id: "delayed",
   label: "Delayed",
@@ -1140,10 +1138,7 @@ const provider: ProviderRegistration = {
       onEvent() { return () => undefined; },
       async close() {
         console.log("provider close started");
-        while (true) {
-          try { await readFile(${JSON.stringify(releaseFile)}); break; }
-          catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
-        }
+        await closeReleased.promise;
         console.log("provider close completed");
       },
     };
@@ -1151,7 +1146,11 @@ const provider: ProviderRegistration = {
 };
 export default function contribute(server: { registerProvider(provider: ProviderRegistration): void }) {
   server.registerProvider(provider);
-  return () => console.log("plugin cleanup started");
+  return () => {
+    console.log("plugin cleanup started");
+    // Let shutdown reach the pending close before releasing it.
+    setImmediate(closeReleased.resolve);
+  };
 }`,
     );
     const closedReports: unknown[] = [];
@@ -1174,20 +1173,14 @@ export default function contribute(server: { registerProvider(provider: Provider
       await expect(connection.send({ type: "catalog", requestId: "during-close" })).rejects.toThrow(
         "Provider connection is closing",
       );
-      const stopping = runtime.stopPluginById("closing-provider");
-      await expect
-        .poll(() => pluginMessages(runtime, "closing-provider"))
-        .toContain("plugin cleanup started");
-      await writeFile(releaseFile, "release");
-      await Promise.all([closing, stopping]);
+      await Promise.all([closing, runtime.stopPluginById("closing-provider")]);
       const messages = pluginMessages(runtime, "closing-provider");
+      expect(messages).toContain("plugin cleanup started");
       expect(messages).toContain("provider close completed");
       expect(messages).not.toContain("provider accepted input");
       expect(closedReports).toHaveLength(1);
     } finally {
-      await writeFile(releaseFile, "release");
       await runtime.stopAll();
-      await rm(releaseDirectory, { recursive: true, force: true });
     }
   });
 
