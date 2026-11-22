@@ -240,9 +240,10 @@ The background refresh takes the settings refresh path for one provider, with th
   rotates its shared server on it.
 - An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
   no update.
-- A result that is not ready keeps a ready catalogue. Plugin status probes report a failed startup
-  as unavailable, so an unavailable result counts as transient too. A manual refresh still
-  publishes both.
+- A result that is not ready, or a catalogue the provider marks `incomplete`, keeps a ready
+  catalogue. Plugin status probes report a failed startup as unavailable, so that counts as
+  transient. Set `ProviderCatalog.incomplete` when discovery fails and you fall back to a partial
+  list, as Claude does when model discovery times out. A manual refresh still publishes all three.
 
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.

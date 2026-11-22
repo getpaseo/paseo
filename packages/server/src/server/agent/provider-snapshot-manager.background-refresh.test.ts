@@ -68,6 +68,8 @@ function model(provider: AgentProvider, id: string): AgentModelDefinition {
 interface TestProvider {
   models: AgentModelDefinition[];
   failure?: Error;
+  /** Reports the catalogue as missing models discovery could not confirm. */
+  incomplete?: boolean;
   available: boolean;
   /** `force` of each catalogue request, in order. */
   forces: boolean[];
@@ -147,7 +149,9 @@ function createClient(
       state.hold = undefined;
       await hold;
       if (state.failure) throw state.failure;
-      return { models: state.models, modes: [] };
+      return state.incomplete
+        ? { models: state.models, modes: [], incomplete: true }
+        : { models: state.models, modes: [] };
     },
   };
 }
@@ -300,6 +304,29 @@ describe("ProviderSnapshotManager background refresh", () => {
         status: "error",
         error: "network unreachable",
       });
+    } finally {
+      harness.manager.destroy();
+    }
+  });
+
+  test("keeps the ready catalogue when a background refresh returns an incomplete one", async () => {
+    const harness = createHarness({ enabled: ["codex"] });
+    try {
+      harness.provider("codex").models = [model("codex", "codex-1"), model("codex", "codex-2")];
+      await harness.manager.listProviders({ providers: ["codex"], wait: true });
+      const warmed = harness.globalEntry("codex");
+      harness.changes.length = 0;
+      harness.provider("codex").models = [model("codex", "codex-1")];
+      harness.provider("codex").incomplete = true;
+
+      await harness.timers.advanceMinutes(30);
+
+      expect(harness.probes).toHaveLength(2);
+      expect(harness.changes).toEqual([]);
+      expect(harness.globalEntry("codex")).toBe(warmed);
+
+      await harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      expect(harness.globalEntry("codex").models?.map(({ id }) => id)).toEqual(["codex-1"]);
     } finally {
       harness.manager.destroy();
     }

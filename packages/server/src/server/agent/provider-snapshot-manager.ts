@@ -1053,13 +1053,23 @@ export class ProviderSnapshotManager {
           definition,
           initial,
           client,
-          publish: (entry) => {
+          publish: (entry, { incomplete }) => {
             if (!isCurrent()) return false;
             const result = identifyEntry(structuredClone(entry));
-            if (background && current.result && keepsPublishedResult(current.result, result)) {
-              if (entry.status !== "ready") {
+            if (
+              background &&
+              current.result &&
+              keepsPublishedResult({ published: current.result, next: result, incomplete })
+            ) {
+              if (entry.status !== "ready" || incomplete) {
                 this.logger.warn(
-                  { provider, target: catalogOptions, status: entry.status, error: entry.error },
+                  {
+                    provider,
+                    target: catalogOptions,
+                    status: entry.status,
+                    incomplete,
+                    error: entry.error,
+                  },
                   "Background provider refresh failed; keeping the last catalogue",
                 );
               }
@@ -1087,7 +1097,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     initial: ProviderSnapshotEntry;
     client: AgentClient;
-    publish: (entry: ProviderSnapshotEntry) => boolean;
+    publish: (entry: ProviderSnapshotEntry, result: { incomplete: boolean }) => boolean;
   }): Promise<void> {
     const {
       catalogOptions,
@@ -1117,7 +1127,7 @@ export class ProviderSnapshotManager {
         },
       });
       if (!catalog) {
-        setEntry({ ...base, status: "unavailable", enabled: true });
+        setEntry({ ...base, status: "unavailable", enabled: true }, { incomplete: false });
         return;
       }
 
@@ -1128,23 +1138,24 @@ export class ProviderSnapshotManager {
           "Provider catalog contains repeated model IDs; retaining the first definition",
         );
       }
-      setEntry({
-        ...base,
-        defaultModeId:
-          catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
-        status: "ready",
-        enabled: true,
-        models,
-        modes: catalog.modes,
-        fetchedAt: new Date().toISOString(),
-      });
+      setEntry(
+        {
+          ...base,
+          defaultModeId:
+            catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
+          status: "ready",
+          enabled: true,
+          models,
+          modes: catalog.modes,
+          fetchedAt: new Date().toISOString(),
+        },
+        { incomplete: catalog.incomplete === true },
+      );
     } catch (error) {
-      const emitted = setEntry({
-        ...base,
-        status: "error",
-        enabled: true,
-        error: toErrorMessage(error),
-      });
+      const emitted = setEntry(
+        { ...base, status: "error", enabled: true, error: toErrorMessage(error) },
+        { incomplete: false },
+      );
       if (emitted) {
         this.logger.warn(
           { err: error, provider, target: catalogOptions },
@@ -1286,15 +1297,18 @@ function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {
 
 /**
  * A background result replaces neither unchanged content nor a ready catalogue with a result that
- * is not ready. Providers report a failed startup probe as unavailable, so both count as transient.
+ * is not ready or is incomplete. Providers report a failed startup probe as unavailable, so it
+ * counts as transient too.
  */
-function keepsPublishedResult(
-  published: ProviderSnapshotRecord,
-  next: ProviderSnapshotRecord,
-): boolean {
+function keepsPublishedResult(options: {
+  published: ProviderSnapshotRecord;
+  next: ProviderSnapshotRecord;
+  incomplete: boolean;
+}): boolean {
+  const { published, next, incomplete } = options;
   return (
     published.contentHash === next.contentHash ||
-    (published.entry.status === "ready" && next.entry.status !== "ready")
+    (published.entry.status === "ready" && (next.entry.status !== "ready" || incomplete))
   );
 }
 
