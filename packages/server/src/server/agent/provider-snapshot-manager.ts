@@ -63,6 +63,8 @@ const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
+/** How long shutdown waits for aborted probes; a provider ignoring the abort must not hang it. */
+const PROBE_SHUTDOWN_GRACE_MS = 10_000;
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
 function validRefreshDeadline(value: unknown): number | undefined {
@@ -258,6 +260,9 @@ export class ProviderSnapshotManager {
   private readonly targets = new Map<string, Target>();
   private readonly events = new EventEmitter();
   private destroyed = false;
+  /** Aborts provider work in flight when the manager stops. */
+  private readonly stopped = new AbortController();
+  private readonly runningProbes = new Set<Promise<void>>();
   private refreshTimeoutMs: number;
   private diagnosticTimeoutMs: number;
   private readonly logger: Logger;
@@ -747,10 +752,16 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
-    this.destroyed = true;
-    this.refreshSchedule?.dispose();
-    this.installations.close();
-    for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
+    this.stop();
+    // A running probe stops at its next activity boundary and cleans up what it started, so no
+    // provider starts work after its client shuts down.
+    await withTimeout(
+      Promise.allSettled(this.runningProbes),
+      PROBE_SHUTDOWN_GRACE_MS,
+      "Provider probes did not stop before shutdown",
+    ).catch((error) =>
+      this.logger.warn({ err: error }, "Shutting down providers with probes running"),
+    );
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
@@ -759,13 +770,18 @@ export class ProviderSnapshotManager {
   }
 
   destroy(): void {
+    this.stop();
+    this.catalogs.clear();
+    this.targets.clear();
+    this.events.removeAllListeners();
+  }
+
+  private stop(): void {
     this.destroyed = true;
     this.refreshSchedule?.dispose();
     this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
-    this.catalogs.clear();
-    this.targets.clear();
-    this.events.removeAllListeners();
+    this.stopped.abort(new Error("Provider snapshot manager stopped"));
   }
 
   private buildRegistry(
@@ -1047,48 +1063,57 @@ export class ProviderSnapshotManager {
       .get(provider)!
       .discoveryLimit(() => {
         if (!isCurrent()) return;
-        return this.refreshProvider({
-          catalogOptions,
-          provider,
-          definition,
-          initial,
-          client,
-          publish: (entry, { incomplete }) => {
-            if (!isCurrent()) return false;
-            const result = identifyEntry(structuredClone(entry));
-            if (
-              background &&
-              current.result &&
-              keepsPublishedResult({ published: current.result, next: result, incomplete })
-            ) {
-              if (entry.status !== "ready" || incomplete) {
-                this.logger.warn(
-                  {
-                    provider,
-                    target: catalogOptions,
-                    status: entry.status,
-                    incomplete,
-                    error: entry.error,
-                  },
-                  "Background provider refresh failed; keeping the last catalogue",
-                );
+        return this.trackProbe(
+          this.refreshProvider({
+            catalogOptions,
+            provider,
+            definition,
+            initial,
+            client,
+            publish: (entry, { incomplete }) => {
+              if (!isCurrent()) return false;
+              const result = identifyEntry(structuredClone(entry));
+              if (
+                background &&
+                current.result &&
+                keepsPublishedResult({ published: current.result, next: result, incomplete })
+              ) {
+                if (entry.status !== "ready" || incomplete) {
+                  this.logger.warn(
+                    {
+                      provider,
+                      target: catalogOptions,
+                      status: entry.status,
+                      incomplete,
+                      error: entry.error,
+                    },
+                    "Background provider refresh failed; keeping the last catalogue",
+                  );
+                }
+                return false;
               }
-              return false;
-            }
-            current.result = result;
-            const boundTargets = [...this.targets].flatMap(([cwd, target]) =>
-              target.bindings.get(provider)?.key === key ? [cwd] : [],
-            );
-            this.publishTargets(boundTargets);
-            return true;
-          },
-        });
+              current.result = result;
+              const boundTargets = [...this.targets].flatMap(([cwd, target]) =>
+                target.bindings.get(provider)?.key === key ? [cwd] : [],
+              );
+              this.publishTargets(boundTargets);
+              return true;
+            },
+          }),
+        );
       })
       .finally(() => {
         if (current.load === load) current.load = undefined;
       });
     current.load = load;
     return load;
+  }
+
+  private trackProbe(probe: Promise<void>): Promise<void> {
+    this.runningProbes.add(probe);
+    const forget = () => this.runningProbes.delete(probe);
+    probe.then(forget, forget);
+    return probe;
   }
 
   private async refreshProvider(options: {
@@ -1112,6 +1137,7 @@ export class ProviderSnapshotManager {
       const catalog = await runProviderRefreshWithDeadline({
         label: definition.label,
         timeoutMs: this.refreshTimeoutMs,
+        signal: this.stopped.signal,
         operation: async (context) => {
           const available = await context.runActivity("availability", () =>
             raceProviderRefreshAbort(

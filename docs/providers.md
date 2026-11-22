@@ -221,7 +221,9 @@ Plugin callbacks follow the same contract; see [plugin providers](plugins.md#con
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager
-aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+aborts the shared refresh signal at the deadline, and when it stops. Shutdown waits for running
+probes to settle before it shuts down provider clients, so a probe cannot start provider work,
+such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 

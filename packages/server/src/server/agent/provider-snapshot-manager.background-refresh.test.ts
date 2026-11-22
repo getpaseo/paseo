@@ -71,6 +71,9 @@ interface TestProvider {
   /** Reports the catalogue as missing models discovery could not confirm. */
   incomplete?: boolean;
   available: boolean;
+  /** Holds the next availability check open until the test releases it. */
+  availabilityHold?: Promise<void>;
+  shutdowns: number;
   /** `force` of each catalogue request, in order. */
   forces: boolean[];
   /** Holds the next probe open until the test releases it. */
@@ -87,6 +90,7 @@ function createHarness(options: { enabled: AgentProvider[]; disabled?: AgentProv
       models: [model(provider, `${provider}-1`)],
       available: true,
       forces: [],
+      shutdowns: 0,
     };
     providers.set(provider, state);
     extraClients[provider] = createClient(provider, state, () =>
@@ -140,7 +144,13 @@ function createClient(
       throw new Error("not implemented");
     },
     async isAvailable() {
+      const hold = state.availabilityHold;
+      state.availabilityHold = undefined;
+      await hold;
       return state.available;
+    },
+    async shutdown() {
+      state.shutdowns += 1;
     },
     async fetchCatalog(options) {
       onProbe();
@@ -355,6 +365,21 @@ describe("ProviderSnapshotManager background refresh", () => {
     } finally {
       harness.manager.destroy();
     }
+  });
+
+  test("shutdown stops a running probe before it starts catalogue discovery", async () => {
+    const harness = createHarness({ enabled: ["codex"] });
+    const held = deferred();
+    harness.provider("codex").availabilityHold = held.promise;
+    await harness.timers.advanceMinutes(30);
+
+    const stopped = harness.manager.shutdown();
+    held.resolve();
+    await stopped;
+    await settle();
+
+    expect(harness.probes).toEqual([]);
+    expect(harness.provider("codex").shutdowns).toBe(1);
   });
 
   test("destroy and shutdown cancel the scheduled refresh", async () => {
