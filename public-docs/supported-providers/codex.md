@@ -8,53 +8,41 @@ category: Providers
 
 # Codex
 
-Paseo runs Codex through the official `codex` CLI and its app-server interface.
-
-## Does Codex cost extra in Paseo?
-
-No. Paseo does not add a charge for Codex. Sign in to the Codex CLI with ChatGPT to use the access included with your ChatGPT plan, or sign in with an API key for usage billed through your OpenAI Platform account.
-
-Your plan's normal Codex limits and OpenAI's standard API pricing still apply.
+Paseo runs Codex through the official `codex` CLI and its app-server interface. It uses your local installation and existing OpenAI sign-in.
 
 ## Getting started
 
-Install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) on the machine running Paseo:
+Codex is built into Paseo and enabled by default.
 
-```bash
-npm install -g @openai/codex
-```
+1. Install the [Codex CLI](https://developers.openai.com/codex/cli) on your daemon host:
 
-Sign in with ChatGPT for subscription access:
+   ```bash
+   npm install -g @openai/codex
+   ```
 
-```bash
-codex login
-```
+2. Sign in with ChatGPT for subscription access:
 
-Or sign in with an API key for usage billed through your OpenAI Platform account:
+   ```bash
+   codex login
+   ```
 
-```bash
-# macOS or Linux
-printenv OPENAI_API_KEY | codex login --with-api-key
-```
+3. In Paseo, choose **Codex** when you start an agent.
 
-```powershell
-# Windows PowerShell
-$env:OPENAI_API_KEY | codex login --with-api-key
-```
+To bill through an OpenAI Platform API key instead, run `printenv OPENAI_API_KEY | codex login --with-api-key` on macOS or Linux. On Windows PowerShell, run `$env:OPENAI_API_KEY | codex login --with-api-key`. See [Codex authentication](https://learn.chatgpt.com/docs/auth) for more sign-in details.
 
-Then confirm the CLI starts:
+If `codex` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary).
 
-```bash
-codex
-```
+## Does Codex cost extra in Paseo?
 
-Paseo uses this installation and its existing authentication when you start a Codex agent.
+No. Paseo does not add a charge for Codex. Sign in with ChatGPT to use the access included in your ChatGPT plan. Or sign in with an API key to bill through your OpenAI Platform account.
+
+Your plan's normal Codex limits and OpenAI's standard API pricing still apply.
 
 ## Codex is missing in Paseo
 
-The ChatGPT desktop app and the Codex CLI are separate installs. Installing the desktop app does not make the `codex` command available to Paseo.
+The ChatGPT desktop app and the Codex CLI are separate installs. Installing the desktop app does not add the `codex` command for Paseo.
 
-Check whether the CLI is on your `PATH`:
+Make sure that `codex` is on your `PATH`:
 
 ```bash
 # macOS or Linux
@@ -66,16 +54,18 @@ where.exe codex
 
 If the command is not found:
 
-1. Install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
-2. Sign in with ChatGPT or an API key using the commands above. See [Codex authentication](https://learn.chatgpt.com/docs/auth).
-3. Restart Paseo if its daemon was already running when you installed the CLI.
-4. In Paseo, open **Settings → Providers → Codex** and select **Refresh**.
+1. Install the [Codex CLI](https://developers.openai.com/codex/cli).
+2. Sign in with `codex login` or an API key.
+3. If the Paseo daemon was already running when you installed the CLI, restart Paseo.
+4. In Paseo, open **Settings → Hosts → your host → Providers → Codex** and select **Refresh**.
 
-The provider should become available once Paseo can find and start the `codex` command.
+Codex becomes available once Paseo can find and start the `codex` command.
 
 ## Use Codex in the Paseo terminal
 
-Codex also works inside the Paseo terminal. Open a terminal in your workspace and run `codex` for the standard CLI experience while keeping access to your workspace, git changes, and other Paseo tools.
+Codex also works inside the Paseo terminal. Open a terminal in your workspace and run `codex` for the standard CLI experience.
+
+You can use the terminal from Paseo's desktop, web, or mobile app. You keep access to your workspace, git changes, and other Paseo tools.
 
 ## See also
 

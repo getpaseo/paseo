@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.17.0-beta.1",
+  "version": "0.17.3",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -81,6 +81,7 @@
     "@xterm/addon-webgl": "0.20.0-beta.329",
     "@xterm/xterm": "6.1.0-beta.336",
     "buffer": "^6.0.3",
+    "diff": "8.0.3",
     "expo": "~57.0.30",
     "expo-asset": "~57.0.20",
     "expo-audio": "~57.0.5",

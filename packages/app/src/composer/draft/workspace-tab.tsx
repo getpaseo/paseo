@@ -1,10 +1,8 @@
 import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import { Keyboard, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { Keyboard, StyleSheet as RNStyleSheet, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet } from "react-native-unistyles";
-import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
@@ -524,16 +522,6 @@ export function WorkspaceDraftComposer({
   );
   return (
     <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
-      {formErrorMessage ? (
-        <View
-          style={styles.formErrorRow}
-          dataSet={isComposerFullscreen ? undefined : CHAT_COLUMN_RAIL_DATASET}
-        >
-          <View style={styles.formError}>
-            <Text style={styles.errorText}>{formErrorMessage}</Text>
-          </View>
-        </View>
-      ) : null}
       {!isSubmitting && !isComposerFullscreen ? (
         <DraftAttachmentActions
           serverId={serverId}
@@ -567,6 +555,7 @@ export function WorkspaceDraftComposer({
         commandDraft={composerState.commandDraft}
         agentControls={composerAgentControls}
         isCompactLayout={isCompactComposerLayout}
+        error={formErrorMessage || null}
       />
     </View>
   );
@@ -580,25 +569,3 @@ const animatedStaticStyles = RNStyleSheet.create({
     flexGrow: 1,
   },
 });
-
-const styles = StyleSheet.create((theme) => ({
-  formErrorRow: {
-    width: "100%",
-    paddingHorizontal: theme.spacing[4],
-    alignItems: "center",
-  },
-  formError: {
-    width: "100%",
-    maxWidth: theme.contentMaxWidth,
-    marginBottom: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface2,
-    borderWidth: 1,
-    borderColor: theme.colors.destructive,
-  },
-  errorText: {
-    color: theme.colors.destructive,
-  },
-}));

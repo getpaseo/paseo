@@ -12,7 +12,7 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: false,
-  workers: 1,
+  workers: Number(process.env.E2E_WORKERS ?? (process.env.CI ? "2" : "1")),
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   use: {

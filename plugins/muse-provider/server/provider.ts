@@ -48,6 +48,7 @@ export function createMuseProvider(
     label: "Muse Code",
     icon: "icon.svg",
     command: ["muse"],
+    docsUrl: "https://paseo.sh/docs/supported-providers/muse-code",
     installation: {
       installUrl: "https://paseo.sh/docs/muse-code",
       async inspect({ launch, signal }) {

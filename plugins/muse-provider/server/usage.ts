@@ -63,6 +63,7 @@ export class Usage {
       id: "muse",
       label: "Muse Code",
       icon: "icon.svg",
+      providers: ["muse"],
       input: inputSchema,
       discover: async (scope) => {
         let accounts: string[];

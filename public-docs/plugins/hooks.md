@@ -208,7 +208,7 @@ Every field except `repoRoot` and `sourceCheckout` is transformable. Return all 
 
 Paseo resolves symlinked parents and validates the returned path. It must be absolute, must not exist, and must not be the filesystem root, your home directory, the repository root, inside a `.git` directory, or an ancestor of the repository. An existing destination fails creation; Paseo never adds a suffix to a plugin-chosen path. The plugin must leave directory creation to Paseo.
 
-Ordering: `worktree.create.before` → `git worktree add` → `worktree.create.after` → workspace registration. Restoring a missing worktree recreates it at its recorded path without running either worktree creation hook.
+Ordering: `worktree.create.before` → worktree manager `create` (or `git worktree add`) → `worktree.create.after` → workspace registration. To delegate `git worktree add`, removal, and restoration to an external tool such as Worktrunk, register a [worktree manager](/docs/plugins/reference#worktree-managers) with `server.registerWorktreeManager()` instead of creating directories inside `worktree.create.before`. Restoring a missing worktree recreates it at its recorded path without running creation hooks, delegating to the owning manager's optional `restore` handler when present.
 
 ## worktree.create.after
 
@@ -700,6 +700,7 @@ replaces that scope's prior value.
 | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection     |
 | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                 |
 | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                   |
+| [worktrunk](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)                     | Worktree manager (`create`, `remove`, `restore`) and agent activity markers      |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 

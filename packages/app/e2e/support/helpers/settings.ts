@@ -567,7 +567,9 @@ export async function expectProviderPageLoaded(page: Page, providerName: string)
   await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName, {
     timeout: 30_000,
   });
-  await expect(page.getByText("Provider status")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Diagnostic report" })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function expectProviderNotOnHost(page: Page): Promise<void> {

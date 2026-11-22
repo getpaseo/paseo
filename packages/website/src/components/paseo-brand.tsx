@@ -99,22 +99,34 @@ function BrandMark({ asset, props }: { asset: ParsedMark; props: React.SVGProps<
   );
 }
 
-function BrandLockup({
-  asset,
-  props,
-}: {
-  asset: ParsedLockup;
-  props: React.SVGProps<SVGSVGElement>;
-}) {
+/**
+ * Optical horizontal tightening (in 144-unit lockup coordinates) for display-scale lockups.
+ * Canonical lockups have a ~91-unit ink-to-ink gap calibrated for ~18–22px header sizes; at
+ * 36–48px display sizes that gap reads ~25–30px wide, so `size="display"` pulls the wordmark
+ * 44 units closer (~14–16px visual gap, ~1/3 of the mark width) and trims the viewBox to match.
+ */
+const DISPLAY_GAP_TIGHTEN_UNITS = 44;
+
+export interface BrandLockupProps extends React.SVGProps<SVGSVGElement> {
+  /** Optical spacing scale: `"default"` for small UI/header lockups, `"display"` for large headings. */
+  size?: "default" | "display";
+}
+
+function BrandLockup({ asset, props }: { asset: ParsedLockup; props: BrandLockupProps }) {
+  const { size = "default", ...svgProps } = props;
+  const tighten = size === "display" ? DISPLAY_GAP_TIGHTEN_UNITS : 0;
+  const width = asset.width - tighten;
+  const viewBox = tighten > 0 ? `0 0 ${width} ${asset.height}` : asset.viewBox;
+
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width={asset.width}
+      width={width}
       height={asset.height}
-      viewBox={asset.viewBox}
+      viewBox={viewBox}
       fill="none"
       aria-hidden="true"
-      {...props}
+      {...svgProps}
     >
       <path
         d={asset.path}
@@ -123,7 +135,11 @@ function BrandLockup({
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d={asset.wordmarkPath} fill="currentColor" />
+      <path
+        d={asset.wordmarkPath}
+        fill="currentColor"
+        transform={tighten > 0 ? `translate(-${tighten} 0)` : undefined}
+      />
     </svg>
   );
 }
@@ -139,16 +155,16 @@ export function PaseoHubMark(props: React.SVGProps<SVGSVGElement>) {
 }
 
 /** Canonical Paseo lockup (butterfly mark at 94% optical scale + Plus Jakarta Sans SemiBold). */
-export function PaseoLockup(props: React.SVGProps<SVGSVGElement>) {
+export function PaseoLockup(props: BrandLockupProps) {
   return <BrandLockup asset={PASEO_LOCKUP} props={props} />;
 }
 
 /** Canonical Paseo Hub lockup (flower mark + Plus Jakarta Sans SemiBold). */
-export function PaseoHubLockup(props: React.SVGProps<SVGSVGElement>) {
+export function PaseoHubLockup(props: BrandLockupProps) {
   return <BrandLockup asset={PASEO_HUB_LOCKUP} props={props} />;
 }
 
 /** Canonical Hub lockup (flower mark + "Hub"), used where Paseo is already on screen. */
-export function HubLockup(props: React.SVGProps<SVGSVGElement>) {
+export function HubLockup(props: BrandLockupProps) {
   return <BrandLockup asset={HUB_LOCKUP} props={props} />;
 }

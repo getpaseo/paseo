@@ -24,6 +24,7 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
+import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { getForgePresentation } from "@/git/forge";
@@ -336,6 +337,7 @@ interface WorkspaceCreationResult {
 
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
+  launchTarget: LaunchTarget;
   worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
@@ -365,10 +367,8 @@ async function createMultiplicityWorkspace(input: {
     prompt: input.prompt,
     attachments: input.attachments,
   });
-  const payload = await input.client.createWorkspace({
-    idempotencyKey: input.idempotencyKey,
+  const request: Omit<CreateWorkspaceRequestOptions, "idempotencyKey" | "onEvent"> = {
     agent: input.agent,
-    onEvent: input.onEvent,
     source: isWorktree
       ? {
           kind: "worktree",
@@ -387,6 +387,14 @@ async function createMultiplicityWorkspace(input: {
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
+  };
+  const payload = await input.client.createWorkspace({
+    ...request,
+    idempotencyKey: draftCreationKey(input.idempotencyKey, {
+      request,
+      launchTarget: input.launchTarget,
+    }),
+    onEvent: input.onEvent,
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -508,7 +516,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   });
   const images = await encodeImages(wirePayload.images);
   let navigated = false;
-  let outcome: SubmitOutcome = "background";
+  const delivery: { outcome: SubmitOutcome } = { outcome: "background" };
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
     config: {
       provider,
@@ -545,7 +553,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
           provider,
           composerState,
         });
-        outcome = submitWorkspaceDraft({
+        delivery.outcome = submitWorkspaceDraft({
           clearConsumedDraft,
           draftKey: input.draftKey,
           draftContextScopeKey: input.draftContextScopeKey,
@@ -571,9 +579,15 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   };
   // A retry after a failed agent start belongs to the ready workspace's draft, not to this creation.
   const agentCreation = { result: Promise.resolve().then(() => execute()) };
-  await agentCreation.result;
-  if (outcome === "background") clearConsumedDraft();
-  return outcome;
+  try {
+    await agentCreation.result;
+  } catch (error) {
+    // Once handed off to the workspace draft tab, that tab owns surfacing agent startup errors.
+    if (delivery.outcome === "navigated") return delivery.outcome;
+    throw error;
+  }
+  if (delivery.outcome === "background") clearConsumedDraft();
+  return delivery.outcome;
 }
 
 function buildComposerConfig(input: {
@@ -1349,6 +1363,7 @@ export function NewWorkspaceScreen({
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
+        launchTarget,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1373,6 +1388,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      launchTarget,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1443,7 +1459,9 @@ export function NewWorkspaceScreen({
         const message = toErrorMessage(error);
         setPendingAction(null);
         setErrorMessage(message);
-        toast.error(message);
+        if (!isStillOnCreateScreen()) {
+          toast.error(message);
+        }
       }
     },
     [
@@ -1524,7 +1542,9 @@ export function NewWorkspaceScreen({
       const message = toErrorMessage(error);
       setPendingAction(null);
       setErrorMessage(message);
-      toast.error(message);
+      if (!isStillOnCreateScreen()) {
+        toast.error(message);
+      }
     }
   }, [
     ensureWorkspace,
@@ -1662,6 +1682,7 @@ export function NewWorkspaceScreen({
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
+      error={errorMessage}
     />
   ) : (
     <Composer
@@ -1693,6 +1714,7 @@ export function NewWorkspaceScreen({
       autoFocusKey={launchFocusKey}
       commandDraft={composerState?.commandDraft}
       agentControls={agentControlsWithDisabled}
+      error={errorMessage}
     />
   );
   return (
@@ -1705,7 +1727,6 @@ export function NewWorkspaceScreen({
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>
@@ -1866,11 +1887,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
-  },
-  errorText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.destructive,
-    lineHeight: 20,
   },
 }));
 

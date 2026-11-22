@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/plus-jakarta-sans";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -46,13 +47,8 @@
 }
 
 .social-proof-marquee {
-  margin-inline: calc(50% - 50cqw);
   overflow-x: clip;
   position: relative;
-}
-
-.landing-content {
-  container-type: inline-size;
 }
 
 .social-proof-marquee::before,
@@ -61,7 +57,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: max(4rem, 8vw);
+  width: 4.5rem;
   z-index: 1;
   pointer-events: none;
 }
@@ -112,7 +108,7 @@
 
 /* Title font - centralized for easy changes */
 .font-title {
-  font-family: inherit;
+  font-family: var(--font-display);
 }
 
 /* Inline code styling - scoped to prose content */
@@ -717,6 +713,8 @@
 
 @theme {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    "Plus Jakarta Sans Variable", "Geist Variable", ui-sans-serif, system-ui, sans-serif;
 
   --color-background: #101615;
   --color-foreground: #fafafa;
@@ -728,6 +726,8 @@
   --color-scrollbar-handle: #717574;
   --color-primary: #239956;
   --color-primary-foreground: #ffffff;
+  --color-accent-text: #6cb17b;
+  --color-brand-green: #20744a;
   --color-secondary: #252b2a;
   --color-secondary-foreground: #fafafa;
 

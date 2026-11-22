@@ -3,6 +3,8 @@ import type { ProviderRefreshContext } from "./agent-sdk-types.js";
 interface RunProviderRefreshOptions<T> {
   label: string;
   timeoutMs: number;
+  /** Aborts the refresh before its deadline, such as at daemon shutdown. */
+  signal?: AbortSignal;
   operation: (context: ProviderRefreshContext) => Promise<T>;
 }
 
@@ -67,6 +69,10 @@ export async function runProviderRefreshWithDeadline<T>(
     );
     controller.abort(timeoutError);
   }, options.timeoutMs);
+  const outer = options.signal;
+  const abortFromOuter = () => controller.abort(outer?.reason);
+  if (outer?.aborted) abortFromOuter();
+  outer?.addEventListener("abort", abortFromOuter, { once: true });
 
   try {
     const result = await options.operation(context);
@@ -76,5 +82,6 @@ export async function runProviderRefreshWithDeadline<T>(
     throw timeoutError ?? error;
   } finally {
     clearTimeout(timer);
+    outer?.removeEventListener("abort", abortFromOuter);
   }
 }

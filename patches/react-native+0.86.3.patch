@@ -1,0 +1,223 @@
+diff --git a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js
+index daab0e3..d3a629c 100644
+--- a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js
++++ b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js
+@@ -16214,12 +16214,21 @@ __DEV__ &&
+           else if (
+             "topTouchEnd" === topLevelType ||
+             "topTouchCancel" === topLevelType
+-          )
+-            if (
+-              (nativeEvent.changedTouches.forEach(recordTouchEnd),
+-              (touchHistory.numberActiveTouches = nativeEvent.touches.length),
+-              1 === touchHistory.numberActiveTouches)
+-            ) {
++          ) {
++            nativeEvent.changedTouches.forEach(recordTouchEnd);
++            touchHistory.numberActiveTouches = nativeEvent.touches.length;
++            if (0 === touchHistory.numberActiveTouches) {
++              for (
++                topLevelType = 0;
++                topLevelType < touchBank.length;
++                topLevelType++
++              )
++                if (
++                  ((nativeEvent = touchBank[topLevelType]),
++                  null != nativeEvent && nativeEvent.touchActive)
++                )
++                  nativeEvent.touchActive = !1;
++            } else if (1 === touchHistory.numberActiveTouches) {
+               for (
+                 topLevelType = 0;
+                 topLevelType < touchBank.length;
+@@ -16236,6 +16245,7 @@ __DEV__ &&
+               (null != topLevelType && topLevelType.touchActive) ||
+                 console.error("Cannot find single active touch.");
+             }
++          }
+         },
+         touchHistory: touchHistory
+       },
+@@ -16314,12 +16324,18 @@ __DEV__ &&
+           nativeEvent,
+           nativeEventTarget
+         ) {
+-          if (isStartish(topLevelType)) trackedTouchCount += 1;
++          if (isStartish(topLevelType))
++            trackedTouchCount =
++              nativeEvent && Array.isArray(nativeEvent.touches)
++                ? nativeEvent.touches.length
++                : trackedTouchCount + 1;
+           else if (
+             "topTouchEnd" === topLevelType ||
+             "topTouchCancel" === topLevelType
+           )
+-            if (0 <= trackedTouchCount) --trackedTouchCount;
++            if (nativeEvent && Array.isArray(nativeEvent.touches))
++              trackedTouchCount = nativeEvent.touches.length;
++            else if (0 <= trackedTouchCount) --trackedTouchCount;
+             else
+               return (
+                 console.warn(
+diff --git a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js
+index 2625bf6..3d85e32 100644
+--- a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js
++++ b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js
+@@ -546,12 +546,21 @@ var instrumentationCallback,
+       else if (
+         "topTouchEnd" === topLevelType ||
+         "topTouchCancel" === topLevelType
+-      )
+-        if (
+-          (nativeEvent.changedTouches.forEach(recordTouchEnd),
+-          (touchHistory.numberActiveTouches = nativeEvent.touches.length),
+-          1 === touchHistory.numberActiveTouches)
+-        )
++      ) {
++        nativeEvent.changedTouches.forEach(recordTouchEnd);
++        touchHistory.numberActiveTouches = nativeEvent.touches.length;
++        if (0 === touchHistory.numberActiveTouches) {
++          for (
++            topLevelType = 0;
++            topLevelType < touchBank.length;
++            topLevelType++
++          )
++            if (
++              ((nativeEvent = touchBank[topLevelType]),
++              null != nativeEvent && nativeEvent.touchActive)
++            )
++              nativeEvent.touchActive = !1;
++        } else if (1 === touchHistory.numberActiveTouches)
+           for (
+             topLevelType = 0;
+             topLevelType < touchBank.length;
+@@ -564,6 +573,7 @@ var instrumentationCallback,
+               touchHistory.indexOfSingleActiveTouch = topLevelType;
+               break;
+             }
++      }
+     },
+     touchHistory: touchHistory
+   };
+@@ -745,12 +755,18 @@ var ResponderEventPlugin = {
+       nativeEvent,
+       nativeEventTarget
+     ) {
+-      if (isStartish(topLevelType)) trackedTouchCount += 1;
++      if (isStartish(topLevelType))
++        trackedTouchCount =
++          nativeEvent && Array.isArray(nativeEvent.touches)
++            ? nativeEvent.touches.length
++            : trackedTouchCount + 1;
+       else if (
+         "topTouchEnd" === topLevelType ||
+         "topTouchCancel" === topLevelType
+       )
+-        if (0 <= trackedTouchCount) --trackedTouchCount;
++        if (nativeEvent && Array.isArray(nativeEvent.touches))
++          trackedTouchCount = nativeEvent.touches.length;
++        else if (0 <= trackedTouchCount) --trackedTouchCount;
+         else return null;
+       ResponderTouchHistoryStore.recordTouchTrack(topLevelType, nativeEvent);
+       if (
+diff --git a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-profiling.js b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-profiling.js
+index 544c754..4d5ec08 100644
+--- a/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-profiling.js
++++ b/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-profiling.js
+@@ -611,12 +611,21 @@ var instrumentationCallback,
+       else if (
+         "topTouchEnd" === topLevelType ||
+         "topTouchCancel" === topLevelType
+-      )
+-        if (
+-          (nativeEvent.changedTouches.forEach(recordTouchEnd),
+-          (touchHistory.numberActiveTouches = nativeEvent.touches.length),
+-          1 === touchHistory.numberActiveTouches)
+-        )
++      ) {
++        nativeEvent.changedTouches.forEach(recordTouchEnd);
++        touchHistory.numberActiveTouches = nativeEvent.touches.length;
++        if (0 === touchHistory.numberActiveTouches) {
++          for (
++            topLevelType = 0;
++            topLevelType < touchBank.length;
++            topLevelType++
++          )
++            if (
++              ((nativeEvent = touchBank[topLevelType]),
++              null != nativeEvent && nativeEvent.touchActive)
++            )
++              nativeEvent.touchActive = !1;
++        } else if (1 === touchHistory.numberActiveTouches)
+           for (
+             topLevelType = 0;
+             topLevelType < touchBank.length;
+@@ -629,6 +638,7 @@ var instrumentationCallback,
+               touchHistory.indexOfSingleActiveTouch = topLevelType;
+               break;
+             }
++      }
+     },
+     touchHistory: touchHistory
+   };
+@@ -810,12 +820,18 @@ var ResponderEventPlugin = {
+       nativeEvent,
+       nativeEventTarget
+     ) {
+-      if (isStartish(topLevelType)) trackedTouchCount += 1;
++      if (isStartish(topLevelType))
++        trackedTouchCount =
++          nativeEvent && Array.isArray(nativeEvent.touches)
++            ? nativeEvent.touches.length
++            : trackedTouchCount + 1;
+       else if (
+         "topTouchEnd" === topLevelType ||
+         "topTouchCancel" === topLevelType
+       )
+-        if (0 <= trackedTouchCount) --trackedTouchCount;
++        if (nativeEvent && Array.isArray(nativeEvent.touches))
++          trackedTouchCount = nativeEvent.touches.length;
++        else if (0 <= trackedTouchCount) --trackedTouchCount;
+         else return null;
+       ResponderTouchHistoryStore.recordTouchTrack(topLevelType, nativeEvent);
+       if (
+diff --git a/node_modules/react-native/src/private/renderer/events/ReactNativeResponder.js b/node_modules/react-native/src/private/renderer/events/ReactNativeResponder.js
+index da29336..7167a2f 100644
+--- a/node_modules/react-native/src/private/renderer/events/ReactNativeResponder.js
++++ b/node_modules/react-native/src/private/renderer/events/ReactNativeResponder.js
+@@ -560,9 +560,13 @@ export function processResponderEvent(
+ ): void {
+   // Track touch count
+   if (isStartish(topLevelType)) {
+-    trackedTouchCount += 1;
++    trackedTouchCount = Array.isArray(nativeEvent.touches)
++      ? nativeEvent.touches.length
++      : trackedTouchCount + 1;
+   } else if (isEndish(topLevelType)) {
+-    if (trackedTouchCount >= 0) {
++    if (Array.isArray(nativeEvent.touches)) {
++      trackedTouchCount = nativeEvent.touches.length;
++    } else if (trackedTouchCount >= 0) {
+       trackedTouchCount -= 1;
+     } else {
+       if (__DEV__) {
+diff --git a/node_modules/react-native/src/private/renderer/events/ResponderTouchHistoryStore.js b/node_modules/react-native/src/private/renderer/events/ResponderTouchHistoryStore.js
+index c0b4d12..b4aab95 100644
+--- a/node_modules/react-native/src/private/renderer/events/ResponderTouchHistoryStore.js
++++ b/node_modules/react-native/src/private/renderer/events/ResponderTouchHistoryStore.js
+@@ -234,7 +234,14 @@ const ResponderTouchHistoryStore = {
+     } else if (isEndish(topLevelType)) {
+       nativeEvent.changedTouches.forEach(recordTouchEnd);
+       touchHistory.numberActiveTouches = nativeEvent.touches.length;
+-      if (touchHistory.numberActiveTouches === 1) {
++      if (touchHistory.numberActiveTouches === 0) {
++        for (let i = 0; i < touchBank.length; i++) {
++          const touchTrackToCheck = touchBank[i];
++          if (touchTrackToCheck != null && touchTrackToCheck.touchActive) {
++            touchTrackToCheck.touchActive = false;
++          }
++        }
++      } else if (touchHistory.numberActiveTouches === 1) {
+         for (let i = 0; i < touchBank.length; i++) {
+           const touchTrackToCheck = touchBank[i];
+           if (touchTrackToCheck != null && touchTrackToCheck.touchActive) {

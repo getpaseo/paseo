@@ -348,6 +348,20 @@
     "intro": "Paseo 原生支持许多 Agent，还可以运行任何 <acp>ACP Agent</acp>，你也可以通过<plugins>插件</plugins>添加新的 Provider。"
   },
   "landing": {
+    "hubEyebrow": {
+      "product": "Paseo Hub",
+      "label": "在你自己的机器上自动化运行"
+    },
+    "eyebrows": {
+      "providers": "Provider",
+      "plugins": "插件",
+      "openSource": "开源理念"
+    },
+    "closingCta": {
+      "eyebrow": "开始使用",
+      "title": "你的 Agent，在每块屏幕上。",
+      "description": "下载桌面应用，或在任意机器上运行 daemon。基于 Apache 2.0 开源。"
+    },
     "socialProof": {
       "title": "深受开发者喜爱",
       "description": "看看开发者们怎么评价 Paseo",
@@ -369,8 +383,16 @@
       "remoteDescription": "在家庭实验室或云主机上运行 Paseo",
       "remoteCta": "文档",
       "teamsTitle": "团队与触发器",
-      "teamsDescription": "共享访问权限，或从 GitHub、Slack 和 Discord 发起工作",
+      "teamsDescription": "通过 Paseo Hub 与团队共享 daemon 并自动化运行 Agent",
       "teamsCta": "Paseo Hub"
+    },
+    "hubSection": {
+      "description": "通过 GitHub、Linear、Slack、Discord、定时任务或 webhook 在你的机器上运行 Agent。",
+      "flowTriggers": "触发来源",
+      "flowDaemons": "已连接的 daemon",
+      "flowOpenSession": "在 Paseo 中打开实时会话",
+      "exploreCta": "了解 Paseo Hub",
+      "docsCta": "自托管文档"
     },
     "automation": {
       "title": "为自动化而生",
@@ -393,7 +415,9 @@
       "plan": "我会把它做成本地插件并安装。",
       "done": "审查队列已出现在你的侧边栏。",
       "panelTitle": "审查队列",
-      "libraryTitle": "400 多个社区插件",
+      "libraryTitle": "社区插件",
+      "libraryTitleCount_one": "{{count}} 个社区插件",
+      "libraryTitleCount_other": "{{count}} 个社区插件",
       "libraryDescription": "开发者用的是和你的 Agent 相同的插件 API",
       "browse": "浏览插件",
       "docs": "插件文档",
@@ -537,9 +561,9 @@
       "title": "以公司身份赞助",
       "description": "在资金上支持 Paseo，同时提升你公司的曝光度",
       "perMonth": "每月",
-      "homepage": "你的 Logo 出现在 paseo.sh 首页和文档中，每月约 70,000 名访客",
+      "homepage": "你的 Logo 出现在 paseo.sh 首页和文档中，每月约 100,000 名访客",
       "readme": "你的 Logo 出现在 GitHub README 中，每月约 30,000 名访客",
-      "discord": "在 Discord 社区发布公告，约 2,000 名成员",
+      "discord": "在 Discord 社区发布公告，约 2,700 名成员",
       "x": "我在 X 上发布一条公告",
       "emailFirst": "或先给我发邮件",
       "emailWhenOpen": "发邮件给我，名额空出时通知你"
@@ -580,25 +604,213 @@
     "reddit": "工作流与问答。"
   },
   "hub": {
-    "metaTitle": "Paseo Hub - GitHub、Slack 和 Discord 触发器",
-    "metaDescription": "自行运行 Paseo Hub，从 GitHub、Slack 和 Discord 在你自己的机器上启动 Agent。",
+    "metaTitle": "Paseo Hub - 在你的机器上自动化运行 Agent",
+    "metaDescription": "通过 GitHub、Linear、Slack、Discord、定时任务和 webhook，在你的 Paseo daemon 上自动运行 Agent。你可以自托管 Hub 或使用托管服务。",
     "title": "Paseo Hub",
-    "intro": "一个可选服务，位于你的 daemon 之上，为它们提供额外能力。",
-    "runIt": "可以自行运行，也可以使用托管服务。",
+    "intro": "自动化运行编程 Agent，并与团队共享 daemon。每次运行都在你自己的机器上执行。",
+    "runIt": "可基于 Apache 2.0 自托管运行，也可以使用托管服务。",
+    "hero": {
+      "getStarted": "开始使用",
+      "selfHost": "自托管"
+    },
+    "eyebrows": {
+      "architecture": "架构",
+      "pricing": "定价"
+    },
+    "automations": {
+      "title": "来自各类来源的自动化",
+      "description": "触发器监听你各类工具中的事件，并在已连接的 daemon 上启动 Agent。"
+    },
+    "sources": {
+      "github": {
+        "name": "GitHub",
+        "description": "Issue、PR 和评论。"
+      },
+      "linear": {
+        "name": "Linear",
+        "description": "Issue、分配和评论。"
+      },
+      "slack": {
+        "name": "Slack",
+        "description": "频道和讨论串中的提及。"
+      },
+      "discord": {
+        "name": "Discord",
+        "description": "频道和讨论串中的提及。"
+      },
+      "schedules": {
+        "name": "定时任务",
+        "description": "按你的时区定时运行。"
+      },
+      "webhooks": {
+        "name": "Webhook",
+        "description": "来自任意服务或脚本的事件。"
+      }
+    },
+    "demo": {
+      "shared": {
+        "tablistLabel": "自动化来源预览",
+        "openInPaseo": "在 Paseo 中打开",
+        "testsPassed": "测试通过",
+        "appBadge": "APP",
+        "docsLink": "阅读 {{source}} 文档"
+      },
+      "slack": {
+        "alt": "#engineering 中的 Slack 讨论串，展示 mo 提及 @paseo-bot 查看 P0 issue 并创建 PR",
+        "searchPlaceholder": "搜索 Paseo",
+        "channels": "频道",
+        "apps": "应用",
+        "channelTopic": "核心 daemon、移动端与 Hub",
+        "threadReplies": "3 条回复",
+        "typing": "paseo-bot 正在输入...",
+        "composerPlaceholder": "回复...",
+        "showIssues": "<mention/> 给我看看最新的 P0 issue",
+        "issuesOpen": "目前有 3 个未关闭的 P0 issue：",
+        "createPr": "<mention/> 为第一个创建一个 PR",
+        "ranOn": "已在 <host>macbook-pro</host> 上继续运行。已创建 <pr>getpaseo/paseo#1234</pr>，修复了终端写入问题。",
+        "filesChanged": "3 个文件已更改",
+        "caption": "在同一讨论串中回复即可继续引导 Agent，或随时在 Paseo 中打开会话。"
+      },
+      "github": {
+        "alt": "GitHub issue #2811，展示 mo 添加标签后 paseo-bot 创建 PR #2819 并通过全部检查",
+        "issueTitle": "高负载下终端输出丢帧",
+        "issueMeta": "于 14 分钟前创建此 issue · 2 条评论",
+        "authorBadge": "Owner",
+        "botBadge": "bot",
+        "openedAgo": "14 分钟前",
+        "repliedAgo": "9 分钟前",
+        "issueBody": "PTY 缓冲区写满时，突发输出会丢失帧。<mention/> 复现这个问题并提交修复。",
+        "addedLabel": "添加了标签",
+        "startedOn": "paseo-bot 已在 macbook-pro 上启动",
+        "botReply": "已在 <host>macbook-pro</host> 上通过 64 KB 突发测试复现，并创建 <pr>#2819</pr> 限制并排空写入队列。",
+        "checksPassed": "全部 4 项检查已通过",
+        "assignees": "负责人",
+        "labels": "标签",
+        "development": "开发关联",
+        "daemon": "daemon",
+        "caption": "添加 issue 标签或发表评论，即可在你的 daemon 上启动 Agent 并创建 PR。"
+      },
+      "linear": {
+        "alt": "Linear issue PAS-418 分配给 paseo-bot 后在 devbox 上运行并关联 PR #2822",
+        "issueTitle": "Android 休眠唤醒后中继陷入重连循环",
+        "issueDescription": "手机从 Doze 模式唤醒后，中继套接字每 200ms 重试一次且没有退避。",
+        "activity": "动态",
+        "assignedEvent": "将此 issue 分配给了",
+        "runningOn": "已在 <host>devbox</host> 上运行 · Codex",
+        "traceLine": "已读取 relay/reconnect.ts，添加带抖动的退避和唤醒重置",
+        "botSummary": "已在 <code>relay/reconnect.ts</code> 中添加指数退避与唤醒状态重置，并补充了回归测试。PR 已准备好等待审查。",
+        "properties": "属性",
+        "status": "状态",
+        "priority": "优先级",
+        "assignee": "负责人",
+        "creator": "创建者",
+        "labels": "标签",
+        "daemon": "daemon",
+        "caption": "将 issue 分配给 Agent，即可在你的 daemon 上运行修复并把 PR 关联回来。"
+      },
+      "discord": {
+        "alt": "Discord 频道 #engineering，展示 mo 提及 @paseo-bot 后在讨论串中收到 PR #2825",
+        "textChannels": "文字频道",
+        "channelTopic": "daemon 与 CLI 工程",
+        "threadTitle": "修复残留 worktree",
+        "time1": "今天 10:12",
+        "time2": "今天 10:16",
+        "userPrompt": "<mention/> 修复 <issue/> 里残留 worktree 分支未清理的问题",
+        "startedThread": "发起了讨论串：",
+        "botStarted": "正在 <host>devbox</host> 上使用 OpenCode 运行，正在检查 worktree 关闭钩子。",
+        "botFinished": "已在 Agent 工作区关闭时自动清理孤立分支，并添加了测试。",
+        "fieldHost": "主机",
+        "fieldDiff": "改动",
+        "fieldChecks": "检查",
+        "composerPlaceholder": "发送消息到 #engineering",
+        "caption": "在频道中提及 @paseo-bot，即可在讨论串里启动 Agent 并回传结果。"
+      },
+      "schedules": {
+        "alt": "每日 CI 优化定时任务在上午 7:00 于 devbox 上运行，创建 PR #2831 并在 Slack 发布摘要",
+        "active": "运行中",
+        "jobTitle": "每日 CI 优化",
+        "cadence": "工作日 7:00 America/New_York",
+        "step1Title": "定时运行 #42 分析了过去 24 小时的 CI",
+        "step1Detail": "发现 <code>website-e2e</code> 有 18% 的概率不稳定，且冷启动 Rust 构建增加了 2m 40s。",
+        "step2Title": "已在 devbox 上创建 PR",
+        "metricRuntime": "平均耗时",
+        "metricFlake": "e2e 不稳定率",
+        "metricCache": "Cargo 缓存",
+        "slackPosted": "已发送到 Slack",
+        "slackSummary": "早间 CI 报告：将平均 workflow 耗时从 <strong>7m 12s</strong> 降至 <strong>4m 28s</strong>，并在 <pr>#2831</pr> 中修复了 e2e 不稳定问题。",
+        "notifiedMo": "抄送 @mo",
+        "caption": "按你的时区定时运行 Agent，自动创建 PR 并将摘要发送到 Slack。"
+      },
+      "webhooks": {
+        "alt": "终端发送 webhook POST 请求。Hub 返回 202 Accepted 并在 devbox 上启动 Codex 运行。",
+        "runMeta": "devbox · Codex · getpaseo/paseo",
+        "statusDone": "已创建 PR",
+        "trace1": "已在独立 worktree 中检出 <code>v0.19.4</code>",
+        "trace2": "定位到 <code>ECONNRESET</code> 来自 <code>relay/server.ts</code> 的空闲 keepalive 超时",
+        "trace3": "已创建 <pr/> 并附带修复与回归测试，全部检查已通过",
+        "triggeredBy": "webhook · sentry-alert",
+        "routedLine": "Hub 已路由到 devbox · 118ms",
+        "caption": "从任意脚本或服务发送 POST 请求，即可立即在你的 daemon 上启动 Agent。"
+      }
+    },
+    "authoring": {
+      "title": "在仪表盘配置，或以代码方式部署",
+      "description": "在浏览器中设置触发器，或将 YAML 文件提交到仓库并通过 CLI 部署。",
+      "dashboardTitle": "仪表盘与运行活动",
+      "dashboardDescription": "在浏览器中选择 daemon 和工作目录。配置触发器时，Hub 会检查该 daemon 提供哪些 Provider、模型和模式。",
+      "triggersLabel": "触发器：",
+      "triggersText": "在表单或 YAML 视图中创建、编辑或暂停自动化。",
+      "validationLabel": "实时校验：",
+      "validationText": "查看已连接的 daemon 提供的 Provider、模型和模式。",
+      "activityLabel": "运行活动：",
+      "activityText": "查看事件投递、路由结果、输出和错误。",
+      "docsLink": "阅读配置文档"
+    },
+    "shape": {
+      "title": "与团队共享，锁定在你的机器上",
+      "description": "Hub 连接到你已在运行的 daemon。团队共享触发器与运行历史，你的代码留在你自己的机器上。",
+      "triggersRow": "自动化来源",
+      "webhooks": "webhook、提及与定时任务",
+      "hub": "Hub",
+      "hubHosting": "自托管或托管",
+      "sameRpcs": "与应用和 CLI 相同的 RPC",
+      "daemonsRow": "已连接的 daemon",
+      "directOrRelay": "直连或端到端加密中继",
+      "appsRow": "Paseo 客户端",
+      "desktop": "桌面端",
+      "web": "网页端",
+      "mobile": "移动端",
+      "cli": "CLI"
+    },
+    "guardrails": {
+      "optInTitle": "主动授权执行",
+      "optInDescription": "每个 daemon 的 <code>hub.execute</code> 权限默认关闭，按机器单独授予。",
+      "scopedTitle": "受控触发范围",
+      "scopedDescription": "事件触发器支持发送者白名单和资源过滤。你可以为每个步骤设置 GitHub 权限，也可以限制 Slack 和 Discord 工具的使用范围。",
+      "visibilityTitle": "团队可见性",
+      "visibilityDescription": "所有者、管理员和成员共享 daemon、触发器、运行历史和路由结果。"
+    },
+    "agents": {
+      "title": "运行你已有的 Agent",
+      "description": "Hub 会发现每个已连接的 Paseo daemon 上的 Provider。你可以运行 Claude Code、Codex、OpenCode、Pi 和自定义 Provider，包括插件提供的 Provider。"
+    },
     "pricing": {
-      "title": "选择 Hub 的运行方式",
-      "unavailable": "方案对比暂时不可用。",
-      "selfHost": "自托管 Hub",
+      "title": "自托管或托管",
+      "seatNote": "你可以按 Apache 2.0 许可自行运行开源 Hub，或使用托管服务。Hub 仪表盘成员和待接受的邀请都计入席位。",
+      "unavailable": "托管方案对比暂时不可用。",
+      "selfHost": "自托管文档",
       "selfHosted": "自托管",
       "free": "免费",
-      "openSource": "/ 开源",
+      "openSource": "/ Apache 2.0",
       "getStarted": "开始使用",
-      "operateHub": "由你运营 Hub",
+      "operateHub": "通过 <code>npx @getpaseo/hub</code> 或 Docker Compose 运行",
+      "allSources": "GitHub、Linear、Slack、Discord、定时任务与 webhook",
+      "managedSources": "GitHub、Linear、Slack、Discord、定时任务与 webhook",
       "ownApps": "由你创建和控制的 Provider 应用",
-      "openSourceFeature": "开源",
+      "openSourceFeature": "Apache 2.0 开源",
       "unlimitedRuns": "无限次 Agent 运行",
       "runsPerMonth": "每月 {{value}} 次 Agent 运行",
-      "unlimitedUnits": "无限{{unit}}",
+      "noSeatCap": "无席位上限",
       "units_one": "{{value}} 个{{unit}}",
       "units_other": "{{value}} 个{{unit}}",
       "perMonth": "/ 月",
@@ -607,71 +819,32 @@
       "perUnitMonths": "每{{unit}} / {{count}} 个月",
       "seat": "席位"
     },
-    "triggers": {
-      "title": "触发器，运行在你的机器上",
-      "description": "在 GitHub、Slack 或 Discord 中提及机器人，就会在你的 daemon 上启动一个 Agent。",
-      "github": "Issue、PR 和代码审查。",
-      "slack": "频道和讨论串。",
-      "discord": "频道和讨论串。"
-    },
-    "demo": {
-      "showIssues": "<mention/> 给我看看最新的 P0 issue",
-      "issuesOpen": "目前有三个未关闭的 P0 issue：",
-      "createPr": "<mention/> 为第一个创建一个拉取请求",
-      "ranOn": "已在 <host>macbook-pro</host> 上运行。已创建 <pr>getpaseo/paseo#1234</pr>，修复了终端写入问题。",
-      "filesChanged": "3 个文件已更改",
-      "testsPassed": "测试通过",
-      "bot": "机器人",
-      "caption": "Agent 在你的 daemon 上运行，使用你的密钥。"
-    },
-    "agents": {
-      "title": "运行你已有的 Agent",
-      "description": "Hub 本身不附带任何 Agent，因此你的团队使用的是 daemon 上已配置好的 Provider、订阅和技能。"
-    },
-    "shape": {
-      "title": "适配你现有的基础设施",
-      "description": "Hub 连接到你已在运行的 daemon，你的应用也继续连接这些 daemon。",
-      "triggersRow": "触发器和团队成员",
-      "yourTeam": "你的团队",
-      "futureIntegrations": "未来的集成",
-      "webhooks": "webhook 和提及",
-      "hub": "Hub",
-      "hubHosting": "自托管或托管",
-      "sameRpcs": "与应用和 CLI 相同的 RPC",
-      "daemonsRow": "你的 daemon",
-      "directOrRelay": "直连或中继",
-      "appsRow": "Paseo 应用",
-      "desktop": "桌面端",
-      "web": "网页端",
-      "mobile": "移动端",
-      "cli": "CLI"
-    },
     "faq": {
       "title": "常见问题",
-      "whatQuestion": "Hub 是什么？",
-      "whatAnswer": "一个独立的服务，位于你的 Paseo daemon 之上。你把一个或多个 daemon 连接到它，它就为这些 daemon 提供 GitHub、Slack 和 Discord 触发器，协作功能也在计划中。没有它，Paseo 也能完整工作。",
-      "separateQuestion": "为什么它是独立服务，而不是 daemon 的一部分？",
-      "separateAnswer1": "daemon 保持为单台机器上的一个精简可执行程序。Hub 通过与应用和 CLI 相同的 RPC 与 daemon 通信，所以任何人都可以基于 Paseo 构建自己的 hub。",
-      "separateAnswer2": "它的职责也不同。Hub 需要暴露在互联网上、与团队共享，并以多租户方式运行。这些都不属于单机 daemon 的职责。",
+      "whatQuestion": "Paseo Hub 是什么？",
+      "whatAnswer": "Paseo Hub 是位于你的 Paseo daemon 之上的独立服务。连接一个或多个 daemon 后，可以通过 GitHub、Linear、Slack、Discord、定时任务和 webhook 自动化运行 Agent，并与团队共享。没有 Hub，Paseo 也能独立工作。",
+      "separateQuestion": "为什么 Hub 是独立服务，而不是 daemon 的一部分？",
+      "separateAnswer1": "daemon 保持为单台机器上的单一进程。Hub 通过与应用和 CLI 相同的 RPC 与 daemon 通信，所以任何人都可以基于 Paseo 构建自己的服务。",
+      "separateAnswer2": "Hub 的职责也不同。它接收公网 webhook、管理团队访问并以多租户方式运行，这些都不属于单机 daemon。",
       "selfHostQuestion": "我可以自己运行吗？",
-      "selfHostAnswer": "可以。运行 <code>npx @getpaseo/hub</code>，然后在浏览器中完成设置。源代码在 <github>GitHub</github> 上，更复杂的部署请参阅<guide>自托管指南</guide>。",
+      "selfHostAnswer": "可以。运行 <code>npx @getpaseo/hub</code> 或使用 Docker Compose 启动，然后在浏览器中完成设置。Apache 2.0 源代码在 <github>GitHub</github> 上，生产部署请参阅<guide>自托管指南</guide>。",
       "needQuestion": "运行它需要什么？",
-      "needAnswer": "Node.js 和一个正在运行的 Paseo daemon。Hub 会引导你连接需要的 Provider 应用。",
+      "needAnswer": "需要 Node.js 或 Docker，以及一个正在运行的 Paseo daemon。Hub 会引导你连接 daemon 和 Provider 应用。",
       "hostedQuestion": "有托管版本吗？",
-      "hostedAnswer": "有。托管服务运行的就是你可以自托管的同一套 Hub 软件。",
-      "plannedQuestion": "还计划了什么？",
-      "plannedIntro": "以下尚未实现，列出来是为了让你了解方向。",
-      "plannedProvisioning": "为团队预配 daemon",
-      "plannedSharing": "在团队内共享设置和技能",
-      "plannedIntegrations": "更多集成",
-      "moveQuestion": "我需要把团队迁移到新工具吗？",
-      "moveAnswer": "不需要。Hub 在你团队已在使用的 Slack 或 Discord 中工作，运行在你已有的 daemon 上。工作变得复杂时，你可以在同样的 daemon 上切换到 Paseo 应用。",
-      "agentsQuestion": "它运行哪些 Agent？",
-      "agentsAnswer": "你的 daemon 上配置了哪些就运行哪些，使用你自己的订阅和技能。Hub 本身不附带任何 Agent。",
+      "hostedAnswer": "有。<hosted>托管服务</hosted>运行的就是你可以自托管的同一套开源 Hub 软件。Hub 仪表盘成员和待接受的邀请都计入席位。",
       "codeQuestion": "Hub 能在我的机器上运行代码吗？",
-      "codeAnswer": "能，但仅限于你连接到它的 daemon，其他地方都不行。这正是触发器的意义，也是测试版访问范围保持小而可信的原因。",
-      "accessQuestion": "如何获得访问权限？",
-      "accessAnswer": "你现在就可以自托管，或<hosted>登录托管版 Hub</hosted> 获取免费账户。需要更多 Agent 运行次数或更多席位时，可在 Hub 内的账单页面升级。"
+      "codeAnswer": "只能在授予了 <code>hub.execute</code> 权限的 daemon 上运行。注册 daemon 默认不会开启执行权限，你可以随时在本机撤销该权限。",
+      "moveQuestion": "我需要把团队迁移到新工具吗？",
+      "moveAnswer": "不需要。Hub 通过 GitHub、Linear、Slack、Discord、定时任务和 webhook 在你已有的 daemon 上运行。需要直接查看或引导运行时，在桌面端或移动端的 Paseo 中打开实时会话即可。",
+      "agentsQuestion": "它运行哪些 Agent？",
+      "agentsAnswer": "Hub 运行已连接的 Paseo daemon 上配置的 Provider，包括插件提供的自定义 Provider。Agent 使用这些机器上的订阅、模型和技能。",
+      "plannedQuestion": "还计划了什么？",
+      "plannedIntro": "以下能力尚未实现，列出来是为了让你了解 Hub 的方向。",
+      "plannedProvisioning": "为团队预配远程 daemon",
+      "plannedSharing": "在团队内共享设置和技能",
+      "plannedIntegrations": "更多 Provider 集成",
+      "accessQuestion": "如何开始使用？",
+      "accessAnswer": "运行 <code>npx @getpaseo/hub</code> 自托管 Hub，或<hosted>登录托管版 Hub</hosted> 获取免费账户。需要更多运行次数或席位时，可在 Hub 内的账单页面升级。"
     }
   },
   "changelog": {

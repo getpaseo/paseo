@@ -2,9 +2,10 @@ import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { Settings } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuSubTrigger,
   type MenuPageDefinition,
@@ -23,26 +24,36 @@ import { Alert } from "@/components/ui/alert";
 import { useHosts } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { useUsageSetting } from "./setting";
-import { useUsageDisplay } from "./display";
+import { useUsageDisplay, type UsageDisplay } from "./display";
 import { useUsageInSidebar } from "./in-sidebar";
 import { hasHostChoice, type UsageHostSelection } from "./hosts";
 import type { UsageDisplayAs } from "./preferences";
+import { UsageSourceIcon } from "./source-icon";
+import type { UsageReportEntry } from "./types";
 
 const ThemedSettings = withUnistyles(Settings);
 
 const HOST_PAGE = "host";
+const SOURCES_PAGE = "sources";
 
 /**
- * The shared usage preferences, opened from a cog as a popover or compact sheet. With more than
- * one host, it leads with the host whose usage shows: the row reads as the current host, and the
- * hosts are a page of the same surface, so a compact sheet never opens a second sheet over it.
+ * The shared usage preferences, opened from a cog as a popover or compact sheet. Host and Sources
+ * open as pages of the same surface, so a compact sheet never opens a second sheet over it.
  */
 export function UsageOptions({
   serverId,
   hostSelection,
+  reports = [],
+  display: providedDisplay,
+  open,
+  onOpenChange,
 }: {
   serverId: string | null;
   hostSelection?: UsageHostSelection;
+  reports?: readonly UsageReportEntry[];
+  display?: UsageDisplay;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const setting = useUsageSetting(serverId);
   const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
@@ -57,24 +68,37 @@ export function UsageOptions({
   ];
   const compact = useIsCompactFormFactor();
   const glyphSize = useIconButtonChromeGlyphSize("small", compact);
-  const { display } = useUsageDisplay([]);
+  const fallbackDisplay = useUsageDisplay(providedDisplay ? [] : reports).display;
+  const display = providedDisplay ?? fallbackDisplay;
   const { inSidebar, setInSidebar } = useUsageInSidebar();
   const hostChoice = hasHostChoice(hostSelection) ? hostSelection : null;
-  const pages = useMemo<MenuPageDefinition[] | undefined>(
-    () =>
-      hostChoice
-        ? [
-            {
-              id: HOST_PAGE,
-              title: t("providerUsage.host"),
-              content: <UsageHostPage hostSelection={hostChoice} />,
-            },
-          ]
-        : undefined,
-    [hostChoice, t],
+  const arrangedReports = useMemo(() => display.arrange(reports), [display, reports]);
+  const hasSources = arrangedReports.length > 0;
+  const shownCount = useMemo(
+    () => arrangedReports.filter((entry) => display.isCardOn(entry)).length,
+    [arrangedReports, display],
   );
+  const pages = useMemo<MenuPageDefinition[] | undefined>(() => {
+    const definitions: MenuPageDefinition[] = [];
+    if (hostChoice) {
+      definitions.push({
+        id: HOST_PAGE,
+        title: t("providerUsage.host"),
+        content: <UsageHostPage hostSelection={hostChoice} />,
+      });
+    }
+    if (hasSources) {
+      definitions.push({
+        id: SOURCES_PAGE,
+        title: t("providerUsage.sources"),
+        content: <UsageSourcesPage reports={arrangedReports} display={display} />,
+      });
+    }
+    return definitions.length > 0 ? definitions : undefined;
+  }, [arrangedReports, display, hasSources, hostChoice, t]);
+  const hasSubTriggers = Boolean(hostChoice || hasSources);
   return (
-    <DropdownMenu compactMode="sheet">
+    <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <ToolbarButton
         kind="menu"
         label={t("providerUsage.options")}
@@ -99,8 +123,20 @@ export function UsageOptions({
             {t("providerUsage.host")}
           </DropdownMenuSubTrigger>
         ) : null}
+        {hasSources ? (
+          <DropdownMenuSubTrigger
+            id={SOURCES_PAGE}
+            value={t("providerUsage.sourcesCount", {
+              shown: shownCount,
+              total: arrangedReports.length,
+            })}
+            testID="usage-options-sources"
+          >
+            {t("providerUsage.sources")}
+          </DropdownMenuSubTrigger>
+        ) : null}
         <View
-          style={hostChoice ? settingsStyles.rowBorder : undefined}
+          style={hasSubTriggers ? settingsStyles.rowBorder : undefined}
           testID="usage-options-fields"
         >
           <MenuSettingsRows>
@@ -154,5 +190,62 @@ function UsageHostPage({ hostSelection }: { hostSelection: UsageHostSelection })
         />
       ))}
     </>
+  );
+}
+
+function UsageSourcesPage({
+  reports,
+  display,
+}: {
+  reports: readonly UsageReportEntry[];
+  display: UsageDisplay;
+}) {
+  const { t } = useTranslation();
+  const inactiveLabel = t("providerUsage.providerInactive");
+  return (
+    <>
+      {reports.map((entry) => (
+        <UsageSourceMenuItem
+          key={entry.id}
+          entry={entry}
+          on={display.isCardOn(entry)}
+          onToggle={display.setCardOn}
+          inactiveLabel={inactiveLabel}
+        />
+      ))}
+    </>
+  );
+}
+
+function UsageSourceMenuItem({
+  entry,
+  on,
+  onToggle,
+  inactiveLabel,
+}: {
+  entry: UsageReportEntry;
+  on: boolean;
+  onToggle: (reportId: string, on: boolean) => void;
+  inactiveLabel: string;
+}) {
+  const handleSelect = useCallback(() => onToggle(entry.id, !on), [entry.id, on, onToggle]);
+  const leading = useMemo(
+    () => <UsageSourceIcon svg={entry.icon ?? null} size={14} />,
+    [entry.icon],
+  );
+  const description =
+    [entry.account.label, !on && entry.defaultEnabled === false ? inactiveLabel : null]
+      .filter(Boolean)
+      .join(" · ") || undefined;
+  return (
+    <DropdownMenuCheckboxItem
+      leading={leading}
+      description={description}
+      checked={on}
+      onToggle={handleSelect}
+      testID={`usage-source-toggle-${entry.id}`}
+    >
+      {entry.sourceLabel}
+    </DropdownMenuCheckboxItem>
   );
 }
