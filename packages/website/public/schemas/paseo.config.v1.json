@@ -528,6 +528,11 @@
         "idleRuntimeCleanup": {
           "type": "boolean"
         },
+        "idleRuntimeCleanupMinutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
         "resumeOnStartup": {
           "type": "boolean"
         },

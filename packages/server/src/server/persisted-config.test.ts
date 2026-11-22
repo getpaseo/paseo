@@ -281,6 +281,17 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     expect(parsed.agents?.catalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("accepts an idle runtime cleanup period in minutes", () => {
+    const parsed = PersistedConfigSchema.parse({ agents: { idleRuntimeCleanupMinutes: 15 } });
+    expect(parsed.agents?.idleRuntimeCleanupMinutes).toBe(15);
+  });
+
+  test.each([4, 1441, 7.5])("rejects an idle runtime cleanup period of %s minutes", (minutes) => {
+    expect(() =>
+      PersistedConfigSchema.parse({ agents: { idleRuntimeCleanupMinutes: minutes } }),
+    ).toThrow();
+  });
+
   test("rejects provider catalog refresh timeouts that overflow Node timers", () => {
     expect(() =>
       PersistedConfigSchema.parse({ agents: { catalogRefreshTimeoutMs: 2_147_483_648 } }),

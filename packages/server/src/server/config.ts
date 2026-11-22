@@ -34,6 +34,7 @@ export {
   editPersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
+import { IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT } from "@getpaseo/protocol/messages";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -596,6 +597,7 @@ export type ResolvedDaemonSettings = Pick<
   | "relayRequireProtectedSecurity"
   | "appBaseUrl"
   | "idleRuntimeCleanup"
+  | "idleRuntimeCleanupMinutes"
   | "resumeOnStartup"
   | "resumePrompt"
   | "providerCatalogRefreshTimeoutMs"
@@ -684,7 +686,7 @@ export function resolveReloadableConfig(
     plugins: persisted.plugins,
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
-    idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+    ...resolveIdleRuntimeCleanupConfig(persisted.agents),
     ...resolveRestartRecoveryConfig(persisted.agents),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
     metadataGeneration: persisted.agents?.metadataGeneration,
@@ -835,6 +837,14 @@ function resolveSpeechOverrideControlledPaths(
   if (env.PASEO_VOICE_LLM_PROVIDER !== undefined) paths.push("features.voiceMode.llm.provider");
   if (env.PASEO_LOCAL_MODELS_DIR !== undefined) paths.push("providers.local.modelsDir");
   return paths;
+}
+
+function resolveIdleRuntimeCleanupConfig(agents: PersistedConfig["agents"]) {
+  return {
+    idleRuntimeCleanup: agents?.idleRuntimeCleanup ?? true,
+    idleRuntimeCleanupMinutes:
+      agents?.idleRuntimeCleanupMinutes ?? IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT,
+  };
 }
 
 function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
