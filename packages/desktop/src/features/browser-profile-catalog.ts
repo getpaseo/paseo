@@ -29,6 +29,16 @@ function foldedSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+// Canonically equivalent spellings (é vs e + U+0301) name the same profile.
+function nameKey(name: string): string {
+  return name.normalize("NFC").trim().toLowerCase();
+}
+
+export type BrowserProfileCreateError = "duplicate" | "reserved" | "invalid" | "io";
+export type BrowserProfileCreateResult =
+  | { ok: true; profile: Entry }
+  | { ok: false; code: BrowserProfileCreateError };
+
 export function createBrowserProfileCatalog(userData: string) {
   const file = path.join(userData, "browser-profiles.json");
   let writer = Promise.resolve();
@@ -40,39 +50,44 @@ export function createBrowserProfileCatalog(userData: string) {
       throw error;
     }
   }
-  async function append(input: unknown) {
-    const { group, name, workspaceNames } = createInput.parse(input);
-    const profiles = await list();
+  async function append(input: unknown): Promise<BrowserProfileCreateResult> {
+    const parsed = createInput.safeParse(input);
+    if (!parsed.success) return { ok: false, code: "invalid" };
+    const { group, name, workspaceNames } = parsed.data;
+    const profiles = await list().catch(() => null);
+    if (!profiles) return { ok: false, code: "io" };
     const siblings = profiles.filter(
       (row) => row.group?.serverId === group?.serverId && row.group?.projectId === group?.projectId,
     );
     const names = siblings.map((row) => row.name).concat(group ? workspaceNames : []);
-    if (names.some((existing) => existing.trim().toLowerCase() === name.toLowerCase()))
-      throw new Error("Duplicate profile name");
+    if (names.some((existing) => nameKey(existing) === nameKey(name)))
+      return { ok: false, code: "duplicate" };
     const base = foldedSlug(name) || `profile-${randomUUID().slice(0, 8)}`;
     if (!isNamedBrowserSlug(base, group === null) || (group && /^ws-/i.test(name)))
-      throw new Error("Reserved profile name");
+      return { ok: false, code: "reserved" };
     let slug = base;
     for (let n = 2; siblings.some((row) => row.slug === slug); n++) {
       const suffix = `-${n}`;
       const stem = group && base === "ws" ? "profile-ws" : base;
       slug = stem.slice(0, 48 - suffix.length).replace(/-+$/, "") + suffix;
     }
-    const entry = { group, name, slug };
+    const profile = { group, name, slug };
     const temp = file + "." + randomUUID();
     try {
-      await writeFile(temp, JSON.stringify({ version: 1, profiles: [...profiles, entry] }), {
+      await writeFile(temp, JSON.stringify({ version: 1, profiles: [...profiles, profile] }), {
         mode: 0o600,
       });
       await rename(temp, file);
+    } catch {
+      return { ok: false, code: "io" };
     } finally {
       await rm(temp, { force: true });
     }
-    return entry;
+    return { ok: true, profile };
   }
   return {
     list,
-    create(input: unknown) {
+    create(input: unknown): Promise<BrowserProfileCreateResult> {
       const result = writer.then(() => append(input));
       writer = result.then(
         () => undefined,

@@ -1,6 +1,6 @@
-import { useFetchQuery } from "@/data/query";
-import { profilePartition, workspaceProfile, sameProfile, sharedDefault } from "../profiles";
-import { ProfileSelector } from "./profile-selector.electron";
+import { sameProfile } from "../profiles";
+import { useBrowserTabProfile } from "../use-browser-tab-profile";
+import { ProfileSelector, useBrowserProfileCatalog } from "./profile-selector.electron";
 import type { BrowserProfileEntry } from "@/desktop/host";
 import {
   useCallback,
@@ -67,7 +67,6 @@ import {
   normalizeWorkspaceBrowserUrl,
   RESPONSIVE_BROWSER_VIEWPORT,
   useBrowserStore,
-  waitForBrowserHydration,
 } from "@/desktop/browser/store";
 import {
   applyInactiveBrowserWebviewViewport,
@@ -607,51 +606,13 @@ export function BrowserPane({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
-  const stored = browser?.profile;
   const {
-    data: resolved,
-    error: partitionError,
-    refetch,
-  } = useFetchQuery({
-    dataShape: "value",
-    queryKey: [
-      "browser-profile",
-      browserId,
-      stored,
-      serverId,
-      projectId,
-      workspaceId,
-      workspaceName,
-    ],
-    enabled: Boolean(projectId && stored),
-    queryFn: async () => {
-      await waitForBrowserHydration();
-      const list = getDesktopHost()?.browser?.listProfiles;
-      if (!projectId || !list) throw new Error("Cannot resolve browser profiles");
-      const automatic = await workspaceProfile(serverId, projectId, workspaceId, workspaceName);
-      const catalog = await list();
-      const choice = stored === "pending" ? automatic : stored;
-      const selected =
-        choice &&
-        typeof choice !== "string" &&
-        [sharedDefault, automatic, ...catalog].find((row) => sameProfile(row, choice));
-      if (!selected) throw new Error("Unknown browser profile");
-      return { selected, automatic, catalog, partition: await profilePartition(selected) };
-    },
-    immutableWhen: () => true,
-    retry: false,
-    gcTime: 0,
-  });
-  const partition =
-    projectId && !partitionError && stored !== "pending" ? resolved?.partition : undefined;
-  useEffect(() => {
-    if (
-      stored === "pending" &&
-      resolved &&
-      useBrowserStore.getState().browsersById[browserId]?.profile === "pending"
-    )
-      useBrowserStore.getState().updateBrowser(browserId, { profile: resolved.selected });
-  }, [browserId, stored, resolved]);
+    selected: explicit,
+    automatic,
+    partition,
+    unavailable,
+  } = useBrowserTabProfile({ browserId, serverId, projectId, workspaceId, workspaceName });
+  const catalog = useBrowserProfileCatalog();
   const [registered, setRegistered] = useState<string | undefined>(undefined);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
@@ -798,7 +759,7 @@ export function BrowserPane({
     );
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     if (residentWebview && residentWebview.getAttribute("partition") !== partition) {
-      updateBrowser(browserId, { lastError: t("desktop.settings.loadFailed") });
+      updateBrowser(browserId, { lastError: t("workspace.browser.profiles.attachFailed") });
       return;
     }
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
@@ -1057,9 +1018,10 @@ export function BrowserPane({
     [browserErrorLabels],
   );
 
+  const refetchCatalog = catalog.refetch;
   const refreshProfiles = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+    void refetchCatalog();
+  }, [refetchCatalog]);
   const selectProfile = useCallback(
     (entry: BrowserProfileEntry) => {
       const current = useBrowserStore.getState().browsersById[browserId];
@@ -1586,11 +1548,11 @@ export function BrowserPane({
             initialValue={draftUrl}
           />
         </View>
-        {resolved && registered === partition && partition ? (
+        {explicit && automatic && partition && registered === partition ? (
           <ProfileSelector
-            selected={resolved.selected}
-            automatic={resolved.automatic}
-            catalog={resolved.catalog}
+            selected={explicit}
+            automatic={automatic}
+            catalog={catalog.data ?? []}
             editable={browser?.phase === "pristine"}
             onSelect={selectProfile}
             refresh={refreshProfiles}
@@ -1645,16 +1607,18 @@ export function BrowserPane({
           </ToolbarButton>
         </View>
       </View>
-      {partitionError || browser?.lastError ? (
+      {unavailable || catalog.error || browser?.lastError ? (
         <View style={styles.errorRow}>
           <Text numberOfLines={1} style={errorTextStyle}>
-            {partitionError ? t("desktop.settings.loadFailed") : browser?.lastError}
+            {unavailable
+              ? t("workspace.browser.profiles.unavailable")
+              : (browser?.lastError ?? t("workspace.browser.profiles.loadFailed"))}
           </Text>
-          {partitionError && (
-            <Button variant="ghost" onPress={refreshProfiles}>
+          {!unavailable && !browser?.lastError && catalog.error ? (
+            <Button variant="ghost" size="sm" onPress={refreshProfiles}>
               {t("common.actions.retry")}
             </Button>
-          )}
+          ) : null}
         </View>
       ) : null}
       <View
@@ -1868,6 +1832,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderBottomWidth: 1,
@@ -1875,6 +1842,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
+    flex: 1,
     fontSize: theme.fontSize.sm,
   },
   webviewWrap: {

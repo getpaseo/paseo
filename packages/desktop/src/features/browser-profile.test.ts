@@ -8,7 +8,6 @@ import {
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
   listBrowserPartitionDirectories,
-  readLegacyPaseoBrowserIds,
 } from "./browser-profile.js";
 
 class FakeProfileSession {
@@ -101,12 +100,10 @@ describe("listPaseoBrowserProfileGuests", () => {
 });
 
 describe("legacy browser profiles", () => {
-  test("accepts only unique saved browser ids and resolves their old partitions", () => {
+  test("opens only on-disk profiles plus the sessions of live guests", () => {
     const uuid = "123e4567-e89b-42d3-a456-426614174000";
-    const fallbackId = "1700000000000-abcd";
-    const browserIds = readLegacyPaseoBrowserIds([uuid, fallbackId, uuid, "not-a-browser-id", 123]);
-    const orphanId = "1700000000001-ef";
     const partitions: string[] = [];
+    const live = new FakeProfileSession();
     const sessions = getPaseoBrowserProfileSessions(
       {
         fromPartition: (partition) => {
@@ -114,7 +111,6 @@ describe("legacy browser profiles", () => {
           return new FakeProfileSession();
         },
       },
-      browserIds,
       [
         "paseo-shared-work",
         `paseo-project-${"a".repeat(32)}-customer`,
@@ -122,23 +118,44 @@ describe("legacy browser profiles", () => {
         "paseo-browser-scope-invalid",
         "foreign",
         `paseo-browser-${uuid}`,
-        `paseo-browser-${orphanId}`,
       ],
+      [live, live],
     );
 
+    // A modern tab ID without a directory is never opened, so no empty partition is created.
     expect(partitions).toEqual([
       "persist:paseo-browser",
       "persist:paseo-shared-work",
       `persist:paseo-project-${"a".repeat(32)}-customer`,
       `persist:paseo-project-${"a".repeat(32)}-ws-${"b".repeat(32)}`,
       `persist:paseo-browser-${uuid}`,
-      `persist:paseo-browser-${fallbackId}`,
-      `persist:paseo-browser-${orphanId}`,
     ]);
-    expect(sessions).toHaveLength(7);
+    expect(sessions).toHaveLength(6);
+    expect(sessions.at(-1)).toBe(live);
   });
 
-  test("resolves one valid legacy profile for tab-close cleanup", () => {
+  test("clears and reloads a live guest whose new profile is not on disk yet", async () => {
+    const live = new FakeProfileSession();
+    const guest = new FakeWebContents(9, live, "webview");
+    const profileSessions = getPaseoBrowserProfileSessions(
+      { fromPartition: () => new FakeProfileSession() },
+      [],
+      [live],
+    );
+    await clearPaseoBrowserProfile({
+      profileSessions,
+      listGuests: () =>
+        listPaseoBrowserProfileGuests({
+          profileSessions: new Set(profileSessions),
+          webContents: [guest],
+        }),
+      logReloadError: () => {},
+    });
+    expect(live.storageClears).toHaveLength(1);
+    expect(guest.reloads).toBe(1);
+  });
+
+  test("resolves a legacy profile for tab-close cleanup only when it exists on disk", () => {
     const partitions: string[] = [];
     const sessions = {
       fromPartition: (partition: string) => {
@@ -146,9 +163,17 @@ describe("legacy browser profiles", () => {
         return new FakeProfileSession();
       },
     };
+    const directories = ["paseo-browser-1700000000000-abcd"];
 
-    expect(getLegacyPaseoBrowserProfileSession(sessions, "1700000000000-abcd")).not.toBeNull();
-    expect(getLegacyPaseoBrowserProfileSession(sessions, "invalid")).toBeNull();
+    expect(
+      getLegacyPaseoBrowserProfileSession(sessions, "1700000000000-abcd", directories),
+    ).not.toBeNull();
+    expect(
+      getLegacyPaseoBrowserProfileSession(sessions, "1700000000001-ef", directories),
+    ).toBeNull();
+    expect(
+      getLegacyPaseoBrowserProfileSession(sessions, "invalid", ["paseo-browser-invalid"]),
+    ).toBeNull();
     expect(partitions).toEqual(["persist:paseo-browser-1700000000000-abcd"]);
   });
 });
@@ -254,7 +279,6 @@ test("disk discovery includes closed named, automatic and old per-tab sessions",
           return new FakeProfileSession();
         },
       },
-      [],
       await listBrowserPartitionDirectories(directory),
     );
     expect(opened.sort()).toEqual(

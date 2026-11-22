@@ -5,10 +5,8 @@ import type { DesktopWindowChromeMode } from "./window/chrome.js";
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
 // third-party module throws and aborts the preload before exposeInMainWorld runs, leaving
-// window.paseoDesktop undefined (the 0.1.108 regression, #2103). Keep this literal in sync
-// with PASEO_BROWSER_PROFILE_PARTITION in features/browser-profile.ts; preload-sandbox.test.ts
-// guards both the no-local-import rule and this drift. Type-only imports are fine (erased at emit).
-const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
+// window.paseoDesktop undefined (the 0.1.108 regression, #2103). preload-sandbox.test.ts
+// guards the no-local-import rule. Type-only imports are fine (erased at emit).
 
 type EventHandler = (payload: unknown) => void;
 
@@ -124,7 +122,6 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   browser: {
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
-    profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
     listProfiles: () => ipcRenderer.invoke("paseo:browser:list-profiles"),
     createProfile: (input: unknown) => ipcRenderer.invoke("paseo:browser:create-profile", input),
     retirePristineGuest: (browserId: string, webContentsId: number) =>
@@ -138,8 +135,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     focus: (browserId: string) => ipcRenderer.invoke("paseo:browser:focus", browserId),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
-    clearProfile: (legacyBrowserIds: string[]) =>
-      ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
+    clearProfile: () => ipcRenderer.invoke("paseo:browser:clear-profile"),
     executeAutomationCommand: (request: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
     captureElement: (

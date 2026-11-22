@@ -20,6 +20,11 @@ export function sameProfile(a: BrowserProfileEntry, b: BrowserProfileEntry): boo
   return a.slug === b.slug && sameProfileGroup(a.group, b.group);
 }
 
+// Canonically equivalent spellings (é vs e + U+0301) render identically, so they are one name.
+function nameKey(name: string): string {
+  return name.normalize("NFC").trim().toLowerCase();
+}
+
 // Catalogs created before automatic names were reserved, and later workspace renames,
 // can introduce an existing collision. Keep both sessions and distinguish the automatic row.
 export function automaticProfileLabel(
@@ -30,10 +35,10 @@ export function automaticProfileLabel(
   const names = new Set(
     catalog
       .filter((entry) => sameProfileGroup(entry.group, automatic.group))
-      .map((entry) => entry.name.trim().toLowerCase()),
+      .map((entry) => nameKey(entry.name)),
   );
   let label = automatic.name;
-  for (let n = 1; names.has(label.trim().toLowerCase()); n++) {
+  for (let n = 1; names.has(nameKey(label)); n++) {
     label = `${automatic.name} (${qualifier}${n === 1 ? "" : " " + n})`;
   }
   return label;

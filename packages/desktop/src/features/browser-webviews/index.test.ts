@@ -6,6 +6,8 @@ import {
   isPaseoBrowserWebviewAttach,
   preparePaseoBrowserWebContents,
   registerAttachedPaseoBrowser,
+  retirePristineGuest,
+  trackBrowserGuestCommits,
   unregisterPaseoBrowser,
   unregisterPaseoBrowserFromHost,
 } from "./index.js";
@@ -236,5 +238,75 @@ describe("browser webview attachment", () => {
     guest.destroy();
 
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
+  });
+});
+
+class FakeNavigatingGuest extends FakeBrowserGuest {
+  public url = "about:blank";
+  public loading = false;
+  public closed = 0;
+  private navigate: ((event: unknown, url: string) => void) | null = null;
+
+  public on(event: "did-navigate", listener: (event: unknown, url: string) => void): void {
+    expect(event).toBe("did-navigate");
+    this.navigate = listener;
+  }
+
+  public commit(url: string): void {
+    this.url = url;
+    this.navigate?.({}, url);
+  }
+
+  public isLoadingMainFrame(): boolean {
+    return this.loading;
+  }
+
+  public getURL(): string {
+    return this.url;
+  }
+
+  public close(): void {
+    this.closed++;
+  }
+}
+
+describe("retiring a pristine guest for a profile change", () => {
+  function registeredGuest(id: number) {
+    const profileSession = {};
+    const renderer = new FakeRenderer(id + 1000);
+    const guest = new FakeNavigatingGuest(id, renderer, profileSession);
+    trackBrowserGuestCommits(guest);
+    registerAttachedPaseoBrowser({
+      browserId: "browser-retire-" + id,
+      workspaceId: "workspace-retire",
+      webContentsId: guest.id,
+      sender: renderer,
+      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      sessionFromPartition: () => profileSession,
+      findWebContents: () => guest,
+    });
+    return guest;
+  }
+
+  test("closes a never-navigated blank guest and unregisters it before it is destroyed", () => {
+    const guest = registeredGuest(701);
+    expect(retirePristineGuest(guest)).toBe(true);
+    expect(guest.closed).toBe(1);
+    expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
+  });
+
+  test("keeps in-flight, committed and revisited-blank guests", () => {
+    const inFlight = registeredGuest(702);
+    inFlight.loading = true;
+    const committed = registeredGuest(703);
+    committed.commit("https://example.com/");
+    const revisited = registeredGuest(704);
+    revisited.commit("https://example.com/");
+    revisited.commit("about:blank");
+    for (const guest of [inFlight, committed, revisited]) {
+      expect(retirePristineGuest(guest)).toBe(false);
+      expect(guest.closed).toBe(0);
+      expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-retire-" + guest.id);
+    }
   });
 });

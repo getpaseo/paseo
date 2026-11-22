@@ -87,7 +87,6 @@ import {
   listBrowserPartitionDirectories,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
-  readLegacyPaseoBrowserIds,
 } from "./features/browser-profile.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import {
@@ -383,8 +382,17 @@ ipcMain.handle("paseo:browser:list-profiles", () => profileCatalog.list());
 ipcMain.handle("paseo:browser:create-profile", (_event, input: unknown) =>
   profileCatalog.create(input),
 );
-ipcMain.on("paseo:browser:retire-pristine", (event, browserId: string, guestId: number) => {
-  const guest = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+ipcMain.on("paseo:browser:retire-pristine", (event, browserId: unknown, guestId: unknown) => {
+  if (
+    typeof browserId !== "string" ||
+    browserId.trim().length === 0 ||
+    !Number.isInteger(guestId) ||
+    (guestId as number) <= 0
+  ) {
+    event.returnValue = false;
+    return;
+  }
+  const guest = getPaseoBrowserWebContentsForHostWindow(browserId.trim(), event.sender.id);
   event.returnValue = guest !== null && guest.id === guestId && retirePristineGuest(guest);
 });
 
@@ -431,7 +439,11 @@ ipcMain.handle("paseo:browser:unregister-workspace-browser", async (event, brows
     // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
     const legacyProfile = hasOtherHost
       ? null
-      : getLegacyPaseoBrowserProfileSession(session, normalizedBrowserId);
+      : getLegacyPaseoBrowserProfileSession(
+          session,
+          normalizedBrowserId,
+          await listBrowserPartitionDirectories(app.getPath("userData")),
+        );
     if (legacyProfile) {
       try {
         await clearPaseoBrowserProfile({
@@ -509,11 +521,14 @@ ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
   return result;
 });
 
-ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds: unknown) => {
+ipcMain.handle("paseo:browser:clear-profile", async () => {
   const profileSessions = getPaseoBrowserProfileSessions(
     session,
-    readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
     await listBrowserPartitionDirectories(app.getPath("userData")),
+    webContents
+      .getAllWebContents()
+      .filter((contents) => getPaseoBrowserIdForWebContents(contents) !== null)
+      .map((contents) => contents.session),
   );
   const sessionsToReload = new Set(profileSessions);
   await clearPaseoBrowserProfile({

@@ -1,19 +1,58 @@
 import { useCallback, useState } from "react";
-import { Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Text, View } from "react-native";
+import { ChevronDown } from "lucide-react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getDesktopHost, type BrowserProfileEntry, type BrowserProfileGroup } from "@/desktop/host";
+import {
+  isToolbarLabelTriggerHighlighted,
+  toolbarLabelTriggerFrameStyle,
+  toolbarLabelTriggerStyle,
+  toolbarLabelTriggerTextStyle,
+  ToolbarLabelTriggerIcon,
+  type ToolbarLabelTriggerState,
+} from "@/components/ui/toolbar-label-trigger";
+import { useFetchQuery } from "@/data/query";
+import {
+  getDesktopHost,
+  type BrowserProfileCreateError,
+  type BrowserProfileEntry,
+  type BrowserProfileGroup,
+} from "@/desktop/host";
 import { useSessionStore } from "@/stores/session-store";
 import { selectProject } from "@/stores/session-store-hooks/selectors";
 import { automaticProfileLabel, sameProfile, sameProfileGroup, sharedDefault } from "../profiles";
+
+const ThemedChevronDown = withUnistyles(ChevronDown);
+
+const createErrorKeys = {
+  duplicate: "workspace.browser.profiles.duplicateName",
+  reserved: "workspace.browser.profiles.reservedName",
+  invalid: "workspace.browser.profiles.invalidName",
+  io: "workspace.browser.profiles.saveFailed",
+} as const satisfies Record<BrowserProfileCreateError, string>;
+
+/** One catalog cache for every browser pane; the menu refetches it when it opens. */
+export function useBrowserProfileCatalog() {
+  const list = getDesktopHost()?.browser?.listProfiles;
+  return useFetchQuery({
+    dataShape: "list",
+    queryKey: ["browser-profiles"],
+    enabled: list !== undefined,
+    queryFn: () => (list ? list() : Promise.resolve([])),
+    staleTimeMs: 30_000,
+    retry: false,
+  });
+}
 
 function useProjectName(group: BrowserProfileGroup) {
   return useSessionStore((state) => {
@@ -35,15 +74,16 @@ function ProfileMenuRow<T>({
   onPick: (value: T) => void;
 }) {
   const pick = useCallback(() => onPick(value), [value, onPick]);
+  // Every row reserves the check column so profiles and create actions share one label rail.
   return (
-    <DropdownMenuItem
-      onSelect={pick}
-      selected={selected}
-      showSelectedCheck={selected !== undefined}
-    >
+    <DropdownMenuItem onSelect={pick} selected={selected} showSelectedCheck>
       {name}
     </DropdownMenuItem>
   );
+}
+
+function triggerStyle(state: ToolbarLabelTriggerState) {
+  return [toolbarLabelTriggerStyle(state), styles.control];
 }
 
 export function ProfileSelector({
@@ -89,7 +129,9 @@ export function ProfileSelector({
   const submit = useCallback(
     async (name: string) => {
       const create = getDesktopHost()?.browser?.createProfile;
-      if (!create || creating === undefined) throw new Error(t("desktop.settings.loadFailed"));
+      if (!create || creating === undefined) {
+        throw new Error(t("workspace.browser.profiles.saveFailed"));
+      }
       const workspaces =
         creating && useSessionStore.getState().sessions[creating.serverId]?.workspaces;
       const workspaceNames = workspaces
@@ -97,23 +139,17 @@ export function ProfileSelector({
             .filter((workspace) => workspace.projectId === creating?.projectId)
             .map((workspace) => workspace.title || workspace.name)
         : [];
-      const entry = await create({ group: creating, name, workspaceNames }).catch(
-        (error: unknown) => {
-          if (error instanceof Error && error.message.endsWith("Duplicate profile name")) {
-            throw new Error(t("workspace.browser.profiles.duplicateName"));
-          }
-          throw error;
-        },
-      );
+      const result = await create({ group: creating, name, workspaceNames }).catch(() => null);
+      if (!result?.ok) throw new Error(t(createErrorKeys[result?.code ?? "io"]));
       refresh();
-      onSelect(entry);
+      onSelect(result.profile);
     },
     [creating, onSelect, refresh, t],
   );
   const entries = [sharedDefault, automatic, ...catalog];
   const action = (group: BrowserProfileGroup) =>
     group
-      ? t("workspace.browser.profiles.createWorkspace")
+      ? t("workspace.browser.profiles.createProject")
       : t("workspace.browser.profiles.createShared");
   return (
     <>
@@ -121,16 +157,27 @@ export function ProfileSelector({
         <DropdownMenu onOpenChange={openChanged}>
           <DropdownMenuTrigger
             accessibilityLabel={accessible}
-            style={styles.trigger}
+            style={triggerStyle}
             testID="browser-profile-picker"
           >
-            <Text numberOfLines={1} style={styles.label}>
-              {label} ▾
-            </Text>
+            {(state) => (
+              <>
+                <Text
+                  style={toolbarLabelTriggerTextStyle(isToolbarLabelTriggerHighlighted(state))}
+                  numberOfLines={1}
+                >
+                  {label}
+                </Text>
+                <ToolbarLabelTriggerIcon>
+                  <ThemedChevronDown size={12} uniProps={extraMutedIconColorMapping} />
+                </ToolbarLabelTriggerIcon>
+              </>
+            )}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" scrollable maxHeight={400}>
-            {groups.map(({ group, name }) => (
-              <div role="group" aria-label={name} key={JSON.stringify(group)}>
+            {groups.map(({ group, name }, index) => (
+              <View role="group" aria-label={name} key={JSON.stringify(group)}>
+                {index > 0 ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuLabel>{name}</DropdownMenuLabel>
                 {entries
                   .filter((entry) => sameProfileGroup(entry.group, group))
@@ -144,19 +191,21 @@ export function ProfileSelector({
                     />
                   ))}
                 <ProfileMenuRow value={group} name={action(group)} onPick={setCreating} />
-              </div>
+              </View>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <Text
-          numberOfLines={1}
-          accessibilityLabel={accessible}
-          testID="browser-profile-label"
-          style={styles.label}
-        >
-          {label}
-        </Text>
+        <View style={[toolbarLabelTriggerFrameStyle(), styles.control]}>
+          <Text
+            numberOfLines={1}
+            accessibilityLabel={accessible}
+            testID="browser-profile-label"
+            style={toolbarLabelTriggerTextStyle(false)}
+          >
+            {label}
+          </Text>
+        </View>
       )}
       {creating !== undefined && (
         <AdaptiveRenameModal
@@ -166,7 +215,6 @@ export function ProfileSelector({
           submitLabel={t("workspace.browser.profiles.create")}
           testID="browser-create-profile"
           maxLength={80}
-          validateOnChange
           onClose={close}
           onSubmit={submit}
         />
@@ -174,12 +222,9 @@ export function ProfileSelector({
     </>
   );
 }
-const styles = StyleSheet.create((theme) => ({
-  trigger: { flexShrink: 1, maxWidth: 340, paddingHorizontal: theme.spacing[1] },
-  label: {
-    maxWidth: 340,
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-}));
+
+const styles = StyleSheet.create({
+  // Pointer toolbar controls are 28px tall (docs/design.md, Buttons). The label yields width;
+  // the chevron never shrinks, so a long project name still reads as a menu.
+  control: { height: 28, maxWidth: 340 },
+});

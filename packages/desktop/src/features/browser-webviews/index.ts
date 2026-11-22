@@ -183,19 +183,35 @@ function preventUnsafeBrowserWebviewNavigation(
   }
 }
 
-const committedGuests = new WeakSet<WebContents>();
+interface RetirableGuest {
+  readonly id: number;
+  isLoadingMainFrame(): boolean;
+  getURL(): string;
+  close(options: { waitForBeforeUnload: boolean }): void;
+}
 
-export function retirePristineGuest(guest: WebContents): boolean {
+// A guest that ever committed a page keeps its session, even after it revisits about:blank.
+const committedGuests = new WeakSet<object>();
+
+export function trackBrowserGuestCommits(contents: {
+  on(event: "did-navigate", listener: (event: unknown, url: string) => void): unknown;
+}): void {
+  contents.on("did-navigate", (_event, url) => {
+    if (url !== "about:blank") committedGuests.add(contents);
+  });
+}
+
+export function retirePristineGuest(guest: RetirableGuest): boolean {
   if (committedGuests.has(guest) || guest.isLoadingMainFrame() || guest.getURL() !== "about:blank")
     return false;
+  // Unregister now so no request reaches the guest between close() and its destroyed event.
+  browserRegistry.unregisterWebContents(guest.id);
   guest.close({ waitForBeforeUnload: false });
   return true;
 }
 
 export function registerBrowserWebviewNavigationGuards(contents: WebContents): void {
-  contents.on("did-navigate", (_event, url) => {
-    if (url !== "about:blank") committedGuests.add(contents);
-  });
+  trackBrowserGuestCommits(contents);
   contents.on("will-navigate", (event) => {
     preventUnsafeBrowserWebviewNavigation(event, event.url);
   });

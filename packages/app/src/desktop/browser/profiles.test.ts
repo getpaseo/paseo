@@ -35,3 +35,20 @@ test("distinguishes a previously saved or renamed workspace collision without ch
   );
   expect(await profilePartition(automatic)).not.toBe(await profilePartition(catalog[0]));
 });
+
+test("qualifies the automatic label against a canonically equivalent named profile", async () => {
+  for (const [workspace, named] of [
+    ["Caf\u00e9 1", "Cafe\u0301 1"],
+    ["Cafe\u0301 1", "Caf\u00e9 1"],
+  ]) {
+    const automatic = await workspaceProfile("server", "project", "id", workspace);
+    const entry = { ...automatic, slug: "cafe-1", name: named };
+    const label = automaticProfileLabel(automatic, [entry], "Workspace");
+    expect(label).toBe(workspace + " (Workspace)");
+    expect(label.normalize("NFC")).not.toBe(named.normalize("NFC"));
+    expect(await profilePartition(automatic)).not.toBe(await profilePartition(entry));
+  }
+  const automatic = await workspaceProfile("server", "project", "id", "Café");
+  const plain = { ...automatic, slug: "cafe", name: "Cafe" };
+  expect(automaticProfileLabel(automatic, [plain], "Workspace")).toBe("Café");
+});

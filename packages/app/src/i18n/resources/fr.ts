@@ -630,7 +630,14 @@ export const fr: TranslationResources = {
         label: "Profil du navigateur {{profile}}",
         duplicateName: "Un profil portant ce nom existe déjà dans ce groupe.",
         createShared: "Créer un profil partagé…",
-        createWorkspace: "Créer un profil d’espace de travail…",
+        createProject: "Créer un profil de projet…",
+        reservedName: "Ce nom est réservé. Choisissez-en un autre.",
+        invalidName: "Saisissez un nom de 80 caractères au maximum.",
+        saveFailed: "Impossible d’enregistrer le profil. Réessayez.",
+        loadFailed: "Impossible de charger les profils du navigateur.",
+        attachFailed: "Impossible d’ouvrir cet onglet dans son profil de navigateur.",
+        unavailable:
+          "Impossible de restaurer cet onglet du navigateur. Fermez-le et ouvrez un nouvel onglet.",
         create: "Créer",
       },
       controls: {

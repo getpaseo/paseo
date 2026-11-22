@@ -4,6 +4,7 @@ import {
   type DesktopBrowserBridge,
 } from "@/desktop/host";
 import { useBrowserStore, type BrowserViewport } from "@/desktop/browser/store";
+import { i18n } from "@/i18n/i18next";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
@@ -90,7 +91,9 @@ function registerBrowserWhenAttached(
     };
     void register().catch((error) => {
       if (!isCurrent()) return;
-      useBrowserStore.getState().updateBrowser(identity.browserId, { lastError: String(error) });
+      useBrowserStore.getState().updateBrowser(identity.browserId, {
+        lastError: i18n.t("workspace.browser.profiles.attachFailed"),
+      });
       console.error("[browser-webview] attached registration failed", error);
     });
   });

@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { PASEO_BROWSER_PROFILE_PARTITION } from "./features/browser-profile.js";
 
 // The preload runs inside Electron's sandbox and is tsc-compiled (not bundled), so at
 // runtime it may only load Electron's sandbox allowlist. Any other module (local or
@@ -85,15 +84,5 @@ describe("preload sandbox safety", () => {
       (specifier) => !SANDBOX_ALLOWLIST.has(specifier),
     );
     expect(disallowed).toEqual([]);
-  });
-
-  it("inlines the browser profile partition instead of importing it", () => {
-    const source = readFileSync(preloadPath, "utf8");
-    const match = source.match(/const\s+PASEO_BROWSER_PROFILE_PARTITION\s*=\s*"([^"]+)"/);
-    expect(
-      match,
-      "PASEO_BROWSER_PROFILE_PARTITION not found as a double-quoted string literal in preload.ts",
-    ).not.toBeNull();
-    expect(match![1]).toBe(PASEO_BROWSER_PROFILE_PARTITION);
   });
 });

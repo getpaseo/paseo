@@ -37,7 +37,6 @@ export async function listBrowserPartitionDirectories(userData: string): Promise
 
 const LEGACY_BROWSER_ID_PATTERN =
   /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\d{13,}-[0-9a-f]+)$/i;
-const MAX_LEGACY_BROWSER_PROFILES = 1000;
 
 const PASEO_BROWSER_STORAGE_TYPES = [
   "cookies",
@@ -83,58 +82,38 @@ interface ElectronSessions {
   fromPartition(partition: string): BrowserProfileSession;
 }
 
-function getPaseoBrowserProfileSession(sessions: ElectronSessions): BrowserProfileSession {
-  return sessions.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+const LEGACY_PREFIX = "paseo-browser-";
+// COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
+// Old per-tab partitions. Open only those already on disk: fromPartition creates the directory.
+function isLegacyDirectory(name: string): boolean {
+  return (
+    name.startsWith(LEGACY_PREFIX) &&
+    LEGACY_BROWSER_ID_PATTERN.test(name.slice(LEGACY_PREFIX.length))
+  );
 }
-
-export function readLegacyPaseoBrowserIds(input: unknown): string[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-  const browserIds = new Set<string>();
-  for (const value of input) {
-    if (typeof value === "string" && LEGACY_BROWSER_ID_PATTERN.test(value)) {
-      browserIds.add(value);
-      if (browserIds.size >= MAX_LEGACY_BROWSER_PROFILES) {
-        break;
-      }
-    }
-  }
-  return [...browserIds];
-}
-
-export function getPaseoBrowserProfileSessions(
-  sessions: ElectronSessions,
-  legacyBrowserIds: string[],
+export function getPaseoBrowserProfileSessions<S extends BrowserProfileSession>(
+  sessions: { fromPartition(partition: string): S },
   directories: string[],
-): [BrowserProfileSession, ...BrowserProfileSession[]] {
-  // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
-  // Include per-tab profiles whose saved browser record no longer exists.
-  const legacyPrefix = "paseo-browser-";
-  const legacyIds = new Set(legacyBrowserIds);
+  liveSessions: Iterable<S> = [],
+): S[] {
+  const result = new Set([sessions.fromPartition(PASEO_BROWSER_PROFILE_PARTITION)]);
   for (const name of directories) {
-    const id = name.slice(legacyPrefix.length);
-    if (name.startsWith(legacyPrefix) && LEGACY_BROWSER_ID_PATTERN.test(id)) legacyIds.add(id);
+    if (isScopedDirectory(name) || isLegacyDirectory(name))
+      result.add(sessions.fromPartition(`persist:${name}`));
   }
-  return [
-    getPaseoBrowserProfileSession(sessions),
-    ...directories
-      .filter((name) => isScopedDirectory(name))
-      .map((name) => sessions.fromPartition(`persist:${name}`)),
-    // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
-    ...Array.from(legacyIds, (browserId) =>
-      sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${browserId}`),
-    ),
-  ];
+  // A new profile's directory may not exist yet while its guest is live.
+  for (const live of liveSessions) result.add(live);
+  return [...result];
 }
 
 export function getLegacyPaseoBrowserProfileSession(
   sessions: ElectronSessions,
   browserId: string,
+  directories: string[],
 ): BrowserProfileSession | null {
-  const [legacyBrowserId] = readLegacyPaseoBrowserIds([browserId]);
-  return legacyBrowserId
-    ? sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${legacyBrowserId}`)
+  const name = LEGACY_PREFIX + browserId;
+  return isLegacyDirectory(name) && directories.includes(name)
+    ? sessions.fromPartition(`persist:${name}`)
     : null;
 }
 

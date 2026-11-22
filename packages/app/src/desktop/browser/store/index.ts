@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { create } from "zustand";
@@ -118,4 +119,12 @@ export function waitForBrowserHydration(): Promise<void> {
       resolve();
     });
   });
+}
+
+function subscribeToBrowserHydration(onChange: () => void): () => void {
+  return useBrowserStore.persist.onFinishHydration(onChange);
+}
+
+export function useBrowserHydrated(): boolean {
+  return useSyncExternalStore(subscribeToBrowserHydration, useBrowserStore.persist.hasHydrated);
 }

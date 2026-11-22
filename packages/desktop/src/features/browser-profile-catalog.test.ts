@@ -12,11 +12,21 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 const group = { serverId: "host", projectId: "project" };
+const composed = "Caf\u00e9 1";
+const decomposed = "Cafe\u0301 1";
+
+async function created(
+  promise: ReturnType<ReturnType<typeof createBrowserProfileCatalog>["create"]>,
+) {
+  const result = await promise;
+  if (!result.ok) throw new Error("create failed: " + result.code);
+  return result.profile;
+}
 
 test("concurrent creates allocate stable bounded keys inside their group", async () => {
   const catalog = createBrowserProfileCatalog(directory);
   const names = [" Café ", "Cafe", "x".repeat(48), "x".repeat(49), "公司"];
-  const rows = await Promise.all(names.map((name) => catalog.create({ group, name })));
+  const rows = await Promise.all(names.map((name) => created(catalog.create({ group, name }))));
   expect(rows.map((row) => row.slug)).toEqual([
     "cafe",
     "cafe-2",
@@ -25,32 +35,34 @@ test("concurrent creates allocate stable bounded keys inside their group", async
     expect.stringMatching(/^profile-[a-f0-9]{8}$/),
   ]);
   expect(rows[0].name).toBe("Café");
-  const shared = await catalog.create({ group: null, name: "Cafe" });
+  const shared = await created(catalog.create({ group: null, name: "Cafe" }));
   expect(shared.slug).toBe("cafe");
   expect(await createBrowserProfileCatalog(directory).list()).toEqual([...rows, shared]);
 });
 
-test("rejects bad or duplicate names and preserves an unreadable catalog", async () => {
+test("reports a typed code for each rejected create and an unreadable catalog", async () => {
   const catalog = createBrowserProfileCatalog(directory);
-  for (const input of [
-    { group, name: "  " },
-    { group, name: "a".repeat(81) },
-    { group, name: "WS-hidden" },
-    { group: null, name: "Default" },
-  ]) {
-    await expect(catalog.create(input)).rejects.toThrow();
+  const rejected = [
+    [{ group, name: "  " }, "invalid"],
+    [{ group, name: "a".repeat(81) }, "invalid"],
+    [{ group: { serverId: "", projectId: "p" }, name: "Work" }, "invalid"],
+    [{ group, name: "WS-hidden" }, "reserved"],
+    [{ group: null, name: "Default" }, "reserved"],
+  ] as const;
+  for (const [input, code] of rejected) {
+    expect(await catalog.create(input)).toEqual({ ok: false, code });
   }
-  await catalog.create({ group, name: "Work" });
-  await expect(catalog.create({ group, name: "work" })).rejects.toThrow("Duplicate");
+  await created(catalog.create({ group, name: "Work" }));
+  expect(await catalog.create({ group, name: "work" })).toEqual({ ok: false, code: "duplicate" });
   await writeFile(path.join(directory, "browser-profiles.json"), "{");
-  await expect(catalog.create({ group, name: "Next" })).rejects.toThrow();
+  expect(await catalog.create({ group, name: "Next" })).toEqual({ ok: false, code: "io" });
   await expect(catalog.list()).rejects.toThrow();
 });
 
 test("collisions with the bare project slug ws never allocate a reserved workspace key", async () => {
   const catalog = createBrowserProfileCatalog(directory);
-  const first = await catalog.create({ group, name: "ws" });
-  const second = await catalog.create({ group, name: "wś" });
+  const first = await created(catalog.create({ group, name: "ws" }));
+  const second = await created(catalog.create({ group, name: "wś" }));
   expect([first.slug, second.slug]).toEqual(["ws", "profile-ws-2"]);
   expect(await catalog.list()).toEqual([first, second]);
 });
@@ -59,10 +71,34 @@ test("reserves the project's automatic workspace names without occupying them in
   const catalog = createBrowserProfileCatalog(directory);
   const workspaceNames = ["Main", "Release"];
   for (const name of ["  MAIN", "release"]) {
-    await expect(catalog.create({ group, name, workspaceNames })).rejects.toThrow(
-      "Duplicate profile name",
-    );
+    expect(await catalog.create({ group, name, workspaceNames })).toEqual({
+      ok: false,
+      code: "duplicate",
+    });
   }
-  const shared = await catalog.create({ group: null, name: "Main", workspaceNames: [] });
+  const shared = await created(catalog.create({ group: null, name: "Main", workspaceNames: [] }));
   expect(await catalog.list()).toEqual([shared]);
+});
+
+test("canonically equivalent spellings are one name; accented and plain names stay distinct", async () => {
+  for (const [stored, entered] of [
+    [composed, decomposed],
+    [decomposed, composed],
+  ]) {
+    const catalog = createBrowserProfileCatalog(await mkdtemp(path.join(directory, "nfc-")));
+    await created(catalog.create({ group, name: stored }));
+    expect(await catalog.create({ group, name: entered })).toEqual({
+      ok: false,
+      code: "duplicate",
+    });
+    expect(await catalog.create({ group, name: entered, workspaceNames: [stored] })).toEqual({
+      ok: false,
+      code: "duplicate",
+    });
+  }
+  const catalog = createBrowserProfileCatalog(await mkdtemp(path.join(directory, "plain-")));
+  const accented = await created(catalog.create({ group, name: "Café" }));
+  const plain = await created(catalog.create({ group, name: "Cafe" }));
+  expect([accented.slug, plain.slug]).toEqual(["cafe", "cafe-2"]);
+  expect(await catalog.list()).toEqual([accented, plain]);
 });

@@ -152,16 +152,20 @@ export interface BrowserProfileEntry {
   name: string;
 }
 
+export type BrowserProfileCreateError = "duplicate" | "reserved" | "invalid" | "io";
+export type BrowserProfileCreateResult =
+  | { ok: true; profile: BrowserProfileEntry }
+  | { ok: false; code: BrowserProfileCreateError };
+
 export interface DesktopBrowserBridge {
   listProfiles?: () => Promise<BrowserProfileEntry[]>;
   createProfile?: (input: {
     group: BrowserProfileGroup;
     workspaceNames: string[];
     name: string;
-  }) => Promise<BrowserProfileEntry>;
+  }) => Promise<BrowserProfileCreateResult>;
   retirePristineGuest?: (browserId: string, webContentsId: number) => boolean;
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
-  readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
   unregisterWorkspaceBrowser?: (browserId: string) => Promise<void>;
   setWorkspaceActiveBrowser?: (input: {
@@ -170,7 +174,7 @@ export interface DesktopBrowserBridge {
   }) => Promise<void>;
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
-  clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
+  clearProfile?: () => Promise<void>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;

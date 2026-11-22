@@ -484,25 +484,32 @@ describe("resident browser webviews", () => {
     expect(webview?.isConnected).toBe(false);
     expect(takeResidentBrowserWebview("browser-closed")).toBeNull();
   });
-});
 
-it("persists first top-level navigation while parked and keeps a committed tab locked", () => {
-  const browserId = useBrowserStore.getState().createBrowser();
-  const view = ensureTestBrowser({ browserId, workspaceId: "workspace-a", url: "about:blank" })!;
-  const record = () => useBrowserStore.getState().browsersById[browserId];
-  const fire = (type: string, url: string) =>
-    view.dispatchEvent(Object.assign(new Event(type), { isMainFrame: true, url }));
-  Object.assign(view, { getURL: () => "about:blank" });
-  fire("did-start-navigation", "file:///unavailable");
-  expect(record().phase).toBe("pristine");
-  fire("did-start-navigation", "https://first.test");
-  expect(record()).toMatchObject({ phase: "in-flight", url: "https://first.test" });
-  fire("did-fail-load", "https://first.test");
-  expect(record().phase).toBe("pristine");
-  fire("did-navigate", "https://second.test");
-  fire("did-navigate", "about:blank");
-  fire("did-fail-load", "https://first.test");
-  expect(record()).toMatchObject({ phase: "locked", url: "about:blank" });
-  useBrowserStore.getState().removeBrowser(browserId);
-  removeResidentBrowserWebview(browserId);
+  it("persists first top-level navigation while parked and keeps a committed tab locked", () => {
+    const browserId = useBrowserStore.getState().createBrowser();
+    try {
+      const view = ensureTestBrowser({
+        browserId,
+        workspaceId: "workspace-a",
+        url: "about:blank",
+      })!;
+      const record = () => useBrowserStore.getState().browsersById[browserId];
+      const fire = (type: string, url: string) =>
+        view.dispatchEvent(Object.assign(new Event(type), { isMainFrame: true, url }));
+      Object.assign(view, { getURL: () => "about:blank" });
+      fire("did-start-navigation", "file:///unavailable");
+      expect(record().phase).toBe("pristine");
+      fire("did-start-navigation", "https://first.test");
+      expect(record()).toMatchObject({ phase: "in-flight", url: "https://first.test" });
+      fire("did-fail-load", "https://first.test");
+      expect(record().phase).toBe("pristine");
+      fire("did-navigate", "https://second.test");
+      fire("did-navigate", "about:blank");
+      fire("did-fail-load", "https://first.test");
+      expect(record()).toMatchObject({ phase: "locked", url: "about:blank" });
+    } finally {
+      useBrowserStore.getState().removeBrowser(browserId);
+      removeResidentBrowserWebview(browserId);
+    }
+  });
 });

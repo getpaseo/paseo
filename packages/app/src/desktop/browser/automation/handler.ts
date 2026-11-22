@@ -381,7 +381,6 @@ async function openBrowserTabForRequest(params: {
     });
   }
   await waitForBrowserHydration();
-  await browserHost?.listProfiles?.();
   const profile = await workspaceProfile(
     serverId,
     workspace.projectId,
