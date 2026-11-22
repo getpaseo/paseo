@@ -95,7 +95,7 @@
     "web": "npm run web --workspace=@getpaseo/app",
     "dev:desktop": "cross-env PASEO_LISTEN=127.0.0.1:6768 npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
-    "build:desktop": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build --workspace=@getpaseo/desktop --",
+    "build:desktop": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && node scripts/precompress-assets.mjs packages/app/dist && npm run build --workspace=@getpaseo/desktop --",
     "db:query": "npm run db:query --workspace=@getpaseo/server --",
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run fdroid:changelogs && npm run release:prepare && git add -A",

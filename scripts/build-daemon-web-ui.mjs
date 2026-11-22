@@ -1,17 +1,14 @@
 import { spawn } from "node:child_process";
-import { createReadStream, createWriteStream } from "node:fs";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
+import { precompressAssets } from "./precompress-assets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const APP_DIR = path.join(REPO_ROOT, "packages", "app");
 const SOURCE_DIST = path.join(APP_DIR, "dist");
 const TARGET_DIST = path.join(REPO_ROOT, "packages", "server", "dist", "server", "web-ui");
-const COMPRESS_EXTENSIONS = new Set([".html", ".js", ".css", ".json", ".svg", ".map"]);
 
 function fmtMiB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
@@ -51,40 +48,6 @@ async function cleanTarget() {
 async function copyAssets() {
   console.log(`Copying assets to ${path.relative(REPO_ROOT, TARGET_DIST)}...`);
   await cp(SOURCE_DIST, TARGET_DIST, { recursive: true, force: true });
-}
-
-async function compressFile(filePath) {
-  const brotliPath = `${filePath}.br`;
-  const gzipPath = `${filePath}.gz`;
-  await Promise.all([
-    pipeline(
-      createReadStream(filePath),
-      createBrotliCompress({
-        params: {
-          [zlibConstants.BROTLI_PARAM_QUALITY]: zlibConstants.BROTLI_MAX_QUALITY,
-        },
-      }),
-      createWriteStream(brotliPath),
-    ),
-    pipeline(createReadStream(filePath), createGzip(), createWriteStream(gzipPath)),
-  ]);
-}
-
-async function precompressAssets(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile());
-  const dirs = entries.filter((entry) => entry.isDirectory());
-
-  for (const file of files) {
-    const filePath = path.join(dir, file.name);
-    if (COMPRESS_EXTENSIONS.has(path.extname(file.name).toLowerCase())) {
-      await compressFile(filePath);
-    }
-  }
-
-  for (const subdir of dirs) {
-    await precompressAssets(path.join(dir, subdir.name));
-  }
 }
 
 async function measureBundle(dir) {
