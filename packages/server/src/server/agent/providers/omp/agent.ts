@@ -121,6 +121,7 @@ import {
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 import {
+  type OmpMountNoticeDeliverer,
   OmpMountNoticeLedger,
   OmpMountNoticeLedgers,
   parseOmpMountNotice,
@@ -623,6 +624,8 @@ class OmpHistorySession implements AgentSession {
     throw new Error("OMP history session cannot start a turn");
   }
 
+  private readonly delivererToken: OmpMountNoticeDeliverer = {};
+
   async startTurn(): Promise<{ turnId: string }> {
     throw new Error("OMP history session cannot start a turn");
   }
@@ -633,7 +636,7 @@ class OmpHistorySession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     // This history seeds a fresh projection that holds no live mount notices.
-    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this);
+    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this.delivererToken);
     yield* streamOmpHistory({
       sessionFile: this.sessionFile,
       provider: this.provider,
@@ -786,6 +789,8 @@ export class OmpAgentSession implements AgentSession {
       null;
     this.attachRuntime(this.runtimeSession);
   }
+
+  private readonly delivererToken: OmpMountNoticeDeliverer = {};
 
   private attachRuntime(runtime: OmpRuntimeSession): void {
     this.unsubscribeRuntime = runtime.onEvent((event) => {
@@ -1040,8 +1045,8 @@ export class OmpAgentSession implements AgentSession {
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     // This history seeds a fresh projection: it keeps the mount notices this session already
     // delivered into it, and none from earlier sessions.
-    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this);
-    else this.sessionMountNotices.retainDeliveredBy(this);
+    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this.delivererToken);
+    else this.sessionMountNotices.retainDeliveredBy(this.delivererToken);
     const replay = yield* streamOmpHistory({
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
@@ -1082,7 +1087,7 @@ export class OmpAgentSession implements AgentSession {
     if (!notice || this.subscribers.size === 0) return false;
     const ledger = this.mountNoticeLedger();
     if (!ledger.announces(notice)) return true;
-    ledger.recordDelivered(notice, this);
+    ledger.recordDelivered(notice, this.delivererToken);
     return false;
   }
 
@@ -1747,27 +1752,7 @@ export class OmpAgentSession implements AgentSession {
     return true;
   }
 
-  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
-    if (this.handleThinkingLevelChanged(event)) {
-      return true;
-    }
-    if (event.type === "model_changed") {
-      void this.refreshState()
-        .then(() =>
-          this.emit({
-            type: "model_changed",
-            provider: this.provider,
-            runtimeInfo: this.runtimeInfoFromState(),
-          }),
-        )
-        .catch((error: unknown) =>
-          this.logger.debug({ err: error }, "OMP state unavailable after model change"),
-        );
-      return true;
-    }
-    if (handleOmpHostToolRuntimeEvent(event, this.hostTools, this.runtimeSession, this.logger)) {
-      return true;
-    }
+  private handleSubagentRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (event.type === "subagent_lifecycle") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_lifecycle" }>).payload;
       if (payload.parentToolCallId && this.activeToolCalls.has(payload.parentToolCallId)) {
@@ -1797,6 +1782,33 @@ export class OmpAgentSession implements AgentSession {
       for (const mapped of this.subagentIndex.handleEvent(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
+      return true;
+    }
+    return false;
+  }
+
+  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (this.handleThinkingLevelChanged(event)) {
+      return true;
+    }
+    if (event.type === "model_changed") {
+      void this.refreshState()
+        .then(() =>
+          this.emit({
+            type: "model_changed",
+            provider: this.provider,
+            runtimeInfo: this.runtimeInfoFromState(),
+          }),
+        )
+        .catch((error: unknown) =>
+          this.logger.debug({ err: error }, "OMP state unavailable after model change"),
+        );
+      return true;
+    }
+    if (handleOmpHostToolRuntimeEvent(event, this.hostTools, this.runtimeSession, this.logger)) {
+      return true;
+    }
+    if (this.handleSubagentRuntimeEvent(event)) {
       return true;
     }
     if (event.type === "todo_reminder") {
@@ -2705,6 +2717,9 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    if (this.runtime) {
+      return true;
+    }
     try {
       const launch = await this.resolveOmpLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
