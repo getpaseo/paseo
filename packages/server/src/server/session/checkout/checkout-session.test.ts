@@ -1994,6 +1994,8 @@ it("previews related issues and creates only explicitly approved issue links", a
       "Resolving issue #7",
       "Implemented group/subgroup/project#7",
       "Implementing https://gitlab.example/project/-/issues/7",
+      "Fixes https://github.com/owner/repo/issues/7",
+      "Closes https://gitlab.example/groups/team/-/work_items/7",
       "Closed PROJ-7",
     ]) {
       generatedBody = directive;
@@ -2020,16 +2022,21 @@ it("previews related issues and creates only explicitly approved issue links", a
         error: { message: expect.stringContaining("issue-closing directives") },
       },
     });
-    generatedBody = "Change the background to #123456 and #0f172a.";
-    await checkout.handleCheckoutPrCreateRequest({
-      type: "checkout_pr_create_request",
-      cwd: created.worktreePath,
-      previewOnly: true,
-      requestId: "color-literals",
-    });
-    expect(emitted.at(-1)).toMatchObject({
-      payload: { error: null, proposal: { body: generatedBody } },
-    });
+    for (const description of [
+      "Change the background to #123456 and #0f172a.",
+      "Fixes https://paseo.sh/docs/setup to use the current installation command.",
+    ]) {
+      generatedBody = description;
+      await checkout.handleCheckoutPrCreateRequest({
+        type: "checkout_pr_create_request",
+        cwd: created.worktreePath,
+        previewOnly: true,
+        requestId: "color-literals",
+      });
+      expect(emitted.at(-1)).toMatchObject({
+        payload: { error: null, proposal: { body: generatedBody } },
+      });
+    }
     generatedBody = "Retries transient failures.";
     duringGeneration = () => {
       git(created.worktreePath, "commit", "--allow-empty", "-m", "concurrent change");
@@ -2069,9 +2076,35 @@ it("previews related issues and creates only explicitly approved issue links", a
     });
     expect(requests).toHaveLength(2);
     git(repo, "checkout", "--detach");
+    const otherRemote = join(root, "other.git");
+    git(root, "init", "--bare", otherRemote);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "before-pushurl-change",
+    });
+    const destinationProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    git(repo, "config", "remote.origin.pushurl", otherRemote);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: destinationProposal?.id,
+      requestId: "pushurl-changed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
+    });
+    expect(requests).toHaveLength(2);
+    git(repo, "config", "--unset", "remote.origin.pushurl");
     git(repo, "branch", "-D", "main");
     const approved = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
     expect(approved.baseSha).toBe(git(repo, "rev-parse", "origin/main"));
+    expect(approved.pushUrls).toEqual([remote]);
+    // Simulate a destination change after approval validation but before push.
+    git(repo, "config", "remote.origin.pushurl", otherRemote);
     git(created.worktreePath, "commit", "--allow-empty", "-m", "after approval");
     git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main");
     git(repo, "update-ref", "-d", `refs/remotes/origin/${created.branchName}`);
@@ -2083,6 +2116,7 @@ it("previews related issues and creates only explicitly approved issue links", a
         head: approved.head,
         base: approved.base,
         approvedHeadSha: approved.headSha,
+        approvedPushUrls: approved.pushUrls,
       },
       service,
       { paseoHome },
@@ -2098,6 +2132,9 @@ it("previews related issues and creates only explicitly approved issue links", a
       `refs/heads/${created.branchName}`,
     );
     expect(requests).toHaveLength(3);
+    expect(() =>
+      git(root, "--git-dir", otherRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

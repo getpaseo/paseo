@@ -4310,6 +4310,7 @@ function parseHeadPushRefspec(refspec: string | null): string | null {
 }
 
 export interface CreatePullRequestOptions {
+  approvedPushUrls?: string[];
   approvedHeadSha?: string;
   title: string;
   body?: string;
@@ -4392,6 +4393,7 @@ export async function capturePrCheckoutState(
     headSha: await git("rev-parse", "HEAD"),
     baseSha: await git("rev-parse", await resolveBestComparisonBaseRef(cwd, base)),
     origin: await git("remote", "get-url", "origin"),
+    pushUrls: (await git("remote", "get-url", "--push", "--all", "origin")).split("\n"),
   };
 }
 
@@ -4426,15 +4428,23 @@ export async function createPullRequest(
   // of the head branch is idempotent.
   // Push the approved commit rather than a branch tip that may have moved
   // since confirmation. This remains a non-force push.
-  const pushArgs = options.approvedHeadSha
-    ? ["push", "origin", `${options.approvedHeadSha}:refs/heads/${head}`]
-    : ["push", "-u", "origin", head];
-  await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
+  for (const destination of options.approvedPushUrls ?? ["origin"]) {
+    const pushArgs = options.approvedHeadSha
+      ? ["push", "--", destination, `${options.approvedHeadSha}:refs/heads/${head}`]
+      : ["push", "-u", "origin", head];
+    await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
+  }
   if (options.approvedHeadSha) {
     // Match push -u without requiring a remote-tracking ref: single-branch
     // clones may deliberately exclude this branch from origin's fetch refspec.
     await runGitCommand(["config", `branch.${head}.remote`, "origin"], { cwd });
     await runGitCommand(["config", `branch.${head}.merge`, `refs/heads/${head}`], { cwd });
+    // Literal-URL pushes do not update origin's tracking refs. Let Git resolve
+    // the configured fetch mapping (which may deliberately exclude this head).
+    const upstream = (
+      await runGitCommand(["for-each-ref", "--format=%(upstream)", `refs/heads/${head}`], { cwd })
+    ).stdout.trim();
+    if (upstream) await runGitCommand(["update-ref", upstream, options.approvedHeadSha], { cwd });
   }
 
   const result = await forgeService.createPullRequest({

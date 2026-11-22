@@ -106,6 +106,7 @@ interface PrIssueCandidate {
 }
 
 interface PrCreateInput {
+  approvedPushUrls?: string[];
   approvedHeadSha?: string;
   head?: string;
   title: string;
@@ -1066,6 +1067,7 @@ export class CheckoutSession {
           base: input.baseRef,
           ...(input.head ? { head: input.head } : {}),
           ...(input.approvedHeadSha ? { approvedHeadSha: input.approvedHeadSha } : {}),
+          ...(input.approvedPushUrls ? { approvedPushUrls: input.approvedPushUrls } : {}),
         },
         service,
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
@@ -1110,7 +1112,7 @@ export class CheckoutSession {
       checkoutState.base,
     );
     if (
-      /\b(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|implement(?:s|ed|ing)?)\s*:?\s+(?:issues?\s+)?(?:#\d+\b|(?:[\w.-]+\/)+[\w.-]+#\d+\b|https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+\b)/i.test(
+      /\b(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|implement(?:s|ed|ing)?)\s*:?\s+(?:issues?\s+)?(?:#\d+\b|(?:[\w.-]+\/)+[\w.-]+#\d+\b|https?:\/\/[^\s?#]+\/(?:issues?|work_items)\/\d+\b|[A-Z][A-Z0-9_]+-\d+\b)/i.test(
         `${generated.title}\n${generated.body}`,
       )
     ) {
@@ -1181,6 +1183,7 @@ export class CheckoutSession {
     return {
       head: proposal.checkoutState.head,
       approvedHeadSha: proposal.checkoutState.headSha,
+      approvedPushUrls: proposal.checkoutState.pushUrls,
       title: proposal.title,
       body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),
       draft: proposal.draft,
