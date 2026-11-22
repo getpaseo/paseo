@@ -2908,7 +2908,7 @@ describe("ACPAgentClient import listing deadlines", () => {
   function createBlockedListing(
     phase: ListingPhase,
     terminator = new FakeTerminator(),
-    listingError?: RequestError,
+    responseError?: RequestError,
   ) {
     const child = createProbeChildStub();
     const clientToAgent = new PassThrough();
@@ -2931,6 +2931,7 @@ describe("ACPAgentClient import listing deadlines", () => {
         if (phase === "initialize") {
           markStarted();
           await blocked;
+          if (responseError) throw responseError;
         }
         return {
           protocolVersion: PROTOCOL_VERSION,
@@ -2942,8 +2943,8 @@ describe("ACPAgentClient import listing deadlines", () => {
         if (phase === "session/list") {
           markStarted();
           await blocked;
+          if (responseError) throw responseError;
         }
-        if (listingError) throw listingError;
         return { sessions: [] };
       },
       async newSession() {
@@ -3031,21 +3032,20 @@ describe("ACPAgentClient import listing deadlines", () => {
     }
   });
 
-  test.each([
-    { outcome: "success", listingError: undefined, providerErrors: [] },
-    {
-      outcome: "provider error",
-      listingError: new RequestError(-32001, "Provider rejected listing"),
-      providerErrors: [
-        { provider: "test-acp", message: expect.stringContaining("Provider rejected listing") },
-      ],
-    },
+  test.each<{ phase: ListingPhase; errorMessage?: string }>([
+    { phase: "session/list" },
+    { phase: "session/list", errorMessage: "Provider rejected listing" },
+    { phase: "initialize", errorMessage: "Sign in to the provider and retry" },
   ])(
-    "returns a timely $outcome while its probe is still shutting down",
-    async ({ listingError, providerErrors }) => {
+    "returns a timely $phase outcome while its probe is still shutting down ($errorMessage)",
+    async ({ phase, errorMessage }) => {
       vi.useFakeTimers();
       const terminator = new FakeTerminator("deferred");
-      const probe = createBlockedListing("session/list", terminator, listingError);
+      const responseError = errorMessage ? new RequestError(-32001, errorMessage) : undefined;
+      const probe = createBlockedListing(phase, terminator, responseError);
+      const providerErrors = errorMessage
+        ? [{ provider: "test-acp", message: expect.stringContaining(errorMessage) }]
+        : [];
       const listing = listSessionsThroughManager(probe.client);
 
       try {

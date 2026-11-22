@@ -1361,6 +1361,7 @@ export class ACPAgentClient implements AgentClient {
     signal.throwIfAborted();
     const probe = await this.spawnProcess(PROBE_ENV, {
       signal,
+      deferCleanupOnError: true,
       client: this.buildProbeClient((params) => history.accept(params)),
     });
     try {
@@ -1369,13 +1370,7 @@ export class ACPAgentClient implements AgentClient {
       if (signal.aborted) {
         await this.closeProbe(probe);
       } else {
-        // Deliver the provider's result while its probe finishes shutting down.
-        void this.closeProbe(probe).catch((error) => {
-          this.logger.warn(
-            { err: error, provider: this.provider },
-            "Failed to close ACP listing probe",
-          );
-        });
+        this.finishListingProbeCleanup(this.closeProbe(probe));
       }
     }
   }
@@ -1557,6 +1552,7 @@ export class ACPAgentClient implements AgentClient {
       onSpawned?: (probe: UninitializedACPProcess) => void;
       client?: ACPClient;
       signal?: AbortSignal;
+      deferCleanupOnError?: boolean;
     },
   ): Promise<SpawnedACPProcess> {
     const configuredOptions = ACPProviderOptionsSchema.parse(options?.providerOptions ?? {});
@@ -1605,9 +1601,24 @@ export class ACPAgentClient implements AgentClient {
       probe.initialize = initialize;
       return initializedProbe;
     } catch (error) {
-      await closeTransport();
+      const cleanup = closeTransport();
+      if (options?.deferCleanupOnError && !signal?.aborted) {
+        this.finishListingProbeCleanup(cleanup);
+      } else {
+        await cleanup;
+      }
       throw error;
     }
+  }
+
+  private finishListingProbeCleanup(cleanup: Promise<void>): void {
+    // Deliver the provider's result while its probe finishes shutting down.
+    void cleanup.catch((error) => {
+      this.logger.warn(
+        { err: error, provider: this.provider },
+        "Failed to close ACP listing probe",
+      );
+    });
   }
 
   protected async spawnTransport(
