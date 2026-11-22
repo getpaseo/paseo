@@ -45,6 +45,7 @@ import com.swmansion.enriched.markdown.utils.common.parseLinkPillContent
 import com.swmansion.enriched.markdown.utils.common.parseLinkRecognition
 import com.swmansion.enriched.markdown.utils.text.extensions.replaceMathSpansWithPlaceholders
 import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
+import com.swmansion.enriched.markdown.utils.text.view.wrapForInsertionOrderedLayout
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 
@@ -681,7 +682,7 @@ object MeasurementStore {
     }
   }
 
-  private fun createStaticLayout(
+  internal fun createStaticLayout(
     text: CharSequence,
     fontSize: Float,
     widthPx: Int,
@@ -689,8 +690,9 @@ object MeasurementStore {
   ): StaticLayout {
     measurePaint.textSize = fontSize
     prepareWidthAwareSpans(text, widthPx)
+    val measuredText = wrapForInsertionOrderedLayout(text)
     return StaticLayout.Builder
-      .obtain(text, 0, text.length, measurePaint, widthPx)
+      .obtain(measuredText, 0, measuredText.length, measurePaint, widthPx)
       .setIncludePad(false)
       .setLineSpacing(0f, 1f)
       .apply {
@@ -776,10 +778,11 @@ object MeasurementStore {
     val content = text ?: ""
     val safeWidth = ceil(maxWidth).toInt().coerceAtLeast(1)
     prepareWidthAwareSpans(content, safeWidth)
+    val measuredText = wrapForInsertionOrderedLayout(content)
 
     val builder =
       StaticLayout.Builder
-        .obtain(content, 0, content.length, paint, safeWidth)
+        .obtain(measuredText, 0, measuredText.length, paint, safeWidth)
         .setIncludePad(false)
         .setLineSpacing(0f, 1f)
 
@@ -882,10 +885,11 @@ object MeasurementStore {
     val content = text ?: ""
     val widthPx = ceil(maxWidth).toInt().coerceAtLeast(1)
     prepareWidthAwareSpans(content, widthPx)
+    val measuredText = wrapForInsertionOrderedLayout(content)
 
     val layout =
       StaticLayout.Builder
-        .obtain(content, 0, content.length, paint, widthPx)
+        .obtain(measuredText, 0, measuredText.length, paint, widthPx)
         .setIncludePad(false)
         .setLineSpacing(0f, 1f)
         .apply {

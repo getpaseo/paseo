@@ -11,6 +11,9 @@ import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.view.ViewCompat
 import com.swmansion.enriched.markdown.accessibility.AccessibleMarkdownTextView
 
+internal fun wrapForInsertionOrderedLayout(source: CharSequence): CharSequence =
+  if (source is SpannableStringBuilder) InsertionOrderedSpannable(source) else source
+
 /**
  * Adopts the renderer's buffer instead of copying it: the default factory's copy is
  * quadratic in span count. Safe because each segment's buffer is owned by one view.

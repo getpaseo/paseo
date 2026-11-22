@@ -9,6 +9,7 @@ import android.text.TextPaint
 import com.swmansion.enriched.markdown.styles.StyleConfig
 import com.swmansion.enriched.markdown.utils.text.extensions.replaceMathSpansWithPlaceholders
 import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
+import com.swmansion.enriched.markdown.utils.text.view.wrapForInsertionOrderedLayout
 import kotlin.math.ceil
 
 /**
@@ -105,8 +106,9 @@ object SegmentHeightMeasurer {
         textSize = fontSizePx
       }
     prepareWidthAwareSpans(text, widthPx)
+    val measuredText = wrapForInsertionOrderedLayout(text)
     return StaticLayout.Builder
-      .obtain(text, 0, text.length, paint, widthPx)
+      .obtain(measuredText, 0, measuredText.length, paint, widthPx)
       .setIncludePad(false)
       .setLineSpacing(0f, 1f)
       .apply {
