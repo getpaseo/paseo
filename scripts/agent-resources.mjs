@@ -140,13 +140,29 @@ export async function superviseScope({ launch, stop, watchParent, signals }) {
   const child = launch();
   let interrupted = false;
   let stopPromise = null;
+  let retryTimer = null;
+  let supervising = true;
   function release() {
-    stopPromise ??= stop();
+    stopPromise ??= Promise.resolve()
+      .then(stop)
+      .catch((error) => {
+        stopPromise = null;
+        throw error;
+      });
     return stopPromise;
   }
   function interrupt() {
     interrupted = true;
-    void release().catch(() => {});
+    void release().catch(() => {
+      // A transient stop failure must not leave an untimed workload running
+      // forever after its only signal. Keep retrying while the launcher lives.
+      if (supervising && retryTimer === null) {
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          interrupt();
+        }, 1000);
+      }
+    });
   }
   const unwatch = watchParent(interrupt);
   const unsubscribe = signals(interrupt);
@@ -154,6 +170,8 @@ export async function superviseScope({ launch, stop, watchParent, signals }) {
     const code = await child;
     return interrupted ? 143 : code;
   } finally {
+    supervising = false;
+    clearTimeout(retryTimer);
     unwatch();
     unsubscribe();
     await release();

@@ -127,6 +127,30 @@ test("failed scope cleanup is reported instead of claiming success", async () =>
   await assert.rejects(s.result, /stop denied/);
 });
 
+for (const trigger of ["signal", "parentExit"]) {
+  test(
+    `failed ${trigger} cleanup retries while the workload is still running`,
+    { timeout: 5000 },
+    async () => {
+      const workload = deferred();
+      let attempts = 0;
+      const s = supervisor(workload.promise, async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("temporary stop failure");
+        workload.resolve(0);
+      });
+      try {
+        s[trigger]();
+        assert.equal(await s.result, 143);
+        assert.equal(attempts, 2);
+        assert.deepEqual(s.events, ["stop", "stop", "unwatch", "unsubscribe"]);
+      } finally {
+        workload.resolve(0);
+      }
+    },
+  );
+}
+
 // The real kernel flock proves cross-process admission and release after exit.
 // Scope creation itself is exercised on a systemd host; no fake systemctl is used.
 test(
