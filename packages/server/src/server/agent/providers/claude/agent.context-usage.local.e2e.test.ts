@@ -7,12 +7,14 @@ import { collectSessionTurnEvents } from "../test-utils/session-stream-adapter.j
 import { ClaudeAgentClient } from "./agent.js";
 
 // Exercise the real Claude Code process against a local Messages API fixture.
-// The input counter's location is the only difference between the two backends.
+// The input counter's location is the only difference between the backends.
+// "zeroed-delta" reports the counts on message_start and zeroes them on message_delta.
 test.each([
   { placement: "start", cacheTokens: 0 },
   { placement: "delta", cacheTokens: 0 },
   { placement: "start", cacheTokens: 1_000 },
   { placement: "delta", cacheTokens: 1_000 },
+  { placement: "zeroed-delta", cacheTokens: 1_000 },
   { placement: "start", cacheTokens: 0, model: "glm-5.2[1m]" },
   { placement: "start", cacheTokens: 0, model: "sonnet", resolvedModel: "glm-5.2[1m]" },
 ])(
@@ -56,7 +58,7 @@ test.each([
           stop_reason: null,
           stop_sequence: null,
           usage: {
-            input_tokens: placement === "start" ? inputTokens : 0,
+            input_tokens: placement === "delta" ? 0 : inputTokens,
             output_tokens: 0,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: cacheTokens,
@@ -72,6 +74,9 @@ test.each([
         usage: {
           output_tokens: 64,
           ...(placement === "delta" ? { input_tokens: inputTokens } : {}),
+          ...(placement === "zeroed-delta"
+            ? { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
+            : {}),
         },
       });
       emit({ type: "message_stop" });
