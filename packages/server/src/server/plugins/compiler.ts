@@ -1,6 +1,6 @@
+import { type ChildProcess, fork } from "node:child_process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
 import pLimit from "p-limit";
 import { ZodError } from "zod";
 import type * as build from "./compiler-build.js";
@@ -35,17 +35,21 @@ const workerUrl = new URL(
   source ? "./compiler-worker.ts" : "./compiler-worker.js",
   import.meta.url,
 );
-// Resolve the development loader once at module initialization, never during a
-// compile request. Packaged workers execute ordinary JavaScript without tsx.
-const workerEntrypoint = source
-  ? `import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)}).then(({ register }) => { register(); return import(${JSON.stringify(workerUrl.href)}); });`
-  : workerUrl;
+const workerExecArgv = source
+  ? ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href]
+  : [];
 
-// Reuse the isolate during a build batch (notably daemon bootstrap), then release
-// TypeScript's heap when idle. Only this owner admits work or stops the worker.
+interface CompilerProcess {
+  child: ChildProcess;
+  exited: Promise<void>;
+}
+
+// Reuse the process during a build batch, then release TypeScript's heap.
+// esbuild starts a native child. Terminating a worker thread closes its libuv
+// loop before it can reap that child, leaving a zombie under the daemon PID.
 class PluginCompiler {
   private readonly queue = pLimit(1);
-  private worker: Worker | null = null;
+  private worker: CompilerProcess | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private stopping: Promise<unknown> = Promise.resolve();
 
@@ -58,12 +62,14 @@ class PluginCompiler {
       this.idleTimer = null;
       await this.stopping;
       const worker = this.worker ?? this.startWorker();
-      worker.ref();
+      worker.child.ref();
+      worker.child.channel?.ref();
       try {
         return await this.request<T>(worker, task, onLog);
       } finally {
         if (this.worker === worker) {
-          worker.unref();
+          worker.child.unref();
+          worker.child.channel?.unref();
           this.idleTimer = setTimeout(() => this.stopWorker(worker), IDLE_TIMEOUT_MS);
           this.idleTimer.unref();
         } else {
@@ -73,38 +79,51 @@ class PluginCompiler {
     });
   }
 
-  private startWorker(): Worker {
-    const worker = new Worker(workerEntrypoint, { eval: source, execArgv: [] });
-    this.worker = worker;
-    // Keep error/exit ownership while idle too. The next caller gets a fresh
-    // isolate after a crash; author build commands are never retried.
-    worker.on("error", () => this.stopWorker(worker));
-    worker.on("exit", () => {
-      if (this.worker === worker) this.stopWorker(worker);
+  private startWorker(): CompilerProcess {
+    const child = fork(workerUrl, [], {
+      execArgv: workerExecArgv,
+      serialization: "advanced",
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
     });
+    const exited = new Promise<void>((resolve) => {
+      child.once("exit", () => resolve());
+      child.on("error", () => {
+        if (child.pid === undefined) resolve();
+      });
+    });
+    const worker = { child, exited };
+    this.worker = worker;
+    child.once("disconnect", () => this.stopWorker(worker));
+    void exited.then(() => this.stopWorker(worker));
     return worker;
   }
 
-  private stopWorker(worker: Worker): void {
+  private stopWorker(worker: CompilerProcess): void {
     if (this.worker !== worker) return;
     this.worker = null;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
-    this.stopping = worker.terminate();
+    this.stopping = worker.exited;
+    // Close IPC so the compiler can finish any in-flight work and exit. Its
+    // pipes close with it, ending esbuild's service.
+    if (worker.child.connected) worker.child.disconnect();
   }
 
   private async request<T extends CompilerTask>(
-    worker: Worker,
+    worker: CompilerProcess,
     task: T,
     onLog?: (data: Record<string, unknown>, message: string) => void,
   ): Promise<TaskResult[T["kind"]]> {
     let onMessage: (reply: CompilerReply) => void;
     let onError: (error: Error) => void;
     let onExit: (code: number) => void;
+    let onDisconnect: () => void;
+    const { child } = worker;
     try {
       return await new Promise<TaskResult[T["kind"]]>((resolve, reject) => {
         onError = reject;
         onExit = (code) => reject(new Error(`Plugin compiler worker exited (code ${code})`));
+        onDisconnect = () => reject(new Error("Plugin compiler worker disconnected"));
         onMessage = (reply) => {
           if (reply.kind === "log") {
             onLog?.(reply.data, reply.message);
@@ -116,20 +135,26 @@ class PluginCompiler {
             if (reply.errors) Object.assign(error, { errors: reply.errors });
             if (reply.warnings) Object.assign(error, { warnings: reply.warnings });
             // Promise.all can reject while the other target is still compiling.
-            // Retire the isolate before another request can enter it.
+            // Retire the compiler before another request can enter it.
             this.stopWorker(worker);
             reject(error);
           }
         };
-        worker.on("error", onError);
-        worker.on("exit", onExit);
-        worker.on("message", onMessage);
-        worker.postMessage(task, []);
+        child.on("error", onError);
+        child.on("exit", onExit);
+        child.on("disconnect", onDisconnect);
+        child.on("message", onMessage);
+        child.send(task, (error) => {
+          if (!error) return;
+          this.stopWorker(worker);
+          reject(error);
+        });
       });
     } finally {
-      worker.off("message", onMessage!);
-      worker.off("error", onError!);
-      worker.off("exit", onExit!);
+      child.off("message", onMessage!);
+      child.off("error", onError!);
+      child.off("exit", onExit!);
+      child.off("disconnect", onDisconnect!);
     }
   }
 }
