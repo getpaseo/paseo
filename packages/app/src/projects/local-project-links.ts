@@ -93,6 +93,11 @@ export function resolveProjectGitIdentity(input: {
 
   for (const workspace of input.workspaces) {
     if (workspace.projectId !== input.project.projectId) continue;
+    // COMPAT(legacyCheckoutRoot): old daemons synthesize this workspace kind from agent payloads,
+    // whose optional worktreeRoot is normalized to cwd. That fallback cannot prove a selected
+    // subdirectory's checkout root, so do not use it for device-local link verification. Remove
+    // after the supported daemon floor guarantees workspaceMultiplicity (2027-11-23).
+    if (workspace.workspaceKind === "checkout") continue;
     const checkout = workspace.project?.checkout;
     const identityRoot = checkout?.isGit
       ? findProjectCheckoutRoot(input.project.projectRootPath, checkout)

@@ -32,6 +32,7 @@ function workspace(input: {
   projectId: string;
   projectRoot: string;
   workspaceDirectory?: string;
+  workspaceKind?: WorkspaceDescriptor["workspaceKind"];
   worktreeRoot: string;
   mainRepoRoot?: string;
   remote: string;
@@ -67,7 +68,7 @@ function workspace(input: {
     projectRootPath: input.projectRoot,
     workspaceDirectory,
     projectKind: "git",
-    workspaceKind: "local_checkout",
+    workspaceKind: input.workspaceKind ?? "local_checkout",
     name: "main",
     status: "done",
     statusEnteredAt: null,
@@ -320,6 +321,48 @@ describe("local project links", () => {
         ],
       }),
     ).toBeNull();
+  });
+
+  test("does not verify links from synthetic legacy checkout roots", () => {
+    const projectA = project({ id: "prj-a", root: "/repo/packages/web" });
+    const projectB = project({ id: "prj-b", root: "/clone/packages/api" });
+    const placements = buildProjectLinkPlacements({
+      hosts: [
+        {
+          serverId: "host-a",
+          serverName: "Desktop",
+          projects: [projectA],
+          workspaces: [
+            workspace({
+              id: "ws-a",
+              projectId: projectA.projectId,
+              projectRoot: projectA.projectRootPath,
+              worktreeRoot: projectA.projectRootPath,
+              workspaceKind: "checkout",
+              remote: "https://github.com/acme/app.git",
+            }),
+          ],
+        },
+        {
+          serverId: "host-b",
+          serverName: "Laptop",
+          projects: [projectB],
+          workspaces: [
+            workspace({
+              id: "ws-b",
+              projectId: projectB.projectId,
+              projectRoot: projectB.projectRootPath,
+              worktreeRoot: projectB.projectRootPath,
+              workspaceKind: "checkout",
+              remote: "https://github.com/acme/app.git",
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(placements.map((placement) => placement.identity)).toEqual([null, null]);
+    expect(buildProjectLinkSuggestions({ placements, links: [] })).toEqual([]);
   });
 
   test("does not infer an identity when a project is outside its Git worktree", () => {
