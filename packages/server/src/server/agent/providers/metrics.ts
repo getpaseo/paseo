@@ -104,3 +104,20 @@ export function mergeTimeIntervals(intervals: readonly TimeInterval[]): [number,
   }
   return merged;
 }
+
+/**
+ * Reports session metrics only when they change, for providers that recompute
+ * them after every event.
+ */
+export function createSessionMetricsReporter(
+  report: (metrics: AgentMetric[]) => void,
+): (metrics: AgentMetric[]) => void {
+  // A session starts with nothing reported, so an empty first report is not news.
+  let reported = "[]";
+  return (metrics) => {
+    const key = JSON.stringify(metrics);
+    if (key === reported) return;
+    reported = key;
+    report(metrics);
+  };
+}
