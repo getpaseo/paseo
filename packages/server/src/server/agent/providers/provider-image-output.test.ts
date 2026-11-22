@@ -4,10 +4,10 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import { projectTimelineRows } from "../timeline-projection.js";
 import { describe, expect, test } from "vitest";
+import { isProviderImageMarkdown } from "@getpaseo/protocol/provider-image";
 
 import {
   MAX_PROVIDER_IMAGE_BYTES,
-  isProviderImageMarkdown,
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
 } from "./provider-image-output.js";

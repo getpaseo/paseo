@@ -137,6 +137,49 @@ describe("collapseTurns", () => {
     });
     expect(opened.summaryRowsByHostId.get("u1")).not.toBe(moreWork.summaryRowsByHostId.get("u1"));
   });
+  it("updates image previews without changing tool counts, and reuses unchanged previews", () => {
+    const image: StreamItem = {
+      kind: "assistant_message",
+      id: "image",
+      timestamp: at,
+      text: `![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)`,
+    };
+    const items = [user("prompt"), shell("call"), image, reply("done")];
+    const first = collapse(items);
+    const again = collapse([...items], { previousSummaryRowsByHostId: first.summaryRowsByHostId });
+    expect(again.summaryRowsByHostId.get("prompt")).toBe(first.summaryRowsByHostId.get("prompt"));
+    const extra = {
+      ...image,
+      id: "second",
+      text: image.text.replace("a".repeat(64), "b".repeat(64)),
+    };
+    const more = collapse([user("prompt"), shell("call"), image, extra, reply("done")], {
+      previousSummaryRowsByHostId: again.summaryRowsByHostId,
+    });
+    expect(more.summaryRowsByHostId.get("prompt")).not.toBe(
+      first.summaryRowsByHostId.get("prompt"),
+    );
+    expect(more.summaryRowsByHostId.get("prompt")?.tools).toEqual(
+      first.summaryRowsByHostId.get("prompt")?.tools,
+    );
+    expect(more.summaryRowsByHostId.get("prompt")?.images).toMatchObject([
+      { itemId: "image", toolName: "Bash" },
+      { itemId: "second", toolName: "Bash" },
+    ]);
+    const mixed = collapse(
+      [
+        user("prompt"),
+        shell("call"),
+        { ...image, text: `${image.text}\nExplanation` },
+        reply("done"),
+      ],
+      {
+        previousSummaryRowsByHostId: more.summaryRowsByHostId,
+      },
+    );
+    expect(mixed.summaryRowsByHostId.get("prompt")?.images).toEqual([]);
+  });
+
   it("stands at its host's timeline position, taking a new row when that position lands", () => {
     const live = collapse([user("u1"), shell("c1"), reply("r1")]);
     expect(live.summaryRowsByHostId.get("u1")).not.toHaveProperty("timelineCursor");
@@ -209,6 +252,7 @@ describe("collapseTurns", () => {
       timestamp: at,
       expanded: false,
       tools: expect.objectContaining({ commandCount: 2 }),
+      images: [],
     });
     expect(result.summaryRowsByHostId.get("u1")).toBe(result.tail[1]);
     expect(result.hostIdByFoldedMessageId.get("early")).toBe("u1");

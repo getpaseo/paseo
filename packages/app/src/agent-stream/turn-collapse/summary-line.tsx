@@ -1,4 +1,6 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
+import type { MarkdownImageContext } from "@/components/markdown/images";
+import { ToolCallImageSummary } from "@/tool-calls/detail-level/overview/image-preview";
 import { useTranslation } from "react-i18next";
 import { Summary } from "lucide-react-native";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
@@ -12,9 +14,11 @@ import type { TurnSummaryItem } from "@/types/stream";
  */
 export const TurnSummaryLine = memo(function TurnSummaryLine({
   item,
+  imageContext,
   onExpandedChange,
 }: {
   item: TurnSummaryItem;
+  imageContext: MarkdownImageContext;
   onExpandedChange: (hostId: string, expanded: boolean) => void;
 }) {
   const { t } = useTranslation();
@@ -25,6 +29,14 @@ export const TurnSummaryLine = memo(function TurnSummaryLine({
     [hold, onExpandedChange, item.expanded, item.hostId],
   );
 
+  const imageSummary = useMemo(
+    () =>
+      item.expanded ? null : (
+        <ToolCallImageSummary images={item.images} context={imageContext} onShowMore={toggle} />
+      ),
+    [item.expanded, item.images, imageContext, toggle],
+  );
+
   return (
     <ExpandableBadge
       testID="turn-summary"
@@ -32,6 +44,7 @@ export const TurnSummaryLine = memo(function TurnSummaryLine({
       icon={Summary}
       isExpanded={item.expanded}
       onToggle={toggle}
+      trailing={imageSummary}
       borderlessWhenExpanded
     />
   );

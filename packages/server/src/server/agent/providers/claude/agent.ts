@@ -107,8 +107,8 @@ import {
 } from "../release-check.js";
 import { runUpdateCommand, updatedForNewAgents } from "../update-command.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
+import { isProviderImageMarkdown } from "@getpaseo/protocol/provider-image";
 import {
-  isProviderImageMarkdown,
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,

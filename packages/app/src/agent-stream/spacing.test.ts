@@ -28,6 +28,7 @@ const summary: StreamItem = {
   expanded: false,
   timestamp: new Date(0),
   tools: summarizeToolCalls([]),
+  images: [],
 };
 describe("whole-message spacing", () => {
   it("compacts only the gap to its turn footer", () => {

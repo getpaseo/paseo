@@ -1561,6 +1561,7 @@ export const TodoListCard = memo(function TodoListCard({
 interface ExpandableBadgeProps {
   label: string;
   secondaryLabel?: string;
+  trailing?: ReactNode;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
   style?: StyleProp<ViewStyle>;
@@ -1884,6 +1885,7 @@ function buildShimmerTextStyle(input: {
 
 export const ExpandableBadge = memo(function ExpandableBadge({
   label,
+  trailing,
   style,
   secondaryLabel,
   icon,
@@ -2185,6 +2187,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
             onSecondaryLayout={handleSecondaryLayout}
           />
         </Pressable>
+        {trailing}
         {onOpenFile && isHovered ? (
           <Pressable
             onPress={handleOpenFilePress}
@@ -2215,6 +2218,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: ExpandableBadgeProps) {
   if (previous.label !== next.label) return false;
   if (previous.secondaryLabel !== next.secondaryLabel) return false;
+  if (previous.trailing !== next.trailing) return false;
   if (previous.icon !== next.icon) return false;
   if (previous.isExpanded !== next.isExpanded) return false;
   if (previous.style !== next.style) return false;

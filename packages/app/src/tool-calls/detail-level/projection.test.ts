@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as markdownSource from "@/components/markdown/source";
+import { resolveToolCallImage } from "./overview/image-source";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
+import { getToolCallImagePreview } from "./overview/model";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
@@ -9,6 +12,7 @@ import {
 } from "./projection";
 
 type AssistantMessageItem = Extract<StreamItem, { kind: "assistant_message" }>;
+const PROVIDER_IMAGE_MARKDOWN = `\n\n![Image](file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png)\n\n`;
 
 function toolCall(
   id: string,
@@ -63,6 +67,227 @@ function project(input: {
 }
 
 describe("tool call detail-level projection", () => {
+  it("provides ordered image thumbnails with their preceding tool names", () => {
+    const first = toolCall("1", { type: "read", filePath: "/repo/first.png" }, { name: "Read" });
+    const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN };
+    const second = toolCall("2", { type: "shell", command: "capture" }, { name: "Bash" });
+    const nextImage = { ...assistant("next-image"), text: PROVIDER_IMAGE_MARKDOWN };
+    const result = project({ level: "overview", tail: [first, image, second, nextImage] });
+
+    expect(result.groupsByHostId.get(first.id)?.images).toEqual([
+      {
+        id: "image:0",
+        itemId: "image",
+        message: image,
+        index: 0,
+        toolName: "Read",
+      },
+      {
+        id: "next-image:0",
+        itemId: "next-image",
+        message: nextImage,
+        index: 0,
+        toolName: "Bash",
+      },
+    ]);
+  });
+
+  it.each([
+    { total: 1, visible: [1], hidden: 0 },
+    { total: 3, visible: [1, 2, 3], hidden: 0 },
+    { total: 10, visible: [8, 9, 10], hidden: 7 },
+    { total: 11, visible: [9, 10, 11], hidden: 8 },
+  ])(
+    "limits the summary for $total merged image outputs without losing their order",
+    ({ total, visible, hidden }) => {
+      const call = toolCall("1", { type: "read", filePath: "/repo/book.pdf" }, { name: "Read" });
+      const pages = Array.from(
+        { length: total },
+        (_, index) =>
+          `![Page ${index + 1}](file:///tmp/paseo-attachments-test/${index.toString(16).padStart(64, "0")}.png)`,
+      );
+      const message = { ...assistant("pages"), text: pages.join("\n\n") };
+      const result = project({ level: "overview", tail: [call], head: [message] });
+      const group = result.groupsByHostId.get(call.id);
+      if (!group) throw new Error("Expected a group containing the image outputs");
+      expect(group.images).toHaveLength(total);
+      expect(new Set(group.images.map((image) => image.id)).size).toBe(total);
+      expect(group.images.map((image) => image.toolName)).toEqual(Array(total).fill("Read"));
+      const preview = getToolCallImagePreview(group.images);
+      expect(preview.hiddenCount).toBe(hidden);
+      expect(preview.visible.map((image) => resolveToolCallImage(image).alt)).toEqual(
+        visible.map((page) => `Page ${page}`),
+      );
+      expect(group.run.calls).toEqual([call, message]);
+    },
+  );
+
+  it.each([false, true])(
+    "parses only visible image messages and reuses parsed sources (merged %s)",
+    (merged) => {
+      const parse = vi.spyOn(markdownSource, "prepareMarkdownSource");
+      try {
+        const call = toolCall("1", { type: "read", filePath: "/repo/book.pdf" }, { name: "Read" });
+        const messages = merged
+          ? [{ ...assistant("pages"), text: PROVIDER_IMAGE_MARKDOWN.repeat(11) }]
+          : Array.from({ length: 11 }, (_, index) => ({
+              ...assistant(`page-${index}`),
+              text: PROVIDER_IMAGE_MARKDOWN,
+            }));
+        const result = project({ level: "overview", tail: [call, ...messages] });
+        const group = result.groupsByHostId.get(call.id);
+        if (!group) throw new Error("Expected image group");
+        expect(parse).not.toHaveBeenCalled();
+        const preview = getToolCallImagePreview(group.images);
+        for (const image of preview.visible) {
+          expect(resolveToolCallImage(image)).toMatchObject({
+            source: `file:///tmp/paseo-attachments-test/${"a".repeat(64)}.png`,
+            alt: "Image",
+          });
+          expect(resolveToolCallImage(image)).toBe(resolveToolCallImage(image));
+        }
+        expect(parse).toHaveBeenCalledTimes(merged ? 1 : 3);
+      } finally {
+        parse.mockRestore();
+      }
+    },
+  );
+
+  it("does not invent a tool name for an image following reasoning alone", () => {
+    const thought: StreamItem = {
+      kind: "thought",
+      id: "thought",
+      text: "Reviewing",
+      status: "ready",
+      timestamp: new Date(0),
+    };
+    const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN };
+    const result = project({ level: "overview", tail: [thought, image] });
+    expect(result.groupsByHostId.get(thought.id)?.images).toMatchObject([
+      { itemId: image.id, message: image, index: 0, toolName: null },
+    ]);
+  });
+
+  it.each([0, 1, 2, 3])(
+    "keeps provider images inside the tool run with %i retained items",
+    (retainedCount) => {
+      const first = toolCall("1", { type: "read", filePath: "/repo/first.png" });
+      const image = {
+        ...assistant("image"),
+        text: PROVIDER_IMAGE_MARKDOWN,
+      };
+      const second = toolCall("2", { type: "read", filePath: "/repo/second.png" });
+      const items = [first, image, second];
+      const result = project({
+        level: "overview",
+        tail: items.slice(0, retainedCount),
+        head: items.slice(retainedCount),
+      });
+
+      expect([...result.tail, ...result.head].map((item) => item.id)).toEqual([first.id]);
+      expect(result.groupsByHostId.get(first.id)?.run.calls).toEqual(items);
+      expect(result.groupsByHostId.get(first.id)?.summary).toMatchObject({
+        readFileCount: 2,
+        otherToolCount: 0,
+      });
+    },
+  );
+
+  it.each([0, 1, 2, 3])(
+    "keeps trailing images folded under a tool host with %i retained items",
+    (retainedCount) => {
+      const call = toolCall("1", { type: "read", filePath: "/repo/first.png" });
+      const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN };
+      const images = { ...assistant("images"), text: PROVIDER_IMAGE_MARKDOWN.repeat(2) };
+      const items = [call, image, images];
+      const tail = items.slice(0, retainedCount);
+      const result = project({
+        level: "overview",
+        tail,
+        head: items.slice(retainedCount),
+        preparedHistory: prepareToolCallHistory("overview", tail, true),
+        isTurnActive: true,
+      });
+
+      expect([...result.tail, ...result.head]).toEqual([call]);
+      expect(result.groupsByHostId.get(call.id)).toMatchObject({
+        run: { calls: items, latest: call, isSealed: false },
+        summary: { readFileCount: 1, otherToolCount: 0 },
+        isLoading: false,
+      });
+      expect(project({ level: "detailed", tail: items }).tail).toEqual(items);
+    },
+  );
+
+  it.each([
+    "![Image](https://example.com/image.png)",
+    "![Image](/repo/first.png)",
+    `Description before${PROVIDER_IMAGE_MARKDOWN}`,
+    `${PROVIDER_IMAGE_MARKDOWN}Description after`,
+    `\`\`\`markdown\n${PROVIDER_IMAGE_MARKDOWN}\n\`\`\``,
+  ])("keeps ordinary images and mixed prose outside groups: %s", (text) => {
+    const first = toolCall("1", { type: "read", filePath: "/repo/first.png" });
+    const message = { ...assistant("message"), text };
+    const second = toolCall("2", { type: "read", filePath: "/repo/second.png" });
+    const items = [first, message, second];
+    const history = project({ level: "overview", tail: items });
+    const live = project({ level: "overview", tail: [first], head: [message, second] });
+
+    expect(history.tail).toEqual(items);
+    expect(history.groupsByHostId.size).toBe(0);
+    expect([...live.tail, ...live.head]).toEqual(items);
+    expect(live.groupsByHostId.size).toBe(0);
+  });
+
+  it("does not start a group with an image or absorb a user-authored image", () => {
+    const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN };
+    const user: StreamItem = { ...image, kind: "user_message", id: "user" };
+    const call = toolCall("1", { type: "read", filePath: "/repo/first.png" });
+    const items = [image, call, user];
+
+    expect(project({ level: "overview", tail: items }).tail).toEqual(items);
+    expect(project({ level: "overview", head: items }).head).toEqual(items);
+  });
+
+  it("does not attach an image across canonical turns", () => {
+    const call = {
+      ...toolCall("1", { type: "read", filePath: "/repo/first.png" }),
+      turnId: "first",
+    };
+    const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN, turnId: "second" };
+
+    expect(project({ level: "overview", tail: [call, image] }).tail).toEqual([call, image]);
+    const live = project({ level: "overview", tail: [call], head: [image] });
+    expect(live.head).toEqual([image]);
+    expect(live.groupsByHostId.size).toBe(0);
+  });
+
+  it.each([false, true])(
+    "respects reasoning boundaries before images (Expand thinking %s)",
+    (autoExpandReasoning) => {
+      const thought: StreamItem = {
+        kind: "thought",
+        id: "reasoning",
+        text: "Inspecting the image",
+        status: "ready",
+        timestamp: new Date("2026-01-01T00:00:00.000Z"),
+      };
+      const image = { ...assistant("image"), text: PROVIDER_IMAGE_MARKDOWN };
+      const tail = [thought];
+      const result = project({
+        level: "overview",
+        tail,
+        head: [image],
+        preparedHistory: prepareToolCallHistory("overview", tail, autoExpandReasoning),
+      });
+      expect(result.tail).toEqual([thought]);
+      expect(result.head).toEqual(autoExpandReasoning ? [image] : []);
+      expect(result.groupsByHostId.get(thought.id)?.run.calls).toEqual(
+        autoExpandReasoning ? undefined : [thought, image],
+      );
+    },
+  );
+
   it.each(["detailed", "overview"] as const)(
     "keeps pending approval tools out of %s presentation without removing their canonical position",
     (level) => {
@@ -243,6 +468,7 @@ describe("tool call detail-level projection", () => {
       mode: "overview",
       run: expect.any(Object),
       isLoading: false,
+      images: [],
       summary: {
         thoughtCount: 0,
         editedFileCount: 1,

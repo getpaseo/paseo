@@ -73,6 +73,7 @@ import {
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
+import { ToolCallImageDetails } from "@/tool-calls/detail-level/overview/image-preview";
 import { IndentRail } from "@/components/indent-rail";
 import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
@@ -737,8 +738,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
     );
 
+    const toolImageContext = useMemo(
+      () => ({ client, workspaceRoot, serverId: resolvedServerId }),
+      [client, workspaceRoot, resolvedServerId],
+    );
+    const getToolImages = useStableEvent((itemId: string) =>
+      presentation.toolImagesByItemId.get(itemId),
+    );
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        const images = getToolImages(item.id);
+        if (images) {
+          return (
+            <ToolCallImageDetails itemId={item.id} images={images} context={toolImageContext} />
+          );
+        }
         return (
           <AssistantFileLinkResolverProvider
             client={client}
@@ -765,7 +779,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        getToolImages,
+        handleInlinePathPress,
+        resolvedServerId,
+        toast,
+        toolImageContext,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(
@@ -865,40 +888,54 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         return (
           <OverviewToolCallGroupView
             group={group}
+            imageContext={toolImageContext}
             expanded={expanded}
             isLastInSequence={layoutItem.isLastInToolSequence}
             onExpandedChange={setToolCallGroupExpanded}
           >
             {expanded
-              ? group.run.calls.map((call, index) => (
-                  <React.Fragment key={call.id}>
-                    {call.kind === "thought" ? (
-                      // Reasoning is grouped only while Expand thinking is off, so an opened
-                      // group shows each thought as a closed row like any other call.
-                      <ThoughtSlot
+              ? group.run.calls.map((call, index) => {
+                  if (call.kind === "assistant_message") {
+                    return (
+                      <ToolCallImageDetails
+                        key={call.id}
                         itemId={call.id}
-                        text={call.text}
-                        status={call.status}
-                        isLastInSequence={index === group.run.calls.length - 1}
-                        defaultExpanded={false}
-                        maxDetailHeight={GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT}
-                        standalone={false}
-                        onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+                        images={group.images}
+                        context={toolImageContext}
                       />
-                    ) : (
-                      renderSingleToolCallItem(call, index === group.run.calls.length - 1, {
-                        maxDetailHeight: GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT,
-                        standalone: false,
-                      })
-                    )}
-                  </React.Fragment>
-                ))
+                    );
+                  }
+                  return (
+                    <React.Fragment key={call.id}>
+                      {call.kind === "thought" ? (
+                        // Reasoning is grouped only while Expand thinking is off, so an opened
+                        // group shows each thought as a closed row like any other call.
+                        <ThoughtSlot
+                          itemId={call.id}
+                          text={call.text}
+                          status={call.status}
+                          isLastInSequence={index === group.run.calls.length - 1}
+                          defaultExpanded={false}
+                          maxDetailHeight={GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT}
+                          standalone={false}
+                          onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+                        />
+                      ) : (
+                        renderSingleToolCallItem(call, index === group.run.calls.length - 1, {
+                          maxDetailHeight: GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT,
+                          standalone: false,
+                        })
+                      )}
+                    </React.Fragment>
+                  );
+                })
               : null}
           </OverviewToolCallGroupView>
         );
       },
       [
         expandedToolCallGroups,
+        toolImageContext,
         renderThoughtItem,
         setInlineDetailsExpanded,
         getToolCallGroup,
@@ -923,7 +960,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return renderToolCallItem(layoutItem, item);
 
           case "turn_summary":
-            return <TurnSummaryLine item={item} onExpandedChange={setTurnExpanded} />;
+            return (
+              <TurnSummaryLine
+                item={item}
+                imageContext={toolImageContext}
+                onExpandedChange={setTurnExpanded}
+              />
+            );
 
           case "notification":
             return <Notification level={item.level} message={item.message} />;
@@ -956,6 +999,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderToolCallItem,
         setTurnExpanded,
         resolvedServerId,
+        toolImageContext,
       ],
     );
 
@@ -1136,7 +1180,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const historyRowRevision = useMemo(
       () => ({
         contentById: {
-          has: (id: string) => presentation.historyGroupUpdatesByHostId.has(id),
+          has: (id: string) =>
+            presentation.historyGroupUpdatesByHostId.has(id) ||
+            presentation.historyImageUpdates.has(id),
         },
         displayStateById: {
           // An opened lone call also marks its future group open; that row stays unrevised
@@ -1153,6 +1199,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobile,
         nestedItemIds,
         presentation.historyGroupUpdatesByHostId,
+        presentation.historyImageUpdates,
       ],
     );
 
