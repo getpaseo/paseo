@@ -1,9 +1,9 @@
 import { useCallback } from "react";
 import {
-  getLastWorkspaceSelection,
   useActiveWorkspaceSelection,
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { getFocusedWorkspaceSelection } from "@/navigation/workspace-route-navigation";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
@@ -14,7 +14,7 @@ import { isWorkspaceListed, type WorkspaceArchiveTarget } from "@/workspace/work
 // The redirect compares descriptor ids; the route's id is not guaranteed to equal one (see
 // use-global-workspace-pin-action.ts), so resolve it through the session store.
 function readActiveDescriptorSelection(): ActiveWorkspaceSelection | null {
-  const selection = getLastWorkspaceSelection();
+  const selection = getFocusedWorkspaceSelection();
   if (!selection) {
     return null;
   }
@@ -53,8 +53,8 @@ export function useActiveWorkspaceArchive(): ActiveWorkspaceArchive {
   }));
 
   // The archive starts after the host answers and you confirm, by which time the header that began
-  // it may be gone (a resize swaps it, and on native switching workspaces unmounts it). So the
-  // redirect asks the navigation owner where you are now instead of using this render's route.
+  // it may be gone (a resize swaps it, and on native switching workspaces unmounts it), and you may
+  // have left workspace routes. So the redirect reads the focused route now, not this render's.
   const redirectAfterArchive = useCallback((workspace: WorkspaceArchiveTarget) => {
     redirectIfArchivingActiveWorkspace({
       ...workspace,
