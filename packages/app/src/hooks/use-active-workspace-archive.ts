@@ -1,9 +1,31 @@
 import { useCallback } from "react";
-import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import {
+  getLastWorkspaceSelection,
+  useActiveWorkspaceSelection,
+  type ActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { isWorkspaceListed, type WorkspaceArchiveTarget } from "@/workspace/workspace-archive";
+
+// The redirect compares descriptor ids; the route's id is not guaranteed to equal one (see
+// use-global-workspace-pin-action.ts), so resolve it through the session store.
+function readActiveDescriptorSelection(): ActiveWorkspaceSelection | null {
+  const selection = getLastWorkspaceSelection();
+  if (!selection) {
+    return null;
+  }
+  const workspaces = useSessionStore.getState().sessions[selection.serverId]?.workspaces;
+  const key = resolveWorkspaceMapKeyByIdentity({
+    workspaces,
+    workspaceId: selection.workspaceId,
+  });
+  const descriptor = key ? workspaces?.get(key) : undefined;
+  return descriptor ? { serverId: selection.serverId, workspaceId: descriptor.id } : null;
+}
 
 export interface ActiveWorkspaceArchive {
   /** False when no workspace is routed, or the routed one is already archiving. */
@@ -30,20 +52,15 @@ export function useActiveWorkspaceArchive(): ActiveWorkspaceArchive {
     diffStat: workspace.diffStat,
   }));
 
-  // useWorkspaceArchive calls the latest render's callback, so `activeWorkspaceId` is whatever is
-  // routed when the archive starts, after any confirmation. It is the descriptor id, which is what
-  // the redirect compares against.
-  const activeWorkspaceId = fields?.id ?? null;
-  const redirectAfterArchive = useCallback(
-    (workspace: WorkspaceArchiveTarget) => {
-      redirectIfArchivingActiveWorkspace({
-        ...workspace,
-        activeWorkspaceSelection:
-          serverId && activeWorkspaceId ? { serverId, workspaceId: activeWorkspaceId } : null,
-      });
-    },
-    [activeWorkspaceId, serverId],
-  );
+  // The archive starts after the host answers and you confirm, by which time the header that began
+  // it may be gone (a resize swaps it, and on native switching workspaces unmounts it). So the
+  // redirect asks the navigation owner where you are now instead of using this render's route.
+  const redirectAfterArchive = useCallback((workspace: WorkspaceArchiveTarget) => {
+    redirectIfArchivingActiveWorkspace({
+      ...workspace,
+      activeWorkspaceSelection: readActiveDescriptorSelection(),
+    });
+  }, []);
 
   const archiveController = useWorkspaceArchive({
     serverId: serverId ?? "",
