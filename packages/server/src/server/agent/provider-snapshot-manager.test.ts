@@ -3856,10 +3856,18 @@ test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real time
     expect(await manager.isProviderActiveForUsage("codex")).toBe(true);
     expect(codexChecks).toBe(checksAfterForce);
 
-    // Once the TTL elapses, a normal read re-probes automatically.
+    // Refreshing Providers after uninstalling codex updates the shared availability reading even
+    // though an unavailable snapshot entry carries no fetchedAt.
     codexAvailable = false;
-    expect(await manager.isProviderActiveForUsage("codex", { ttlMs: 0 })).toBe(false);
-    expect(codexChecks).toBeGreaterThan(checksAfterForce);
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+    const checksAfterSettingsRefresh = codexChecks;
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(false);
+    expect(codexChecks).toBe(checksAfterSettingsRefresh);
+
+    // Once the TTL elapses, a normal read re-probes automatically.
+    codexAvailable = true;
+    expect(await manager.isProviderActiveForUsage("codex", { ttlMs: 0 })).toBe(true);
+    expect(codexChecks).toBeGreaterThan(checksAfterSettingsRefresh);
 
     // A hung non-abortable provider check resolves at the deadline instead of blocking callers.
     const started = Date.now();
