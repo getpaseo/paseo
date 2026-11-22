@@ -153,6 +153,16 @@ const migrateLegacyImages: MigrateLegacyImages = async (images) => {
 
 async function runAttachmentGc(): Promise<void> {
   gcScheduled = false;
+  try {
+    const { getHostRuntimeStore } = await import("@/runtime/host-runtime");
+    const referencedIds = new Set(await getHostRuntimeStore().collectCachedTimelineImageIds());
+    await collectUnreferencedAttachments(referencedIds);
+  } catch (error) {
+    console.warn("[DraftStore] Attachment garbage collection failed", error);
+  }
+}
+
+async function collectUnreferencedAttachments(referencedIds: Set<string>): Promise<void> {
   const nowMs = Date.now();
 
   useDraftStore.setState((state) => {
@@ -166,7 +176,6 @@ async function runAttachmentGc(): Promise<void> {
     };
   });
 
-  const referencedIds = new Set<string>();
   for (const id of useDraftStore.getState().collectActiveAttachmentIds()) {
     referencedIds.add(id);
   }
@@ -203,11 +212,7 @@ async function runAttachmentGc(): Promise<void> {
     }
   }
 
-  try {
-    await garbageCollectAttachments({ referencedIds });
-  } catch (error) {
-    console.warn("[DraftStore] Attachment garbage collection failed", error);
-  }
+  await garbageCollectAttachments({ referencedIds });
 }
 
 function collectQueuedMessageAttachmentIds(

@@ -3,8 +3,11 @@ import {
   type AttachmentMetadata,
   type UserComposerAttachment,
 } from "@/attachments/types";
+import { AttachmentMetadataSchema } from "@/attachments/metadata-schema";
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
+
+export { AttachmentMetadataSchema } from "@/attachments/metadata-schema";
 
 export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
@@ -52,15 +55,6 @@ export interface DraftStoreState {
   createModalDraft: DraftRecord | null;
 }
 
-export const AttachmentMetadataSchema = z.strictObject({
-  id: z.string(),
-  mimeType: z.string(),
-  storageType: z.enum(["web-indexeddb", "desktop-file", "native-file"]),
-  storageKey: z.string(),
-  fileName: z.string().nullable().optional(),
-  byteSize: z.number().nullable().optional(),
-  createdAt: z.number(),
-}) satisfies z.ZodType<AttachmentMetadata>;
 export const LegacyDraftImageSchema: z.ZodType<LegacyDraftImage> = z.strictObject({
   uri: z.string(),
   mimeType: z.string().optional(),
