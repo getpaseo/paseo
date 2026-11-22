@@ -375,6 +375,22 @@ describe("OpenCode v2 metrics through the session", () => {
     }
   });
 
+  test("history of a session with no turns replays nothing", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory!()) history.push(event);
+      expect(history).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("history replays without session metrics when the session info is unavailable", async () => {
     const harness = answeredHarness();
     const client = new OpenCodeV2AgentClient({

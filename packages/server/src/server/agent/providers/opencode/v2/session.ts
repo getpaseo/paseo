@@ -329,12 +329,9 @@ export class OpenCodeV2Session implements AgentSession {
         if (metrics) events.push({ type: "turn_completed", provider: "opencode", metrics });
       },
     );
-    if (info) {
-      events.push({
-        type: "session_metrics_updated",
-        provider: "opencode",
-        metrics: sessionMetrics(info, list),
-      });
+    const metrics = info ? sessionMetrics(info, list) : [];
+    if (metrics.length > 0) {
+      events.push({ type: "session_metrics_updated", provider: "opencode", metrics });
     }
     yield* events;
   }
