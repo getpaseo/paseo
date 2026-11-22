@@ -461,6 +461,8 @@ All providers:
 
 Providers that can accept native tool definitions should set `supportsNativePaseoTools` and read `launchContext.paseoTools`. The daemon then passes the shared Paseo tool catalog directly and removes the internal Paseo MCP server from that provider launch config. Providers that only support MCP continue to receive the same tools through the MCP fallback at `/mcp/agents`.
 
+The `/mcp/agents` route rewrites an unknown `mcp-protocol-version` header to the newest version the pinned MCP SDK speaks before the transport sees it. The SDK rejects any version outside its own list with `400 Unsupported protocol version`, which refuses clients that ship a newer protocol revision; initialize already negotiates an unknown version down, so later requests are read the same way.
+
 ## Data flow: running an agent
 
 1. Client sends `CreateAgentRequestMessage` with config (prompt, cwd, provider, model, mode)
