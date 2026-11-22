@@ -1347,6 +1347,9 @@ const ImageAttachmentSchema = z.object({
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
+/** An agent sender may also queue: wait until the recipient's running turn ends. */
+export const AgentActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
+export type AgentActiveTurnBehavior = z.infer<typeof AgentActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
@@ -1524,7 +1527,8 @@ export const SendAgentMessageRequestSchema = z.object({
   sourceAgentServerId: z.string().min(1).optional(),
   sessionMode: z.string().optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
-  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
+  /** queue needs an agent sender. */
+  activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
@@ -4178,6 +4182,8 @@ export const ServerInfoStatusPayloadSchema = z
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
         agentMessageBatching: z.boolean().optional(),
+        // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
+        agentActiveTurnBehaviors: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -5523,6 +5529,10 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     deliveryStatus: z.literal("queued").optional(),
+    /** The behavior applied to a queued agent message. */
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
+    /** What happens to a queued agent message, and how the sender can change it. */
+    guidance: z.string().optional(),
     error: z.string().nullable(),
   }),
 });

@@ -278,6 +278,7 @@ function buildAgentManagerSpies() {
     effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
     reloadStalePluginSession: async () => {},
     hasInFlightRun: vi.fn().mockReturnValue(false),
+    canSteer: vi.fn().mockReturnValue(false),
     hasPendingPermissions: () => false,
     steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
@@ -3485,6 +3486,8 @@ interface HeldTurnOptions {
   finishDuringSteer?: boolean;
   rejectSteer?: boolean;
   steerResult?: "accepted" | "unavailable";
+  /** The session offers no steering at all, as a provider without steering support. */
+  noSteering?: boolean;
   /** Run the whole turn before the turn-start request returns. */
   finishTurnsDuringStart?: boolean;
 }
@@ -3510,7 +3513,9 @@ class HeldTurnAgentSession implements AgentSession {
     readonly provider: AgentProvider,
     private readonly holdTurns: boolean,
     private readonly options: HeldTurnOptions = {},
-  ) {}
+  ) {
+    if (options.noSteering) Object.defineProperty(this, "steerActiveTurn", { value: undefined });
+  }
 
   /** Hold the next turn's acknowledgment, as a provider awaiting its turn-start request does. */
   holdTurnStart(): () => void {
@@ -3727,19 +3732,66 @@ class HeldTurnAgentClient implements AgentClient {
 
 describe("send_agent_prompt MCP tool", () => {
   it.each([
-    { agentScoped: true, behavior: undefined, available: true },
-    { agentScoped: true, behavior: "interrupt", available: true },
-    { agentScoped: true, behavior: "steer", available: true },
-    { agentScoped: false, behavior: undefined, available: true },
-    { agentScoped: false, behavior: "steer", available: true },
-    { agentScoped: true, behavior: undefined, available: false },
+    {
+      agentScoped: true,
+      behavior: undefined,
+      steering: "accepted",
+      applied: "queue",
+      outcome: "queued",
+      guidance: 'or "interrupt" (it stops the turn and starts a new one). The follow-up carries',
+    },
+    {
+      agentScoped: true,
+      behavior: undefined,
+      steering: "none",
+      applied: "queue",
+      outcome: "queued",
+      guidance: 'provider cannot steer, so "steer" also stops the turn',
+    },
+    {
+      agentScoped: true,
+      behavior: "steer",
+      steering: "accepted",
+      applied: "steer",
+      outcome: "steered",
+      guidance: "Steering the running turn.",
+    },
+    {
+      agentScoped: true,
+      behavior: "steer",
+      steering: "none",
+      applied: "steer",
+      outcome: "replaced",
+      guidance: "This agent's provider cannot steer, so your message interrupts the running turn.",
+    },
+    // A provider that can steer may refuse one steer; the turn is replaced all the same.
+    {
+      agentScoped: true,
+      behavior: "steer",
+      steering: "unavailable",
+      applied: "steer",
+      outcome: "replaced",
+      guidance: "Steering the running turn.",
+    },
+    {
+      agentScoped: true,
+      behavior: "interrupt",
+      steering: "accepted",
+      applied: "interrupt",
+      outcome: "replaced",
+      guidance: "Interrupting the running turn.",
+    },
+    { agentScoped: false, behavior: undefined, steering: "accepted", outcome: "replaced" },
+    { agentScoped: false, behavior: "steer", steering: "accepted", outcome: "steered" },
   ] as const)(
-    "dispatches behavior $behavior for agent-scoped=$agentScoped, steering available=$available",
-    async ({ agentScoped, behavior, available }) => {
+    "$behavior from agent-scoped=$agentScoped to a working agent (steering: $steering) is $outcome",
+    async (scenario) => {
+      const { agentScoped, behavior, steering, outcome } = scenario;
       const workdir = await mkdtemp(join(tmpdir(), "mcp-send-behavior-"));
       const storage = new AgentStorage(join(workdir, "agents"), logger);
       const client = new HeldTurnAgentClient("codex", true, {
-        steerResult: available ? "accepted" : "unavailable",
+        steerResult: steering === "none" ? undefined : steering,
+        noSteering: steering === "none",
       });
       const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
       try {
@@ -3766,9 +3818,8 @@ describe("send_agent_prompt MCP tool", () => {
           prompt: "Original work",
           notifyOnFinish: false,
         });
+        const session = client.sessions[1]!;
         const originalTurn = manager.getAgent(child.id)!.activeTurnId;
-        const queued = agentScoped && behavior !== "interrupt";
-        const steered = !agentScoped && behavior === "steer";
         const response = await invokeToolWithParsedInput(
           tool,
           {
@@ -3777,31 +3828,74 @@ describe("send_agent_prompt MCP tool", () => {
             notifyOnFinish: false,
             ...(behavior ? { activeTurnBehavior: behavior } : {}),
           },
-          !queued,
+          outcome !== "queued",
         );
-        expect(response.structuredContent).toMatchObject({
-          success: true,
-          ...(agentScoped
-            ? { deliveryStatus: "queued" }
-            : { disposition: steered ? "steered" : "turn_started" }),
-        });
-        if (queued) {
-          expect(client.sessions[1]!.prompts).toHaveLength(1);
-          expect(client.sessions[1]!.steeredPrompts).toEqual([]);
+        if (agentScoped) {
+          expect(response.structuredContent).toMatchObject({
+            success: true,
+            deliveryStatus: "queued",
+            activeTurnBehavior: scenario.applied,
+          });
+          expect(response.structuredContent.guidance).toContain(scenario.guidance);
+        }
+        if (outcome === "queued") {
+          expect(session.prompts).toHaveLength(1);
           expect(manager.getAgent(child.id)!.activeTurnId).toBe(originalTurn);
-          client.sessions[1]!.finishTurn();
+          session.finishTurn();
           await serverDeliveries
             .get(server)!
             .waitForDispatch(child.id, new AbortController().signal);
         }
-        expect(client.sessions[1]!.prompts).toHaveLength(steered ? 1 : 2);
-        expect(client.sessions[1]!.steeredPrompts).toHaveLength(steered ? 1 : 0);
-        expect(manager.getAgent(child.id)!.activeTurnId === originalTurn).toBe(steered);
+        expect(session.prompts).toHaveLength(outcome === "steered" ? 1 : 2);
+        expect(session.steeredPrompts).toHaveLength(outcome === "steered" ? 1 : 0);
+        expect(manager.getAgent(child.id)!.activeTurnId === originalTurn).toBe(
+          outcome === "steered",
+        );
       } finally {
         await removeAgentStateDir(manager, storage, workdir);
       }
     },
   );
+
+  it("tells an agent caller that an idle recipient starts a turn with its queued message", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-send-idle-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", false, { steerResult: "accepted" });
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    try {
+      const parent = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const response = await invokeToolWithParsedInput(
+        registeredTool(server, "send_agent_prompt"),
+        {
+          agentId: child.id,
+          prompt: "Start work",
+          notifyOnFinish: false,
+        },
+      );
+      expect(response.structuredContent).toMatchObject({
+        deliveryStatus: "queued",
+        activeTurnBehavior: "queue",
+      });
+      expect(response.structuredContent.guidance).toContain(
+        "Queued. The agent is idle, so your message starts a turn in about 2 seconds.",
+      );
+      expect(client.sessions[1]!.prompts).toHaveLength(1);
+    } finally {
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
 
   it.each([
     { rejected: false, priorNotification: false },
@@ -4231,7 +4325,7 @@ describe("send_agent_prompt MCP tool", () => {
             {
               agentId: child.id,
               prompt: "/side-command",
-              activeTurnBehavior: scenario === "out_of_band_interrupt" ? "interrupt" : "steer",
+              activeTurnBehavior: scenario === "out_of_band_interrupt" ? "interrupt" : "queue",
             },
             scenario !== "out_of_band",
           );
@@ -4536,10 +4630,10 @@ describe("message order for one recipient", () => {
   const existingCwd = process.cwd();
 
   /** A sending agent, a person, and a recipient whose turns end only when the test says so. */
-  async function setupRecipient() {
+  async function setupRecipient(options: HeldTurnOptions = {}) {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-message-order-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
-    const client = new HeldTurnAgentClient("codex", true);
+    const client = new HeldTurnAgentClient("codex", true, options);
     const agentManager = new AgentManager({
       clients: { codex: client },
       registry: storage,
@@ -4610,11 +4704,11 @@ describe("message order for one recipient", () => {
       await delivery.waitForDispatch(recipient.id, new AbortController().signal);
       expect(delivery.hasPending(recipient.id)).toBe(false);
     }
-    /** Resolves when the message is queued; an interrupt by default when it is dispatched. */
+    /** Resolves when the message is queued; a steer or an interrupt by default when it is dispatched. */
     function agentSends(
       prompt: string,
-      activeTurnBehavior: "steer" | "interrupt" = "steer",
-      awaitDispatch = activeTurnBehavior === "interrupt",
+      activeTurnBehavior: "queue" | "steer" | "interrupt" = "queue",
+      awaitDispatch = activeTurnBehavior !== "queue",
     ) {
       return invokeToolWithParsedInput(
         agentSend,
@@ -4656,7 +4750,7 @@ describe("message order for one recipient", () => {
     };
   }
 
-  it("an interrupt delivers the steer queued before it first, in the same turn", async () => {
+  it("an interrupt delivers the message queued before it first, in the same turn", async () => {
     const recipient = await setupRecipient();
     try {
       await recipient.agentSends("Go ahead and cut the release");
@@ -4680,7 +4774,28 @@ describe("message order for one recipient", () => {
     }
   });
 
-  it("a person's prompt takes the queued steer into its own turn", async () => {
+  it("a steer carries the message queued before it into the running turn", async () => {
+    const recipient = await setupRecipient({ steerResult: "accepted" });
+    try {
+      await recipient.agentSends("Report the test results");
+      await recipient.agentSends("Use the staging database", "steer");
+
+      expect(recipient.session.prompts).toHaveLength(1);
+      expect(
+        parseAgentMessages(String(recipient.session.steeredPrompts[0]))?.map(
+          (message) => message.text,
+        ),
+      ).toEqual(["Report the test results", "Use the staging database"]);
+      recipient.session.finishTurn();
+      recipient.advance(10 * 60_000);
+      await recipient.settled();
+      expect(recipient.session.prompts).toHaveLength(1);
+    } finally {
+      await recipient.cleanup();
+    }
+  });
+
+  it("a person's prompt takes the queued message into its own turn", async () => {
     const recipient = await setupRecipient();
     try {
       await recipient.agentSends("Go ahead and cut the release");
@@ -4866,7 +4981,7 @@ describe("message order for one recipient", () => {
     }
   });
 
-  it("a queued steer returns to the queue when the provider rejects the person's turn", async () => {
+  it("a queued message returns to the queue when the provider rejects the person's turn", async () => {
     const recipient = await setupRecipient();
     try {
       await recipient.agentSends("Go ahead and cut the release");

@@ -1144,6 +1144,14 @@ export class AgentManager {
     return (this.agents.get(agentId)?.pendingPermissions.size ?? 0) > 0;
   }
 
+  /**
+   * The agent's session can take a prompt into a running turn. A session declares it by offering
+   * steerActiveTurn. A provider can still refuse one steer; the prompt then replaces the turn.
+   */
+  canSteer(agentId: string): boolean {
+    return Boolean(this.agents.get(agentId)?.session?.steerActiveTurn);
+  }
+
   hasInFlightRun(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {

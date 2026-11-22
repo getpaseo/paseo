@@ -2259,7 +2259,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("returns unavailable when steering a provider without prompt.steer capability", async () => {
+  test("offers no steering when the provider did not negotiate prompt.steer", async () => {
     const harness = createProviderHarness({
       capabilities: [
         "prompt.message",
@@ -2276,9 +2276,7 @@ describe("PluginAgentClientRegistry", () => {
       cwd: "/workspace",
     });
     try {
-      const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
-      expect(result).toEqual({ status: "unavailable" });
-      expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+      expect(session.steerActiveTurn).toBeUndefined();
     } finally {
       await session.close();
       registry.replace([]);

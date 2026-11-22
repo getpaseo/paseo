@@ -84,13 +84,41 @@ Detach is an explicit user action in the subagents track, not an agent tool. A c
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` when you want explicit reporting or no completion callback.
 
-**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. For agent-scoped calls, `steer` waits until the recipient's current turn ends, and only `interrupt` stops a running turn. The recipient reads messages in the order they were queued: an `interrupt` replaces the turn at once and delivers the messages queued before it first, in the same turn, so a later message never cancels an earlier one. To withdraw an earlier instruction, say so in the new message. For top-level calls, `steer` joins the running turn and falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Agent-scoped calls return a queued receipt immediately; messages to each recipient deliver together after two quiet seconds, or after the recipient's turn ends if it is running. A person's prompt to the recipient takes the queued messages into its turn. `cancel_agent` and the stop button hold them until the recipient's next prompt. Top-level calls return after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
-
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; set `includeBackground: true` to include agents in background workspaces.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
+
+## Sending prompts to agents
+
+**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. The call returns at once. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
+
+### Choose `activeTurnBehavior`
+
+Leave `activeTurnBehavior` out unless the message cannot wait. The default for agent-scoped calls is `queue`, and it is right for almost every message.
+
+- `queue` (default): the message waits until the recipient's running turn ends. An idle recipient gets it after about two quiet seconds.
+- `steer`: the message joins the running turn, and the recipient reads it at its next step. If the recipient's provider cannot steer, `steer` interrupts the turn instead.
+- `interrupt`: the running turn stops, and a new turn starts with the message.
+
+The recipient reads your messages in the order you sent them. A `steer` or `interrupt` carries the messages you queued before it, so a later message never cancels an earlier one. To withdraw an earlier instruction, say so in the new message.
+
+### Read the response
+
+The response gives the applied `activeTurnBehavior` and a `guidance` sentence. The guidance says whether the message waits, joins the running turn, or interrupts it.
+
+If a queued message cannot wait after all, do not send it again. The recipient reads a resent message twice. Send a short follow-up with `steer` or `interrupt` instead, such as "Read my queued message now." The follow-up carries the queued message ahead of it.
+
+A steer that the recipient has not read yet is lost when the turn stops or is interrupted. If the recipient must act on the message no matter what, use `queue` or `interrupt`.
+
+### What else changes delivery
+
+- A person's prompt to the recipient takes your queued messages into its turn.
+- `cancel_agent` and the stop button hold your queued messages until the recipient's next prompt.
+- Finish notifications always wait for the recipient's turn to end.
+- Top-level calls default to `interrupt`, accept `steer`, reject `queue`, and return after dispatch acknowledgement.
+- CLI agent sends (`PASEO_AGENT_ID` set) use the same defaults and accept `--behavior queue|steer|interrupt`.
 
 ## Agent profiles and provider discovery
 
