@@ -38,6 +38,9 @@ Scheduled runs can use **Full access** without a person to approve each tool cal
 - Paseo can import CLI sessions and restore conversation history when it reopens a chat.
 - Antigravity publishes slash commands and skills, accepts image attachments, and receives the MCP servers configured for the agent.
 - Send a follow-up after the current turn finishes, or interrupt the turn to change direction.
+- On `agy` 1.5.14, `/compact` shows progress while it runs. Automatic compaction is shown only
+  after Antigravity writes its checkpoint. [Antigravity CLI issue 1509](https://github.com/google-antigravity/antigravity-cli/issues/1509)
+  tracks native progress events.
 
 After an upgrade, an older Hub trigger can report that its Antigravity model is unavailable. Open the trigger in Hub and select the model and thinking level again.
 

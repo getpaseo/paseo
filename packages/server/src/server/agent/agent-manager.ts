@@ -5594,6 +5594,11 @@ export class AgentManager {
 
     flags.shouldDispatchEvent = false;
     flags.shouldNotifyWaiters = false;
+    if (event.item.type === "compaction" && event.item.liveOnly) {
+      // A failed or canceled prompt must not leave progress in durable history.
+      if (!options?.fromHistory && event.turnId) this.dispatchStream(agent.id, event);
+      return;
+    }
     for (const item of projectAgentMessages(event.item)) {
       if (
         item.type === "user_message" &&

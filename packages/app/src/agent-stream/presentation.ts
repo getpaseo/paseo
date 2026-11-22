@@ -45,6 +45,12 @@ function groupedRowHosts(
   return hosts;
 }
 
+function withoutInactiveCompaction(items: StreamItem[], activeTurnId: string | null): StreamItem[] {
+  const inactive = (item: StreamItem) =>
+    item.kind === "compaction" && item.liveOnly && item.turnId !== activeTurnId;
+  return items.some(inactive) ? items.filter((item) => !inactive(item)) : items;
+}
+
 const NO_COLLAPSED_TURNS: StreamPresentation["turns"] = collapseTurns({
   tail: [],
   isLatestTurnOpen: false,
@@ -75,6 +81,7 @@ export function createStreamPresentation() {
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
   let historyRows: StreamItem[] = [];
+  let historyProgressTurn: string | null | undefined;
   let preparedTail: StreamItem[] | undefined;
   let preparedAutoExpandReasoning: boolean | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
@@ -161,16 +168,32 @@ export function createStreamPresentation() {
 
   return (input: PresentationInput): StreamPresentation => {
     const level: ToolCallDetailLevel = input.display === "full" ? "detailed" : "overview";
+    const activeTurnId = input.isTurnActive ? (input.activeTurnId ?? null) : null;
     // Retained history is not reprojected or regrouped on each live text update.
-    if (historySource !== input.tail || historyTransform !== input.transform) {
-      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) => presentRows(item),
-      );
+    if (
+      historySource !== input.tail ||
+      historyTransform !== input.transform ||
+      (historyProgressTurn !== undefined && historyProgressTurn !== activeTurnId)
+    ) {
+      historyProgressTurn = input.tail.some((item) => item.kind === "compaction" && item.liveOnly)
+        ? activeTurnId
+        : undefined;
+      // A reconnect can update turn liveness without delivering the original terminal event.
+      historyRows = projectPluginTimelineItems(
+        historyProgressTurn === undefined
+          ? input.tail
+          : withoutInactiveCompaction(input.tail, activeTurnId),
+        input.transform,
+      ).flatMap<StreamItem>((item) => presentRows(item));
       historySource = input.tail;
       historyTransform = input.transform;
     }
     const head: StreamItem[] = [];
-    for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
+    for (const item of projectPluginTimelineItems(
+      withoutInactiveCompaction(input.head, activeTurnId),
+      input.transform,
+      "streaming",
+    )) {
       const blocks = presentRows(item);
       head.push(...blocks);
     }

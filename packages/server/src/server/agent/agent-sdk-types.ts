@@ -396,6 +396,7 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  liveOnly?: true;
 }
 
 export interface PluginTimelineItem {

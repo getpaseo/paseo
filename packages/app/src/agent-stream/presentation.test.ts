@@ -890,3 +890,26 @@ it.each([false, true])(
     expect(opened.groupsByHostId.size).toBe(0);
   },
 );
+
+it("hides live compaction progress when a snapshot ends the turn without a terminal frame", () => {
+  const progress: StreamItem = {
+    kind: "compaction",
+    id: "progress",
+    turnId: "compact-turn",
+    timestamp: new Date("2026-01-01T00:00:00Z"),
+    status: "loading",
+    liveOnly: true,
+  };
+  const present = createStreamPresentation();
+  const state = {
+    ...presentationOptions,
+    transform: undefined,
+    tail: [progress],
+    head: [],
+    isTurnActive: true,
+    activeTurnId: "compact-turn",
+  };
+  expect(present(state).tail).toEqual([progress]);
+  expect(present({ ...state, isTurnActive: false, activeTurnId: null }).tail).toEqual([]);
+  expect(present({ ...state, activeTurnId: "next-turn" }).tail).toEqual([]);
+});

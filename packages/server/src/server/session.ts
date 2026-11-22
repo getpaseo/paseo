@@ -1548,12 +1548,22 @@ export class Session {
 
   // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
   // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
-  private supportsTimelineItem(item: { type: string }, source?: object): boolean {
+  private supportsTimelineItem(item: { type: string; liveOnly?: true }, source?: object): boolean {
     let capability: ClientCapability;
     if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
     else if (item.type === "plugin") capability = CLIENT_CAPS.pluginTimelineItems;
+    else if (item.type === "compaction" && item.liveOnly)
+      capability = CLIENT_CAPS.liveCompactionProgress;
     else return true;
     return source ? this.supportsForSource(capability, source) : this.supports(capability);
+  }
+
+  private supportsStreamEvent(
+    event: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+    source?: object,
+  ): boolean {
+    if (event.type !== "timeline" || (!source && event.item.type !== "compaction")) return true;
+    return this.supportsTimelineItem(event.item, source);
   }
 
   private forwardAgentStream(
@@ -1586,22 +1596,14 @@ export class Session {
           this.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, source))
       )
         continue;
-      if (
-        serializedEvent.type === "timeline" &&
-        !this.supportsTimelineItem(serializedEvent.item, source)
-      )
-        continue;
+      if (!this.supportsStreamEvent(serializedEvent, source)) continue;
       subscription.owner.emit(message);
     }
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
       if (this.delivery.isModern(source) || capabilities.has(CLIENT_CAPS.selectiveAgentTimeline))
         continue;
-      if (
-        serializedEvent.type === "timeline" &&
-        !this.supportsTimelineItem(serializedEvent.item, source)
-      )
-        continue;
+      if (!this.supportsStreamEvent(serializedEvent, source)) continue;
       const alreadyDelivered = [...this.timelineSubscriptions.values()].some(
         (subscription) =>
           subscription.owner.source === source && subscription.agentIds.has(event.agentId),
@@ -1611,7 +1613,8 @@ export class Session {
     if (
       this.clientSources.size === 0 &&
       !this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
-      this.timelineSubscriptions.size === 0
+      this.timelineSubscriptions.size === 0 &&
+      this.supportsStreamEvent(serializedEvent)
     )
       this.emit(message);
   }

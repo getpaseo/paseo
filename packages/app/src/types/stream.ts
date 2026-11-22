@@ -490,7 +490,10 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
   }
   if (retained.kind === "compaction" && retained.status === "completed") {
     const tailIndex = tail.findIndex(
-      (item) => item.kind === "compaction" && item.status === "loading",
+      (item) =>
+        item.kind === "compaction" &&
+        item.status === "loading" &&
+        (!item.liveOnly || (item.turnId !== undefined && item.turnId === retained.turnId)),
     );
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || existing.kind !== "compaction") {
@@ -501,6 +504,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       ...existing,
       timelineCursor: retained.timelineCursor,
       status: "completed",
+      liveOnly: undefined,
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
     };
@@ -813,6 +817,7 @@ export interface CompactionItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  liveOnly?: true;
 }
 
 export interface PluginTimelineStreamItem {
@@ -1494,6 +1499,18 @@ function reduceTimelineToolCall(
   });
 }
 
+function liveCompactionIndex(items: StreamItem[], turnId: string | undefined): number {
+  if (turnId === undefined) return -1;
+  return items.findIndex(
+    (item) => item.kind === "compaction" && item.liveOnly === true && item.turnId === turnId,
+  );
+}
+
+function clearLiveCompaction(items: StreamItem[], turnId: string | undefined): StreamItem[] {
+  const index = liveCompactionIndex(items, turnId);
+  return index < 0 ? items : [...items.slice(0, index), ...items.slice(index + 1)];
+}
+
 function reduceTimelineCompaction(
   state: StreamItem[],
   item: Extract<
@@ -1501,16 +1518,22 @@ function reduceTimelineCompaction(
     { type: "compaction" }
   >,
   timestamp: Date,
+  turnId?: string,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   if (item.status === "completed") {
-    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
+    const liveIdx = liveCompactionIndex(state, turnId);
+    const loadingIdx =
+      liveIdx >= 0
+        ? liveIdx
+        : state.findIndex((s) => s.kind === "compaction" && s.status === "loading" && !s.liveOnly);
     const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
         ...existing,
         ...(timelineCursor ? { timelineCursor } : {}),
         status: "completed",
+        liveOnly: undefined,
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
       };
@@ -1526,6 +1549,7 @@ function reduceTimelineCompaction(
     ...(timelineCursor ? { timelineCursor } : {}),
     timestamp,
     status: item.status,
+    ...(item.liveOnly ? { liveOnly: true } : {}),
     trigger: item.trigger,
     preTokens: item.preTokens,
   };
@@ -1602,7 +1626,7 @@ function reduceTimelineEvent(
       return appendNotification(state, notification);
     }
     case "compaction":
-      return reduceTimelineCompaction(state, item, timestamp, timelineCursor);
+      return reduceTimelineCompaction(state, item, timestamp, event.turnId, timelineCursor);
     case "plugin":
       return appendPluginTimelineItem(state, item, timestamp, timelineCursor);
     default:
@@ -1637,11 +1661,16 @@ export function reduceStreamUpdate(
       return event.item.type === "reasoning" ? updated : finalizeActiveThoughts(updated);
     }
     case "turn_completed":
-      return stampCompletedTurnMetrics(finalizeActiveThoughts(state), event.metrics, event.turnId);
-    case "thread_started":
-    case "turn_started":
+      return stampCompletedTurnMetrics(
+        finalizeActiveThoughts(clearLiveCompaction(state, event.turnId)),
+        event.metrics,
+        event.turnId,
+      );
     case "turn_failed":
     case "turn_canceled":
+      return finalizeActiveThoughts(clearLiveCompaction(state, event.turnId));
+    case "thread_started":
+    case "turn_started":
     case "permission_requested":
     case "permission_resolved":
     case "attention_required":

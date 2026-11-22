@@ -448,6 +448,11 @@ Use `config(state, context)` to return the configuration snapshot that Paseo dis
 Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
 Use `configure` to send changes to the agent.
 
+Use `observeTurn` when an ACP agent records live state outside the protocol. The observer starts
+only after Paseo admits a prompt. Bound work at `flush`, and release timers and file watchers at
+`stop`. A compaction loading item with `liveOnly: true` is removed on turn settlement unless a
+confirmed completion replaced it. It does not enter history.
+
 Publish `session.commands` to advertise slash commands and skills. Each entry carries `name`,
 `description`, and optional `argumentHint` and `kind`. The composer suggests both kinds at the
 start of a prompt. Use `kind: "skill"` if the agent accepts the skill inline as part of a normal

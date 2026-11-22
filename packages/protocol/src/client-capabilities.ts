@@ -45,6 +45,8 @@ export const CLIENT_CAPS = {
   timelineNotifications: "timeline_notifications",
   // COMPAT(pluginTimelineItems): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   pluginTimelineItems: "plugin_timeline_items",
+  // COMPAT(liveCompactionProgress): added in v0.18.0, remove after 2027-05-22 once the client floor handles live progress.
+  liveCompactionProgress: "live_compaction_progress",
   workspaceSetupObservation: "workspace_setup_observation",
   // COMPAT(pluginBinaryPayloads): added in v0.15.0, remove after 2027-05-02 once client floor >= v0.15.0.
   // The daemon sends plugin RPC outputs as binary opcode 0x21 only to clients that decode it.
