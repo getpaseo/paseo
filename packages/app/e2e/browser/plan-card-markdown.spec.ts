@@ -3,6 +3,78 @@ import { expect, test } from "../support/fixtures";
 import { waitForPermissionPrompt } from "../support/helpers/permissions";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+test("keeps a concluding paragraph below its nested list", async ({ page }, testInfo) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "nested-list-paragraph-",
+    title: "Nested list paragraphs",
+    featureValues: {
+      mockAssistantResponse: [
+        "1. **Removed:**",
+        "   1. The re-check listeners and their timing constants.",
+        "   2. The detection of failed requests and blocked pages.",
+        "",
+        "   All of those files are back to upstream exactly.",
+        "",
+        "   A separate concluding paragraph.",
+        "2. **Kept:**",
+        "   1. The login.",
+        "",
+        "- [x] Finished task",
+        "  - Nested item",
+        "",
+        "  ```text",
+        "  code stays separate",
+        "  ```",
+        "",
+        "  Task conclusion.",
+        "- [ ]",
+      ].join("\n"),
+    },
+    initialPrompt: "Show the nested list",
+  });
+  try {
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const message = page.getByTestId("assistant-message");
+    const item = message.locator(".enrm-text > ol > li").first();
+    await expect(item).toBeVisible();
+    const screenshot = testInfo.outputPath("nested-list-paragraph.png");
+    await message.screenshot({ path: screenshot });
+    await expect(item.locator(":scope > p").first()).toHaveText("Removed:");
+    await expect(item.locator(":scope > p")).toHaveText([
+      "Removed:",
+      "All of those files are back to upstream exactly.",
+      "A separate concluding paragraph.",
+    ]);
+    expect(
+      await item.evaluate((element) => Array.from(element.children, (child) => child.tagName)),
+    ).toEqual(["P", "OL", "P", "P"]);
+    const list = await item.locator(":scope > ol").boundingBox();
+    const paragraph = await item.locator(":scope > p").nth(1).boundingBox();
+    expect(paragraph!.y).toBeGreaterThanOrEqual(list!.y + list!.height);
+    const tasks = message.locator(".enrm-text > ul > li");
+    const task = tasks.first();
+    await expect(task.locator(":scope > p").first().getByRole("checkbox")).toBeChecked();
+    await expect(task.locator(":scope > p > span").first()).toHaveAttribute("style", /color:/);
+    await expect(task.locator(":scope > ul > li > p > span")).not.toHaveAttribute(
+      "style",
+      /color:/,
+    );
+    await expect(task.locator(":scope > p").last()).toHaveText("Task conclusion.");
+    await expect(task.locator('[data-paseo-markdown-tag="pre"]')).toContainText(
+      "code stays separate",
+    );
+    await expect(tasks.nth(1).getByRole("checkbox")).toBeVisible();
+    await expect(tasks.nth(1).getByRole("checkbox")).not.toBeChecked();
+    await testInfo.attach("nested-list-paragraph", {
+      path: screenshot,
+      contentType: "image/png",
+    });
+  } finally {
+    await session.cleanup();
+  }
+});
+
 // Literal shell commands and copyright markers must survive Markdown rendering.
 test.describe("Plan card markdown", () => {
   test("renders plan text verbatim", async ({ page }) => {
