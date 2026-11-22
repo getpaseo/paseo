@@ -4,6 +4,7 @@ import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
 import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { ProviderInstallationInspection } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
@@ -65,6 +66,7 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
+  AgentClientDiagnosticContext,
 } from "./agent-sdk-types.js";
 import {
   resolveProviderLaunch,
@@ -76,7 +78,6 @@ import { readPluginOptionState } from "./plugin-provider-options.js";
 import {
   buildCommandResolutionDiagnosticRows,
   formatProviderDiagnostic,
-  toDiagnosticErrorMessage,
   type DiagnosticEntry,
 } from "./providers/diagnostic-utils.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
@@ -142,8 +143,11 @@ function isProviderRequestReply(
   );
 }
 
-// The CLI answers its version in well under this; a hung one must not hold the report.
-const VERSION_ROW_TIMEOUT_MS = 10_000;
+function describeVersion(inspection: ProviderInstallationInspection): string {
+  if (inspection.status === "not_installed") return "not installed";
+  if (inspection.status === "error") return `error: ${inspection.message}`;
+  return inspection.version?.trim() || "unknown";
+}
 
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
@@ -241,7 +245,7 @@ class ProviderRuntime {
   }
 
   /** What the daemon launches, where it found the executable and which version it runs. */
-  async launchDiagnosticRows(): Promise<DiagnosticEntry[]> {
+  async launchDiagnosticRows(context: AgentClientDiagnosticContext): Promise<DiagnosticEntry[]> {
     const configured = await this.resolveConfiguredLaunch();
     if (!configured) return [];
     const { launch, env, availability } = configured;
@@ -252,21 +256,10 @@ class ProviderRuntime {
       })),
       { label: "Resolved path", value: availability.resolvedPath ?? "not found" },
     ];
-    if (availability.resolvedPath && this.registration.installation?.inspect)
-      rows.push({ label: "Version", value: await this.readInstalledVersion() });
+    if (!availability.resolvedPath) return rows;
+    const inspection = await context.inspectInstallation();
+    if (inspection) rows.push({ label: "Version", value: describeVersion(inspection) });
     return rows;
-  }
-
-  private async readInstalledVersion(): Promise<string> {
-    try {
-      const inspection = await this.inspectInstallation(
-        AbortSignal.timeout(VERSION_ROW_TIMEOUT_MS),
-      );
-      if (inspection.status === "not_installed") return "not installed";
-      return inspection.version?.trim() || "unknown";
-    } catch (error) {
-      return `error: ${toDiagnosticErrorMessage(error)}`;
-    }
   }
 
   async status(): Promise<ProviderStatus> {
@@ -1157,9 +1150,9 @@ class PluginAgentClient implements AgentClient {
     return await this.runtime.isAvailable();
   }
 
-  async getDiagnostic(): Promise<{ diagnostic: string }> {
+  async getDiagnostic(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }> {
     const [rows, status] = await Promise.all([
-      this.runtime.launchDiagnosticRows(),
+      this.runtime.launchDiagnosticRows(context),
       this.runtime.status(),
     ]);
     const report = [formatProviderDiagnostic(this.label, rows)];

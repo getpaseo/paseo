@@ -1045,6 +1045,40 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("getProviderDiagnostic gives the client the installation that the Installation row shows", async () => {
+    let inspections = 0;
+    const client = createExtraClient("codex", {
+      installation: {
+        async inspect() {
+          inspections += 1;
+          return { status: "installed", version: `1.0.${inspections}` };
+        },
+      },
+      async getDiagnostic(context) {
+        const inspection = await context.inspectInstallation();
+        return {
+          diagnostic: `codex ${inspection?.status === "installed" ? inspection.version : "?"}`,
+        };
+      },
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: client },
+    });
+    try {
+      const { diagnostic } = await manager.getProviderDiagnostic("codex");
+      expect(diagnostic).toContain("codex 1.0.1");
+      // The report refreshed the installation, so the Installation row reads the same answer.
+      expect((await manager.installations.inspect("codex"))?.inspection).toEqual({
+        status: "installed",
+        version: "1.0.1",
+      });
+      expect(inspections).toBe(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getProviderDiagnostic force-refreshes the snapshot and appends models/status", async () => {
     const catalogModels: AgentModelDefinition[] = [
       { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },

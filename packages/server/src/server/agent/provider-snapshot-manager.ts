@@ -842,7 +842,11 @@ export class ProviderSnapshotManager {
       if (client.getDiagnostic) {
         return (
           await withTimeout(
-            client.getDiagnostic(),
+            client.getDiagnostic({
+              // The report and the Installation row show one answer for the version.
+              inspectInstallation: async () =>
+                (await this.installations.inspect(provider, { refresh: true }))?.inspection,
+            }),
             this.diagnosticTimeoutMs,
             `Timed out collecting ${definition.label ?? provider} diagnostic after ${
               this.diagnosticTimeoutMs

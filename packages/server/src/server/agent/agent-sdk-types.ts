@@ -9,7 +9,7 @@ import type {
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ProviderInstallationInspection } from "@getpaseo/protocol/messages";
 import type {
   ProviderInspection,
   ProviderUpdateCheck,
@@ -851,6 +851,15 @@ export interface AgentClientUpdateContext extends AgentClientInstallationContext
   report(event: ProviderUpdateReport): void;
 }
 
+/** What the daemon gives a provider's diagnostic report. */
+export interface AgentClientDiagnosticContext {
+  /**
+   * The installation as the provider's Installation row shows it, under the same deadline and
+   * cache. Undefined when the provider does not report its installation.
+   */
+  inspectInstallation(): Promise<ProviderInstallationInspection | undefined>;
+}
+
 export interface AgentClient {
   resolveUsageLaunch?(): Promise<
     import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined
@@ -916,7 +925,7 @@ export interface AgentClient {
    * Returns true if available, false otherwise.
    */
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
-  getDiagnostic?(): Promise<{ diagnostic: string }>;
+  getDiagnostic?(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }>;
   /**
    * Installation links and the installed version. The same contract as plugin providers'
    * `ProviderRegistration.installation`; built-ins resolve their own launch inside `inspect`.
