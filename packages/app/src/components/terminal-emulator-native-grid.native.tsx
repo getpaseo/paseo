@@ -1,4 +1,5 @@
 import Svg, { Path } from "react-native-svg";
+import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   Keyboard,
@@ -372,6 +373,11 @@ function NativeTerminalEmulator({
       cols: size.cols,
       scrollbackLines,
       characterWidths,
+      onOsc52: (text) => {
+        // Same clipboard write as the manual copy action; the program's own UI
+        // already reports the copy, so failures stay silent here.
+        void Clipboard.setStringAsync(text).catch(() => {});
+      },
     });
     terminalRef.current = terminal;
     screenModelRef.current = createNativeTerminalScreenModel({ terminal });

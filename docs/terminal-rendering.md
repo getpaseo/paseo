@@ -2,6 +2,8 @@
 
 Web and Electron draw terminals with xterm.js. iOS and Android keep an `@xterm/headless` buffer in JS and draw it with the `PaseoTerminal` native view in `packages/app/modules/paseo-terminal`: CoreText on iOS, `Canvas.drawTextRun` on Android. `src/terminal/native-renderer/terminal-frame.ts` turns the visible buffer into frames, and both native views take the same props.
 
+Clipboard copies that a program requests with OSC 52 reach the system clipboard on every platform: web and Electron through `@xterm/addon-clipboard`, iOS and Android through an OSC 52 handler that `createNativeHeadlessTerminal` registers on the headless xterm parser and that writes with expo-clipboard. Only the system clipboard selector `c` is honoured; primary selection, read queries (`?`) and malformed payloads are ignored. An empty payload clears the clipboard.
+
 ## xterm owns the grid
 
 xterm decides which column every cell occupies. The native views never let text advance move a cell. Each row is shaped once, one run per font face, so Hangul jamo, ligatures, combining marks, conjuncts and fallback fonts see their neighbours. Each shaped cluster is then drawn at its first cell's column, centred in the columns it owns, and scaled down when its glyphs are wider. Cursor, selection, hit-testing and copy all use xterm's columns, so they stay correct whatever the font does.
