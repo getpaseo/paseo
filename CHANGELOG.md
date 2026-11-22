@@ -2,9 +2,9 @@
 
 ## 0.17.1 - 2026-11-21
 
-- **Antigravity approvals and history:** Choose a permission mode, answer tool approvals, and import or reopen sessions. Requires Antigravity CLI 1.5.0 or later. ([#10193](https://github.com/getpaseo/paseo/pull/10193))
+- **Antigravity approvals and history:** Choose a permission mode, answer tool approvals, and import or reopen sessions. Requires [Antigravity CLI 1.5.0 or later](https://paseo.sh/docs/supported-providers/antigravity). ([#10193](https://github.com/getpaseo/paseo/pull/10193))
 - **Use existing worktrees:** Start a workspace in a worktree you already have, or create one from a branch or pull request. ([#10190](https://github.com/getpaseo/paseo/pull/10190))
-- **Update providers in Paseo:** See each provider's status and installed version, and update its CLI from the app. ([#9568](https://github.com/getpaseo/paseo/pull/9568), [#9661](https://github.com/getpaseo/paseo/pull/9661))
+- **Update providers in Paseo:** See each provider's status and installed version, and update supported CLIs from the app. ([#9568](https://github.com/getpaseo/paseo/pull/9568), [#9661](https://github.com/getpaseo/paseo/pull/9661))
 - **Provider quota forecasts:** Usage shows when a quota will run out at your current pace. ([#10289](https://github.com/getpaseo/paseo/pull/10289), [#10385](https://github.com/getpaseo/paseo/pull/10385))
 - **Watch PRs and MRs:** Ask an agent to watch a pull or merge request for new checks, reviews, and comments. ([#10148](https://github.com/getpaseo/paseo/pull/10148), [#10279](https://github.com/getpaseo/paseo/pull/10279), [#10280](https://github.com/getpaseo/paseo/pull/10280))
 - **Heartbeats in Background work:** See and stop an agent's heartbeats next to its background tasks. ([#10097](https://github.com/getpaseo/paseo/pull/10097), [#10216](https://github.com/getpaseo/paseo/pull/10216))
@@ -35,7 +35,7 @@
 - Changed healthy quota bars in Usage to green ([#10397](https://github.com/getpaseo/paseo/pull/10397))
 - Changed worktree teardown to keep the worktree when the command times out ([#9852](https://github.com/getpaseo/paseo/pull/9852) by [@ragokan](https://github.com/ragokan))
 - Changed workspace navigation on mobile to acknowledge taps sooner ([#9887](https://github.com/getpaseo/paseo/pull/9887))
-- Changed workspace Git status to skip its reload after a short reconnect ([#10142](https://github.com/getpaseo/paseo/pull/10142) by [@VladimirGVP](https://github.com/VladimirGVP))
+- Changed workspace Git status to skip its reload after a short reconnect with no file changes ([#10142](https://github.com/getpaseo/paseo/pull/10142) by [@VladimirGVP](https://github.com/VladimirGVP))
 - Changed `browser_new_tab` to ask agents to choose a Desktop when several are connected ([#10189](https://github.com/getpaseo/paseo/pull/10189))
 
 ### Fixed
@@ -71,7 +71,7 @@
 - Fixed a Codex message stopped before its turn starts showing an error instead of canceled ([#9931](https://github.com/getpaseo/paseo/pull/9931) by [@3ae3ae](https://github.com/3ae3ae))
 - Fixed Changes failing to open when Git metadata watching reaches its limit ([#10188](https://github.com/getpaseo/paseo/pull/10188))
 - Fixed copying selected reply text into plain-text targets with unwanted Markdown syntax ([#10079](https://github.com/getpaseo/paseo/pull/10079) by [@danberindei](https://github.com/danberindei))
-- Fixed file views losing their scroll position when switching Preview and Source ([#10195](https://github.com/getpaseo/paseo/pull/10195) by [@apple-ouyang](https://github.com/apple-ouyang))
+- Fixed Markdown previews and source views losing their scroll position when switching between them ([#10195](https://github.com/getpaseo/paseo/pull/10195) by [@apple-ouyang](https://github.com/apple-ouyang))
 - Fixed file tabs in split panes showing or focusing the wrong file ([#9888](https://github.com/getpaseo/paseo/pull/9888) by [@KosmoCHE](https://github.com/KosmoCHE))
 - Fixed touch-screen submenus closing as soon as they open ([#10175](https://github.com/getpaseo/paseo/pull/10175) by [@christiantwu](https://github.com/christiantwu))
 - Fixed dictation failing after another chat that used the microphone closes ([#10185](https://github.com/getpaseo/paseo/pull/10185) by [@Brandon168](https://github.com/Brandon168))

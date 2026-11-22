@@ -2,9 +2,9 @@
 
 ## 0.17.1 - 2026-11-21
 
-- **Antigravity 审批和历史记录**：选择权限模式、回复工具审批，以及导入或重新打开会话。需要 Antigravity CLI 1.5.0 或更高版本。([#10193](https://github.com/getpaseo/paseo/pull/10193))
+- **Antigravity 审批和历史记录**：选择权限模式、回复工具审批，以及导入或重新打开会话。需要 [Antigravity CLI 1.5.0 或更高版本](https://paseo.sh/zh-CN/docs/supported-providers/antigravity)。([#10193](https://github.com/getpaseo/paseo/pull/10193))
 - **使用现有 worktree**：在已有的 worktree 中启动工作区，或从分支或 PR 创建 worktree。([#10190](https://github.com/getpaseo/paseo/pull/10190))
-- **在 Paseo 中更新 Provider**：查看各 Provider 的状态和已安装版本，并在应用内更新其 CLI。([#9568](https://github.com/getpaseo/paseo/pull/9568), [#9661](https://github.com/getpaseo/paseo/pull/9661))
+- **在 Paseo 中更新 Provider**：查看各 Provider 的状态和已安装版本，并在应用内更新受支持的 CLI。([#9568](https://github.com/getpaseo/paseo/pull/9568), [#9661](https://github.com/getpaseo/paseo/pull/9661))
 - **Provider 配额预测**：“使用情况”页面会按当前使用速度显示配额何时用完。([#10289](https://github.com/getpaseo/paseo/pull/10289), [#10385](https://github.com/getpaseo/paseo/pull/10385))
 - **监视 PR 和 MR**：让 Agent 监视 PR 或 MR 的检查、审查和评论更新。([#10148](https://github.com/getpaseo/paseo/pull/10148), [#10279](https://github.com/getpaseo/paseo/pull/10279), [#10280](https://github.com/getpaseo/paseo/pull/10280))
 - **在后台任务中查看 heartbeat**：在 Agent 的后台任务旁查看和停止 heartbeat。([#10097](https://github.com/getpaseo/paseo/pull/10097), [#10216](https://github.com/getpaseo/paseo/pull/10216))
@@ -35,7 +35,7 @@
 - “使用情况”页面中健康的配额进度条改为绿色 ([#10397](https://github.com/getpaseo/paseo/pull/10397))
 - worktree 清理命令超时时保留 worktree ([#9852](https://github.com/getpaseo/paseo/pull/9852)，贡献者：[@ragokan](https://github.com/ragokan))
 - 手机端工作区导航更快响应点击 ([#9887](https://github.com/getpaseo/paseo/pull/9887))
-- 短暂重连后，工作区 Git 状态不再重新加载 ([#10142](https://github.com/getpaseo/paseo/pull/10142)，贡献者：[@VladimirGVP](https://github.com/VladimirGVP))
+- 短暂重连且文件未更改时，工作区 Git 状态不再重新加载 ([#10142](https://github.com/getpaseo/paseo/pull/10142)，贡献者：[@VladimirGVP](https://github.com/VladimirGVP))
 - 连接多个 Desktop 时，`browser_new_tab` 会让 Agent 选择打开标签页的 Desktop ([#10189](https://github.com/getpaseo/paseo/pull/10189))
 
 ### 修复
@@ -71,7 +71,7 @@
 - 修复 Codex 消息在轮次开始前停止时显示错误而非已取消的问题 ([#9931](https://github.com/getpaseo/paseo/pull/9931)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
 - 修复 Git 元数据监听达到上限时无法打开“更改”的问题 ([#10188](https://github.com/getpaseo/paseo/pull/10188))
 - 修复将选中的回复复制到纯文本目标时出现多余 Markdown 语法的问题 ([#10079](https://github.com/getpaseo/paseo/pull/10079)，贡献者：[@danberindei](https://github.com/danberindei))
-- 修复在预览和源码之间切换时文件视图丢失滚动位置的问题 ([#10195](https://github.com/getpaseo/paseo/pull/10195)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
+- 修复在预览和源码之间切换时 Markdown 预览和源码视图丢失滚动位置的问题 ([#10195](https://github.com/getpaseo/paseo/pull/10195)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
 - 修复拆分窗格中的文件标签页显示或聚焦错误文件的问题 ([#9888](https://github.com/getpaseo/paseo/pull/9888)，贡献者：[@KosmoCHE](https://github.com/KosmoCHE))
 - 修复触摸屏上的子菜单打开后立即关闭的问题 ([#10175](https://github.com/getpaseo/paseo/pull/10175)，贡献者：[@christiantwu](https://github.com/christiantwu))
 - 修复关闭另一个使用过麦克风的对话后无法听写的问题 ([#10185](https://github.com/getpaseo/paseo/pull/10185)，贡献者：[@Brandon168](https://github.com/Brandon168))
