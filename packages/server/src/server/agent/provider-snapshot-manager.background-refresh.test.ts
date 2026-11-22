@@ -71,6 +71,8 @@ interface TestProvider {
   /** Reports the catalogue as missing models discovery could not confirm. */
   incomplete?: boolean;
   available: boolean;
+  /** Holds the next catalogue key resolution open until the test releases it. */
+  keyHold?: Promise<void>;
   /** Holds the next availability check open until the test releases it. */
   availabilityHold?: Promise<void>;
   shutdowns: number;
@@ -142,6 +144,12 @@ function createClient(
     },
     async resumeSession() {
       throw new Error("not implemented");
+    },
+    async getCatalogCacheKey() {
+      const hold = state.keyHold;
+      state.keyHold = undefined;
+      await hold;
+      return undefined;
     },
     async isAvailable() {
       const hold = state.availabilityHold;
@@ -337,6 +345,32 @@ describe("ProviderSnapshotManager background refresh", () => {
 
       await harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
       expect(harness.globalEntry("codex").models?.map(({ id }) => id)).toEqual(["codex-1"]);
+    } finally {
+      harness.manager.destroy();
+    }
+  });
+
+  test("a background refresh arriving while a manual refresh resolves its catalogue key does not weaken it", async () => {
+    const harness = createHarness({ enabled: ["codex"] });
+    try {
+      await harness.manager.listProviders({ providers: ["codex"], wait: true });
+      await harness.timers.advanceMinutes(29);
+      harness.provider("codex").failure = new Error("network unreachable");
+      const keyHeld = deferred();
+      harness.provider("codex").keyHold = keyHeld.promise;
+      const manual = harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      await settle();
+
+      // The manual refresh at minute 29 makes the provider due again at the minute-60 tick.
+      await harness.timers.advanceMinutes(31);
+      keyHeld.resolve();
+      await manual;
+
+      expect(harness.provider("codex").forces).toEqual([false, true]);
+      expect(harness.globalEntry("codex")).toMatchObject({
+        status: "error",
+        error: "network unreachable",
+      });
     } finally {
       harness.manager.destroy();
     }

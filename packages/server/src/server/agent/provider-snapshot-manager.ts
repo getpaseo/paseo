@@ -214,6 +214,14 @@ export interface AgentManagerProviderState {
   retiredProviders?: readonly AgentProvider[];
 }
 
+/** A manual refresh forces the provider and publishes failures; a background one never weakens it. */
+function strongerRefresh(
+  first: RefreshReason | undefined,
+  second: RefreshReason | undefined,
+): RefreshReason | undefined {
+  return first === "manual" || second === "manual" ? "manual" : (first ?? second);
+}
+
 interface ProviderLoadOptions {
   snapshotCwd: string;
   providers: AgentProvider[];
@@ -359,7 +367,10 @@ export class ProviderSnapshotManager {
       for (const provider of providers) {
         const catalog = catalogs.get(provider);
         if (!catalog || (reason === "background" && catalog.load)) continue;
-        catalogs.set(provider, { result: catalog.result, stale: reason });
+        catalogs.set(provider, {
+          result: catalog.result,
+          stale: strongerRefresh(catalog.stale, reason),
+        });
       }
     }
     // Refresh each known target: provider keys coalesce reads, while target-scoped
@@ -990,7 +1001,7 @@ export class ProviderSnapshotManager {
     const binding: CatalogBinding = {
       key: bindings.get(options.provider)?.key,
       failure: bindings.get(options.provider)?.failure,
-      refresh: options.refresh ?? bindings.get(options.provider)?.refresh,
+      refresh: strongerRefresh(options.refresh, bindings.get(options.provider)?.refresh),
       promise: Promise.resolve(),
     };
     bindings.set(options.provider, binding);
@@ -1053,7 +1064,7 @@ export class ProviderSnapshotManager {
     this.publishTargets([snapshotCwd]);
     if (refresh !== "manual" && catalog.load) return catalog.load;
     if (!refresh && catalog.result && !catalog.stale) return;
-    const background = (refresh ?? catalog.stale) === "background";
+    const background = strongerRefresh(refresh, catalog.stale) === "background";
     catalog.stale = undefined;
 
     const current = catalog;
