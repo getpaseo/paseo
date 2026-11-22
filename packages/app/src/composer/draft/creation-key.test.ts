@@ -74,4 +74,20 @@ describe("draftCreationKey", () => {
       expect(key.startsWith("draft-1:")).toBe(true);
     },
   );
+
+  it("gives a New workspace request with a changed launch target a new key even when the wire request matches", () => {
+    const emptyRequest = {
+      source: { kind: "directory" as const, path: "/repo", projectId: "prj_1" },
+    };
+    const chatKey = draftCreationKey("draft-1", {
+      request: emptyRequest,
+      launchTarget: { kind: "chat" },
+    });
+    const terminalKey = draftCreationKey("draft-1", {
+      request: emptyRequest,
+      launchTarget: { kind: "terminal", profileId: "shell" },
+    });
+    expect(terminalKey).not.toBe(chatKey);
+    expect(terminalKey.startsWith("draft-1:")).toBe(true);
+  });
 });

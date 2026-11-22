@@ -10,6 +10,11 @@ import {
   openNewWorkspaceComposer,
   selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
+import {
+  seedTerminalProfiles,
+  selectLaunchOption,
+  submitTerminalLaunch,
+} from "../support/helpers/new-workspace-launch";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
@@ -239,6 +244,56 @@ test("editing a failed New workspace submission starts without a request key con
     await client.close();
     rmSync(repoDir, { recursive: true, force: true });
   }
+});
+
+test("switching only the launch target after a failed New workspace creation starts a new workspace", async ({
+  creation,
+  workspaceProvision,
+  page,
+}) => {
+  const profiles = await seedTerminalProfiles([
+    {
+      id: "promptless-shell",
+      name: "Promptless Shell",
+      command: "sh",
+      args: ["-c", "echo ready; sleep 5"],
+      promptArg: "none",
+    },
+  ]);
+  try {
+    await creation.openWorkspaceForm("local");
+    await workspaceProvision.fail();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(
+      page.getByTestId("composer-error").filter({ visible: true }).first(),
+    ).toContainText("Workspace provisioning failed for test");
+
+    await selectLaunchOption(page, "promptless-shell");
+    await submitTerminalLaunch(page);
+    await creation.expectOneCreatedWorkspace();
+    await expect(
+      page.locator('[data-testid^="workspace-tab-terminal_"]').filter({ visible: true }).first(),
+    ).toBeVisible();
+  } finally {
+    await profiles.restore();
+  }
+});
+
+test("failing New workspace creation after switching workspaces shows an error toast", async ({
+  creation,
+  workspaceProvision,
+  page,
+}) => {
+  await creation.openWorkspaceForm("local");
+  await workspaceProvision.hold();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.locator('[data-testid^="sidebar-workspace-row-"]').first().click();
+  await expect(page).toHaveURL(/\/workspace\//);
+
+  await workspaceProvision.fail();
+  await expect(page.getByTestId("app-toast")).toContainText(
+    "Workspace provisioning failed for test",
+  );
 });
 
 for (const entry of [

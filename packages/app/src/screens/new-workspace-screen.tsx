@@ -23,6 +23,7 @@ import {
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-context";
 import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -336,6 +337,7 @@ interface WorkspaceCreationResult {
 
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
+  launchTarget: LaunchTarget;
   worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
@@ -388,7 +390,10 @@ async function createMultiplicityWorkspace(input: {
   };
   const payload = await input.client.createWorkspace({
     ...request,
-    idempotencyKey: draftCreationKey(input.idempotencyKey, request),
+    idempotencyKey: draftCreationKey(input.idempotencyKey, {
+      request,
+      launchTarget: input.launchTarget,
+    }),
     onEvent: input.onEvent,
   });
   if (payload.error || !payload.workspace) {
@@ -914,6 +919,7 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
+  const toast = useToast();
   const composerEditing = useNewWorkspaceComposerEditing();
   const { leaveFullscreen } = composerEditing;
   const mergeWorkspaces = useCallback(
@@ -1351,6 +1357,7 @@ export function NewWorkspaceScreen({
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
+        launchTarget,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1375,6 +1382,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      launchTarget,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1445,6 +1453,9 @@ export function NewWorkspaceScreen({
         const message = toErrorMessage(error);
         setPendingAction(null);
         setErrorMessage(message);
+        if (!isStillOnCreateScreen()) {
+          toast.error(message);
+        }
       }
     },
     [
@@ -1461,6 +1472,7 @@ export function NewWorkspaceScreen({
       selectedServerId,
       supportsForgeSearch,
       t,
+      toast,
       updateFormPreferences,
       withConnectedClient,
     ],
@@ -1524,6 +1536,9 @@ export function NewWorkspaceScreen({
       const message = toErrorMessage(error);
       setPendingAction(null);
       setErrorMessage(message);
+      if (!isStillOnCreateScreen()) {
+        toast.error(message);
+      }
     }
   }, [
     ensureWorkspace,
@@ -1534,6 +1549,7 @@ export function NewWorkspaceScreen({
     selectedTerminalProfile,
     t,
     terminalPromptText,
+    toast,
     leaveFullscreen,
     updateFormPreferences,
     withConnectedClient,

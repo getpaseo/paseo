@@ -11,6 +11,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
+import { useToast } from "@/contexts/toast-context";
 import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
@@ -156,6 +157,7 @@ function buildCreateAgentOptions({
 
 export function WorkspaceSetupDialog() {
   const { t } = useTranslation();
+  const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
   const mergeWorkspaces = useCallback(
@@ -365,6 +367,9 @@ export function WorkspaceSetupDialog() {
       } catch (error) {
         const message = toErrorMessage(error);
         setErrorMessage(message);
+        if (!getIsStillActive()) {
+          toast.error(message);
+        }
       } finally {
         if (getIsStillActive()) {
           setPendingAction(null);
@@ -379,6 +384,7 @@ export function WorkspaceSetupDialog() {
       serverId,
       ensureWorkspace,
       t,
+      toast,
       supportsForgeSearch,
     ],
   );
