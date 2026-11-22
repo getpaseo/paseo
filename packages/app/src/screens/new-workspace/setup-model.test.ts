@@ -260,7 +260,10 @@ describe("New workspace isolation and ref actions", () => {
     setup.chooseRefAction("branch", "checkout");
     setup.chooseRefAction("github-pr", "branch-off");
 
-    expect(setup.checkoutRequestFor(release)).toEqual({ action: "checkout", refName: "release" });
+    expect(setup.checkoutRequestFor(release)).toEqual({
+      action: "checkout",
+      refName: "refs/remotes/origin/release",
+    });
     expect(setup.checkoutRequestFor(PULL_REQUEST)?.action).toBe("branch-off");
   });
 

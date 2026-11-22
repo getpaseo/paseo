@@ -659,6 +659,7 @@ No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or 
 - `CHANGELOG.md` holds stable releases and at most one entry for the current beta series.
 - The first beta of a version inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
 - Each subsequent beta rewrites that entry in place: the heading becomes the new beta number and date, and the body describes the full change from the previous stable release to this beta. Never add a second beta entry.
+- The entry announces changes and leaves setup steps, click paths, migration notes, configuration keys, hedges and edge cases to product docs. The headline change is the first highlight. [Changelog conciseness](#changelog-conciseness) and [Changelog ordering](#changelog-ordering) hold the rules.
 - The entry is a list of changes, not of PRs. When a later beta reverts, reworks, or follows up on something an earlier beta added, rewrite the bullet to the current behavior or delete it. A stable user never saw the earlier beta behavior, so fixes to it are not "Fixed" bullets.
 - Anything that already shipped to stable through a patch release on an older line stays out of the beta entry.
 - Stable promotion renames the entry to `## 0.1.60 - YYYY-MM-DD` after a final review.
@@ -714,14 +715,30 @@ claims a general improvement, rewrite it with the concrete change.
 
 ## Changelog conciseness
 
-Every section bullet must be scannable at a glance. The changelog is not release documentation — it's a list. [Highlights](#changelog-highlights) get more room; every other bullet follows these limits.
+An entry announces what changed. Product docs own setup, navigation, migration and edge cases, and the PR link leads to the rest. These rules apply to highlights and section bullets.
 
-- **One sentence per bullet, max.** If a bullet contains two sentences, the second one is doing work that belongs in product docs, not the changelog. Cut it.
+- **No instructions.** Cut setup steps, click paths, configuration keys, flags and migration notes. "Open a provider's settings from Settings, setup, or the model picker" is a click path. "Existing goose settings and sessions carry over to the bundled plugin" is a migration note.
+- **One warning for a breaking requirement.** When the update stops something working until the user acts, state the requirement in one short sentence after the announcement, and link the product doc that has the steps: "Requires [Antigravity CLI 1.5.0 or later](https://paseo.sh/docs/supported-providers/antigravity)." Nothing else earns a second sentence.
+- **No hedges or exception clauses.** Cut "when needed", "for eligible models", "on hosts where…", "except…", "with a hint shown when…" and "across common install shapes". Keep the condition that triggers a fixed failure, as in `Fixed <failure> when <condition>`.
+- **The shorter bullet is still true.** When a change reaches only some providers, platforms or file types, name what it covers in the sentence's own words: "update supported CLIs" where one provider has no update command, "Markdown previews and source views" where HTML previews on iOS are left out, "by default" where an explicit interrupt still replaces the turn. Do not widen the claim to remove a clause.
+- **State the outcome and stop.** Say what the user gets. Leave out queues, snapshots, caches, timeouts, LAN/WAN topology, TLS handshakes and IPC.
+
+Each row is from the first draft of 0.17.1:
+
+| Avoid                                                                                                                                                                                                                                                     | Write                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Open a provider's settings from Settings, setup, or the model picker to update supported CLIs and watch their output                                                                                                                                      | Update supported CLIs from the app                                                                |
+| Use Antigravity CLI 1.5.0 or later on the daemon host, and include `acp` if you override its command                                                                                                                                                      | Requires Antigravity CLI 1.5.0 or later                                                           |
+| Reports and notifications from other agents arrive in order when the current turn ends instead of interrupting it. An interrupt or your own prompt carries earlier queued messages in the same turn, and Stop holds queued messages until the next prompt | By default, messages from other agents wait for the current turn to end                           |
+| Changed worktree teardown to keep the worktree when the command exceeds one minute or the `worktree.teardownTimeoutMs` limit in `paseo.json`                                                                                                              | Changed worktree teardown to keep the worktree when the command times out                         |
+| Fixed file views losing their scroll position when switching Preview and Source, except HTML previews on iOS                                                                                                                                              | Fixed Markdown previews and source views losing their scroll position when switching between them |
+
+Section bullets also follow these limits:
+
+- **One sentence per bullet, max.** A second sentence is documentation. Cut it.
 - **No trailing periods.** Bullets are list items, not prose. Drop the period at the end of every bullet, including the period inside any bolded lead-in. `**Configurable terminal scrollback**` not `**Configurable terminal scrollback.**`.
 - **One line per bullet.** If a bullet wraps to three lines in a narrow column, it's too long.
 - **Split bullets that pack multiple distinct changes.** If a bullet uses "and", "plus", a comma list, or an em-dash to chain several independent improvements, break them into separate bullets — even when they share a theme or author. One bullet = one user-facing change.
-- **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
-- **Stop after identifying the change.** Do not explain LAN/WAN topology, TLS handshakes, IPC, or other architecture in a changelog bullet. Put necessary background in product docs.
 - **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
 
 ## Changelog highlights
@@ -734,7 +751,7 @@ reader who stops after the highlights should have missed nothing they would ask 
 ```markdown
 ## 0.16.0 - 2026-11-20
 
-- **Undo workspace archive:** Archiving a workspace in the app now shows a "Workspace archived" toast for six seconds. Undo, or Cmd/Ctrl+Z, restores the workspace with its tabs and agents. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
+- **Undo workspace archive:** Restore an archived workspace with Undo or Cmd/Ctrl+Z. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
 
 ### Added
 ```
@@ -745,17 +762,19 @@ reader who stops after the highlights should have missed nothing they would ask 
 - **The lead-in is not a place or something Paseo already had.** A device, screen or area names
   where the change landed. A feature name that was true of the last release hides the news: Paseo
   already had keyboard shortcuts, so the lead-in says they now work on mobile.
-- **The first sentence says the plain thing.** Write what a user would tell a friend: Paseo now
+- **One short sentence says the plain thing.** Write what a user would tell a friend: Paseo now
   shows the background tasks an agent is running. Leave out the conditions and mechanics that make
-  it true.
+  it true. A second sentence is only for a
+  [breaking requirement](#changelog-conciseness).
 - **Describe the new behavior, not the old one.** Say what is faster or better now, and do not
   dwell on how slow or broken it was before. A number is welcome as a short aside after the new
   behavior is stated: seconds, a percentage, a multiple.
 - **Do not list what a sentence already covers.** After "the same shortcuts as desktop", naming
   five of them adds nothing. Keep a list only when it sets the scope, such as the providers a
   feature works with.
-- **The description runs one to three sentences.** Sentences end with periods, and the attribution
-  follows the last one. [Changelog wording](#changelog-wording) applies in full.
+- **Sentences end with periods, and the attribution follows the last one.**
+  [Changelog wording](#changelog-wording) and [Changelog conciseness](#changelog-conciseness)
+  apply.
 - **A highlight replaces the section bullets it covers.** A PR appears once in an entry, so its
   attribution moves to the highlight.
 - **A highlight is something a user would name.** Everything else stays a section bullet. A patch
@@ -764,13 +783,13 @@ reader who stops after the highlights should have missed nothing they would ask 
   of related fixes, becomes a highlight only when it passes the same test as a feature, and then
   it is written as what works now: `**Fewer reconnects on return:**`.
 
-| Avoid                                                                                      | Write                                                                                                            |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                                               |
-| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                                              |
-| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                                                         |
-| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner on hosts with many worktrees |
-| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                                                    |
+| Avoid                                                                                      | Write                                                                               |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                  |
+| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                 |
+| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                            |
+| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner |
+| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                       |
 
 Before showing a draft, read only the bold lead-ins top to bottom. Each one must answer "what is
 new?" without its description, and each must outrank the one below it.
@@ -820,6 +839,9 @@ question.
    for them: `Undo workspace archive`, `Fewer reconnects on return`. Fixes are routine, so one
    that earned a highlight still follows everything new or improved.
 
+- **The headline change goes first, whatever its group.** It is the change the release is announced
+  with. 0.17.1 leads with `Antigravity approvals and history`, which needs one provider. The groups
+  rank everything after it.
 - **Reach decides before kind.** A new capability that needs a hardware keyboard is in group 3.
 - **Rank the whole list in one pass.** The order you collected the pull requests in, the alphabet
   and the order of the sections below are not rankings.

@@ -2,6 +2,7 @@ import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
   AgentBackgroundWorkSummarySchema,
+  AgentMetricSchema,
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
@@ -129,6 +130,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("assistant_message"),
     messageId: z.string().optional(),
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     text: z.string(),
     // Reject old caches containing display fragments; refetch the complete source text.
   }),
@@ -163,6 +165,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
     provider: AgentProviderSchema,
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
   }),
   z.strictObject({
@@ -482,6 +485,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -516,6 +520,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         provider: item.payload.data.provider,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         item: serializeAgentToolCall(item.payload.data),
       };
     case "plugin":
@@ -575,6 +580,7 @@ function deserializeBuiltinTimelineItem(
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -611,6 +617,7 @@ function deserializeBuiltinTimelineItem(
       return {
         ...base,
         kind: item.kind,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         payload: {
           source: "agent",
           data: {

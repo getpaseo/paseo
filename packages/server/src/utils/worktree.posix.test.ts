@@ -305,6 +305,35 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       },
     );
 
+    it.each(["company", "upstream"])(
+      "checks out the selected %s ref when remote branch names are ambiguous",
+      async (remote) => {
+        for (const name of ["company", "upstream"]) {
+          execFileSync("git", ["remote", "add", name, repoDir], { cwd: repoDir });
+          execFileSync("git", ["update-ref", `refs/remotes/${name}/topic`, "main"], {
+            cwd: repoDir,
+          });
+        }
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "remote-choice",
+          paseoHome,
+          source: {
+            kind: "checkout-branch",
+            branchName: "topic",
+            remoteRef: `refs/remotes/${remote}/topic`,
+          },
+        });
+        expect(result.branchName).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(`refs/remotes/${remote}/topic`);
+      },
+    );
+
     it("checks out an existing local branch that is not checked out elsewhere", async () => {
       execFileSync("git", ["branch", "dev"], { cwd: repoDir });
 

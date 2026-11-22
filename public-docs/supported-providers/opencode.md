@@ -8,9 +8,11 @@ category: Providers
 
 # OpenCode
 
-Run OpenCode in Paseo with your existing `opencode` installation, credentials, and configuration.
+Paseo runs OpenCode through your installed `opencode` CLI. It uses your existing credentials and configuration.
 
 ## Getting started
+
+OpenCode is built into Paseo and enabled by default.
 
 1. Install [OpenCode](https://opencode.ai/) on your daemon host:
 
@@ -21,13 +23,13 @@ Run OpenCode in Paseo with your existing `opencode` installation, credentials, a
 2. Connect OpenCode to a model provider, and make sure that `opencode` runs in a terminal.
 3. In Paseo, choose **OpenCode** when you start an agent.
 
-If you use OpenCode v2, install version 2.0.10 or newer. Paseo rejects older v2 versions.
+If you use OpenCode v2, install version 2.0.10 or later. Paseo rejects older v2 versions.
 
-If `opencode` is outside your daemon's PATH, use a [command override](/docs/custom-providers#custom-binary).
+If `opencode` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary).
 
 ## Modes
 
-Paseo shows the agents of OpenCode as modes.
+Paseo shows OpenCode agents as modes.
 
 | Mode  | Effect                                          |
 | ----- | ----------------------------------------------- |

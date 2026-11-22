@@ -230,9 +230,7 @@ test.describe("Assistant fork menu", () => {
     await selectWorkspaceIsolation(page, "worktree");
     await expectPickerSelected(page, "Choose where to start from");
     await submitNewWorkspaceEmpty(page);
-    await expect(page.getByTestId("new-workspace-error")).toContainText(
-      "Choose where to start from",
-    );
+    await expect(page.getByTestId("composer-error")).toContainText("Choose where to start from");
     expect(
       (await session.client.fetchWorkspaces()).entries.map((entry) => entry.id).sort(),
     ).toEqual(before.entries.map((entry) => entry.id).sort());

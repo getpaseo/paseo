@@ -222,10 +222,7 @@ export function pickerItemToCheckoutRequest(
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      // A checkout works on the local branch; both the origin row and the local row stand for it.
-      return action === "checkout"
-        ? { action, refName: branchNameFromRef(item.refName) }
-        : { action, refName: item.refName };
+      return { action, refName: item.refName };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";
@@ -264,7 +261,7 @@ export function startsNewBranch(request: PickerCheckoutRequest | undefined): boo
 
 /**
  * The rows of one ref list. Checking out works on the local branch, so the origin and local rows
- * of a branch are one choice there: one row per branch, named by the branch, keeping the selected
+ * of a branch are one choice there. Other remotes keep their distinct ref and label. Keep the selected
  * row's id so its checkmark stays.
  */
 export function refListOptions(input: {
@@ -281,6 +278,13 @@ export function refListOptions(input: {
   for (const option of ofKind) {
     const item = itemById.get(option.id);
     if (item?.kind !== "branch") continue;
+    if (
+      item.refName.startsWith(REMOTE_TRACKING_PREFIX) &&
+      !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`)
+    ) {
+      rowByBranch.set(option.id, option);
+      continue;
+    }
     const branchName = branchNameFromRef(item.refName);
     if (rowByBranch.has(branchName) && option.id !== selectedOptionId) continue;
     rowByBranch.set(branchName, { ...option, label: branchName });

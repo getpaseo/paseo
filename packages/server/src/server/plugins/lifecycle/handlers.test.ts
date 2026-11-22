@@ -346,6 +346,31 @@ test("a waiting after hook propagates failures and stops later handlers", async 
   expect(received).toEqual(["/worktree"]);
 });
 
+test("checkout-branch hooks preserve remoteRef across old hooks", async () => {
+  const request = {
+    kind: "checkout-branch" as const,
+    repoRoot: "/repo",
+    sourceCheckout: "/repo",
+    branch: "topic",
+    slug: "topic",
+    path: "/work/topic",
+    remoteRef: "refs/remotes/company/topic",
+  };
+  const { remoteRef: _remoteRef, ...oldRequest } = request;
+  await expect(
+    validateBeforeResult("worktree.create.before", request, oldRequest),
+  ).resolves.toEqual(request);
+  await expect(
+    validateBeforeResult("worktree.create.before", request, {
+      ...request,
+      remoteRef: "refs/remotes/upstream/topic",
+    }),
+  ).rejects.toThrow(/cannot change remoteRef/);
+  await expect(
+    validateBeforeResult("worktree.create.before", request, { ...request, branch: "other" }),
+  ).resolves.toEqual({ ...oldRequest, branch: "other" });
+});
+
 test("checkout-branch hooks reject a branch-off baseRef", async () => {
   const request = {
     kind: "checkout-branch" as const,

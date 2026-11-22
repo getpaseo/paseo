@@ -248,7 +248,12 @@ function describeCreationRequest(
       ...(intent.startPoint ? { startPoint: intent.startPoint } : {}),
     };
   if (intent.kind === "checkout-branch")
-    return { ...placement, kind: intent.kind, branch: intent.branchName };
+    return {
+      ...placement,
+      kind: intent.kind,
+      branch: intent.branchName,
+      ...(intent.remoteRef ? { remoteRef: intent.remoteRef } : {}),
+    };
   const { localBranchName, baseRefName, ...facts } = intent;
   return {
     ...placement,
@@ -273,9 +278,15 @@ function creationIntentFromRequest(
     };
   }
   if (request.kind === "checkout-branch") {
+    // A hook that changes the branch also replaces the selected remote's branch identity.
+    const remoteRef =
+      original.kind === "checkout-branch" && original.branchName === request.branch
+        ? original.remoteRef
+        : undefined;
     return {
       kind: request.kind,
       branchName: request.branch,
+      ...(remoteRef ? { remoteRef } : {}),
     };
   }
   const {

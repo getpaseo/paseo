@@ -108,7 +108,7 @@ describe("pickerItemToCheckoutRequest", () => {
 });
 
 describe("pickerItemToCheckoutRequest with an action", () => {
-  it("checks a branch out by its branch name, whichever ref the row stands for", () => {
+  it("keeps the selected ref when checking a branch out", () => {
     const item: PickerItem = {
       kind: "branch",
       name: "dev",
@@ -117,7 +117,7 @@ describe("pickerItemToCheckoutRequest with an action", () => {
     };
     expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
-      refName: "dev",
+      refName: "refs/remotes/origin/dev",
     });
   });
 
@@ -133,6 +133,33 @@ describe("pickerItemToCheckoutRequest with an action", () => {
 });
 
 describe("refListOptions", () => {
+  it("keeps checkout choices on different remotes distinct", () => {
+    const data = buildPickerOptionData({
+      branchDetails: [
+        {
+          name: "refs/remotes/company/topic",
+          refName: "refs/remotes/company/topic",
+          committerDate: 1,
+        },
+        {
+          name: "refs/remotes/upstream/topic",
+          refName: "refs/remotes/upstream/topic",
+          committerDate: 2,
+        },
+      ],
+      prItems: [],
+      baseItem: null,
+    });
+    const rows = refListOptions({ ...data, kind: "branch", action: "checkout" });
+    expect(rows.map((row) => row.label)).toEqual(["topic (upstream)", "topic (company)"]);
+    expect(
+      rows.map((row) => pickerItemToCheckoutRequest(data.itemById.get(row.id)!, "checkout")),
+    ).toEqual([
+      { action: "checkout", refName: "refs/remotes/upstream/topic" },
+      { action: "checkout", refName: "refs/remotes/company/topic" },
+    ]);
+  });
+
   const branchDetails: BranchPickerDetail[] = [
     {
       name: "main",
