@@ -623,8 +623,9 @@ translated change to `apply(change)`. Applying a change this way uses the shared
 mapping and skips the transformers for that change.
 
 Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after its `session/load`
-response. Paseo waits for that interval without session updates before it publishes the session as
-ready. The wait is bounded at five times the interval.
+response. Paseo publishes the session as ready once that interval passes without a history update.
+Non-history state and metadata updates (such as commands, configuration, mode, usage, and session
+info) do not extend the wait.
 
 Set `acpOptions.autoAcceptMode` to offer an unattended mode backed by a specific native mode.
 The adapter selects an unambiguous ACP `allow_once` action without opening a Paseo approval.

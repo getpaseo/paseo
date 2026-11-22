@@ -31,6 +31,8 @@ If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config
 
 If you already override the command, add `acp` to the command arguments. See [Custom providers](/docs/custom-providers) for command and environment overrides.
 
+After the upgrade, a Hub trigger saved with an older model ID that includes the thinking level reports that its model is unavailable. In Hub, select the model and thinking level again.
+
 ## Permissions
 
 Paseo connects to `agy acp` and shows the permission modes the CLI offers. In **Default**, Paseo shows approval requests for edits and commands that Antigravity policy requires you to approve. In **Accept edits**, Antigravity approves workspace edits and still asks about commands that require approval. **Plan** lets Antigravity plan before it acts.
