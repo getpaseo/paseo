@@ -92,33 +92,17 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 ## Sending prompts to agents
 
-**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. The call returns at once. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
+**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Sends a follow-up to an existing agent and returns at once.
 
-### Choose `activeTurnBehavior`
+Leave `activeTurnBehavior` out unless the message cannot wait. It decides what happens when the agent is mid-turn:
 
-Leave `activeTurnBehavior` out unless the message cannot wait. The default for agent-scoped calls is `queue`, and it is right for almost every message.
+- `queue` (default): the message waits for the turn to end.
+- `steer`: the agent reads the message at its next step and keeps working. If its provider cannot steer, the turn is interrupted instead.
+- `interrupt`: the turn stops, and a new turn starts with the message.
 
-- `queue` (default): the message waits until the recipient's running turn ends. An idle recipient gets it after about two quiet seconds.
-- `steer`: the message joins the running turn, and the recipient reads it at its next step. If the recipient's provider cannot steer, `steer` interrupts the turn instead.
-- `interrupt`: the running turn stops, and a new turn starts with the message.
+Read `guidance` in the response. If it says your message is waiting and the message cannot wait, such as a course correction, send a short follow-up with `steer` or `interrupt`. Do not resend the message: the follow-up carries it, and a resent message is read twice.
 
-The recipient reads your messages in the order you sent them. A `steer` or `interrupt` carries the messages you queued before it, so sending one does not skip or cancel them. To withdraw an earlier instruction, say so in the new message.
-
-### Read the response
-
-The response gives the applied `activeTurnBehavior` and a `guidance` sentence. The guidance says whether the message waits, joins the running turn, or interrupts it.
-
-If a queued message cannot wait after all, do not send it again. The recipient reads a resent message twice. Send a short follow-up with `steer` or `interrupt` instead, such as "Read my queued message now." The follow-up carries the queued message ahead of it.
-
-A steer that the recipient has not read yet is lost when the turn stops or is interrupted, together with the queued messages it carried. This includes your own later `interrupt`. If the recipient must act on the message no matter what, use `queue` or `interrupt`.
-
-### What else changes delivery
-
-- A person's prompt to the recipient takes your queued messages into its turn.
-- `cancel_agent` and the stop button hold your queued messages until the recipient's next prompt.
-- Finish notifications always wait for the recipient's turn to end.
-- Top-level calls default to `interrupt`, accept `steer`, reject `queue`, and return after dispatch acknowledgement.
-- CLI agent sends (`PASEO_AGENT_ID` set) use the same defaults and accept `--behavior queue|steer|interrupt`.
+A steer the agent has not read is lost if its turn stops or is interrupted, along with the messages it carried. For a message that must arrive, use `queue` or `interrupt`.
 
 ## Agent profiles and provider discovery
 
@@ -170,6 +154,7 @@ paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
 paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
 paseo send <agent-id> "<follow-up>"
+paseo send <agent-id> --behavior steer "<follow-up that cannot wait>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
 paseo heartbeat create --cron "*/15 * * * *" "check the build"
