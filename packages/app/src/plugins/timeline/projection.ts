@@ -76,7 +76,7 @@ function transformSourceItem(
   assistantPhase: AssistantPhase,
 ): StreamItem[] {
   const source = sourceTimelineItem(item);
-  if (!source) return [item];
+  if (!source || item.kind === "plugin") return [item];
   const isStreamingThought = item.kind === "thought" && item.status === "loading";
   const isStreamingToolCall =
     item.kind === "tool_call" &&
