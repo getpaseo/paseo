@@ -1,8 +1,9 @@
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { UsageRefreshButton } from "./refresh-button";
 import { UsageOptions } from "./options";
+import { useUsageDisplay, type UsageDisplay } from "./display";
 import { hasHostChoice, type UsageHostSelection } from "./hosts";
 import { useHostUsage } from "./queries";
 import type { UsageView } from "./types";
@@ -15,13 +16,19 @@ import type { UsageView } from "./types";
 export function UsageControls({
   view,
   serverId,
+  display,
   onRefresh,
   hostSelection,
+  optionsOpen,
+  onOptionsOpenChange,
 }: {
   view: UsageView;
   serverId: string;
+  display?: UsageDisplay;
   onRefresh: () => void;
   hostSelection?: UsageHostSelection;
+  optionsOpen?: boolean;
+  onOptionsOpenChange?: (open: boolean) => void;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
   if (!hasUsageControls(view, hostSelection)) return null;
@@ -30,7 +37,14 @@ export function UsageControls({
       {view.kind === "off" || view.kind === "unavailable" ? null : (
         <UsageRefreshButton busy={busy} onRefresh={onRefresh} />
       )}
-      <UsageOptions serverId={serverId} hostSelection={hostSelection} />
+      <UsageOptions
+        serverId={serverId}
+        hostSelection={hostSelection}
+        reports={view.kind === "ready" ? view.reports : []}
+        display={display}
+        open={optionsOpen}
+        onOpenChange={onOptionsOpenChange}
+      />
     </View>
   );
 }
@@ -54,10 +68,15 @@ const styles = StyleSheet.create((theme) => ({
  */
 export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   view: UsageView;
+  display: UsageDisplay;
   refresh: () => void;
   controls: ReactElement | null;
+  openOptions: () => void;
 } {
   const { view, refresh } = useHostUsage(hostSelection.serverId);
+  const { display } = useUsageDisplay(view.kind === "ready" ? view.reports : []);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const openOptions = useCallback(() => setOptionsOpen(true), []);
   const controls = useMemo(
     () =>
       hasUsageControls(view, hostSelection) ? (
@@ -67,11 +86,14 @@ export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
           key={hostSelection.serverId}
           serverId={hostSelection.serverId}
           view={view}
+          display={display}
           onRefresh={refresh}
           hostSelection={hostSelection}
+          optionsOpen={optionsOpen}
+          onOptionsOpenChange={setOptionsOpen}
         />
       ) : null,
-    [hostSelection, refresh, view],
+    [display, hostSelection, optionsOpen, refresh, view],
   );
-  return { view, refresh, controls };
+  return { view, display, refresh, controls, openOptions };
 }

@@ -62,6 +62,8 @@ import {
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
+const USAGE_PROVIDER_ACTIVITY_TIMEOUT_MS = 5_000;
+const USAGE_PROVIDER_ACTIVITY_TTL_MS = 300_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 /** How long shutdown waits for aborted probes; a provider ignoring the abort must not hang it. */
 const PROBE_SHUTDOWN_GRACE_MS = 10_000;
@@ -266,6 +268,7 @@ interface ProviderSnapshotTarget {
 export class ProviderSnapshotManager {
   private readonly catalogs = new Map<string, Map<AgentProvider, ProviderCatalog>>();
   private readonly targets = new Map<string, Target>();
+  private readonly usageActivityCache = new Map<AgentProvider, { at: number; active: boolean }>();
   private readonly events = new EventEmitter();
   private destroyed = false;
   /** Aborts provider work in flight when the manager stops. */
@@ -529,6 +532,87 @@ export class ProviderSnapshotManager {
     return this.ensureClient(provider, definition).resolveUsageLaunch?.();
   }
 
+  /**
+   * Whether `provider` (or a custom provider derived from it) is enabled and installed on this
+   * host. Used as a hint for whether discovered usage accounts start shown.
+   */
+  async isProviderActiveForUsage(
+    provider: string,
+    options: { forceRefresh?: boolean; timeoutMs?: number; ttlMs?: number } = {},
+  ): Promise<boolean> {
+    const matching = this.generation.order
+      .map((id) => ({ id, definition: this.generation.definitions[id] }))
+      .filter(
+        (candidate): candidate is { id: AgentProvider; definition: ProviderDefinition } =>
+          candidate.definition !== undefined &&
+          candidate.definition.enabled &&
+          (candidate.id === provider || candidate.definition.derivedFromProviderId === provider),
+      );
+    if (matching.length === 0) return false;
+
+    const forceRefresh = options.forceRefresh === true;
+    const ttlMs = options.ttlMs ?? USAGE_PROVIDER_ACTIVITY_TTL_MS;
+    const timeoutMs = options.timeoutMs ?? USAGE_PROVIDER_ACTIVITY_TIMEOUT_MS;
+    const now = Date.now();
+
+    const unresolved: Array<{ id: AgentProvider; definition: ProviderDefinition }> = [];
+    if (forceRefresh) {
+      unresolved.push(...matching);
+    } else {
+      for (const candidate of matching) {
+        const cached = this.usageActivityCache.get(candidate.id);
+        if (cached && now - cached.at < ttlMs) {
+          if (cached.active) return true;
+          continue;
+        }
+        unresolved.push(candidate);
+      }
+      if (unresolved.length === 0) return false;
+    }
+
+    const results = await Promise.all(
+      unresolved.map(({ id, definition }) => this.probeUsageActivity(id, definition, timeoutMs)),
+    );
+    return results.some(Boolean);
+  }
+
+  private async probeUsageActivity(
+    provider: AgentProvider,
+    definition: ProviderDefinition,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const generation = this.generation;
+    const controller = new AbortController();
+    const timedOut = Symbol("usage-provider-activity-timeout");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof timedOut>((finish) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        finish(timedOut);
+      }, timeoutMs);
+    });
+    const probe = this.ensureClient(provider, definition)
+      .isAvailable(controller.signal, { scope: "global", force: true })
+      .then(
+        (active) => ({ ok: true as const, active }),
+        () => ({ ok: false as const, active: false }),
+      );
+    try {
+      const outcome = await Promise.race([probe, deadline]);
+      if (outcome === timedOut) {
+        // Fail open without caching when a slow probe misses the deadline; a subsequent read
+        // picks up the real status once the provider snapshot finishes loading.
+        return true;
+      }
+      if (outcome.ok && this.generation === generation) {
+        this.usageActivityCache.set(provider, { at: Date.now(), active: outcome.active });
+      }
+      return outcome.active;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
     const target = resolveProviderSnapshotTarget(input.cwd);
     if (input.wait) {
@@ -723,6 +807,7 @@ export class ProviderSnapshotManager {
   ): void {
     for (const provider of changed) {
       this.generation.providerStates.get(provider)?.discoveryLimit.clearQueue();
+      this.usageActivityCache.delete(provider);
     }
     this.generation = generation;
     this.providerClients = clients;
@@ -1089,6 +1174,12 @@ export class ProviderSnapshotManager {
             publish: (entry, { incomplete }) => {
               if (!isCurrent()) return false;
               const result = identifyEntry(structuredClone(entry));
+              const boundTargets = [...this.targets].flatMap(([cwd, target]) =>
+                target.bindings.get(provider)?.key === key ? [cwd] : [],
+              );
+              const isGlobal =
+                catalogOptions.scope === "global" ||
+                boundTargets.includes(resolveProviderSnapshotTarget().snapshotCwd);
               if (
                 background &&
                 current.result &&
@@ -1106,12 +1197,25 @@ export class ProviderSnapshotManager {
                     "Background provider refresh failed; keeping the last catalogue",
                   );
                 }
+                if (
+                  isGlobal &&
+                  (entry.status === "ready" ||
+                    (entry.status === "unavailable" && current.result.entry.status !== "ready"))
+                ) {
+                  this.usageActivityCache.set(provider, {
+                    at: Date.now(),
+                    active: entry.status === "ready",
+                  });
+                }
                 return false;
               }
               current.result = result;
-              const boundTargets = [...this.targets].flatMap(([cwd, target]) =>
-                target.bindings.get(provider)?.key === key ? [cwd] : [],
-              );
+              if (isGlobal && (entry.status === "ready" || entry.status === "unavailable")) {
+                this.usageActivityCache.set(provider, {
+                  at: Date.now(),
+                  active: entry.status === "ready",
+                });
+              }
               this.publishTargets(boundTargets);
               return true;
             },

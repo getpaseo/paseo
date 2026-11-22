@@ -7083,6 +7083,8 @@ export const UsageReportEntrySchema = z.object({
   sourceId: z.string(),
   sourceLabel: z.string(),
   icon: z.string().optional(),
+  /** Host hint for whether this report starts shown until the user overrides it. Absent means true. */
+  defaultEnabled: z.boolean().optional(),
   report: UsageReportSchema,
   // Successful completion time; fetchedAt remains the attempt timestamp for ordering.
   successfulAt: z.string().optional(),

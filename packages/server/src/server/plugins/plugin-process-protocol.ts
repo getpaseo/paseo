@@ -43,6 +43,7 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   provider?: string;
+  providers?: string[];
   icon?: string;
 }
 
@@ -199,6 +200,7 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     provider: z.string().min(1).optional(),
+    providers: z.array(z.string().min(1)).optional(),
     icon: z.string().optional(),
   })
   .strict();

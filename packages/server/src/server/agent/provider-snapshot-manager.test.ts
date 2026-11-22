@@ -3856,3 +3856,68 @@ test("model overrides preserve negotiated plugin capabilities and connection shu
     manager.destroy();
   }
 });
+
+test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real timeout deadline", async () => {
+  let codexAvailable = false;
+  let codexChecks = 0;
+  let copilotSignalAborted = false;
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      codex: createExtraClient("codex", {
+        async isAvailable() {
+          codexChecks += 1;
+          return codexAvailable;
+        },
+      }),
+      copilot: createExtraClient("copilot", {
+        isAvailable(signal) {
+          signal?.addEventListener("abort", () => {
+            copilotSignalAborted = true;
+          });
+          // Simulate a plugin provider RPC that ignores AbortSignal and hangs indefinitely.
+          return new Promise<boolean>(() => {});
+        },
+      }),
+    },
+  });
+  try {
+    // Prime the global snapshot while codex is unavailable.
+    await manager.getProvider({ provider: "codex", wait: true });
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(false);
+    const checksAfterSnapshot = codexChecks;
+
+    // Install codex externally; a forced Usage refresh re-probes and persists the fresh result.
+    codexAvailable = true;
+    expect(await manager.isProviderActiveForUsage("codex", { forceRefresh: true })).toBe(true);
+    expect(codexChecks).toBeGreaterThan(checksAfterSnapshot);
+
+    // Subsequent non-forced reads keep the fresher probe result instead of falling back to the
+    // older unavailable snapshot.
+    const checksAfterForce = codexChecks;
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(true);
+    expect(codexChecks).toBe(checksAfterForce);
+
+    // Refreshing Providers after uninstalling codex updates the shared availability reading even
+    // though an unavailable snapshot entry carries no fetchedAt.
+    codexAvailable = false;
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+    const checksAfterSettingsRefresh = codexChecks;
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(false);
+    expect(codexChecks).toBe(checksAfterSettingsRefresh);
+
+    // Once the TTL elapses, a normal read re-probes automatically.
+    codexAvailable = true;
+    expect(await manager.isProviderActiveForUsage("codex", { ttlMs: 0 })).toBe(true);
+    expect(codexChecks).toBeGreaterThan(checksAfterSettingsRefresh);
+
+    // A hung non-abortable provider check resolves at the deadline instead of blocking callers.
+    const started = Date.now();
+    expect(await manager.isProviderActiveForUsage("copilot", { timeoutMs: 30 })).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(copilotSignalAborted).toBe(true);
+  } finally {
+    await manager.shutdown();
+    manager.destroy();
+  }
+});
