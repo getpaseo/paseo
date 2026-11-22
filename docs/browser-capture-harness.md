@@ -59,13 +59,7 @@ The browser profile group launches two Electron processes against the same test 
 and user data. It matches renderer registrations to the main-process guests, checks sharing
 within a profile and isolation between named profiles, and verifies that a child popup
 inherits its opener’s session. The second launch checks the saved cookies and local storage.
-
-For the toolbar and Settings journey, run the app against isolated workspace fixtures.
-Screenshots and `profiles.json` record each tab ID, visible label and account across relaunch.
-
-```bash
-PASEO_DESKTOP_BROWSER_PROFILES_ONLY=1 PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR=/tmp/paseo-profile-results npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
-```
+The toolbar profile journey runs in the [desktop browser regression](testing.md#desktop-browser-regression).
 
 The automation group uses a real guest webview to verify the page-side ref contract:
 ARIA-like snapshot text includes headings, static text, and controls; refs survive

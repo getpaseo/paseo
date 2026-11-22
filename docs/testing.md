@@ -148,6 +148,8 @@ Run it locally with the same command owned by the Ubuntu `desktop-tests` require
 npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
 ```
 
+Its last step is the per-tab browser profile journey. It relaunches Electron once, so two tabs on one origin keep different accounts and their toolbar labels, then clears all profiles through Settings. Run only that journey with `PASEO_DESKTOP_BROWSER_PROFILES_ONLY=1`. Set `PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR` to keep its screenshots and `profiles.json`.
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`
