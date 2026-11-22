@@ -41,6 +41,9 @@ Scheduled runs can use **Full access** without a person to approve each tool cal
 
 After an upgrade, an older Hub trigger can report that its Antigravity model is unavailable. Open the trigger in Hub and select the model and thinking level again.
 
+The context meter uses Antigravity's session-specific compaction limit when the local CLI
+records it. Until that value is available, Paseo shows the limit reported by ACP.
+
 ## Troubleshooting
 
 In Paseo, open **Settings → Providers → Antigravity** and select **Diagnostic report**. The report shows the command that Paseo runs, where the daemon found `agy`, the `agy` version, the number of models, and whether `agy` runs in an SSH session.

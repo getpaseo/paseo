@@ -448,6 +448,10 @@ Use `config(state, context)` to return the configuration snapshot that Paseo dis
 Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
 Use `configure` to send changes to the agent.
 
+Use `contextWindow` only when the agent exposes an effective context limit separately from ACP's
+reported size. The reader is scoped to one native session. Return `undefined` to use ACP's size;
+call `refresh()` after a delayed native write to re-read the limit without changing tokens used.
+
 Publish `session.commands` to advertise slash commands and skills. Each entry carries `name`,
 `description`, and optional `argumentHint` and `kind`. The composer suggests both kinds at the
 start of a prompt. Use `kind: "skill"` if the agent accepts the skill inline as part of a normal
