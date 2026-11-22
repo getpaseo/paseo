@@ -686,7 +686,8 @@ export async function createPaseoDaemon(
       hasAgent: (id) => agentManager.getAgent(id) !== null,
       usageSession: (id) => agentManager.usageSession(id),
       resolveLaunch: (provider) => providerSnapshotManager.resolveUsageLaunch(provider),
-      isProviderActive: (provider) => providerSnapshotManager.isProviderActiveForUsage(provider),
+      isProviderActive: (provider, options) =>
+        providerSnapshotManager.isProviderActiveForUsage(provider, options),
     },
     managedSources: new ManagedPluginSources(config.paseoHome, {
       registries: config.pluginRegistries,

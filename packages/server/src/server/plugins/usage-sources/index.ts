@@ -40,7 +40,7 @@ export interface AgentUsageLookup {
     provider: string,
   ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
   /** Whether the provider (or a custom provider derived from it) is installed and enabled. */
-  isProviderActive?(provider: string): Promise<boolean>;
+  isProviderActive?(provider: string, options?: { forceRefresh?: boolean }): Promise<boolean>;
 }
 
 export interface ListUsageReportsOptions {
@@ -110,19 +110,21 @@ export class UsageSourceRegistry {
       ids = [...this.known.keys()];
     }
     const uniqueIds = [...new Set(ids)];
-    const activeProviders =
+    const checkProvider =
       options.agentId === undefined
-        ? await this.resolveProviderActivity(uniqueIds, reports)
+        ? this.createProviderActivityChecker(options.forceRefresh)
         : undefined;
     return Promise.all(
       uniqueIds.flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
-        const defaultEnabled = activeProviders
-          ? this.resolveDefaultEnabled(known, activeProviders)
-          : undefined;
+        // Resolve each report's provider hint alongside its fetch so a slow provider probe
+        // never blocks unrelated reports from fetching or streaming.
         return [
-          this.fetchId(id, known, options.forceRefresh).then((entry) => {
+          Promise.all([
+            this.fetchId(id, known, options.forceRefresh),
+            this.resolveDefaultEnabled(known, checkProvider),
+          ]).then(([entry, defaultEnabled]) => {
             const stamped = defaultEnabled === false ? { ...entry, defaultEnabled: false } : entry;
             options.onReport?.(stamped);
             return stamped;
@@ -140,39 +142,32 @@ export class UsageSourceRegistry {
     return known.source.providers ? [...new Set(known.source.providers)] : [];
   }
 
-  private async resolveProviderActivity(
-    ids: readonly string[],
-    reports: ReadonlyMap<string, KnownReport>,
-  ): Promise<Map<string, boolean> | undefined> {
+  private createProviderActivityChecker(
+    forceRefresh?: boolean,
+  ): ((provider: string) => Promise<boolean>) | undefined {
     const isProviderActive = this.agents.isProviderActive;
     if (!isProviderActive) return undefined;
-    const providerIds = new Set<string>();
-    for (const id of ids) {
-      const known = reports.get(id);
-      if (!known) continue;
-      for (const provider of this.hintedProviders(known)) providerIds.add(provider);
-    }
-    if (providerIds.size === 0) return undefined;
-    const results = await Promise.all(
-      [...providerIds].map(async (provider) => {
-        try {
-          return [provider, await isProviderActive(provider)] as const;
-        } catch (error) {
-          this.logger.warn({ provider, err: error }, "Usage provider availability hint failed");
-          return [provider, true] as const;
-        }
-      }),
-    );
-    return new Map(results);
+    const checks = new Map<string, Promise<boolean>>();
+    return (provider: string) => {
+      const existing = checks.get(provider);
+      if (existing) return existing;
+      const check = isProviderActive(provider, { forceRefresh }).catch((error) => {
+        this.logger.warn({ provider, err: error }, "Usage provider availability hint failed");
+        return true;
+      });
+      checks.set(provider, check);
+      return check;
+    };
   }
 
-  private resolveDefaultEnabled(
+  private async resolveDefaultEnabled(
     known: KnownReport,
-    activeProviders: ReadonlyMap<string, boolean>,
-  ): boolean | undefined {
+    checkProvider: ((provider: string) => Promise<boolean>) | undefined,
+  ): Promise<boolean | undefined> {
+    if (!checkProvider) return undefined;
     const hinted = this.hintedProviders(known);
     if (hinted.length === 0) return undefined;
-    return hinted.some((provider) => activeProviders.get(provider) !== false) ? undefined : false;
+    return (await anyTrue(hinted.map(checkProvider))) ? undefined : false;
   }
 
   private pruneAgents(): void {
@@ -451,4 +446,29 @@ function cacheIdentity(id: string, known: KnownReport): string {
   return `${id}:${createHash("sha256")
     .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
     .digest("hex")}`;
+}
+
+/** Resolves true as soon as any check resolves true, or false once every check resolves false. */
+function anyTrue(checks: readonly Promise<boolean>[]): Promise<boolean> {
+  if (checks.length === 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let remaining = checks.length;
+    let settled = false;
+    for (const check of checks) {
+      void (async () => {
+        const value = await check;
+        if (settled) return;
+        if (value) {
+          settled = true;
+          resolve(true);
+          return;
+        }
+        remaining -= 1;
+        if (remaining === 0) {
+          settled = true;
+          resolve(false);
+        }
+      })();
+    }
+  });
 }

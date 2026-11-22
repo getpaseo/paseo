@@ -62,6 +62,8 @@ import {
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
+const USAGE_PROVIDER_ACTIVITY_TIMEOUT_MS = 5_000;
+const USAGE_PROVIDER_ACTIVITY_TTL_MS = 300_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 /** How long shutdown waits for aborted probes; a provider ignoring the abort must not hang it. */
 const PROBE_SHUTDOWN_GRACE_MS = 10_000;
@@ -266,6 +268,7 @@ interface ProviderSnapshotTarget {
 export class ProviderSnapshotManager {
   private readonly catalogs = new Map<string, Map<AgentProvider, ProviderCatalog>>();
   private readonly targets = new Map<string, Target>();
+  private readonly usageActivityCache = new Map<AgentProvider, { at: number; active: boolean }>();
   private readonly events = new EventEmitter();
   private destroyed = false;
   /** Aborts provider work in flight when the manager stops. */
@@ -533,7 +536,10 @@ export class ProviderSnapshotManager {
    * Whether `provider` (or a custom provider derived from it) is enabled and installed on this
    * host. Used as a hint for whether discovered usage accounts start shown.
    */
-  async isProviderActiveForUsage(provider: string): Promise<boolean> {
+  async isProviderActiveForUsage(
+    provider: string,
+    options: { forceRefresh?: boolean; timeoutMs?: number; ttlMs?: number } = {},
+  ): Promise<boolean> {
     const matching = this.generation.order
       .map((id) => ({ id, definition: this.generation.definitions[id] }))
       .filter(
@@ -544,31 +550,90 @@ export class ProviderSnapshotManager {
       );
     if (matching.length === 0) return false;
 
+    const forceRefresh = options.forceRefresh === true;
+    const ttlMs = options.ttlMs ?? USAGE_PROVIDER_ACTIVITY_TTL_MS;
+    const timeoutMs = options.timeoutMs ?? USAGE_PROVIDER_ACTIVITY_TIMEOUT_MS;
+    const now = Date.now();
     const homeTarget = this.targets.get(resolveProviderSnapshotTarget().snapshotCwd);
+
     const unresolved: Array<{ id: AgentProvider; definition: ProviderDefinition }> = [];
-    for (const candidate of matching) {
-      const entry = homeTarget?.snapshot.records.find(
-        (record) => record.entry.provider === candidate.id,
-      )?.entry;
-      if (entry?.status === "ready") return true;
-      if (entry?.status === "unavailable") continue;
-      unresolved.push(candidate);
+    if (forceRefresh) {
+      unresolved.push(...matching);
+    } else {
+      for (const candidate of matching) {
+        const fresh = this.freshUsageActivity(homeTarget, candidate.id, now, ttlMs);
+        if (fresh === true) return true;
+        if (fresh === false) continue;
+        unresolved.push(candidate);
+      }
+      if (unresolved.length === 0) return false;
     }
-    if (unresolved.length === 0) return false;
 
     const results = await Promise.all(
-      unresolved.map(async ({ id, definition }) => {
-        try {
-          return await this.ensureClient(id, definition).isAvailable(AbortSignal.timeout(5_000), {
-            scope: "global",
-            force: false,
-          });
-        } catch {
-          return false;
-        }
-      }),
+      unresolved.map(({ id, definition }) => this.probeUsageActivity(id, definition, timeoutMs)),
     );
     return results.some(Boolean);
+  }
+
+  private freshUsageActivity(
+    homeTarget: Target | undefined,
+    provider: AgentProvider,
+    now: number,
+    ttlMs: number,
+  ): boolean | undefined {
+    const entry = homeTarget?.snapshot.records.find(
+      (record) => record.entry.provider === provider,
+    )?.entry;
+    const snapshotAt =
+      entry && (entry.status === "ready" || entry.status === "unavailable") && entry.fetchedAt
+        ? Date.parse(entry.fetchedAt)
+        : Number.NaN;
+    const snapshotReading = Number.isFinite(snapshotAt)
+      ? { at: snapshotAt, active: entry?.status === "ready" }
+      : undefined;
+    const probeReading = this.usageActivityCache.get(provider);
+    let newest = snapshotReading ?? probeReading;
+    if (snapshotReading && probeReading) {
+      newest = snapshotReading.at >= probeReading.at ? snapshotReading : probeReading;
+    }
+    if (!newest || now - newest.at >= ttlMs) return undefined;
+    return newest.active;
+  }
+
+  private async probeUsageActivity(
+    provider: AgentProvider,
+    definition: ProviderDefinition,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const controller = new AbortController();
+    const timedOut = Symbol("usage-provider-activity-timeout");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof timedOut>((finish) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        finish(timedOut);
+      }, timeoutMs);
+    });
+    const probe = this.ensureClient(provider, definition)
+      .isAvailable(controller.signal, { scope: "global", force: true })
+      .then(
+        (active) => ({ ok: true as const, active }),
+        () => ({ ok: false as const, active: false }),
+      );
+    try {
+      const outcome = await Promise.race([probe, deadline]);
+      if (outcome === timedOut) {
+        // Fail open without caching when a slow probe misses the deadline; a subsequent read
+        // picks up the real status once the provider snapshot finishes loading.
+        return true;
+      }
+      if (outcome.ok) {
+        this.usageActivityCache.set(provider, { at: Date.now(), active: outcome.active });
+      }
+      return outcome.active;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
@@ -765,6 +830,7 @@ export class ProviderSnapshotManager {
   ): void {
     for (const provider of changed) {
       this.generation.providerStates.get(provider)?.discoveryLimit.clearQueue();
+      this.usageActivityCache.delete(provider);
     }
     this.generation = generation;
     this.providerClients = clients;

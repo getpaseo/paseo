@@ -2315,7 +2315,7 @@ export const es: TranslationResources = {
     reorderCard: "Reordenar {{source}}",
     sources: "Fuentes",
     sourcesCount: "{{shown}} de {{total}}",
-    providerNotInstalled: "Proveedor no instalado",
+    providerInactive: "Proveedor inactivo",
     allSourcesHidden: "No hay fuentes de uso visibles",
     chooseSources: "Elegir fuentes",
     refreshAll: "Actualizar todo",

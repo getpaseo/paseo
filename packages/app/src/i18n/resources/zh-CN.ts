@@ -2243,7 +2243,7 @@ export const zhCN: TranslationResources = {
     reorderCard: "重新排序 {{source}}",
     sources: "来源",
     sourcesCount: "{{shown}} / {{total}}",
-    providerNotInstalled: "未安装提供商",
+    providerInactive: "提供商未启用",
     allSourcesHidden: "未显示任何用量来源",
     chooseSources: "选择来源",
     refreshAll: "全部刷新",

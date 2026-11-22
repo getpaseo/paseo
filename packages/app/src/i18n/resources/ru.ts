@@ -2302,7 +2302,7 @@ export const ru: TranslationResources = {
     reorderCard: "Переместить {{source}}",
     sources: "Источники",
     sourcesCount: "{{shown}} из {{total}}",
-    providerNotInstalled: "Провайдер не установлен",
+    providerInactive: "Провайдер неактивен",
     allSourcesHidden: "Источники использования скрыты",
     chooseSources: "Выбрать источники",
     refreshAll: "Обновить всё",

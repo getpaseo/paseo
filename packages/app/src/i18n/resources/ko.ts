@@ -2277,7 +2277,7 @@ export const ko: TranslationResources = {
     reorderCard: "{{source}} 순서 변경",
     sources: "소스",
     sourcesCount: "{{shown}} / {{total}}",
-    providerNotInstalled: "제공업체가 설치되지 않음",
+    providerInactive: "제공업체 비활성",
     allSourcesHidden: "표시된 사용량 소스가 없습니다",
     chooseSources: "소스 선택",
     refreshAll: "모두 새로 고침",

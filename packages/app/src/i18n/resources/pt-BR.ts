@@ -2300,7 +2300,7 @@ export const ptBR: TranslationResources = {
     reorderCard: "Reordenar {{source}}",
     sources: "Fontes",
     sourcesCount: "{{shown}} de {{total}}",
-    providerNotInstalled: "Provedor não instalado",
+    providerInactive: "Provedor inativo",
     allSourcesHidden: "Nenhuma fonte de uso exibida",
     chooseSources: "Escolher fontes",
     refreshAll: "Atualizar tudo",

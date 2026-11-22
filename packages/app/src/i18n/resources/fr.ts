@@ -2316,7 +2316,7 @@ export const fr: TranslationResources = {
     reorderCard: "Réorganiser {{source}}",
     sources: "Sources",
     sourcesCount: "{{shown}} sur {{total}}",
-    providerNotInstalled: "Fournisseur non installé",
+    providerInactive: "Fournisseur inactif",
     allSourcesHidden: "Aucune source d'utilisation affichée",
     chooseSources: "Choisir les sources",
     refreshAll: "Tout actualiser",

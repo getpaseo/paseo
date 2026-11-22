@@ -201,7 +201,7 @@ function UsageSourcesPage({
   display: UsageDisplay;
 }) {
   const { t } = useTranslation();
-  const notInstalledLabel = t("providerUsage.providerNotInstalled");
+  const inactiveLabel = t("providerUsage.providerInactive");
   return (
     <>
       {reports.map((entry) => (
@@ -210,7 +210,7 @@ function UsageSourcesPage({
           entry={entry}
           on={display.isCardOn(entry)}
           onToggle={display.setCardOn}
-          notInstalledLabel={notInstalledLabel}
+          inactiveLabel={inactiveLabel}
         />
       ))}
     </>
@@ -221,12 +221,12 @@ function UsageSourceMenuItem({
   entry,
   on,
   onToggle,
-  notInstalledLabel,
+  inactiveLabel,
 }: {
   entry: UsageReportEntry;
   on: boolean;
   onToggle: (reportId: string, on: boolean) => void;
-  notInstalledLabel: string;
+  inactiveLabel: string;
 }) {
   const handleSelect = useCallback(() => onToggle(entry.id, !on), [entry.id, on, onToggle]);
   const leading = useMemo(
@@ -234,7 +234,7 @@ function UsageSourceMenuItem({
     [entry.icon],
   );
   const description =
-    [entry.account.label, !on && entry.defaultEnabled === false ? notInstalledLabel : null]
+    [entry.account.label, !on && entry.defaultEnabled === false ? inactiveLabel : null]
       .filter(Boolean)
       .join(" · ") || undefined;
   return (

@@ -2294,7 +2294,7 @@ export const en = {
     reorderCard: "Reorder {{source}}",
     sources: "Sources",
     sourcesCount: "{{shown}} of {{total}}",
-    providerNotInstalled: "Provider not installed",
+    providerInactive: "Provider inactive",
     allSourcesHidden: "No usage sources shown",
     chooseSources: "Choose sources",
     refreshAll: "Refresh all",

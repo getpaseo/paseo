@@ -992,3 +992,68 @@ test("uses provider activity as a defaultEnabled hint without blocking discovery
     "openrouter:default": undefined,
   });
 });
+
+test("streams unrelated usage reports without waiting on a slow provider check and forwards forceRefresh", async () => {
+  let resolveSlowCheck: ((active: boolean) => void) | undefined;
+  const forceRefreshSeen: Array<{ provider: string; forceRefresh?: boolean }> = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    isProviderActive: (provider, options) => {
+      forceRefreshSeen.push({ provider, forceRefresh: options?.forceRefresh });
+      if (provider === "slow") {
+        return new Promise<boolean>((resolve) => {
+          resolveSlowCheck = resolve;
+        });
+      }
+      return Promise.resolve(true);
+    },
+  });
+  registry.register(
+    source({
+      id: "slow-source",
+      providers: ["slow"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "fast-source",
+      providers: ["fast"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "unhinted",
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+
+  const streamed: string[] = [];
+  let fastStreamed!: () => void;
+  const bothFastStreamed = new Promise<void>((resolve) => {
+    fastStreamed = resolve;
+  });
+  const pending = registry.listReports({
+    forceRefresh: true,
+    onReport: (report) => {
+      streamed.push(report.id);
+      if (streamed.includes("fast-source:default") && streamed.includes("unhinted:default")) {
+        fastStreamed();
+      }
+    },
+  });
+
+  await bothFastStreamed;
+  expect(streamed).not.toContain("slow-source:default");
+  expect(forceRefreshSeen).toContainEqual({ provider: "slow", forceRefresh: true });
+  expect(forceRefreshSeen).toContainEqual({ provider: "fast", forceRefresh: true });
+
+  resolveSlowCheck?.(false);
+  const reports = await pending;
+  expect(reports.find((entry) => entry.id === "slow-source:default")?.defaultEnabled).toBe(false);
+  expect(
+    reports.find((entry) => entry.id === "fast-source:default")?.defaultEnabled,
+  ).toBeUndefined();
+});

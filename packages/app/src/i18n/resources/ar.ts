@@ -2266,7 +2266,7 @@ export const ar: TranslationResources = {
     reorderCard: "إعادة ترتيب {{source}}",
     sources: "المصادر",
     sourcesCount: "{{shown}} من {{total}}",
-    providerNotInstalled: "المزود غير مثبت",
+    providerInactive: "المزود غير نشط",
     allSourcesHidden: "لا توجد مصادر استخدام معروضة",
     chooseSources: "اختيار المصادر",
     refreshAll: "تحديث الكل",

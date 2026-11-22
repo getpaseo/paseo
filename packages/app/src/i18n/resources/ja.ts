@@ -2289,7 +2289,7 @@ export const ja: TranslationResources = {
     reorderCard: "{{source}} を並べ替え",
     sources: "ソース",
     sourcesCount: "{{shown}} / {{total}}",
-    providerNotInstalled: "プロバイダー未インストール",
+    providerInactive: "プロバイダー無効",
     allSourcesHidden: "表示中の使用量ソースはありません",
     chooseSources: "ソースを選択",
     refreshAll: "すべて更新",

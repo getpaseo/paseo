@@ -343,7 +343,7 @@ test.describe("usage modal", () => {
         "false",
       );
       await expect(page.getByTestId("usage-source-toggle-copilot:default")).toContainText(
-        "Provider not installed",
+        "Provider inactive",
       );
       await qaScreenshot(page, `usage-sources-${size}-list`);
 
