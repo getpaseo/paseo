@@ -446,6 +446,28 @@ async function waitForCapturedLog(
           config: { provider: "claude/claude-test" },
           title: "Local checks",
         });
+        const accessManager = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          sessionPermissions: ["access.manage"],
+        });
+        cleanup.push(() => accessManager.close());
+        await accessManager.connect();
+        await expect(
+          accessManager.manageHostInstructions({
+            action: "set_policy",
+            sourceId,
+            policy: "unattended",
+            workspaceOverrides: [],
+          }),
+        ).rejects.toMatchObject({ code: "access_denied" });
+        await expect(
+          accessManager.manageHostInstructions({
+            action: "grant",
+            sourceId,
+            agentId: agent.id,
+            policy: "ask",
+          }),
+        ).rejects.toMatchObject({ code: "access_denied" });
         const { registration } = await destinationClient.manageHostInstructions({
           action: "set_policy",
           sourceId,
@@ -709,6 +731,103 @@ async function waitForCapturedLog(
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();
+      }
+    },
+  );
+
+  test(
+    "connected hosts acknowledge the last revoked instruction grant after restart",
+    { timeout: 60000 },
+    async () => {
+      const homeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-revoked-instructions-"));
+      const cleanup: (() => Promise<unknown>)[] = [];
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destinationOptions = {
+          paseoHomeRoot: homeRoot,
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+        };
+        const destination = await createTestPaseoDaemon({ ...destinationOptions, cleanup: false });
+        cleanup.push(() => rm(destination.staticDir, { recursive: true, force: true }));
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+        const sourceId = sourceClient.getLastServerInfoMessage()!.serverId;
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+
+        // No source exchange observes the revocation before the receiving daemon goes away.
+        await destinationClient.manageHostInstructions({ action: "revoke", id: registration.id });
+        await destinationClient.close();
+        await destination.close();
+        const restarted = await createTestPaseoDaemon(destinationOptions);
+        cleanup.push(() => restarted.close());
+
+        const mcp = new McpClient({ name: "revoked-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: "conversation",
+            workspaceId: "workspace",
+            prompt: "Check the revoked registration",
+          },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("revoked");
+        const stale = await sourceClient.manageHostInstructions({
+          action: "has_registration",
+          destinationId: serverId,
+          id: registration.id,
+        });
+        expect(stale.hasRegistration).toBe(false);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+        await rm(homeRoot, { recursive: true, force: true });
       }
     },
   );

@@ -73,6 +73,7 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
   const policy = draftPolicy ?? saved?.policy ?? "ask";
   const workspaceOverrides = draftOverrides ?? saved?.workspaceOverrides ?? emptyOverrides;
   const [busy, setBusy] = useState(false);
+  const canEditPolicy = Boolean(directory) && !busy;
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -207,6 +208,7 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
           <SelectField
+            triggerTestID="host-instruction-source"
             label={t("settings.host.instructions.source")}
             placeholder={t("settings.host.instructions.source")}
             emptyText={t("settings.host.instructions.noSources")}
@@ -221,13 +223,14 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
           <SelectField
+            triggerTestID="host-instruction-policy"
             label={t("settings.host.instructions.policy")}
             placeholder={t("settings.host.instructions.ask")}
             emptyText={t("settings.host.instructions.ask")}
             value={policy}
             selectedDisplay={selectedPolicy}
             options={policies}
-            disabled={busy}
+            disabled={!canEditPolicy}
             onChange={setDraftPolicy}
           />
         </View>
@@ -237,12 +240,12 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
           key={sourceId}
           workspaces={workspaces}
           workspaceOverrides={workspaceOverrides}
-          busy={busy}
+          busy={!canEditPolicy}
           onChange={setDraftOverrides}
         />
       ) : null}
       <View style={footerRow}>
-        <Button disabled={busy || !sourceId || !directory} onPress={save}>
+        <Button disabled={!canEditPolicy || !sourceId} onPress={save}>
           {t("settings.host.instructions.save")}
         </Button>
       </View>
@@ -324,6 +327,7 @@ function WorkspaceOverrideFields({
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
           <SelectField
+            triggerTestID="host-instruction-workspace"
             label={t("settings.host.instructions.workspace")}
             placeholder={t("settings.host.instructions.chooseWorkspace")}
             emptyText={t("settings.host.instructions.noWorkspaces")}

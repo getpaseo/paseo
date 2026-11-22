@@ -65,6 +65,10 @@ const Reply = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), state: z.enum(["failed", "revoked"]) }),
 ]);
 
+function instructionRelayIdentityFile(paseoHome: string): string {
+  return path.join(paseoHome, "host-instructions", "relay-id.json");
+}
+
 function registrationKey(registration: Registration): string {
   return registration.token.slice(0, 36);
 }
@@ -95,6 +99,7 @@ export class HostInstructionsRuntime {
     private readonly registrations: Map<string, Registration>,
     private readonly registrationWriter: InstructionFileWriter,
     readonly outbox: HostInstructionOutbox,
+    private relayId: string | null,
   ) {
     this.timer = setInterval(() => {
       void this.tick().catch(() => options.logger.warn("host_instruction_tick_failed"));
@@ -121,7 +126,12 @@ export class HostInstructionsRuntime {
       cancel: (key, instruction) => deliver(key, { action: "cancel", instruction }),
       status: (key, id, expiresAt) => deliver(key, { action: "status", id, expiresAt }),
     });
-    return new HostInstructionsRuntime(options, inbox, registrations, writer, outbox);
+    const relayId = await readInstructionFile(
+      instructionRelayIdentityFile(options.paseoHome),
+      z.string().nullable().parse,
+      null,
+    );
+    return new HostInstructionsRuntime(options, inbox, registrations, writer, outbox, relayId);
   }
 
   async manage(command: HostInstructionsCommand): Promise<ManagementResult> {
@@ -346,10 +356,13 @@ export class HostInstructionsRuntime {
   private async startRelay(config: RelayRuntimeConfig) {
     const home = path.join(this.options.paseoHome, "host-instructions");
     const key = await loadOrCreateDaemonKeyPair(home, this.options.logger);
-    const identityFile = path.join(home, "relay-id.json");
-    const savedId = await readInstructionFile(identityFile, z.string().nullable().parse, null);
-    const routeId = savedId ?? `srv_${randomBytes(9).toString("base64url")}`;
-    if (!savedId) await new InstructionFileWriter(identityFile).persist(routeId);
+    const routeId = this.relayId ?? `srv_${randomBytes(9).toString("base64url")}`;
+    if (!this.relayId) {
+      await new InstructionFileWriter(instructionRelayIdentityFile(this.options.paseoHome)).persist(
+        routeId,
+      );
+      this.relayId = routeId;
+    }
     const offer = await createConnectionOfferV2({
       serverId: routeId,
       daemonPublicKeyB64: key.publicKeyB64,
@@ -471,7 +484,8 @@ export class HostInstructionsRuntime {
     );
     try {
       const relayEnabled = this.options.relay().enabled;
-      if (relayEnabled && (await this.inbox.listGrants()).length > 0) await this.getRelayOffer();
+      // Previously issued credentials must still receive a permanent rejection after revocation.
+      if (relayEnabled && this.relayId) await this.getRelayOffer();
       this.relay?.setEnabled(relayEnabled);
       const requests = await this.inbox.list();
       for (const { state, sourceId, instruction } of requests) {
