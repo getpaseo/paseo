@@ -7,7 +7,12 @@ import {
   type Agent,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
+import type {
+  ProviderConnection,
+  ProviderEvent,
+  ProviderInput,
+  ProviderPermissionResponse,
+} from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
@@ -7123,5 +7128,260 @@ describe("ACP tool call rows", () => {
     } finally {
       await connection.close();
     }
+  });
+});
+
+describe("ACP form elicitation", () => {
+  const agySchema = {
+    type: "object",
+    properties: {
+      q1: {
+        type: "string",
+        title: "Pick one",
+        oneOf: [
+          { const: "1", title: "alpha" },
+          { const: "2", title: "beta" },
+        ],
+      },
+      q1_other: { type: "string", title: "Other" },
+    },
+  };
+  type PermissionEvent = Extract<ProviderEvent, { type: "session.permission" }>;
+
+  async function open(options: {
+    elicitationForms: boolean;
+    handleRequest?: ConnectorHarnessOptions["handleRequest"];
+    handleMessage?: ConnectorHarnessOptions["handleMessage"];
+  }) {
+    const harness = connectorHarness({
+      handleRequest: options.handleRequest,
+      handleMessage: options.handleMessage,
+    });
+    const connection = await runAcpProvider({
+      id: "elicit",
+      label: "Elicit",
+      connector: harness.connector,
+      ...(options.elicitationForms ? { acpOptions: { elicitationForms: true } } : {}),
+    }).connect({ versions: [1], capabilities: ["prompt.message", "permission"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    return { harness, connection, events };
+  }
+
+  const formRequest = (overrides: Record<string, unknown> = {}) => ({
+    sessionId: "connector-session",
+    message: "Pick one",
+    mode: "form",
+    requestedSchema: agySchema,
+    ...overrides,
+  });
+
+  const answer = (permissionId: string, response: ProviderPermissionResponse): ProviderInput => ({
+    type: "session.permission",
+    sessionId: "session-1",
+    permissionId,
+    response,
+  });
+
+  async function openInTurn(options: { elicitationForms: boolean }) {
+    const opened = await open({
+      ...options,
+      // Forms are only answerable inside a turn; the agent keeps this prompt open.
+      handleRequest: (_runtime, request) => request.method === "session/prompt",
+    });
+    await opened.connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "turn" }] },
+      },
+    });
+    await expect
+      .poll(() => opened.harness.instances[1]!.requests.some((r) => r.method === "session/prompt"))
+      .toBe(true);
+    return opened;
+  }
+
+  async function askAndWait(options: { elicitationForms: boolean }) {
+    const opened = await openInTurn(options);
+    const response = opened.harness.instances[1]!.request("elicitation/create", formRequest());
+    const event = (await waitForEvent(
+      opened.events,
+      (e) => e.type === "session.permission",
+    )) as PermissionEvent;
+    return { ...opened, response, event };
+  }
+
+  it("advertises form elicitation only when the provider opts in", async () => {
+    const plain = await open({ elicitationForms: false });
+    const optedIn = await open({ elicitationForms: true });
+    const capabilities = (harness: ReturnType<typeof connectorHarness>) =>
+      (
+        harness.instances
+          .flatMap((instance) => instance.requests)
+          .find((request) => request.method === "initialize")!.params as {
+          clientCapabilities: unknown;
+        }
+      ).clientCapabilities;
+    expect(capabilities(plain.harness)).toEqual({});
+    expect(capabilities(optedIn.harness)).toEqual({ elicitation: { form: {} } });
+    await plain.connection.close();
+    await optedIn.connection.close();
+  });
+
+  it("shows the agy form as a question card and accepts a choice by its const", async () => {
+    const { connection, events, response, event } = await askAndWait({ elicitationForms: true });
+    expect(event.request).toMatchObject({
+      kind: "question",
+      input: {
+        questions: [
+          {
+            id: "q1",
+            header: "Pick one",
+            question: "Pick one",
+            options: [
+              { label: "alpha", description: "" },
+              { label: "beta", description: "" },
+            ],
+            multiSelect: false,
+            allowOther: true,
+          },
+        ],
+      },
+    });
+    await connection.send(
+      answer(event.request.id, {
+        behavior: "allow",
+        updatedInput: { answers: { "Pick one": "alpha" } },
+      }),
+    );
+    await expect(response).resolves.toEqual({ action: "accept", content: { q1: "1" } });
+    await waitForEvent(
+      events,
+      (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+    );
+    await connection.close();
+  });
+
+  it("sends free text for Other in the sibling _other property", async () => {
+    const { connection, response, event } = await askAndWait({ elicitationForms: true });
+    await connection.send(
+      answer(event.request.id, {
+        behavior: "allow",
+        updatedInput: { answers: { "Pick one": "gamma" } },
+      }),
+    );
+    await expect(response).resolves.toEqual({ action: "accept", content: { q1_other: "gamma" } });
+    await connection.close();
+  });
+
+  it("declines when the user denies the question", async () => {
+    const { connection, response, event } = await askAndWait({ elicitationForms: true });
+    await connection.send(answer(event.request.id, { behavior: "deny" }));
+    await expect(response).resolves.toEqual({ action: "decline" });
+    await connection.close();
+  });
+
+  it("declines a form from a provider that did not opt in", async () => {
+    const { harness, connection, events } = await openInTurn({ elicitationForms: false });
+    await expect(
+      harness.instances[1]!.request("elicitation/create", formRequest()),
+    ).resolves.toEqual({ action: "decline" });
+    expect(events.some((event) => event.type === "session.permission")).toBe(false);
+    await connection.close();
+  });
+
+  it("declines a form sent while the session is still opening instead of hanging it", async () => {
+    let outcome: unknown;
+    const { connection, events } = await open({
+      elicitationForms: true,
+      handleRequest(runtime, request) {
+        if (request.method !== "session/new") return false;
+        void runtime.request("elicitation/create", formRequest()).then((result) => {
+          outcome = result;
+          runtime.respond(request, {
+            sessionId: "connector-session",
+            modes: null,
+            configOptions: [],
+          });
+          return undefined;
+        });
+        return true;
+      },
+    });
+    expect(outcome).toEqual({ action: "decline" });
+    expect(events.some((event) => event.type === "session.permission")).toBe(false);
+    await connection.close();
+  });
+
+  it("declines unsupported schemas and url mode without a question card", async () => {
+    const { harness, connection, events } = await openInTurn({ elicitationForms: true });
+    const agent = harness.instances[1]!;
+    await expect(
+      agent.request(
+        "elicitation/create",
+        formRequest({
+          requestedSchema: { type: "object", properties: { n: { type: "integer" } } },
+        }),
+      ),
+    ).resolves.toEqual({ action: "decline" });
+    await expect(
+      agent.request("elicitation/create", {
+        sessionId: "connector-session",
+        message: "Sign in",
+        mode: "url",
+        url: "https://example.com",
+        elicitationId: "e1",
+      }),
+    ).resolves.toEqual({ action: "decline" });
+    expect(events.some((event) => event.type === "session.permission")).toBe(false);
+    await connection.close();
+  });
+
+  it("cancels a pending form when the turn is interrupted", async () => {
+    let response: Promise<unknown> | undefined;
+    let stopping = false;
+    const { connection, events } = await open({
+      elicitationForms: true,
+      handleMessage(_runtime, message) {
+        if (!("method" in message) || message.method !== "session/cancel") return false;
+        stopping = true;
+        return true;
+      },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/prompt") return false;
+        response = runtime.request("elicitation/create", formRequest());
+        void response.then(() => {
+          if (stopping) runtime.respond(request, { stopReason: "cancelled" });
+          return undefined;
+        });
+        return true;
+      },
+    });
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "ask",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "ask" }] },
+      },
+    });
+    const event = (await waitForEvent(
+      events,
+      (e) => e.type === "session.permission",
+    )) as PermissionEvent;
+    await connection.send({ type: "session.interrupt", requestId: "stop", sessionId: "session-1" });
+    await expect.poll(() => response).toBeDefined();
+    await expect(response).resolves.toEqual({ action: "cancel" });
+    await waitForEvent(
+      events,
+      (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+    );
+    await connection.close();
   });
 });

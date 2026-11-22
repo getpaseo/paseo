@@ -111,6 +111,8 @@ export function createAntigravityProvider(): ProviderRegistration {
     acpOptions: {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
+      // agy asks its ask_question tool through ACP form elicitation only when advertised.
+      elicitationForms: true,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.

@@ -54,6 +54,11 @@ export interface AcpOptions {
    * model in turn and records the thinking options the agent lists for it, or none.
    */
   perModelThinkingOptions?: boolean;
+  /**
+   * Advertise ACP form elicitation and show the agent's forms as question cards. Opt in per
+   * agent: some agents change behaviour when the client says it can render forms.
+   */
+  elicitationForms?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
   /**
