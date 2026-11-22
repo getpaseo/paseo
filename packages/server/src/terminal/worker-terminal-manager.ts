@@ -293,6 +293,10 @@ export function createWorkerTerminalManager(
       get workspaceScriptName() {
         return record.state.workspaceScriptName;
       },
+      get mayBeUnstampedWorkspaceScript() {
+        // COMPAT(unstampedWorkspaceScript): remove once protocol-6 workers no longer drain.
+        return managerOptions.workerProtocolVersion === 6;
+      },
       send(message: ClientMessage): void {
         if (message.type === "resize") {
           record.state = {

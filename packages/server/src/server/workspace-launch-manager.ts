@@ -140,7 +140,10 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   }
 
   /** Bootstrap calls this before exposing any command or service allocation. */
-  async initialize(contexts: readonly WorkspaceLaunchContext[]): Promise<void> {
+  async initialize(
+    contexts: readonly WorkspaceLaunchContext[],
+    archivedWorkspaceIds: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
     const terminalManager = this.deps.terminalManager;
     if (!terminalManager || terminalManager.getUnavailableError?.()) return;
 
@@ -152,12 +155,18 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
         }
       }
     }
+    for (const terminal of terminalManager.getClosingTerminals?.() ?? []) {
+      if (terminal.workspacePortBlock || terminal.workspaceLaunch)
+        terminals.set(terminal.id, terminal);
+    }
     // Reserve all blocks first, including unused ports, before resuming endpoint
     // monitoring or allowing another workspace to allocate.
     for (const captured of terminals.values()) {
       await this.runExclusive(captured.workspaceId, async () => {
         // Reconciliation can remove a captured terminal before recovery gets the queue.
-        const terminal = terminalManager.getTerminal(captured.id);
+        const terminal =
+          terminalManager.getTerminal(captured.id) ??
+          terminalManager.getClosingTerminals?.().find((entry) => entry.id === captured.id);
         if (!terminal || terminal.workspaceId !== captured.workspaceId) return;
         // COMPAT(workspaceLaunchPortBlock): added in v0.15.0, remove after 2027-05-05 once pre-metadata launch workers drain.
         const metadata = terminal.workspacePortBlock ?? terminal.workspaceLaunch;
@@ -168,6 +177,19 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
           portCount: metadata.portCount,
         });
       });
+    }
+    for (const workspaceId of new Set(
+      [...terminals.values()].map((terminal) => terminal.workspaceId),
+    )) {
+      if (!archivedWorkspaceIds.has(workspaceId)) continue;
+      try {
+        await this.disposeWorkspace(workspaceId);
+      } catch (error) {
+        this.deps.logger.warn(
+          { err: error, workspaceId },
+          "Failed to close archived workspace launch owners",
+        );
+      }
     }
     const contextsById = new Map(contexts.map((context) => [context.workspaceId, context]));
     for (const captured of terminals.values()) {
@@ -835,7 +857,11 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   ): Set<string> {
     const launchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
     const workerOwnedScriptNames = new Set(
-      workspaceTerminals.map((terminal) => terminal.workspaceScriptName),
+      workspaceTerminals.map(
+        (terminal) =>
+          terminal.workspaceScriptName ??
+          (terminal.mayBeUnstampedWorkspaceScript ? terminal.name : undefined),
+      ),
     );
 
     return new Set(
@@ -861,6 +887,19 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     const terminalManager = this.deps.terminalManager;
     const terminalIds = new Set<string>();
     if (terminalManager) {
+      if (
+        workspaceTerminals.some(
+          (terminal) =>
+            terminal.mayBeUnstampedWorkspaceScript &&
+            !terminal.workspaceScriptName &&
+            terminal.name === launchName &&
+            !(runtime?.lifecycle === "running" && terminal.id === runtime.terminalId),
+        )
+      ) {
+        throw new Error(
+          `Close the existing terminal named '${launchName}' before starting this launch; its worker cannot identify scripts`,
+        );
+      }
       if (runtime?.lifecycle === "running" && terminalManager.getTerminal(runtime.terminalId)) {
         terminalIds.add(runtime.terminalId);
       }

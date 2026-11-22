@@ -554,7 +554,7 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   cwd: string;
   branchName: string | null;
   allocation: PaseoServicePortAllocation | undefined;
-  excludedPorts: ReadonlySet<number> | (() => ReadonlySet<number>);
+  excludedPorts: (idleServiceNames: ReadonlySet<string>) => ReadonlySet<number>;
 }): Promise<WorkspaceRuntimeEnvironment | null> {
   // Existing servicePorts range/portScript settings allocate individual
   // services. A block is an explicit opt-in for ordinary scripts and services;
@@ -562,15 +562,30 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   if (!params.workspaceRuntimeEnvironment || params.allocation?.blockSize === undefined) {
     return null;
   }
-  const closingScripts = new Set(
-    (params.terminalManager.getClosingTerminals?.() ?? [])
+  const visible = params.suppressedScriptNames?.size
+    ? (
+        await Promise.all(
+          params.terminalManager
+            .listDirectories()
+            .map((directory) =>
+              params.terminalManager.getTerminals(directory, { workspaceId: params.workspaceId }),
+            ),
+        )
+      ).flat()
+    : [];
+  const workerOwnedScripts = new Set(
+    [...visible, ...(params.terminalManager.getClosingTerminals?.() ?? [])]
       .filter((terminal) => terminal.workspaceId === params.workspaceId)
-      .map((terminal) => terminal.workspaceScriptName),
+      .map(
+        (terminal) =>
+          terminal.workspaceScriptName ??
+          (terminal.mayBeUnstampedWorkspaceScript ? terminal.name : undefined),
+      ),
   );
   const idleServiceNames = [...(params.suppressedScriptNames ?? [])].filter(
     (scriptName) =>
       !params.runtimeStore.isRunning({ workspaceId: params.workspaceId, scriptName }) &&
-      !closingScripts.has(scriptName),
+      !workerOwnedScripts.has(scriptName),
   );
   // A project launch supersedes idle service definitions, including leases
   // planned before the config changed. Running and closing owners keep theirs.
@@ -580,7 +595,7 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
     cwd: params.cwd,
     branchName: params.branchName,
     allocation: params.allocation,
-    excludedPorts: params.excludedPorts,
+    excludedPorts: () => params.excludedPorts(new Set(idleServiceNames)),
   });
 }
 
@@ -737,8 +752,8 @@ export async function spawnWorkspaceScript(
       cwd: repoRoot,
       branchName,
       allocation: servicePortAllocation,
-      excludedPorts: () => {
-        const ports = getExplicitWorkspaceServicePorts(configResult.config, suppressedScriptNames);
+      excludedPorts: (idleServiceNames) => {
+        const ports = getExplicitWorkspaceServicePorts(configResult.config, idleServiceNames);
         for (const reservedPort of getAllReservedWorkspaceServicePorts()) {
           ports.add(reservedPort);
         }

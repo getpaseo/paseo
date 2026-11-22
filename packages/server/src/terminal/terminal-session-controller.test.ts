@@ -212,6 +212,7 @@ describe("terminal-session-controller restore", () => {
     const terminalManager = {
       getTerminal: vi.fn(() => terminal),
       replayTerminal: replayFixture(async () => terminalReplay("launch failed", 4)),
+      subscribeTerminalsChanged: () => () => {},
     } as unknown as TerminalManager;
     const controller = createController({
       terminalManager,
@@ -1136,6 +1137,7 @@ function exitFixture(
     controller,
     outputs,
     exits,
+    changeListenerCount: () => changes.size,
     removeTerminal: () => {
       registered = false;
       for (const listener of changes) listener({ cwd: terminal.cwd, terminals: [] });
@@ -1177,7 +1179,6 @@ describe("terminal output before natural exit", () => {
         completed,
         workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 4 },
       });
-      f.controller.start();
       try {
         const phone = await f.subscribe({}, true, "phone");
         const desktop = await f.subscribe({}, true, "desktop");
@@ -1201,6 +1202,7 @@ describe("terminal output before natural exit", () => {
         ]);
         expect(f.delivery.registrationCount).toBe(0);
         expect(f.controller.getMetrics().streamSubscriptionCount).toBe(0);
+        expect(f.changeListenerCount()).toBe(0);
       } finally {
         f.controller.dispose();
         await f.delivery.close();

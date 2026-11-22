@@ -891,74 +891,97 @@ describe("WorkspaceLaunchManager", () => {
     ).resolves.toMatchObject({ portBase: 42_000, portCount: 4 });
   });
 
-  it("reserves every surviving launch block before a different workspace starts", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-startup-reservations-"));
-    tempDirs.push(directory);
-    writeFileSync(
-      join(directory, "paseo.json"),
-      JSON.stringify({
-        worktree: { servicePorts: { range: "42004-42019", blockSize: 8 } },
-        launches: { dev: { command: "./bin/dev" } },
-      }),
-    );
-    const terminalManager = createTerminalManager();
-    const firstContext = {
-      workspaceId: "startup-launch-a",
-      workspaceDirectory: directory,
-      projectSlug: "app",
-      branchName: "a",
-    };
-    const secondContext = { ...firstContext, workspaceId: "startup-launch-b", branchName: "b" };
-    const survivingTerminal = await terminalManager.manager.createTerminal({
-      cwd: directory,
-      workspaceId: firstContext.workspaceId,
-      name: "launch:dev",
-      retainOnExit: true,
-      workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 8 },
-    });
-    const environment = new WorkspaceRuntimeEnvironmentService({
-      random: () => 0,
-      checkPortAvailable: async () => true,
-    });
-    const manager = new WorkspaceLaunchManager({
-      terminalManager: terminalManager.manager,
-      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
-      workspaceRuntimeEnvironment: environment,
-      assertAutomationAllowed: async () => {},
-      getDaemonTcpPort: () => 6767,
-      serviceProxyPublicBaseUrl: null,
-      resolveScriptHealth: null,
-      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
-      logger: pino({ level: "silent" }),
-    });
-    try {
-      await manager.initialize([firstContext, secondContext]);
-      const second = await manager.start(secondContext, "dev");
-      expect(second).toMatchObject({ portBase: 42008, portEnd: 42015 });
-      expect(await manager.buildSnapshot(firstContext)).toEqual([
-        expect.objectContaining({
-          active: true,
-          terminalId: survivingTerminal.id,
-          portBase: 42000,
-          portEnd: 42007,
+  it.each(["active", "archived", "archive close fails"] as const)(
+    "reconciles blocks before another workspace starts (%s)",
+    async (owner) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-launch-startup-reservations-"));
+      tempDirs.push(directory);
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          worktree: { servicePorts: { range: "42004-42019", blockSize: 8 } },
+          launches: { dev: { command: "./bin/dev" } },
         }),
-      ]);
-      await expect(
-        ensureWorkspaceServicePortPlan({
-          workspaceId: "startup-service",
-          services: [{ scriptName: "api", port: 42004 }],
-          getReservedPorts: () => environment.getReservedPorts(),
-          allocatePort: async () => {
-            throw new Error("No dynamic allocation expected");
-          },
-        }),
-      ).rejects.toThrow("reserved by a workspace runtime block");
-    } finally {
-      await manager.disposeWorkspace(firstContext.workspaceId);
-      await manager.disposeWorkspace(secondContext.workspaceId);
-      releaseWorkspaceServicePortPlan("startup-service");
-    }
-  });
+      );
+      const terminalManager = createTerminalManager({
+        beforeKill: async () => {
+          if (owner === "archive close fails" && failClose) throw new Error("worker unavailable");
+        },
+      });
+      let failClose = true;
+      const firstContext = {
+        workspaceId: "startup-launch-a",
+        workspaceDirectory: directory,
+        projectSlug: "app",
+        branchName: "a",
+      };
+      const secondContext = { ...firstContext, workspaceId: "startup-launch-b", branchName: "b" };
+      const survivingTerminal = await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId: firstContext.workspaceId,
+        name: "launch:dev",
+        retainOnExit: true,
+        workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 8 },
+      });
+      const environment = new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      });
+      const manager = new WorkspaceLaunchManager({
+        terminalManager: terminalManager.manager,
+        serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+        workspaceRuntimeEnvironment: environment,
+        assertAutomationAllowed: async () => {},
+        getDaemonTcpPort: () => 6767,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+        logger: pino({ level: "silent" }),
+      });
+      try {
+        await manager.initialize(
+          owner === "active" ? [firstContext, secondContext] : [secondContext],
+          new Set(owner === "active" ? [] : [firstContext.workspaceId]),
+        );
+        const second = await manager.start(secondContext, "dev");
+        if (owner === "archived") {
+          expect(terminalManager.manager.getTerminal(survivingTerminal.id)).toBeUndefined();
+          expect(environment.get(firstContext.workspaceId)).toBeNull();
+          expect(second).toMatchObject({ portBase: 42004, portEnd: 42011 });
+          return;
+        }
+        expect(second).toMatchObject({ portBase: 42008, portEnd: 42015 });
+        if (owner === "archive close fails") {
+          expect(terminalManager.manager.getTerminal(survivingTerminal.id)).toBe(survivingTerminal);
+          expect(environment.get(firstContext.workspaceId)).toMatchObject({ portBase: 42000 });
+          return;
+        }
+        expect(await manager.buildSnapshot(firstContext)).toEqual([
+          expect.objectContaining({
+            active: true,
+            terminalId: survivingTerminal.id,
+            portBase: 42000,
+            portEnd: 42007,
+          }),
+        ]);
+        await expect(
+          ensureWorkspaceServicePortPlan({
+            workspaceId: "startup-service",
+            services: [{ scriptName: "api", port: 42004 }],
+            getReservedPorts: () => environment.getReservedPorts(),
+            allocatePort: async () => {
+              throw new Error("No dynamic allocation expected");
+            },
+          }),
+        ).rejects.toThrow("reserved by a workspace runtime block");
+      } finally {
+        failClose = false;
+        await manager.disposeWorkspace(firstContext.workspaceId);
+        await manager.disposeWorkspace(secondContext.workspaceId);
+        releaseWorkspaceServicePortPlan("startup-service");
+      }
+    },
+  );
 
   it("rejects allocation until the worktree config can exclude all explicit ports", async () => {
     const projectDirectory = mkdtempSync(join(tmpdir(), "launch-project-config-"));
@@ -1886,7 +1909,7 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it.each(["runtime store", "surviving worker"] as const)(
+  it.each(["runtime store", "surviving worker", "protocol 6"] as const)(
     "protects a peer service port tracked by the %s",
     async (owner) => {
       const directory = mkdtempSync(join(tmpdir(), "paseo-launch-running-peer-service-"));
@@ -1908,13 +1931,15 @@ describe("WorkspaceLaunchManager", () => {
       );
       const terminalManager = createTerminalManager();
       const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
-      if (owner === "surviving worker") {
-        await terminalManager.manager.createTerminal({
+      if (owner !== "runtime store") {
+        const terminal = await terminalManager.manager.createTerminal({
           cwd: join(directory, "previous-checkout"),
           workspaceId,
-          name: "renamed-service-terminal",
-          workspaceScriptName: "full",
+          name: owner === "protocol 6" ? "full" : "renamed-service-terminal",
+          workspaceScriptName: owner === "protocol 6" ? undefined : "full",
         });
+        if (owner === "protocol 6")
+          Object.assign(terminal, { mayBeUnstampedWorkspaceScript: true });
       } else {
         await ensureWorkspaceServicePortPlan({
           workspaceId,
@@ -1967,6 +1992,12 @@ describe("WorkspaceLaunchManager", () => {
           new Set(owner === "runtime store" ? [43_001] : []),
         );
         expect(terminalManager.killed).toEqual([]);
+        if (owner === "protocol 6") {
+          await expect(manager.start(context, "full")).rejects.toThrow(
+            "Close the existing terminal named 'full'",
+          );
+          expect(terminalManager.killed).toEqual([]);
+        }
       } finally {
         await manager.disposeWorkspace(workspaceId);
         releaseWorkspaceServicePortPlan(workspaceId);

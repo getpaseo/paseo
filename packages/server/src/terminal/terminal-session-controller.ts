@@ -177,6 +177,12 @@ export class TerminalSessionController {
     };
   }
 
+  private stopListeningWhenIdle(): void {
+    if (this.subscribedDirectories.size > 0 || this.activeStreams.size > 0) return;
+    this.unsubscribeTerminalsChanged?.();
+    this.unsubscribeTerminalsChanged = null;
+  }
+
   getMetrics(): TerminalSessionControllerMetrics {
     return {
       directorySubscriptionCount: this.subscribedDirectories.size,
@@ -359,10 +365,7 @@ export class TerminalSessionController {
       undefined,
       async (id) => {
         this.subscribedDirectories.delete(id);
-        if (this.subscribedDirectories.size === 0) {
-          this.unsubscribeTerminalsChanged?.();
-          this.unsubscribeTerminalsChanged = null;
-        }
+        this.stopListeningWhenIdle();
         await subscription?.refresh?.catch(() => undefined);
       },
       `terminal-directory:${terminalSubscriptionKey(msg.cwd, msg.workspaceId)}`,
@@ -977,6 +980,7 @@ export class TerminalSessionController {
     };
 
     this.activeStreams.set(slot, activeStream);
+    this.start();
 
     // Completed launch terminals stay registered so their final snapshot can
     // be opened later. They have no live output or future exit to subscribe to.
@@ -1248,6 +1252,7 @@ export class TerminalSessionController {
 
   private detachRegistration(stream: ActiveTerminalStream): void {
     this.activeStreams.delete(stream.slot);
+    this.stopListeningWhenIdle();
     stream.outputCoalescer.dispose();
     stream.snapshotOutput = undefined;
     stream.bufferedOutputs.length = 0;

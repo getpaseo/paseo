@@ -107,6 +107,8 @@ export interface TerminalSession {
   readonly workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   readonly workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
   readonly workspaceScriptName?: string;
+  /** Previous-protocol workers cannot distinguish script terminals from named user terminals. */
+  readonly mayBeUnstampedWorkspaceScript?: boolean;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;

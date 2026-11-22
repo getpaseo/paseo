@@ -760,6 +760,11 @@ describe("runWorktreeAutoTerminals", () => {
       lifecycle: "stopped" as const,
       closingTerminals: (terminal: TerminalSession) => [terminal],
     },
+    {
+      owner: "surviving",
+      lifecycle: null,
+      closingTerminals: (_terminal: TerminalSession) => [],
+    },
   ])(
     "preserves a $owner suppressed service lease during script block allocation",
     async ({ owner, lifecycle, closingTerminals }) => {
@@ -771,11 +776,12 @@ describe("runWorktreeAutoTerminals", () => {
           inspect: { command: "docker compose ps" },
         },
       });
-      await ensureWorkspaceServicePortPlan({
-        workspaceId,
-        services: [{ scriptName: "dev", port: 43_000 }],
-        allocatePort: async () => 43_000,
-      });
+      if (lifecycle)
+        await ensureWorkspaceServicePortPlan({
+          workspaceId,
+          services: [{ scriptName: "dev", port: 43_000 }],
+          allocatePort: async () => 43_000,
+        });
       const createTerminalCalls: CreateTerminalCall[] = [];
       const terminalManager = createStubTerminalManager(createTerminalCalls);
       const terminal = await terminalManager.createTerminal({
@@ -785,15 +791,20 @@ describe("runWorktreeAutoTerminals", () => {
         workspaceScriptName: "dev",
       });
       terminalManager.getClosingTerminals = () => closingTerminals(terminal);
+      if (owner === "surviving") {
+        terminalManager.listDirectories = () => [repoDir];
+        terminalManager.getTerminals = async () => [terminal];
+      }
       const runtimeStore = new WorkspaceScriptRuntimeStore();
-      runtimeStore.set({
-        workspaceId,
-        scriptName: "dev",
-        type: "service",
-        lifecycle,
-        terminalId: terminal.id,
-        exitCode: null,
-      });
+      if (lifecycle)
+        runtimeStore.set({
+          workspaceId,
+          scriptName: "dev",
+          type: "service",
+          lifecycle,
+          terminalId: terminal.id,
+          exitCode: null,
+        });
       const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService({
         random: () => 0,
         checkPortAvailable: async () => true,
@@ -816,7 +827,7 @@ describe("runWorktreeAutoTerminals", () => {
         ).rejects.toThrow("No available workspace port block in configured range 43000-43003");
         expect(createTerminalCalls).toHaveLength(1);
         expect(createTerminalCalls[0]?.name).toBe("dev");
-        expect(getAllReservedWorkspaceServicePorts().has(43_000)).toBe(true);
+        expect(getAllReservedWorkspaceServicePorts().has(43_000)).toBe(lifecycle !== null);
         expect(workspaceRuntimeEnvironment.get(workspaceId)).toBe(null);
       } finally {
         workspaceRuntimeEnvironment.release(workspaceId);
@@ -1082,8 +1093,10 @@ describe("runWorktreeAutoTerminals", () => {
     const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
     const existingTerminal = await terminalManager.createTerminal({
       cwd: repoDir,
+      workspaceId: repoDir,
       name: "typecheck",
       title: "typecheck",
+      workspaceScriptName: "typecheck",
     });
     runtimeStore.set({
       workspaceId: repoDir,

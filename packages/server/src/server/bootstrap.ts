@@ -1245,8 +1245,9 @@ export async function createPaseoDaemon(
   const launchProjects = new Map(
     (await projectRegistry.list()).map((project) => [project.projectId, project]),
   );
+  const launchWorkspaces = await workspaceRegistry.listAll();
   await workspaceLaunchManager.initialize(
-    (await workspaceRegistry.listAll())
+    launchWorkspaces
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => {
         const project = launchProjects.get(workspace.projectId);
@@ -1261,6 +1262,11 @@ export async function createPaseoDaemon(
           branchName: snapshot?.git.currentBranch ?? workspace.branch ?? null,
         };
       }),
+    new Set(
+      launchWorkspaces
+        .filter((workspace) => workspace.archivedAt)
+        .map((workspace) => workspace.workspaceId),
+    ),
   );
   // Recovery must own surviving blocks before reconciliation can archive their workspaces.
   await workspaceReconciliation.start();
