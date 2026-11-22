@@ -482,8 +482,27 @@ const OmpExtensionUiRequestSchema = z
     url: z.string().optional(),
     launchUrl: z.string().optional(),
     instructions: z.string().optional(),
+    html: z.string().optional(),
+    targetId: z.string().optional(),
   })
   .passthrough();
+
+const OmpFormValueSchema = z.union([z.string(), z.number(), z.array(z.string())]);
+export const OmpFormDataSchema = z.custom<Record<string, z.infer<typeof OmpFormValueSchema>>>(
+  (value) =>
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => OmpFormValueSchema.safeParse(item).success),
+);
+
+export interface OmpExtensionUiResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  data?: z.infer<typeof OmpFormDataSchema>;
+}
+
 const OmpSubagentLifecycleEventSchema = z
   .object({ type: z.literal("subagent_lifecycle"), payload: OmpSubagentLifecyclePayloadSchema })
   .passthrough();

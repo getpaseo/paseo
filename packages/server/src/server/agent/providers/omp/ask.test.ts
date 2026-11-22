@@ -28,6 +28,45 @@ function select(omp: OmpHarness, id: string, title: string, options: string[]): 
 }
 
 describe("OMP ask RPC UI", () => {
+  test("delivers an OMP 19.1 HTML ask and returns typed form values", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const html = `<form>
+      <label><input type="radio" name="store" value="sqlite" checked>SQLite</label>
+      <label><input type="checkbox" name="tools" value="x,y">X, Y</label>
+      <label><input type="checkbox" name="tools" value="z">Z</label>
+      <label>Days <input type="number" name="days"></label>
+      <label>Note <input name="__proto__"></label>
+    </form>`;
+    omp.emit({ type: "extension_ui_request", id: "form-1", method: "form", html });
+
+    expect(omp.pendingPermissions()).toMatchObject([
+      { id: "form-1", kind: "question", input: { html }, metadata: { extensionUiMethod: "form" } },
+    ]);
+    const data = { store: "sqlite", tools: ["x,y", "z"], days: 7, ["__proto__"]: "a field name" };
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { data },
+    });
+    expect(omp.extensionUiResponses()).toEqual([{ id: "form-1", response: { data } }]);
+  });
+
+  test("dismisses an HTML ask on OMP timeout without sending a late reply", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const html = '<form><input name="answer"></form>';
+    omp.emit({ type: "extension_ui_request", id: "form-1", method: "form", html });
+    expect(omp.pendingPermissions()).toHaveLength(1);
+    omp.emit({
+      type: "extension_ui_request",
+      id: "cancel-1",
+      method: "cancel",
+      targetId: "form-1",
+    });
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.extensionUiResponses()).toEqual([]);
+  });
+
   test("recognizes ask arguments from the assistant message before the UI request", async () => {
     const omp = new OmpHarness();
     await omp.start();

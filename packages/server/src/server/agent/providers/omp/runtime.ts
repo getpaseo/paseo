@@ -1,5 +1,6 @@
 import type {
   OmpAgentMessage,
+  OmpExtensionUiResponse,
   OmpModel,
   OmpPromptAck,
   OmpRpcHostToolDefinition,
@@ -77,10 +78,7 @@ export interface OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void>;
   handoff(customInstructions?: string): Promise<void>;
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void;
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }

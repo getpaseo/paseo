@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Show OMP 19.1 HTML questions and return form answers in Paseo.
+
 ## 0.17.2 - 2026-11-22
 
 - **Turn and session stats:** View per-turn and session timing, token, cache, and cost metrics for Claude, OpenCode v2, Pi, Oh My Pi, and plugin providers. ([#10496](https://github.com/getpaseo/paseo/pull/10496), [#10510](https://github.com/getpaseo/paseo/pull/10510))

@@ -61,6 +61,7 @@ import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
+import { OmpFormCard } from "@/components/omp-form-card";
 import {
   ToolCallExpansionContext,
   useAgentToolCallExpansion,
@@ -1628,6 +1629,19 @@ function PermissionRequestCard({
       permissionMutation.variables?.agentId === permission.agentId &&
       permissionMutation.variables?.requestId === permission.request.id;
     const responseError = responseFailed ? t("message.question.responseFailed") : null;
+    const html = request.input?.html;
+    if (request.metadata?.extensionUiMethod === "form" && typeof html === "string") {
+      return (
+        <OmpFormCard
+          key={permission.key}
+          html={html}
+          title={title}
+          onRespond={handleResponse}
+          isResponding={isResponding}
+          responseError={responseError}
+        />
+      );
+    }
     return (
       <QuestionFormCard
         permission={permission}

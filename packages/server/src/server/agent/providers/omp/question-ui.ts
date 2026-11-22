@@ -4,15 +4,15 @@ import type {
   AgentProvider,
 } from "../../agent-sdk-types.js";
 import { splitMultiSelectAnswer } from "../question-card-answer.js";
-import type { OmpAgentMessage, OmpRuntimeEvent } from "./rpc-types.js";
+import {
+  OmpFormDataSchema,
+  type OmpAgentMessage,
+  type OmpExtensionUiResponse,
+  type OmpRuntimeEvent,
+} from "./rpc-types.js";
 
 type UiRequest = Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>;
-interface UiResponse {
-  value?: string;
-  confirmed?: boolean;
-  cancelled?: boolean;
-}
-type SendResponse = (id: string, response: UiResponse) => void;
+type SendResponse = (id: string, response: OmpExtensionUiResponse) => void;
 
 const OTHER = "Other (type your own)";
 const ANSWER_HEADER = "Response";
@@ -123,8 +123,12 @@ function mapGenericQuestion(
 function genericResponse(
   request: AgentPermissionRequest,
   response: AgentPermissionResponse,
-): UiResponse {
+): OmpExtensionUiResponse {
   if (response.behavior === "deny") return { cancelled: true };
+  if (request.metadata?.extensionUiMethod === "form") {
+    const data = OmpFormDataSchema.safeParse(response.updatedInput?.data);
+    return data.success ? { data: data.data } : { cancelled: true };
+  }
   const answers = record(response.updatedInput?.answers);
   const answer = Object.values(answers ?? {}).find(
     (value): value is string => typeof value === "string",
@@ -211,6 +215,20 @@ export class OmpQuestionUi {
     provider: AgentProvider,
     send: SendResponse,
   ): AgentPermissionRequest | null {
+    if (event.method === "form") {
+      if (!event.html) {
+        send(event.id, { cancelled: true });
+        return null;
+      }
+      const request = genericQuestion(event, provider, "Update Paseo to answer this OMP form.", [
+        { label: "Cancel" },
+      ]);
+      return {
+        ...request,
+        title: "OMP ask",
+        input: { ...request.input, html: event.html },
+      };
+    }
     if (this.consume(event, send)) return null;
     return this.mapAsk(event, provider) ?? mapGenericQuestion(event, provider);
   }

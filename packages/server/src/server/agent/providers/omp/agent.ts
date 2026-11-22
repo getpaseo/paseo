@@ -1151,6 +1151,10 @@ export class OmpAgentSession implements AgentSession {
         this.runtimeSession.respondToExtensionUiRequest(id, uiResponse),
       );
     }
+    this.emitPermissionResolved(requestId, response);
+  }
+
+  private emitPermissionResolved(requestId: string, response: AgentPermissionResponse): void {
     this.emit({
       type: "permission_resolved",
       provider: this.provider,
@@ -1603,6 +1607,17 @@ export class OmpAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    if (event.method === "cancel") {
+      const requestId = event.targetId;
+      if (
+        requestId &&
+        this.pendingExtensionUiRequests.get(requestId)?.metadata?.extensionUiMethod === "form"
+      ) {
+        this.pendingExtensionUiRequests.delete(requestId);
+        this.emitPermissionResolved(requestId, { behavior: "deny" });
+      }
+      return;
+    }
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       this.emit({
