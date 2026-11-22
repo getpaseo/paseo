@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,6 +15,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  findAssistantMessageEnd,
+  findLastConversationEntry,
   findSteeredMessageParent,
   revertClaudeConversation,
   revertClaudeConversationAndFiles,
@@ -277,6 +280,202 @@ describe("Claude rewind against the Claude SDK", () => {
       "running a tool",
       "tool output",
     ]);
+  });
+});
+
+describe("Claude fork point", () => {
+  let tempRoot: string | null = null;
+
+  afterEach(() => {
+    if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+    tempRoot = null;
+  });
+
+  // Claude Code writes one entry per content block; the blocks of one API message share its id.
+  function entry(input: {
+    type: "user" | "assistant";
+    uuid: string;
+    parentUuid: string | null;
+    text: string;
+    apiMessageId?: string;
+    isSidechain?: boolean;
+  }): string {
+    return JSON.stringify({
+      type: input.type,
+      uuid: input.uuid,
+      parentUuid: input.parentUuid,
+      sessionId: "source-session",
+      cwd: "/repo",
+      timestamp: new Date().toISOString(),
+      ...(input.isSidechain ? { isSidechain: true } : {}),
+      message: {
+        role: input.type,
+        ...(input.apiMessageId ? { id: input.apiMessageId } : {}),
+        content: input.text,
+      },
+    });
+  }
+
+  function writeConversation(): {
+    projectDir: string;
+    sessionId: string;
+    transcriptPath: string;
+    ids: Record<string, string>;
+  } {
+    tempRoot = mkdtempSync(path.join(tmpdir(), "claude-fork-point-"));
+    const projectDir = path.join(tempRoot, "projects", "-repo");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionId = randomUUID();
+    const ids = {
+      firstUser: randomUUID(),
+      firstThinking: randomUUID(),
+      firstText: randomUUID(),
+      sidechain: randomUUID(),
+      secondUser: randomUUID(),
+      secondText: randomUUID(),
+    };
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    writeTranscript(transcriptPath, sessionId, [
+      entry({ type: "user", uuid: ids.firstUser, parentUuid: null, text: "first" }),
+      entry({
+        type: "assistant",
+        uuid: ids.firstThinking,
+        parentUuid: ids.firstUser,
+        text: "thinking",
+        apiMessageId: "msg_first",
+      }),
+      entry({
+        type: "assistant",
+        uuid: ids.sidechain,
+        parentUuid: null,
+        text: "subagent reply",
+        apiMessageId: "msg_first",
+        isSidechain: true,
+      }),
+      entry({
+        type: "assistant",
+        uuid: ids.firstText,
+        parentUuid: ids.firstThinking,
+        text: "first reply",
+        apiMessageId: "msg_first",
+      }),
+      entry({ type: "user", uuid: ids.secondUser, parentUuid: ids.firstText, text: "second" }),
+      entry({
+        type: "assistant",
+        uuid: ids.secondText,
+        parentUuid: ids.secondUser,
+        text: "second reply",
+        apiMessageId: "msg_second",
+      }),
+    ]);
+    return { projectDir, sessionId, transcriptPath, ids };
+  }
+
+  test("ends a live assistant message at its last content block", async () => {
+    const { transcriptPath, ids } = writeConversation();
+
+    await expect(findAssistantMessageEnd(transcriptPath, "msg_first")).resolves.toBe(ids.firstText);
+  });
+
+  test("ends a replayed assistant message at its last content block", async () => {
+    const { transcriptPath, ids } = writeConversation();
+
+    await expect(findAssistantMessageEnd(transcriptPath, ids.firstThinking)).resolves.toBe(
+      ids.firstText,
+    );
+  });
+
+  test("finds no fork point for a message only a subagent wrote", async () => {
+    const { transcriptPath, ids } = writeConversation();
+
+    await expect(findAssistantMessageEnd(transcriptPath, ids.sidechain)).resolves.toBeNull();
+  });
+
+  test("branches a running turn with everything written so far", async () => {
+    const { projectDir, sessionId, transcriptPath, ids } = writeConversation();
+    const thirdUser = randomUUID();
+    const toolCall = randomUUID();
+    appendFileSync(
+      transcriptPath,
+      [
+        entry({ type: "user", uuid: thirdUser, parentUuid: ids.secondText, text: "third" }),
+        entry({
+          type: "assistant",
+          uuid: toolCall,
+          parentUuid: thirdUser,
+          text: "running the command",
+          apiMessageId: "msg_third",
+        }),
+        entry({
+          type: "assistant",
+          uuid: randomUUID(),
+          parentUuid: null,
+          text: "subagent still working",
+          isSidechain: true,
+        }),
+        JSON.stringify({ type: "last-prompt", lastPrompt: "third" }),
+        // Claude Code is still writing this line.
+        '{"type":"assistant","uuid":"',
+      ].join("\n"),
+    );
+
+    const upToMessageId = await findLastConversationEntry(transcriptPath);
+    expect(upToMessageId).toBe(toolCall);
+    const fork = await realClaudeRewindSdk.forkSession(sessionId, {
+      upToMessageId: toolCall,
+      transcriptPath,
+      forkProjectFolder: projectDir,
+    });
+
+    expect(readMessageTexts(path.join(projectDir, `${fork.sessionId}.jsonl`))).toEqual([
+      "first",
+      "thinking",
+      "first reply",
+      "second",
+      "second reply",
+      "third",
+      "running the command",
+    ]);
+  });
+
+  test("branches the conversation after the selected assistant message", async () => {
+    const { projectDir, sessionId, transcriptPath } = writeConversation();
+    const upToMessageId = await findAssistantMessageEnd(transcriptPath, "msg_first");
+    if (!upToMessageId) throw new Error("fork point not found");
+
+    const fork = await realClaudeRewindSdk.forkSession(sessionId, {
+      upToMessageId,
+      transcriptPath,
+      forkProjectFolder: projectDir,
+    });
+
+    expect(fork.sessionId).not.toBe(sessionId);
+    expect(readMessageTexts(path.join(projectDir, `${fork.sessionId}.jsonl`))).toEqual([
+      "first",
+      "thinking",
+      "first reply",
+    ]);
+    expect(readMessageTexts(transcriptPath)).toContain("second reply");
+  });
+
+  test("writes a branch into the project folder of another directory", async () => {
+    const { projectDir, sessionId, transcriptPath } = writeConversation();
+    const upToMessageId = await findAssistantMessageEnd(transcriptPath, "msg_first");
+    if (!upToMessageId) throw new Error("fork point not found");
+    const worktreeProjectDir = path.join(path.dirname(projectDir), "-worktree");
+
+    const fork = await realClaudeRewindSdk.forkSession(sessionId, {
+      upToMessageId,
+      transcriptPath,
+      forkProjectFolder: worktreeProjectDir,
+    });
+
+    expect(readMessageTexts(path.join(worktreeProjectDir, `${fork.sessionId}.jsonl`))).toEqual([
+      "first",
+      "thinking",
+      "first reply",
+    ]);
+    expect(readdirSync(projectDir)).toEqual([`${sessionId}.jsonl`]);
   });
 });
 

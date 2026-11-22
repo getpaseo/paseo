@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
@@ -51,6 +52,7 @@ export const TurnFooter = memo(function TurnFooter({
   host,
   strategy,
   supportsTimelineCursor,
+  forkBranchUnavailableReason,
   onForkAssistantTurn,
   onForkInFlightTurn,
 }: {
@@ -59,6 +61,8 @@ export const TurnFooter = memo(function TurnFooter({
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
+  /** Why this agent's turns cannot be branched at all; null when its provider can branch them. */
+  forkBranchUnavailableReason: string | null;
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
@@ -67,6 +71,7 @@ export const TurnFooter = memo(function TurnFooter({
       <TurnFooterRow>
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
+          forkBranchUnavailableReason={forkBranchUnavailableReason}
           onForkInFlightTurn={onForkInFlightTurn}
         />
       </TurnFooterRow>
@@ -82,6 +87,7 @@ export const TurnFooter = memo(function TurnFooter({
       timing={host.timing}
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
+      forkBranchUnavailableReason={forkBranchUnavailableReason}
       onForkAssistantTurn={onForkAssistantTurn}
     />
   );
@@ -93,6 +99,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   timing,
   startIndex,
   supportsTimelineCursor,
+  forkBranchUnavailableReason,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
@@ -100,6 +107,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   timing?: TurnTiming;
   startIndex: number;
   supportsTimelineCursor: boolean;
+  forkBranchUnavailableReason: string | null;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   return (
@@ -110,6 +118,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         timing={timing}
         startIndex={startIndex}
         supportsTimelineCursor={supportsTimelineCursor}
+        forkBranchUnavailableReason={forkBranchUnavailableReason}
         onForkAssistantTurn={onForkAssistantTurn}
       />
     </TurnFooterRow>
@@ -118,9 +127,11 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  forkBranchUnavailableReason,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  forkBranchUnavailableReason: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
@@ -130,7 +141,13 @@ const WorkingIndicator = memo(function WorkingIndicator({
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
       {/* Match the completed-turn footer: actions precede timing metadata. */}
-      {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
+      {onForkInFlightTurn ? (
+        <AssistantForkMenu
+          onFork={onForkInFlightTurn}
+          // The branch takes everything the provider has written so far.
+          branchUnavailableReason={forkBranchUnavailableReason}
+        />
+      ) : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -145,15 +162,18 @@ const WorkingIndicator = memo(function WorkingIndicator({
 
 function RunningTurnFooter({
   inFlightTurnStartedAt,
+  forkBranchUnavailableReason,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt: Date | null;
+  forkBranchUnavailableReason: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
+        forkBranchUnavailableReason={forkBranchUnavailableReason}
         onForkInFlightTurn={onForkInFlightTurn}
       />
     </View>
@@ -166,6 +186,7 @@ function CompletedTurnFooter({
   timing,
   startIndex,
   supportsTimelineCursor,
+  forkBranchUnavailableReason,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
@@ -173,8 +194,10 @@ function CompletedTurnFooter({
   timing?: TurnTiming;
   startIndex: number;
   supportsTimelineCursor: boolean;
+  forkBranchUnavailableReason: string | null;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
+  const { t } = useTranslation();
   const getContent = useCallback(
     () =>
       collectAssistantResponseContentForStreamRenderStrategy({
@@ -205,6 +228,11 @@ function CompletedTurnFooter({
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
+        forkBranchUnavailableReason={
+          forkBranchUnavailableReason ??
+          // A branch is cut at a provider message; a turn whose reply has no id cannot be cut.
+          (boundary?.boundaryMessageId ? null : t("message.actions.forkBranchNoMessageId"))
+        }
       />
     </View>
   );

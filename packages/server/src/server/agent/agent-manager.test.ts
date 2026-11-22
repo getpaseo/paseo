@@ -15945,3 +15945,125 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("fork opens the provider's branch as a new agent with the source's settings", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-"));
+  const otherDir = mkdtempSync(join(tmpdir(), "agent-manager-fork-target-"));
+  const forkRequests: Array<{ messageId: string; cwd: string }> = [];
+
+  class ForkingSession extends TestAgentSession {
+    override readonly capabilities = { ...TEST_CAPABILITIES, supportsNativeFork: true };
+
+    async forkConversation(input: { messageId: string; cwd: string }) {
+      forkRequests.push(input);
+      return {
+        provider: this.provider,
+        sessionId: `branch-${forkRequests.length}`,
+        metadata: { provider: this.provider, cwd: input.cwd },
+      };
+    }
+  }
+
+  const client = new (class extends TestAgentClient {
+    readonly resumedHandles: AgentPersistenceHandle[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ForkingSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumedHandles.push(handle);
+      this.resumeOverrides.push(config);
+      return new ForkingSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const source = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "model-a", modeId: "mode-a" },
+    undefined,
+    { workspaceId: "workspace-source" },
+  );
+
+  const sameTab = await manager.fork(source.id, { messageId: "assistant-1" });
+  const otherWorkspace = await manager.fork(source.id, {
+    messageId: "assistant-2",
+    cwd: otherDir,
+    workspaceId: "workspace-target",
+  });
+
+  expect(forkRequests).toEqual([
+    { messageId: "assistant-1", cwd: workdir },
+    { messageId: "assistant-2", cwd: otherDir },
+  ]);
+  expect(client.resumedHandles.map((handle) => handle.sessionId)).toEqual(["branch-1", "branch-2"]);
+  expect(client.resumeOverrides).toMatchObject([
+    { cwd: workdir, model: "model-a", modeId: "mode-a" },
+    { cwd: otherDir, model: "model-a", modeId: "mode-a" },
+  ]);
+  expect(new Set([source.id, sameTab.id, otherWorkspace.id]).size).toBe(3);
+  expect(sameTab).toMatchObject({
+    provider: "codex",
+    cwd: workdir,
+    workspaceId: "workspace-source",
+  });
+  expect(otherWorkspace).toMatchObject({ cwd: otherDir, workspaceId: "workspace-target" });
+  expect(manager.getAgent(source.id)?.cwd).toBe(workdir);
+});
+
+test("fork names the branch after the source's current title with a (fork) suffix", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-title-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let branches = 0;
+
+  class ForkingSession extends TestAgentSession {
+    override readonly capabilities = { ...TEST_CAPABILITIES, supportsNativeFork: true };
+
+    async forkConversation(input: { messageId: string; cwd: string }) {
+      branches += 1;
+      return {
+        provider: this.provider,
+        sessionId: `branch-${branches}`,
+        metadata: { provider: this.provider, cwd: input.cwd },
+      };
+    }
+  }
+
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ForkingSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ForkingSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const source = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await manager.setTitle(source.id, "Fix login bug");
+
+  const branch = await manager.fork(source.id, { messageId: "assistant-1" });
+  const branchOfBranch = await manager.fork(branch.id, { messageId: "assistant-2" });
+
+  expect((await storage.get(branch.id))?.title).toBe("Fix login bug (fork)");
+  expect((await storage.get(branchOfBranch.id))?.title).toBe("Fix login bug (fork) (fork)");
+});
+
+test("fork rejects a provider that cannot branch its session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-unsupported-"));
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+  const source = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await expect(manager.fork(source.id, { messageId: "assistant-1" })).rejects.toThrow(
+    "Provider 'codex' cannot branch its session",
+  );
+});

@@ -104,6 +104,8 @@ describe("Claude session request journal replay", () => {
         expect.objectContaining({ type: "user_message", text: "Read package.json" }),
         expect.objectContaining({ type: "tool_call", callId: "read-1", name: "Read" }),
         expect.objectContaining({ type: "assistant_message", text: "paseo" }),
+        // read-1 never gets a result here, so replay cancels it.
+        expect.objectContaining({ type: "tool_call", callId: "read-1", status: "canceled" }),
       ]);
     },
   );

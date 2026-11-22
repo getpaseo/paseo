@@ -7,16 +7,34 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
-export type AssistantForkTarget = "tab" | "workspace";
+/**
+ * `branch` copies the provider's own session up to the turn, so the fork keeps the reasoning,
+ * tool results and compaction summaries the agent worked from. `history` starts a new agent from
+ * a chat-history attachment, which works on any provider.
+ */
+export type AssistantForkKind = "branch" | "history";
+export type AssistantForkDestination = "tab" | "workspace";
+export interface AssistantForkTarget {
+  kind: AssistantForkKind;
+  destination: AssistantForkDestination;
+}
 
 interface AssistantForkMenuProps {
   onFork: (target: AssistantForkTarget) => Promise<void> | void;
+  /** Why `branch` cannot run for this turn; null when it can. */
+  branchUnavailableReason: string | null;
   testID?: string;
+}
+
+function targetKey(target: AssistantForkTarget): string {
+  return `${target.kind}:${target.destination}`;
 }
 
 const ThemedSplit = withUnistyles(Split);
@@ -26,11 +44,12 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 
 export const AssistantForkMenu = memo(function AssistantForkMenu({
   onFork,
+  branchUnavailableReason,
   testID = "assistant-fork-menu",
 }: AssistantForkMenuProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
-  const [pendingTarget, setPendingTarget] = useState<AssistantForkTarget | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const isLocked = pendingTarget !== null;
 
   const handleOpenChange = useCallback(
@@ -44,7 +63,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
   const handleSelect = useCallback(
     (target: AssistantForkTarget) => async () => {
       if (isLocked) return;
-      setPendingTarget(target);
+      setPendingTarget(targetKey(target));
       try {
         await onFork(target);
       } finally {
@@ -74,6 +93,26 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
     [],
   );
 
+  function renderItem(target: AssistantForkTarget, itemTestID: string) {
+    const key = targetKey(target);
+    const unavailableReason = target.kind === "branch" ? branchUnavailableReason : null;
+    return (
+      <DropdownMenuItem
+        closeOnSelect={false}
+        description={unavailableReason ?? undefined}
+        disabled={unavailableReason !== null || (isLocked && pendingTarget !== key)}
+        leading={forkIcon}
+        onSelect={handleSelect(target)}
+        status={pendingTarget === key ? "pending" : undefined}
+        testID={itemTestID}
+      >
+        {target.destination === "tab"
+          ? t("message.actions.forkNewTab")
+          : t("message.actions.forkNewWorkspace")}
+      </DropdownMenuItem>
+    );
+  }
+
   return (
     <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
       <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
@@ -97,27 +136,14 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
         </TooltipTrigger>
         {tooltipContent}
       </Tooltip>
-      <DropdownMenuContent align="start" minWidth={220} side="bottom" testID={`${testID}-content`}>
-        <DropdownMenuItem
-          closeOnSelect={false}
-          disabled={isLocked && pendingTarget !== "tab"}
-          leading={forkIcon}
-          onSelect={handleSelect("tab")}
-          status={pendingTarget === "tab" ? "pending" : undefined}
-          testID={`${testID}-new-tab`}
-        >
-          {t("message.actions.forkInNewTab")}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          closeOnSelect={false}
-          disabled={isLocked && pendingTarget !== "workspace"}
-          leading={forkIcon}
-          onSelect={handleSelect("workspace")}
-          status={pendingTarget === "workspace" ? "pending" : undefined}
-          testID={`${testID}-new-workspace`}
-        >
-          {t("message.actions.forkInNewWorkspace")}
-        </DropdownMenuItem>
+      <DropdownMenuContent align="start" minWidth={240} side="bottom" testID={`${testID}-content`}>
+        <DropdownMenuLabel>{t("message.actions.forkBranchSession")}</DropdownMenuLabel>
+        {renderItem({ kind: "branch", destination: "tab" }, `${testID}-branch-new-tab`)}
+        {renderItem({ kind: "branch", destination: "workspace" }, `${testID}-branch-new-workspace`)}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>{t("message.actions.forkCopyChatHistory")}</DropdownMenuLabel>
+        {renderItem({ kind: "history", destination: "tab" }, `${testID}-new-tab`)}
+        {renderItem({ kind: "history", destination: "workspace" }, `${testID}-new-workspace`)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

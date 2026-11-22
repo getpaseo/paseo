@@ -560,6 +560,8 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  /** Why the fork menu's branch items cannot run for this turn; null when they can. */
+  forkBranchUnavailableReason: string | null;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -617,6 +619,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  forkBranchUnavailableReason,
 }: AssistantTurnFooterProps) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
@@ -677,7 +680,12 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
               containerStyle={assistantTurnFooterStylesheet.copyButton}
             />
           ) : null}
-          {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+          {canFork ? (
+            <AssistantForkMenu
+              onFork={handleFork}
+              branchUnavailableReason={forkBranchUnavailableReason}
+            />
+          ) : null}
         </View>
       ) : null}
       {primaryLabel ? (

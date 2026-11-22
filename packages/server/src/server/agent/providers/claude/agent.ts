@@ -91,12 +91,19 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import {
   findSteeredMessageParent,
   realClaudeRewindSdk,
+  findAssistantMessageEnd,
+  findLastConversationEntry,
   revertClaudeConversation,
   revertClaudeFiles,
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  claudeConfigDir,
+  claudeProjectDir,
+  claudeProjectDirSync,
+  claudeTranscriptPath,
+} from "./project-dir.js";
 import {
   compareWithLatestRelease,
   fetchHomebrewCaskVersion,
@@ -398,6 +405,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsNativeFork: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -3291,18 +3299,22 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
+    this.persistence = this.persistenceHandle(this.claudeSessionId, this.config.cwd);
+    return this.persistence;
+  }
+
+  private persistenceHandle(sessionId: string, cwd: string): AgentPersistenceHandle {
     const {
       providerOptions: _providerOptions,
       pluginAppendSystemPrompt: _pluginAppendSystemPrompt,
       ...persistedConfig
     } = this.config;
-    this.persistence = {
+    return {
       provider: "claude",
-      sessionId: this.claudeSessionId,
-      nativeHandle: this.claudeSessionId,
-      metadata: { ...persistedConfig },
+      sessionId,
+      nativeHandle: sessionId,
+      metadata: { ...persistedConfig, cwd },
     };
-    return this.persistence;
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -3436,6 +3448,42 @@ class ClaudeAgentSession implements AgentSession {
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
       setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
     });
+  }
+
+  async forkConversation(input: {
+    messageId?: string;
+    cwd: string;
+  }): Promise<AgentPersistenceHandle> {
+    await this.ensureHistoryReady();
+    const sessionId = this.claudeSessionId;
+    const transcriptPath = sessionId ? await this.resolveHistoryPath(sessionId) : null;
+    if (!sessionId || !transcriptPath) {
+      throw new Error("Claude session is not ready for fork");
+    }
+    // Without a message the branch takes everything written so far, a running turn included.
+    // On resume Claude Code records a tool call left without a result as interrupted.
+    const upToMessageId =
+      input.messageId === undefined
+        ? await findLastConversationEntry(transcriptPath)
+        : await findAssistantMessageEnd(transcriptPath, input.messageId);
+    if (!upToMessageId) {
+      throw new Error(
+        input.messageId === undefined
+          ? "Claude transcript has no messages to fork"
+          : `Claude fork target ${input.messageId} is not in the transcript`,
+      );
+    }
+    // The copy goes into the project folder of the branch's directory, where Claude Code keeps a
+    // session started there.
+    const forkProjectFolder = await claudeProjectDir(input.cwd, {
+      configDir: claudeConfigDir(this.harnessEnvironment),
+    });
+    const fork = await this.rewindSdk.forkSession(sessionId, {
+      upToMessageId,
+      transcriptPath,
+      forkProjectFolder,
+    });
+    return this.persistenceHandle(fork.sessionId, input.cwd);
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
@@ -5697,7 +5745,8 @@ class ClaudeAgentSession implements AgentSession {
     this.pushEvent({ type: "timeline", item, provider: "claude" });
   }
 
-  private flushPendingToolCalls() {
+  /** Cancels every tool call that started without a result, then forgets them. */
+  private cancelUnfinishedToolCalls(target?: AgentTimelineItem[]) {
     for (const [id, entry] of this.toolUseCache) {
       if (entry.started) {
         this.pushToolCall(
@@ -5707,10 +5756,15 @@ class ClaudeAgentSession implements AgentSession {
             input: entry.input ?? null,
             output: null,
           }),
+          target,
         );
       }
     }
     this.toolUseCache.clear();
+  }
+
+  private flushPendingToolCalls() {
+    this.cancelUnfinishedToolCalls();
     this.sidechainTracker.clear();
     // The task protocol's routing table is session-scoped, so it is deliberately NOT reset here:
     // the turn ended, the session did not. Wiping it would strand every task id the session still
@@ -5871,6 +5925,13 @@ class ClaudeAgentSession implements AgentSession {
     const timeline: PersistedTimelineEntry[] = [];
     for await (const entry of entries) {
       await this.ingestPersistedHistoryEntry(entry, timeline, replay);
+    }
+    // History loads while no turn runs, so a call the transcript never answered is not running:
+    // a branch taken mid-call or a daemon stopped mid-turn leaves one behind.
+    const unfinished: AgentTimelineItem[] = [];
+    this.cancelUnfinishedToolCalls(unfinished);
+    for (const item of unfinished) {
+      timeline.push({ item: labelReplayedSubagentCard(item, replay.subagentToolCalls) });
     }
 
     if (timeline.length > 0) {

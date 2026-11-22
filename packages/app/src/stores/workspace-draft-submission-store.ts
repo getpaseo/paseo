@@ -25,9 +25,18 @@ export interface PendingWorkspaceDraftSubmission {
   allowEmptyText?: boolean;
 }
 
+/** A new workspace that opens a branch of an existing agent's session instead of a new agent. */
+export interface WorkspaceDraftBranch {
+  sourceAgentId: string;
+  sourceCwd: string;
+  /** The assistant message ending the turn to branch after; absent for a turn still running. */
+  boundaryMessageId?: string;
+}
+
 export interface PendingWorkspaceDraftSetup {
   setup: WorkspaceDraftTabSetup;
   sourceDirectory?: string | null;
+  branch?: WorkspaceDraftBranch;
 }
 
 interface WorkspaceDraftSubmissionState {
@@ -38,6 +47,7 @@ interface WorkspaceDraftSubmissionState {
     draftId: string;
     setup: WorkspaceDraftTabSetup;
     sourceDirectory?: string | null;
+    branch?: WorkspaceDraftBranch;
   }) => void;
   clearDraftSetup: (input: { draftId: string }) => void;
   consumePending: (input: {
@@ -73,13 +83,17 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
           [submission.draftId]: submission,
         },
       })),
-    setDraftSetup: ({ draftId, setup, sourceDirectory }) => {
+    setDraftSetup: ({ draftId, setup, sourceDirectory, branch }) => {
       const normalizedDraftId = normalizeDraftId(draftId);
       if (!normalizedDraftId) return;
       set((state) => ({
         setupByDraftId: {
           ...state.setupByDraftId,
-          [normalizedDraftId]: { setup, sourceDirectory: sourceDirectory ?? null },
+          [normalizedDraftId]: {
+            setup,
+            sourceDirectory: sourceDirectory ?? null,
+            ...(branch ? { branch } : {}),
+          },
         },
       }));
     },

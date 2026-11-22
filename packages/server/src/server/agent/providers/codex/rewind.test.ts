@@ -9,6 +9,7 @@ import type {
 import {
   type CodexUserMessageTurnIndex,
   type CodexRewindClient,
+  branchCodexConversation,
   revertCodexConversation,
 } from "./rewind.js";
 
@@ -249,5 +250,162 @@ describe("Codex Rewind", () => {
     ).rejects.toThrow("Codex could not find user message missing-message");
     expect(codex.recordedForks).toEqual([]);
     expect(codex.recordedRollbacks).toEqual([]);
+  });
+});
+
+const HISTORY_TURNS = [
+  {
+    id: "turn-1",
+    items: [
+      { type: "userMessage", id: "user-1" },
+      { type: "agentMessage", id: "assistant-1" },
+    ],
+  },
+  {
+    id: "turn-2",
+    items: [
+      { type: "userMessage", id: "user-2" },
+      { type: "reasoning", id: "reasoning-2" },
+      { type: "agentMessage", id: "assistant-2" },
+    ],
+  },
+  {
+    id: "turn-3",
+    items: [
+      { type: "userMessage", id: "user-3" },
+      { type: "agentMessage", id: "assistant-3" },
+    ],
+  },
+];
+
+class LegacyHistoryCodex extends FakeCodex {
+  override request(method: string, params?: unknown): Promise<unknown> {
+    if (method === "thread/read") {
+      const includeTurns = (params as { includeTurns?: boolean }).includeTurns === true;
+      return Promise.resolve({
+        thread: {
+          id: "source-thread",
+          historyMode: "legacy",
+          ...(includeTurns ? { turns: HISTORY_TURNS } : {}),
+        },
+      });
+    }
+    throw new Error(`Unexpected request: ${method}`);
+  }
+}
+
+class PaginatedHistoryCodex extends FakeCodex {
+  override request(method: string): Promise<unknown> {
+    if (method === "thread/read") {
+      return Promise.resolve({ thread: { id: "source-thread", historyMode: "paginated" } });
+    }
+    if (method === "thread/items/list") {
+      return Promise.resolve({
+        data: HISTORY_TURNS.flatMap((turn) =>
+          turn.items.map((item) => ({ turnId: turn.id, item })),
+        ),
+        nextCursor: null,
+      });
+    }
+    throw new Error(`Unexpected request: ${method}`);
+  }
+
+  override rollbackThread(): Promise<CodexThreadRollbackResponse> {
+    throw new Error("paginated threads do not support thread/rollback");
+  }
+}
+
+const branchSettings = {
+  threadId: "source-thread",
+  cwd: "/workspace/branch",
+  model: "gpt-5.4-mini",
+  serviceTier: null,
+  threadRollbackAvailable: true,
+};
+
+describe("Codex branch", () => {
+  test("forks a paginated thread before the turn after the selected assistant message", async () => {
+    const codex = new PaginatedHistoryCodex();
+
+    const threadId = await branchCodexConversation({
+      ...branchSettings,
+      client: codex,
+      messageId: "assistant-2",
+    });
+
+    expect(threadId).toBe("forked-thread");
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        beforeTurnId: "turn-3",
+        cwd: "/workspace/branch",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([]);
+  });
+
+  test("forks the whole thread when the selected assistant message ends the latest turn", async () => {
+    const codex = new PaginatedHistoryCodex();
+
+    await branchCodexConversation({ ...branchSettings, client: codex, messageId: "assistant-3" });
+
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        cwd: "/workspace/branch",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([]);
+  });
+
+  test("forks a legacy thread and rolls back the turns after the selected assistant message", async () => {
+    const codex = new LegacyHistoryCodex();
+
+    const threadId = await branchCodexConversation({
+      ...branchSettings,
+      client: codex,
+      messageId: "assistant-1",
+    });
+
+    expect(codex.recordedForks).toMatchObject([{ threadId: "source-thread" }]);
+    expect(codex.recordedForks[0]).not.toHaveProperty("beforeTurnId");
+    expect(codex.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
+    expect(threadId).toBe("forked-thread");
+  });
+
+  test("forks everything written so far, a running turn included, without an assistant message", async () => {
+    const codex = new LegacyHistoryCodex();
+
+    const threadId = await branchCodexConversation({ ...branchSettings, client: codex });
+
+    expect(threadId).toBe("forked-thread");
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        cwd: "/workspace/branch",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([]);
+  });
+
+  test("declines to branch when the assistant message is not in the thread", async () => {
+    const codex = new PaginatedHistoryCodex();
+
+    await expect(
+      branchCodexConversation({ ...branchSettings, client: codex, messageId: "missing-message" }),
+    ).rejects.toThrow("Codex fork target missing-message is not in the thread");
+    expect(codex.recordedForks).toEqual([]);
   });
 });

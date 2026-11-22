@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -12,28 +12,30 @@ import {
 export interface ClaudeRewindSdk {
   forkSession(
     sessionId: string,
-    options: { upToMessageId: string; transcriptPath: string },
+    options: { upToMessageId: string; transcriptPath: string; forkProjectFolder: string },
   ): Promise<{ sessionId: string }>;
 }
 
 // On its own, the SDK looks for the session under the daemon's CLAUDE_CONFIG_DIR, while a
-// provider can point Claude Code at another one. Forking through a store rooted at the
-// transcript's folder reads the session where Claude Code wrote it and writes the fork beside it.
+// provider can point Claude Code at another one. Forking through a store reads the session where
+// Claude Code wrote it and writes the fork into the project folder the caller names.
 export const realClaudeRewindSdk: ClaudeRewindSdk = {
   forkSession: (sessionId, options) =>
     claudeForkSession(sessionId, {
       upToMessageId: options.upToMessageId,
-      sessionStore: projectFolderSessionStore(path.dirname(options.transcriptPath)),
+      sessionStore: forkSessionStore({
+        readFrom: path.dirname(options.transcriptPath),
+        writeTo: options.forkProjectFolder,
+      }),
     }),
 };
 
-function projectFolderSessionStore(projectFolder: string): SessionStore {
-  const transcriptPath = (sessionId: string) => path.join(projectFolder, `${sessionId}.jsonl`);
+function forkSessionStore(folders: { readFrom: string; writeTo: string }): SessionStore {
   return {
     async load({ sessionId }) {
       let text: string;
       try {
-        text = await readFile(transcriptPath(sessionId), "utf8");
+        text = await readFile(path.join(folders.readFrom, `${sessionId}.jsonl`), "utf8");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw error;
@@ -42,7 +44,8 @@ function projectFolderSessionStore(projectFolder: string): SessionStore {
     },
     async append({ sessionId }, entries) {
       const lines = entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
-      await appendFile(transcriptPath(sessionId), lines, "utf8");
+      await mkdir(folders.writeTo, { recursive: true });
+      await appendFile(path.join(folders.writeTo, `${sessionId}.jsonl`), lines, "utf8");
     },
   };
 }
@@ -70,6 +73,79 @@ function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
     !Array.isArray(value) &&
     typeof (value as { type?: unknown }).type === "string"
   );
+}
+
+/** A transcript entry in the main conversation; forkSession resolves its uuid. */
+interface ConversationEntry {
+  type?: unknown;
+  uuid: string;
+  message?: { id?: unknown };
+}
+
+/**
+ * The main conversation's entries in file order. Lines that do not parse (including one Claude
+ * Code is still writing), entries without a uuid and subagent sidechains are skipped, since
+ * forkSession cannot resolve sidechain uuids.
+ */
+async function* readConversationEntries(transcriptPath: string): AsyncGenerator<ConversationEntry> {
+  const input = createReadStream(transcriptPath, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== "object" || parsed === null) continue;
+      const entry = parsed as { uuid?: unknown; isSidechain?: unknown };
+      if (entry.isSidechain === true || typeof entry.uuid !== "string") continue;
+      yield parsed as ConversationEntry;
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+/**
+ * The uuid of the transcript entry that ends the assistant message `messageId`, the place to fork
+ * a conversation after that message. `messageId` is either an entry uuid (rows replayed from the
+ * transcript) or the API message id (rows streamed live). Claude Code writes one entry per content
+ * block, all sharing the API message id, so the message ends at the last of them. Null when the
+ * main conversation holds no such message.
+ */
+export async function findAssistantMessageEnd(
+  transcriptPath: string,
+  messageId: string,
+): Promise<string | null> {
+  let apiMessageId: string | null = null;
+  let end: string | null = null;
+  for await (const entry of readConversationEntries(transcriptPath)) {
+    const entryApiId = entry.type === "assistant" ? entry.message?.id : undefined;
+    if (apiMessageId === null) {
+      if (entry.uuid !== messageId && entryApiId !== messageId) continue;
+      if (typeof entryApiId !== "string") return entry.uuid;
+      apiMessageId = entryApiId;
+    }
+    if (entryApiId === apiMessageId) end = entry.uuid;
+  }
+  return end;
+}
+
+/**
+ * The uuid of the last user or assistant message in the main conversation, the place to fork a
+ * turn that is still running. Claude Code writes a message once it has finished streaming, so a
+ * reply still streaming is not in the copy.
+ */
+export async function findLastConversationEntry(transcriptPath: string): Promise<string | null> {
+  let last: string | null = null;
+  for await (const entry of readConversationEntries(transcriptPath)) {
+    if (entry.type === "user" || entry.type === "assistant") last = entry.uuid;
+  }
+  return last;
 }
 
 /**
@@ -135,6 +211,7 @@ export async function revertClaudeConversation(input: {
   const fork = await input.sdk.forkSession(input.sessionId, {
     upToMessageId: messageId,
     transcriptPath: input.transcriptPath,
+    forkProjectFolder: path.dirname(input.transcriptPath),
   });
   await input.setSessionId(fork.sessionId);
 }

@@ -8,7 +8,7 @@ import {
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
 } from "./app-server-transport.js";
-import { readCodexThreadHistoryMode } from "./thread-history.js";
+import { readCodexThreadHistory, readCodexThreadHistoryMode } from "./thread-history.js";
 
 export interface CodexRewindClient {
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
@@ -41,19 +41,86 @@ async function rollbackCodexThread(
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
-export async function revertCodexConversation(input: {
-  client: CodexRewindClient;
-  threadId: string | null;
-  messageId: string;
+/** The settings a fork must carry over; Codex does not copy them from the parent thread. */
+interface CodexForkSettings {
   cwd?: string | null;
   model?: string | null;
   serviceTier?: string | null;
   config?: Record<string, unknown> | null;
   developerInstructions?: string;
-  userMessageTurns: CodexUserMessageTurnIndex;
   threadRollbackAvailable: boolean;
-  setThreadId: (threadId: string) => void | Promise<void>;
-}): Promise<void> {
+}
+
+/**
+ * Forks a thread without its last `droppedTurns` turns and returns the new thread id.
+ * `firstDroppedTurnId` names the first of them; `target` describes the cut in errors.
+ */
+async function forkCodexThreadWithoutLastTurns(input: {
+  client: CodexRewindClient;
+  threadId: string;
+  settings: CodexForkSettings;
+  droppedTurns: number;
+  firstDroppedTurnId: string | null;
+  target: string;
+}): Promise<string> {
+  const { client, settings } = input;
+  // Codex does not carry the parent thread's config into a fork; without it the
+  // forked thread falls back to the default model provider.
+  const forkParams: CodexThreadForkParams = {
+    threadId: input.threadId,
+    cwd: settings.cwd ?? null,
+    model: settings.model ?? null,
+    serviceTier: settings.serviceTier ?? null,
+    ...(settings.config ? { config: settings.config } : {}),
+    ...(settings.developerInstructions
+      ? { developerInstructions: settings.developerInstructions }
+      : {}),
+    // Paseo re-reads the forked thread through paged history, not the fork reply.
+    excludeTurns: true,
+    persistExtendedHistory: true,
+  };
+
+  if (input.droppedTurns === 0) {
+    return (await forkCodexThread(client, forkParams)).thread.id;
+  }
+
+  if (
+    !settings.threadRollbackAvailable ||
+    (await readCodexThreadHistoryMode(client, input.threadId)) === "paginated"
+  ) {
+    if (!input.firstDroppedTurnId) {
+      throw new Error(`Codex could not find the turn containing ${input.target}`);
+    }
+    const forked = await forkCodexThread(client, {
+      ...forkParams,
+      beforeTurnId: input.firstDroppedTurnId,
+    });
+    return forked.thread.id;
+  }
+
+  // Legacy threads on Codex before 0.156 fork and then roll back. Fork is
+  // non-destructive: the old thread file stays on disk and remains
+  // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
+  const forked = await forkCodexThread(client, forkParams);
+
+  // Codex rollback is chat-only by design. File edits from rewound turns stay
+  // on disk; a future file primitive would be a separate capability.
+  const rolledBack = await rollbackCodexThread(client, {
+    threadId: forked.thread.id,
+    numTurns: input.droppedTurns,
+  });
+  return rolledBack.thread.id;
+}
+
+export async function revertCodexConversation(
+  input: CodexForkSettings & {
+    client: CodexRewindClient;
+    threadId: string | null;
+    messageId: string;
+    userMessageTurns: CodexUserMessageTurnIndex;
+    setThreadId: (threadId: string) => void | Promise<void>;
+  },
+): Promise<void> {
   if (!input.threadId) {
     throw new Error("Codex thread is not ready for rewind");
   }
@@ -69,46 +136,74 @@ export async function revertCodexConversation(input: {
     throw new Error(`Codex user message ${input.messageId} is outside the current thread`);
   }
 
-  // Codex does not carry the parent thread's config into a fork; without it the
-  // forked thread falls back to the default model provider.
-  const forkParams: CodexThreadForkParams = {
+  const threadId = await forkCodexThreadWithoutLastTurns({
+    client: input.client,
     threadId: input.threadId,
-    cwd: input.cwd ?? null,
-    model: input.model ?? null,
-    serviceTier: input.serviceTier ?? null,
-    ...(input.config ? { config: input.config } : {}),
-    ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
-    // Paseo re-reads the rewound thread through paged history, not the fork reply.
-    excludeTurns: true,
-    persistExtendedHistory: true,
-  };
-
-  if (
-    !input.threadRollbackAvailable ||
-    (await readCodexThreadHistoryMode(input.client, input.threadId)) === "paginated"
-  ) {
-    if (!targetTurn.turnId) {
-      throw new Error(`Codex could not find the turn containing user message ${input.messageId}`);
-    }
-    const forked = await forkCodexThread(input.client, {
-      ...forkParams,
-      beforeTurnId: targetTurn.turnId,
-    });
-    await input.setThreadId(forked.thread.id);
-    return;
-  }
-
-  // Legacy threads on Codex before 0.156 fork and then roll back. Fork is
-  // non-destructive: the old thread file stays on disk and remains
-  // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
-  const forked = await forkCodexThread(input.client, forkParams);
-  const forkedThreadId = forked.thread.id;
-
-  // Codex rollback is chat-only by design. File edits from rewound turns stay
-  // on disk; a future file primitive would be a separate capability.
-  const rolledBack = await rollbackCodexThread(input.client, {
-    threadId: forkedThreadId,
-    numTurns,
+    settings: input,
+    droppedTurns: numTurns,
+    firstDroppedTurnId: targetTurn.turnId,
+    target: `user message ${input.messageId}`,
   });
-  await input.setThreadId(rolledBack.thread.id);
+  await input.setThreadId(threadId);
+}
+
+/**
+ * Forks the thread through the turn holding the assistant message and returns the new
+ * thread id. Paseo's assistant message id is the Codex item id. Without a message the fork
+ * takes everything written so far; Codex marks a turn still running as aborted in the fork.
+ */
+export async function branchCodexConversation(
+  input: CodexForkSettings & {
+    client: CodexRewindClient;
+    threadId: string;
+    messageId?: string;
+  },
+): Promise<string> {
+  if (input.messageId === undefined) {
+    return forkCodexThreadWithoutLastTurns({
+      client: input.client,
+      threadId: input.threadId,
+      settings: input,
+      droppedTurns: 0,
+      firstDroppedTurnId: null,
+      target: "the latest item",
+    });
+  }
+  const turnsAfter = await readCodexTurnsAfterItem(input.client, input.threadId, input.messageId);
+  if (turnsAfter === null) {
+    throw new Error(`Codex fork target ${input.messageId} is not in the thread`);
+  }
+  return forkCodexThreadWithoutLastTurns({
+    client: input.client,
+    threadId: input.threadId,
+    settings: input,
+    droppedTurns: turnsAfter.length,
+    firstDroppedTurnId: turnsAfter[0] ?? null,
+    target: `assistant message ${input.messageId}`,
+  });
+}
+
+/** The ids of the turns after the one holding `itemId`, in order; null when no turn holds it. */
+async function readCodexTurnsAfterItem(
+  client: CodexRewindClient,
+  threadId: string,
+  itemId: string,
+): Promise<string[] | null> {
+  const { rows } = await readCodexThreadHistory(client, threadId);
+  const turnIds: string[] = [];
+  let holdingTurn: number | null = null;
+  for await (const row of rows) {
+    if (!row.turnId) {
+      throw new Error(`Codex history for thread ${threadId} has an item without a turn id`);
+    }
+    if (turnIds.at(-1) !== row.turnId) turnIds.push(row.turnId);
+    if (holdingTurn === null && readItemId(row.item) === itemId) holdingTurn = turnIds.length - 1;
+  }
+  return holdingTurn === null ? null : turnIds.slice(holdingTurn + 1);
+}
+
+function readItemId(item: unknown): string | null {
+  if (!item || typeof item !== "object") return null;
+  const id = (item as { id?: unknown }).id;
+  return typeof id === "string" ? id : null;
 }

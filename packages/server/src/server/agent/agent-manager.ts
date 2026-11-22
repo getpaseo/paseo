@@ -4128,6 +4128,29 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  /**
+   * Branch the agent's provider session at the end of the assistant message `messageId` and open
+   * the branch as a new agent with the source's provider and settings. The source agent keeps
+   * running untouched. `cwd` and `workspaceId` default to the source's.
+   */
+  async fork(
+    agentId: string,
+    input: { messageId?: string; cwd?: string; workspaceId?: string },
+  ): Promise<ManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.forkConversation) {
+      throw new Error(`Provider '${agent.provider}' cannot branch its session`);
+    }
+    const cwd = input.cwd ?? agent.cwd;
+    const sourceTitle = (await this.registry?.get(agentId))?.title ?? agent.config.title;
+    const handle = await agent.session.forkConversation({ messageId: input.messageId, cwd });
+    // Named like Claude Code's own forks: every branch appends " (fork)".
+    const title = sourceTitle ? `${sourceTitle} (fork)` : undefined;
+    return this.resumeAgentFromPersistence(handle, { ...agent.config, cwd, title }, undefined, {
+      workspaceId: input.workspaceId ?? agent.workspaceId,
+    });
+  }
+
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
