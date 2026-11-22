@@ -917,7 +917,7 @@ const sessionConfigSchema = z
     providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
-    wrap: z.tuple([z.string()], z.string()).optional(),
+    wrap: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const externalResourceSchema = z

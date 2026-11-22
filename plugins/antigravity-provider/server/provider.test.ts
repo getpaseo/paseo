@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
@@ -888,28 +888,24 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
 });
 
 it("runs a wrapped session as [...wrap, agy, acp, --disable-telemetry] with the session env", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "paseo-antigravity-wrap-"));
-  directories.push(directory);
-  const agy = path.join(directory, "agy");
-  await writeFile(
-    agy,
-    `#!${process.execPath}
-const { createInterface } = require("node:readline");
-const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
-createInterface({ input: process.stdin }).on("line", (line) => {
-  const { id, method } = JSON.parse(line);
-  if (method === "initialize") send({ id, result: { protocolVersion: 1 } });
-  if (method === "session/new") send({ id, result: { sessionId: "native", configOptions: [{ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] }] } });
-  if (method === "session/new") send({ method: "session/update", params: { sessionId: "native", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
-});
-`,
-  );
-  const launcher = path.join(directory, "launcher");
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1 } });
+      if (method === "session/new") {
+        send({ id, result: { sessionId: "native", configOptions: [{ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] }] } });
+        send({ method: "session/update", params: { sessionId: "native", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+      }
+    });
+  `);
+  // Records what it was started with, then runs the rest: the provider's own launch.
+  const launcher = path.join(directory, "launcher.cjs");
   const record = path.join(directory, "launch.json");
   await writeFile(
     launcher,
-    `#!${process.execPath}
-const { writeFileSync } = require("node:fs");
+    `const { writeFileSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 const [log, command, ...args] = process.argv.slice(2);
 writeFileSync(log, JSON.stringify({ argv: process.argv.slice(2), hook: process.env.HOOK_ENV ?? null }));
@@ -918,11 +914,10 @@ process.on("SIGTERM", () => child.kill("SIGTERM"));
 child.on("exit", (code) => process.exit(code ?? 1));
 `,
   );
-  await Promise.all([chmod(agy, 0o755), chmod(launcher, 0o755)]);
   const provider = createAntigravityProvider();
   expect(provider.launchWrap).toBe(true);
   const connection = await provider.connect({
-    launch: { command: agy, args: ["acp", "--disable-telemetry"], env: {} },
+    launch,
     versions: [1],
     capabilities: ["prompt.message", "session.launch_wrap"],
   });
@@ -940,7 +935,7 @@ child.on("exit", (code) => process.exit(code ?? 1));
         mcpServers: {},
         settings: {},
         persist: false,
-        wrap: [launcher, record],
+        wrap: [process.execPath, launcher, record],
       },
     });
     await expect
@@ -949,10 +944,8 @@ child.on("exit", (code) => process.exit(code ?? 1));
       )
       .toMatchObject({ type: "session.ready" });
     const launched = JSON.parse(await readFile(record, "utf8"));
-    expect(launched).toEqual({
-      argv: [record, agy, "acp", "--disable-telemetry"],
-      hook: "final",
-    });
+    expect(launched).toEqual({ argv: [record, launch.command, ...launch.args], hook: "final" });
+    expect(launched.argv.slice(-2)).toEqual(["acp", "--disable-telemetry"]);
   } finally {
     await connection.close();
   }

@@ -1,22 +1,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type * as ChildProcess from "node:child_process";
-import { afterEach, expect, test, vi } from "vitest";
-import { applyLaunchWrap, execCommand, spawnProcess } from "./index.js";
-
-// Delegates to the real spawn; a test can capture one call instead of starting a process.
-const spawnSpy = vi.hoisted(() => ({
-  current: undefined as undefined | ((...args: unknown[]) => unknown),
-}));
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof ChildProcess>();
-  return {
-    ...actual,
-    spawn: (...args: Parameters<typeof actual.spawn>) =>
-      spawnSpy.current ? spawnSpy.current(...args) : actual.spawn(...args),
-  };
-});
+import { afterEach, expect, test } from "vitest";
+import { execCommand, spawnProcess } from "./index.js";
+import { resolveSpawnInvocation } from "./process.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -66,33 +53,24 @@ test("spawnProcess delivers shell arguments to the real child unchanged", async 
   expect(JSON.parse(stdout)).toEqual(argumentsToPreserve);
 });
 
-test("a Windows command-script wrapper starts through cmd.exe with each argument quoted whole", () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  const calls: unknown[][] = [];
-  spawnSpy.current = (...args) => {
-    calls.push(args);
-    return {};
-  };
-  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
-  try {
-    const { command, args } = applyLaunchWrap(
-      ["C:\\Program Files\\Sandbox\\run.cmd", "--profile", "work profile"],
-      { command: "C:\\tools\\agy.cmd", args: ["acp", "--disable-telemetry"] },
-    );
-    spawnProcess(command, args, { stdio: "pipe" });
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-    spawnSpy.current = undefined;
-  }
-  expect(calls).toHaveLength(1);
-  const [command, args, options] = calls[0] as [string, string[], { shell: unknown }];
-  expect(options.shell).toBe(true);
-  expect(command).toBe('"C:\\Program Files\\Sandbox\\run.cmd"');
-  expect(args).toEqual([
+// A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess must run it
+// through cmd.exe with every argument quoted whole, as it does for any provider launcher.
+test("a Windows script launch wrap starts through cmd.exe with each argument quoted", () => {
+  const wrapped = [
+    "C:\\Program Files\\Sandbox\\run.cmd",
     "--profile",
-    '"work profile"',
+    "work profile",
     "C:\\tools\\agy.cmd",
     "acp",
-    "--disable-telemetry",
-  ]);
+  ];
+  expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "win32")).toEqual({
+    command: '"C:\\Program Files\\Sandbox\\run.cmd"',
+    args: ["--profile", '"work profile"', "C:\\tools\\agy.cmd", "acp"],
+    shell: true,
+  });
+  expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "linux")).toEqual({
+    command: wrapped[0],
+    args: wrapped.slice(1),
+    shell: false,
+  });
 });

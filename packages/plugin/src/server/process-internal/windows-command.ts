@@ -1,12 +1,15 @@
 import { extname } from "node:path";
 
-export function isWindowsCommandScript(executablePath: string): boolean {
+export function isWindowsCommandScript(
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   const extension = extname(executablePath).toLowerCase();
-  return process.platform === "win32" && (extension === ".cmd" || extension === ".bat");
+  return platform === "win32" && (extension === ".cmd" || extension === ".bat");
 }
 
-function escapeWindowsCmdValue(value: string): string {
-  if (process.platform !== "win32") return value;
+function escapeWindowsCmdValue(value: string, platform: NodeJS.Platform): string {
+  if (platform !== "win32") return value;
 
   const isQuoted = value.startsWith('"') && value.endsWith('"');
   const unquoted = isQuoted ? value.slice(1, -1) : value;
@@ -32,8 +35,11 @@ function escapeWindowsCmdValue(value: string): string {
  * command path with spaces (e.g. `C:\Program Files\...`) is split at the
  * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
  */
-export function quoteWindowsCommand(command: string): string {
-  return escapeWindowsCmdValue(command);
+export function quoteWindowsCommand(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return escapeWindowsCmdValue(command, platform);
 }
 
 /**
@@ -41,6 +47,9 @@ export function quoteWindowsCommand(command: string): string {
  * Any argument containing spaces must be quoted or it will be split before the
  * child process sees it.
  */
-export function quoteWindowsArgument(argument: string): string {
-  return escapeWindowsCmdValue(argument);
+export function quoteWindowsArgument(
+  argument: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return escapeWindowsCmdValue(argument, platform);
 }

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -7128,9 +7128,10 @@ describe("ACP tool call rows", () => {
 
 describe("runAcpProvider launch wrap", () => {
   async function wrapFixture(): Promise<{
-    launcher: string;
     agent: string;
     launchLog: string;
+    /** The wrap that runs the recording launcher as Node, tagged so the agent can tell. */
+    wrap: (tag: string) => [string, ...string[]];
     launches: () => Promise<Array<{ argv: string[]; token: string | null }>>;
     agentStarts: () => Promise<string[]>;
   }> {
@@ -7142,8 +7143,7 @@ describe("runAcpProvider launch wrap", () => {
     // Consumes two arguments of its own (log path, tag), records what it saw, then runs the rest.
     await writeFile(
       launcher,
-      `#!${process.execPath}
-const { appendFileSync } = require("node:fs");
+      `const { appendFileSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 const [log, tag, command, ...args] = process.argv.slice(2);
 appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), token: process.env.SESSION_TOKEN ?? null }) + "\\n");
@@ -7153,7 +7153,6 @@ child.on("exit", (code) => process.exit(code ?? 1));
 `,
       "utf8",
     );
-    await chmod(launcher, 0o755);
     const agent = path.join(directory, "agent.cjs");
     await writeFile(
       agent,
@@ -7172,9 +7171,9 @@ lines.on("line", (line) => {
     const readLines = async (file: string) =>
       (await readFile(file, "utf8").catch(() => "")).split("\n").filter(Boolean);
     return {
-      launcher,
       agent,
       launchLog,
+      wrap: (tag) => [process.execPath, launcher, launchLog, tag],
       launches: async () => (await readLines(launchLog)).map((line) => JSON.parse(line)),
       agentStarts: async () => await readLines(agentLog),
     };
@@ -7211,7 +7210,7 @@ lines.on("line", (line) => {
     const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
     expect(connection.capabilities).toContain("session.launch_wrap");
     try {
-      await connection.send(wrappedOpen("one", [fixture.launcher, launchLog, "sandbox"]));
+      await connection.send(wrappedOpen("one", fixture.wrap("sandbox")));
       await waitForEvent(events, (event) => event.type === "session.ready");
       expect(await fixture.launches()).toEqual([
         { argv: [launchLog, "sandbox", process.execPath, fixture.agent], token: "one" },
@@ -7231,7 +7230,7 @@ lines.on("line", (line) => {
       "--profile name with spaces",
     ]);
     try {
-      await connection.send(wrappedOpen("one", [fixture.launcher, launchLog, "tag with spaces"]));
+      await connection.send(wrappedOpen("one", fixture.wrap("tag with spaces")));
       await waitForEvent(events, (event) => event.type === "session.ready");
       expect((await fixture.launches())[0]?.argv).toEqual([
         launchLog,
@@ -7250,7 +7249,7 @@ lines.on("line", (line) => {
     const { launchLog } = fixture;
     const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
     try {
-      await connection.send(wrappedOpen("wrapped", [fixture.launcher, launchLog, "sandbox"]));
+      await connection.send(wrappedOpen("wrapped", fixture.wrap("sandbox")));
       await connection.send(wrappedOpen("bare", undefined));
       await waitForEvent(
         events,

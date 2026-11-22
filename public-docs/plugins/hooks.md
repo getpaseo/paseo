@@ -31,7 +31,7 @@ Names follow `subject.operation.position`: the subject, the operation, then `bef
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, MCP servers, and a launch wrap each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -50,7 +50,7 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 ## Hooks
 
 | Hook                      | Waits | Payload                                   | Handler may change                                                     |
-|---------------------------|-------|-------------------------------------------|------------------------------------------------------------------------|
+| ------------------------- | ----- | ----------------------------------------- | ---------------------------------------------------------------------- |
 | `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                                  |
 | `workspace.create.after`  | no    | `{ workspace }`                           |                                                                        |
 | `workspace.archive.after` | no    | `{ workspace }`                           |                                                                        |

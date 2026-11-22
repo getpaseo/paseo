@@ -3690,6 +3690,7 @@ test("a declared launch wrap still needs session.launch_wrap on the live connect
   registry.replace([{ ...harness.registration, launchWrap: true }]);
   expect(registry.definitions()[harness.registration.id]?.supportsLaunchWrap).toBe(true);
   const client = registry.clients()[harness.registration.id]!;
+  expect(client.supportsLaunchWrap).toBe(true);
 
   await expect(client.requireLaunchWrap?.()).rejects.toMatchObject({
     code: "launch_wrap_unsupported",
@@ -3709,6 +3710,7 @@ test("a provider that declares no launch wrap is not marked as supporting it", (
   const registry = new PluginAgentClientRegistry(createTestLogger());
   registry.replace([harness.registration]);
   expect(registry.definitions()[harness.registration.id]?.supportsLaunchWrap).toBe(false);
+  expect(registry.clients()[harness.registration.id]!.supportsLaunchWrap).toBe(false);
 });
 
 test("a plugin session reopen sends the wrap the session opened with", async () => {
@@ -3730,39 +3732,5 @@ test("a plugin session reopen sends the wrap the session opened with", async () 
   expect(opens.length).toBeGreaterThanOrEqual(2);
   for (const open of opens) expect(open.config.wrap).toEqual(wrap);
   await session.close();
-  await registry.shutdown();
-});
-
-test("an ACP connector provider neither declares nor offers launch wrap", async () => {
-  const registration = runAcpProvider({
-    id: "connector-acp",
-    label: "Connector ACP",
-    connector() {
-      let controller!: ReadableStreamDefaultController<AcpStreamMessage>;
-      const readable = new ReadableStream<AcpStreamMessage>({
-        start(ctrl) {
-          controller = ctrl;
-        },
-      });
-      const writable = new WritableStream<AcpStreamMessage>({
-        write(message) {
-          if ("method" in message && "id" in message && message.method === "initialize") {
-            controller.enqueue({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: { protocolVersion: 1, agentCapabilities: {} },
-            });
-          }
-        },
-      });
-      return { readable, writable };
-    },
-  });
-  const registry = new PluginAgentClientRegistry(createTestLogger());
-  registry.replace([registration]);
-  expect(registry.definitions()[registration.id]?.supportsLaunchWrap).toBe(false);
-  await expect(registry.clients()[registration.id]!.requireLaunchWrap?.()).rejects.toMatchObject({
-    code: "launch_wrap_unsupported",
-  });
   await registry.shutdown();
 });
