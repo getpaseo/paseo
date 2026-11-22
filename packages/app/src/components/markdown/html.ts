@@ -2,6 +2,7 @@ import { Parser } from "htmlparser2";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { decodeString } from "micromark-util-decode-string";
 import type { Nodes } from "mdast";
+import { scanMath } from "./math";
 
 const ATTRIBUTE = String.raw`\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>\x60]+|'[^']*'|"[^"]*"))?`;
 const TAG = String.raw`<(?:[A-Za-z][A-Za-z0-9-]*(?:${ATTRIBUTE})*\s*\/?|\/[A-Za-z][A-Za-z0-9-]*\s*)>`;
@@ -33,6 +34,11 @@ const EMPHASIS: Readonly<Record<string, string>> = { b: "**", strong: "**", i: "
 /** Convert comment HTML to Markdown while preserving the original spelling of code. */
 export function normalizeMarkdownHtml(source: string): string {
   if (!source.includes("<")) return source;
+  // Math spans must reach the parser untouched: a `$x<y>z$` equation would
+  // otherwise lose `<y>` to the tag cleanup below and render as `$xz$`.
+  const mathRanges: { start: number; end: number }[] = source.includes("$")
+    ? scanMath(source).spans
+    : [];
   const htmlRanges: { start: number; end: number }[] = [];
   function findHtml(node: Nodes) {
     if (node.type === "html" && node.position) {
@@ -57,6 +63,7 @@ export function normalizeMarkdownHtml(source: string): string {
   let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
+    if (mathRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
     if (raw.startsWith("<!--")) return "";
     const summary = /^<summary\b[^>]*>([\s\S]*?)<\/summary\s*>$/i.exec(raw);
     if (summary) {
