@@ -90,12 +90,28 @@ function AdmonitionRenderer({
 }
 
 function CodeBlockRenderer({
+  capabilities,
   node,
   styles,
   renderChildren,
   callbacks,
 }: RendererProps) {
   const language = node.attributes?.language;
+  const CustomCodeBlock = capabilities.renderers?.codeBlock;
+  if (CustomCodeBlock) {
+    // The custom renderer owns the block's look; the library keeps its spacing,
+    // including the zeroed trailing margin of the last block.
+    return (
+      <div
+        style={{
+          marginTop: styles.codeBlock.marginTop,
+          marginBottom: styles.codeBlock.marginBottom,
+        }}
+      >
+        <CustomCodeBlock code={extractNodeText(node)} language={language ?? ''} />
+      </div>
+    );
+  }
   const label = language ? `Code block: ${language}` : 'Code block';
 
   if (callbacks.onCodeBlockPress == null) {
@@ -196,7 +212,7 @@ function ImageRenderer({ node, styles, parentType, callbacks }: RendererProps) {
       src={url}
       alt={alt}
       title={title}
-      style={imgStyle}
+      style={{ ...imgStyle, cursor: 'zoom-in' }}
       role="button"
       tabIndex={0}
       aria-label={alt}
