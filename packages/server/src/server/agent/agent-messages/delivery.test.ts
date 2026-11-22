@@ -1,4 +1,4 @@
-import { AgentTurnBusyError } from "../agent-prompt.js";
+import { AgentTurnBusyError, AgentTurnChangedError } from "../agent-prompt.js";
 import { expect, test } from "vitest";
 import { createAgentMessageDelivery, parseAgentMessages } from "./index.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
@@ -1219,6 +1219,41 @@ test("a steer enters the running turn at admission and carries the messages queu
   await recipient.tick();
   expect(recipient.sent).toHaveLength(1);
   await recipient.delivery.close();
+});
+
+test("a steer that misses the turn's end goes again with the messages it carries", async () => {
+  const clock = createClock();
+  let running = true;
+  const sent: Array<{ ids: readonly string[]; behavior: string }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    dispatch: async (request) => {
+      if (running) {
+        // The turn ended before the provider took the steer.
+        running = false;
+        throw new AgentTurnChangedError("Active turn changed before steering could be delivered");
+      }
+      sent.push({ ids: request.messageIds, behavior: request.activeTurnBehavior });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "recipient",
+    source: { kind: "agent-message" as const, agentId: "sender" },
+    prompt: "message",
+  };
+  const report = delivery.enqueue({ ...message, messageId: "report", activeTurnBehavior: "queue" });
+  const steer = delivery.enqueue({ ...message, messageId: "steer", activeTurnBehavior: "steer" });
+  await expect(Promise.all([report.dispatched, steer.dispatched])).resolves.toEqual([
+    "turn_started",
+    "turn_started",
+  ]);
+  expect(sent).toEqual([{ ids: ["report", "steer"], behavior: "steer" }]);
+  await delivery.close();
 });
 
 test("a queued message sent after a steer waits for the turn to end", async () => {

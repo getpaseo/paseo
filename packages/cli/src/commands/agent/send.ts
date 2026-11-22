@@ -16,6 +16,8 @@ import { extname, resolve } from "node:path";
 export interface AgentSendResult {
   agentId: string;
   status: "queued" | "sent" | "completed" | "timeout" | "permission" | "error";
+  /** What the host applied to an agent's message with a running turn. */
+  activeTurnBehavior?: AgentActiveTurnBehavior;
   message: string;
 }
 
@@ -171,6 +173,15 @@ function buildSendResult(agentIdArg: string, state: SendWaitState): AgentSendRes
   return { agentId, status: "completed", message: "Agent completed processing the message" };
 }
 
+export function buildNoWaitResult(agentId: string, receipt: AgentMessageReceipt): AgentSendResult {
+  return {
+    agentId,
+    status: receipt.deliveryStatus ?? "sent",
+    ...(receipt.activeTurnBehavior ? { activeTurnBehavior: receipt.activeTurnBehavior } : {}),
+    message: sendReceiptMessage(receipt),
+  };
+}
+
 function sendReceiptMessage(receipt: AgentMessageReceipt): string {
   if (receipt.deliveryStatus !== "queued") return "Message sent, not waiting for completion";
   // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after 2027-05-22 once daemon
@@ -221,11 +232,7 @@ export async function runSendCommand(
 
       return {
         type: "single",
-        data: {
-          agentId: agentIdArg,
-          status: receipt.deliveryStatus ?? "sent",
-          message: sendReceiptMessage(receipt),
-        },
+        data: buildNoWaitResult(agentIdArg, receipt),
         schema: agentSendSchema,
       };
     }

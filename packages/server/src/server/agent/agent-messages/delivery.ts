@@ -1,5 +1,6 @@
 import {
   AgentTurnBusyError,
+  AgentTurnChangedError,
   type PromptDispatchDisposition,
   type PromptDispatchResult,
 } from "../agent-prompt.js";
@@ -341,6 +342,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         }
         // A withdrawal invalidated this exact prompt; the rest goes again without it.
         if (messages.some(isWithdrawn)) {
+          handBack(messages);
+          continue;
+        }
+        // The turn a steer targeted ended first. The batch goes again, into the next turn or as
+        // a new one, so the messages it carries are not lost.
+        if (error instanceof AgentTurnChangedError) {
           handBack(messages);
           continue;
         }
