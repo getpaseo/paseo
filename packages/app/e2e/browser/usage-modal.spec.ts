@@ -334,25 +334,17 @@ test.describe("usage modal", () => {
       await qaScreenshot(page, `usage-sources-${size}-settings`);
 
       await openUsageSources(page);
-      await expect(page.getByTestId("usage-source-toggle-claude:default")).toHaveAttribute(
-        "aria-checked",
-        "true",
-      );
-      await expect(page.getByTestId("usage-source-toggle-copilot:default")).toHaveAttribute(
-        "aria-checked",
-        "false",
-      );
-      await expect(page.getByTestId("usage-source-toggle-copilot:default")).toContainText(
-        "Provider inactive",
-      );
+      const claudeToggle = page.getByRole("checkbox", { name: /^Claude/ });
+      const copilotToggle = page.getByRole("checkbox", { name: /^GitHub Copilot/ });
+      const cursorToggle = page.getByRole("checkbox", { name: /^Cursor/ });
+      await expect(claudeToggle).toBeChecked();
+      await expect(copilotToggle).not.toBeChecked();
+      await expect(copilotToggle).toContainText("Provider inactive");
       await qaScreenshot(page, `usage-sources-${size}-list`);
 
       // Opting into a default-off source brings its card and summary window in immediately.
-      await page.getByTestId("usage-source-toggle-cursor:default").click();
-      await expect(page.getByTestId("usage-source-toggle-cursor:default")).toHaveAttribute(
-        "aria-checked",
-        "true",
-      );
+      await cursorToggle.click();
+      await expect(cursorToggle).toBeChecked();
       await closeUsageOptions(page);
       await expectUsageCardOrder(page, ["claude:default", "codex:default", "cursor:default"]);
 

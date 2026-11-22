@@ -5,8 +5,8 @@ import { withUnistyles } from "react-native-unistyles";
 import { useCallback, useMemo } from "react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuSubTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
@@ -238,15 +238,14 @@ function UsageSourceMenuItem({
       .filter(Boolean)
       .join(" · ") || undefined;
   return (
-    <DropdownMenuItem
+    <DropdownMenuCheckboxItem
       leading={leading}
       description={description}
-      selected={on}
-      closeOnSelect={false}
-      onSelect={handleSelect}
+      checked={on}
+      onToggle={handleSelect}
       testID={`usage-source-toggle-${entry.id}`}
     >
       {entry.sourceLabel}
-    </DropdownMenuItem>
+    </DropdownMenuCheckboxItem>
   );
 }

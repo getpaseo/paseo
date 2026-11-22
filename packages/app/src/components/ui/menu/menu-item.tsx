@@ -253,7 +253,37 @@ export interface MenuItemProps {
   tooltip?: string;
 }
 
-export function MenuItem({
+export function MenuItem(props: PropsWithChildren<MenuItemProps>): ReactElement {
+  return <MenuRow {...props} accessibilityRole="menuitem" />;
+}
+
+export interface MenuCheckboxItemProps extends Omit<MenuItemProps, "selected" | "onSelect"> {
+  checked: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * A toggleable menu row that stays open on press by default and exposes `checkbox` semantics so
+ * screen readers announce its checked state.
+ */
+export function MenuCheckboxItem({
+  checked,
+  onToggle,
+  closeOnSelect = false,
+  ...rest
+}: PropsWithChildren<MenuCheckboxItemProps>): ReactElement {
+  return (
+    <MenuRow
+      {...rest}
+      selected={checked}
+      onSelect={onToggle}
+      closeOnSelect={closeOnSelect}
+      accessibilityRole="checkbox"
+    />
+  );
+}
+
+function MenuRow({
   children,
   description,
   onSelect,
@@ -272,7 +302,10 @@ export function MenuItem({
   closeOnSelect = true,
   testID,
   tooltip,
-}: PropsWithChildren<MenuItemProps>): ReactElement {
+  accessibilityRole,
+}: PropsWithChildren<
+  MenuItemProps & { accessibilityRole: "menuitem" | "checkbox" }
+>): ReactElement {
   const { selectItem } = useMenuContext("MenuItem");
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
@@ -337,7 +370,7 @@ export function MenuItem({
   const content = (
     <Pressable
       testID={testID}
-      accessibilityRole="menuitem"
+      accessibilityRole={accessibilityRole}
       accessibilityState={accessibilityState}
       aria-checked={selected}
       tabIndex={-1}
