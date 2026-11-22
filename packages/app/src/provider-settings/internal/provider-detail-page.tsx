@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { SettingsDetailHeader } from "@/components/settings";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { ICON_SIZE } from "@/styles/theme";
+import { FONT_SIZE, ICON_SIZE } from "@/styles/theme";
 import { ProviderDetail, useProviderDetail } from "./provider-detail";
 import { ProviderGlyph } from "./provider-glyph";
 
@@ -38,8 +38,8 @@ export function ProviderDetailPage({
       <ProviderGlyph
         serverId={serverId}
         provider={provider}
-        // The glyph follows the size of the name beside it.
-        size={isCompact ? ICON_SIZE.md : ICON_SIZE.lg}
+        // As large as the name beside it: the page title on wide layouts, a row title on compact.
+        size={isCompact ? ICON_SIZE.md : FONT_SIZE["4xl"]}
       />
     ),
     [isCompact, provider, serverId],
