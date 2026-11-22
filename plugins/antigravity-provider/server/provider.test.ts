@@ -39,6 +39,50 @@ it("reports a CLI without the acp subcommand as unavailable", async () => {
   });
 });
 
+const minimalAcpAgent = `
+  const { createInterface } = require("node:readline");
+  createInterface({ input: process.stdin }).on("line", (line) => {
+    const { id, method } = JSON.parse(line);
+    if (method === "initialize")
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result: { protocolVersion: 1, agentCapabilities: {} } }) + "\\n");
+  });
+`;
+
+describe("diagnostic", () => {
+  it("says agy runs outside an SSH session when the daemon has no SSH variables", async () => {
+    const { launch } = await launchAgent(minimalAcpAgent);
+    expect(await createAntigravityProvider().status!({ launch })).toEqual({
+      available: true,
+      diagnostic: "SSH session: no\nSign-in: can differ from agy over SSH",
+    });
+  });
+
+  it.each(["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"])(
+    "says agy runs in an SSH session when the daemon has %s",
+    async (variable) => {
+      const { launch } = await launchAgent(minimalAcpAgent);
+      const env = { ...launch.env, [variable]: "set" };
+      expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
+        available: true,
+        diagnostic: `SSH session: yes (${variable})\nSign-in: can differ from agy outside SSH`,
+      });
+    },
+  );
+
+  it("says whether agy runs in an SSH session when ACP does not start", async () => {
+    const { launch } = await launchAgent(`process.exit(1);`);
+    const env = { ...launch.env, SSH_CONNECTION: "set" };
+    expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
+      available: false,
+      diagnostic: [
+        "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        "SSH session: yes (SSH_CONNECTION)",
+        "Sign-in: can differ from agy outside SSH",
+      ].join("\n"),
+    });
+  });
+});
+
 it("publishes Antigravity skills separately from built-in commands", async () => {
   const { directory, launch } = await launchAgent(`
     const { createInterface } = require("node:readline");
@@ -154,7 +198,7 @@ it.each([true, false])(
       });
     `);
     const provider = createAntigravityProvider();
-    expect(await provider.status!({ launch })).toEqual({ available: true });
+    expect(await provider.status!({ launch })).toMatchObject({ available: true });
     const connection = await provider.connect({
       launch,
       versions: [1],

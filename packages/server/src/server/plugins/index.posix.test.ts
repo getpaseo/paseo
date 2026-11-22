@@ -434,6 +434,7 @@ describe("PluginService", () => {
         "provider-installation",
         `export default function contribute(server) {
       server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        docsUrl: "https://example.com/docs",
         installation: {
           installUrl: "https://example.com/install",
           updateUrl: "https://example.com/update",
@@ -472,6 +473,7 @@ describe("PluginService", () => {
       try {
         if (runtime === "subprocess") await service.installDirectory({ path: directory });
         const [registration] = service.getProviderRegistrations();
+        expect(registration!.docsUrl).toBe("https://example.com/docs");
         const installation = registration!.installation!;
         expect(installation).toMatchObject({
           installUrl: "https://example.com/install",
@@ -552,6 +554,33 @@ describe("PluginService", () => {
       await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
     ).toBe("runtime:/project-b");
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("fails a plugin whose provider docs link is not an http(s) page", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-docs-link",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    docsUrl: "file:///etc/passwd",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory }).catch(() => undefined);
+
+    expect(service.getProviderRegistrations()).toEqual([]);
+    expect(await service.listPlugins()).toMatchObject([
+      { status: "failed", error: "Plugin provider plugin-agent docsUrl must be an http(s) URL" },
+    ]);
+    await service.stopAllPlugins();
   });
 
   it("publishes provider registrations only while their plugin is running", async () => {

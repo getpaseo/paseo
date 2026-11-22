@@ -157,6 +157,7 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { createAgentProviderRuntime } from "./agent/provider-runtime.js";
+import { PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS } from "./agent/provider-refresh-schedule.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import {
@@ -517,6 +518,7 @@ export interface PaseoDaemon {
 
 export interface PaseoDaemonDependencies {
   builtinPlugins?: BuiltinPluginLoader;
+  lazyTerminalWorker?: boolean;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -685,6 +687,8 @@ export async function createPaseoDaemon(
       hasAgent: (id) => agentManager.getAgent(id) !== null,
       usageSession: (id) => agentManager.usageSession(id),
       resolveLaunch: (provider) => providerSnapshotManager.resolveUsageLaunch(provider),
+      isProviderActive: (provider, options) =>
+        providerSnapshotManager.isProviderActiveForUsage(provider, options),
     },
     managedSources: new ManagedPluginSources(config.paseoHome, {
       registries: config.pluginRegistries,
@@ -735,6 +739,7 @@ export async function createPaseoDaemon(
     paseoVersion: daemonVersion,
     logger,
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    eagerLaunch: !dependencies.lazyTerminalWorker,
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -1017,6 +1022,7 @@ export async function createPaseoDaemon(
       managedProcesses,
       isDev: config.isDev === true,
       extraClients: config.agentClients,
+      backgroundRefresh: { intervalMs: PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS },
     },
   });
   const providerSnapshotManager = agentProviderRuntime.snapshotManager;

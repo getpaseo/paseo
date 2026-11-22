@@ -747,6 +747,7 @@ export class VoiceAssistantWebSocketServer {
           onAccepted,
         ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
+      canSteer: (agentId) => agentManager.canSteer(agentId),
       hasPendingPermission: (agentId) => agentManager.hasPendingPermissions(agentId),
       subscribe: (notify) =>
         agentManager.subscribe(
@@ -2258,6 +2259,8 @@ export class VoiceAssistantWebSocketServer {
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
         agentMessageBatching: true,
+        // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
+        agentActiveTurnBehaviors: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.

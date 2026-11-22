@@ -427,6 +427,54 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report metrics
+
+Report what your provider measured as `label` and `value` pairs. Paseo shows each value as given,
+so format it for reading: `12.4s`, not `12431`. You choose which metrics make sense for your agent.
+
+Add `metrics` to the `completed` turn event. Paseo shows them from the footer of that turn:
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+Publish `session.metrics` for totals that cover the whole session. Paseo shows them in the context
+window details. Each event replaces the previous list, and an empty list clears it. Add
+`session.metrics` to your supported capabilities and publish the event only when it was negotiated:
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+A Paseo from before session metrics does not offer the capability and closes a connection that
+sends the event. It ignores `metrics` on a turn, so turn metrics need no check.
+
+Set `tone` to `"ok"`, `"warning"`, or `"danger"` to color a value. When a completed turn has no
+`Model` metric, Paseo adds the session's model.
+
+When `history` is `"replay"`, publish each old turn's `completed` event after that turn's items.
+Paseo puts the metrics back on the turn's footer.
+
 ## Report installation and updates
 
 Add `installation` to your registration and the provider's settings show an **Installation**
@@ -547,6 +595,37 @@ Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds
 version, so a CLI updated outside Paseo is checked again once the inspection expires. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
 `update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
 See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
+
+## Help users fix problems
+
+A user who gets a wrong result opens the provider's settings before they ask for help. Give that
+page what they need: declare `docsUrl`, and return the facts that explain a wrong result from
+`status`.
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**Docs** opens `docsUrl`. **Diagnostic report** shows the command, the path of the executable and
+the version that Paseo found, then your `Profile` row. Report what the CLI reads from its
+environment, such as the account, the profile, or the configuration file in use. Those differ
+between the daemon and the user's terminal, and the user cannot see them from the app.
+See the [troubleshooting reference](/docs/plugins/reference#provider-troubleshooting) for the rows
+that Paseo writes and for the rules of `status`.
 
 ## Adapt an ACP agent
 

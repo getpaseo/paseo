@@ -351,6 +351,48 @@ export default function contribute(client: PluginClientContext) {
 
 同一个渲染器可以显示由 Provider、客户端时间线转换器或 daemon 时间线追加发出的条目。渲染器并不需要 Provider 实现。
 
+## 报告指标 {#report-metrics}
+
+把 Provider 测量到的数据以 `label` 和 `value` 的形式报告。Paseo 会原样显示每个值，所以请把它格式化成便于阅读的形式：写 `12.4s`，不要写 `12431`。哪些指标适合你的 Agent，由你决定。
+
+在 `completed` 轮次事件中添加 `metrics`。Paseo 会在该轮次的页脚显示它们：
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+对于覆盖整个会话的总计，发布 `session.metrics`。Paseo 会在上下文窗口详情中显示它们。每个事件都会替换之前的列表，空列表会清除它。把 `session.metrics` 加入你支持的能力，并且只在协商成功时发布该事件：
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+不支持会话指标的旧版 Paseo 不会提供这项能力，并且会关闭发送该事件的连接。它会忽略轮次上的 `metrics`，所以轮次指标不需要检查。
+
+把 `tone` 设为 `"ok"`、`"warning"` 或 `"danger"`，可以给值着色。如果已完成的轮次没有 `Model` 指标，Paseo 会添加会话的模型。
+
+当 `history` 为 `"replay"` 时，请在每个旧轮次的条目之后发布该轮次的 `completed` 事件。Paseo 会把指标放回该轮次的页脚。
+
 ## 报告安装与更新 {#report-installation-and-updates}
 
 在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：
@@ -448,6 +490,30 @@ Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从�
 只要 `inspect` 报告 CLI 已安装，就会显示 **更新** 或 **更新说明**。检查只在旁边说明它知道的情况，所以即使无法检查，也要声明 `update`。
 
 Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。只要 `inspect` 报告的版本不变，它就把 `checkForUpdates` 的 `current` 或 `available` 结果保留一小时，所以在 Paseo 之外更新的 CLI 会在 `inspect` 的结果过期后重新检查。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
+
+## 帮助用户解决问题 {#help-users-fix-problems}
+
+用户得到错误结果时，会先打开 Provider 的设置，然后才去寻求帮助。请在这个页面提供他们需要的内容：声明 `docsUrl`，并从 `status` 返回能解释错误结果的事实。
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**文档** 会打开 `docsUrl`。**诊断报告** 会显示命令、可执行文件的路径和 Paseo 找到的版本，然后是你的 `Profile` 行。请报告 CLI 从环境中读取的内容，例如账号、profile 或正在使用的配置文件。这些内容在 daemon 和用户的终端之间可能不同，用户在应用中也看不到。Paseo 写入的各行以及 `status` 的规则见[故障排查参考](/docs/plugins/reference#provider-troubleshooting)。
 
 ## 适配 ACP Agent {#adapt-an-acp-agent}
 
