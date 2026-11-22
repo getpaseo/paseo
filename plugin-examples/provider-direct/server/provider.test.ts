@@ -47,6 +47,7 @@ describe("direct provider example", () => {
         "prompt.message",
         "prompt.command",
         "session.configure",
+        "session.metrics",
         "session.persistence",
         "session.subsession",
         "timeline.plugin",
@@ -165,6 +166,54 @@ describe("direct provider example", () => {
       }),
     );
     expect(events).toContainEqual(expect.objectContaining({ type: "session.persistence" }));
+    expect(events).toContainEqual({
+      type: "session.turn",
+      sessionId: "session-complete",
+      turnId: "turn-1",
+      state: "completed",
+      metrics: [
+        { label: "Model", value: "example-1" },
+        { label: "Reply", value: "11 characters" },
+      ],
+    });
+    expect(events).toContainEqual({
+      type: "session.metrics",
+      sessionId: "session-complete",
+      metrics: [{ label: "Turns", value: "1" }],
+    });
+    await connection.close();
+  });
+
+  it("keeps session metrics from a Paseo that does not offer them", async () => {
+    const connection = await createDirectExampleProvider().connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({
+      type: "session.open",
+      requestId: "open-older",
+      sessionId: "session-older",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: false },
+      history: "skip",
+    });
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-older",
+      prompt: {
+        clientMessageId: "message-older",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "session.turn", state: "completed" }),
+    );
+    expect(events.filter((event) => event.type === "session.metrics")).toEqual([]);
     await connection.close();
   });
 

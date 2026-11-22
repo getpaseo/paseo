@@ -1,5 +1,5 @@
 # LegendList 3.7.1 for the native chat timeline (docs/agent-stream-disclosure.md).
-# Upstream: https://github.com/LegendApp/legend-list/issues/593 covers every change below.
+# Upstream: https://github.com/LegendApp/legend-list/issues/593 covers changes 1–12 below.
 # react-native.js and react-native.mjs carry the same hunks; each has a "Paseo patch" comment.
 #
 # 1. getEstimatedItemSize (react-native.d.ts, getItemSize, LegendListInner props): a per-item
@@ -34,6 +34,8 @@
 #    of a shrink past the end from the new end, assuming the scroll view clamped first. The app's
 #    scroll view clamps after the adjustment on both platforms (modules/paseo-scroll), so a
 #    bottom-edge disclosure collapsing near the end landed at the end instead of in place.
+# 13. Recalculate the rendered range when drawDistance changes (LegendListInner). Chat uses
+#     a small window for initial placement and schedules expansion after initial reveal.
 #
 # Upgrading: drop each hunk whose fix the new version ships, regenerate with
 # `npx patch-package @legendapp/list`, and copy this header back on top.
@@ -54,7 +56,7 @@ index 983e937..970ba51 100644
       * Returns a stable item type used for pooling and size estimation.
       */
 diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legendapp/list/react-native.js
-index eeb3fb0..5ebd8e9 100644
+index eeb3fb0..33d6241 100644
 --- a/node_modules/@legendapp/list/react-native.js
 +++ b/node_modules/@legendapp/list/react-native.js
 @@ -1497,7 +1497,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -344,8 +346,24 @@ index eeb3fb0..5ebd8e9 100644
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
      getItemType: useWrapIfItem(getItemType),
      hasExternalScroll,
+@@ -8549,6 +8618,15 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       doMaintainScrollAtEnd(ctx);
+     }
+   }, [!!maintainScrollAtEndConfig]);
++  // Paseo patch: the chat fills its offscreen buffer after its initial reveal.
++  const previousDrawDistance = React2.useRef(drawDistance);
++  React2.useLayoutEffect(() => {
++    if (previousDrawDistance.current !== drawDistance) {
++      previousDrawDistance.current = drawDistance;
++      state.scrollForNextCalculateItemsInView = void 0;
++      calculateItemsInView(ctx);
++    }
++  }, [drawDistance]);
+   const previousAlwaysRenderIndices = React2.useRef(alwaysRenderIndices);
+   React2.useLayoutEffect(() => {
+     const previousPins = previousAlwaysRenderIndices.current;
 diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legendapp/list/react-native.mjs
-index fe5f415..9788ce6 100644
+index fe5f415..8219839 100644
 --- a/node_modules/@legendapp/list/react-native.mjs
 +++ b/node_modules/@legendapp/list/react-native.mjs
 @@ -1476,7 +1476,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -635,3 +653,19 @@ index fe5f415..9788ce6 100644
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
      getItemType: useWrapIfItem(getItemType),
      hasExternalScroll,
+@@ -8528,6 +8597,15 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       doMaintainScrollAtEnd(ctx);
+     }
+   }, [!!maintainScrollAtEndConfig]);
++  // Paseo patch: the chat fills its offscreen buffer after its initial reveal.
++  const previousDrawDistance = useRef(drawDistance);
++  useLayoutEffect(() => {
++    if (previousDrawDistance.current !== drawDistance) {
++      previousDrawDistance.current = drawDistance;
++      state.scrollForNextCalculateItemsInView = void 0;
++      calculateItemsInView(ctx);
++    }
++  }, [drawDistance]);
+   const previousAlwaysRenderIndices = useRef(alwaysRenderIndices);
+   useLayoutEffect(() => {
+     const previousPins = previousAlwaysRenderIndices.current;

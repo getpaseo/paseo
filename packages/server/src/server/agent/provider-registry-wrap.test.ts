@@ -224,6 +224,8 @@ describe("wrapSessionProvider", () => {
     expect(wrapped.id).toBe("session-2");
     expect(wrapped.capabilities).toEqual(session.capabilities);
     expect(wrapped.initialTimeline).toEqual(session.initialTimeline);
+    session.steerActiveTurn = undefined;
+    expect(wrapped.steerActiveTurn).toBeUndefined();
   });
 
   test("propagates steering failure without interrupting or replacing the turn", async () => {

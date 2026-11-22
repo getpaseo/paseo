@@ -1,3 +1,4 @@
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import { existsSync, rmSync, statSync, readFileSync } from "node:fs";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
@@ -211,7 +212,7 @@ test("64 MiB materialization leaves the event loop responsive and preserves byte
 });
 
 test("preserves base64 decoding across whitespace and chunk boundaries", async () => {
-  const bytes = Buffer.alloc(512 * 1024, 123);
+  const bytes = Buffer.alloc(1024 * 1024, 123);
   const base64 = bytes.toString("base64");
   const data = base64.match(/.{1,77}/g)!.join("\n");
   const result = await materializeProviderImage({ data, mimeType: "image/png" });
@@ -246,4 +247,115 @@ test("simultaneous requests for the same content share the published file", asyn
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(readFileSync(results[0].path).toString()).toBe("concurrent dedupe fixture");
+});
+
+test("a small image finishes before an earlier distinct 64 MiB image", async () => {
+  const largeData = Buffer.alloc(64 * 1024 * 1024, 42).toString("base64");
+  const smallData = Buffer.from("live image during large replay").toString("base64");
+  const completionOrder: string[] = [];
+  const large = materializeProviderImage({ data: largeData, mimeType: "image/png" }).then(
+    (image) => {
+      completionOrder.push("large");
+      return image;
+    },
+  );
+  const small = materializeProviderImage({ data: smallData, mimeType: "image/png" }).then(
+    (image) => {
+      completionOrder.push("small");
+      return image;
+    },
+  );
+  const images = await Promise.all([large, small]);
+  for (const image of images) rmSync(image.path, { force: true });
+  expect(completionOrder).toEqual(["small", "large"]);
+});
+
+test("publishing small distinct images stays within eight event-loop turns per image", async () => {
+  const count = 20;
+  const materializing = new AsyncLocalStorage<boolean>();
+  let turn = 0;
+  let lastActiveTurn = -1;
+  let activeTurns = 0;
+  const hook = createHook({
+    before() {
+      // A spinning immediate can tick many times while a filesystem worker is
+      // still running. Count only turns that advance the materializations.
+      if (materializing.getStore() && turn !== lastActiveTurn) {
+        lastActiveTurn = turn;
+        activeTurns++;
+      }
+    },
+  });
+  let probe = setImmediate(function tick() {
+    turn++;
+    probe = setImmediate(tick);
+  });
+  const images: string[] = [];
+  hook.enable();
+  try {
+    await materializing.run(true, async () => {
+      for (let index = 0; index < count; index++) {
+        const data = Buffer.from(`small attachment ${index}`).toString("base64");
+        const image = await materializeProviderImage({ data, mimeType: "image/png" });
+        images.push(image.path);
+      }
+    });
+  } finally {
+    hook.disable();
+    clearImmediate(probe);
+    for (const image of images) rmSync(image, { force: true });
+  }
+  expect(activeTurns).toBeLessThanOrEqual(8 * count);
+});
+
+test("six concurrent 8 MiB images share the main-thread CPU budget", async () => {
+  const inputs = Array.from({ length: 6 }, (_, index) => ({
+    data: Buffer.alloc(8 * 1024 * 1024, index + 1).toString("base64"),
+    mimeType: "image/png",
+  }));
+  const threadCpuMs = () => {
+    const { user, system } = process.threadCpuUsage();
+    return (user + system) / 1000;
+  };
+  let previous = threadCpuMs();
+  let longest = 0;
+  const probe = setInterval(() => {
+    const now = threadCpuMs();
+    longest = Math.max(longest, now - previous);
+    previous = now;
+  }, 1);
+  try {
+    const images = await Promise.all(inputs.map(materializeProviderImage));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (const image of images) rmSync(image.path, { force: true });
+    expect(longest).toBeLessThan(50);
+  } finally {
+    clearInterval(probe);
+  }
+});
+
+test("a busy event loop does not spend the image decode budget", async () => {
+  const count = 8;
+  let turns = 0;
+  let probe = setImmediate(function tick() {
+    turns++;
+    // Simulate unrelated work that exceeds a 10 ms decode slice.
+    const end = performance.now() + 20;
+    while (performance.now() < end) {
+      // Keep this event-loop turn busy.
+    }
+    probe = setImmediate(tick);
+  });
+  const paths: string[] = [];
+  try {
+    for (let index = 0; index < count; index++) {
+      const data = Buffer.from(`attachment on a busy loop ${index}`).toString("base64");
+      const image = await materializeProviderImage({ data, mimeType: "image/png" });
+      paths.push(image.path);
+    }
+  } finally {
+    clearImmediate(probe);
+    for (const image of paths) rmSync(image, { force: true });
+  }
+  expect(turns).toBeLessThanOrEqual(7 * count);
 });

@@ -1,28 +1,29 @@
 ---
 title: Discord for Hub
-description: Create the Discord application your Hub uses and connect a server.
+description: Create the Discord application your self-hosted Hub uses and connect a server.
 nav: Discord app
-order: 77
+order: 81
 category: Hub
 ---
 
 # Discord for Hub
 
-Hub connects out to Discord through the gateway. Discord does not send event webhooks to Hub, so the bot does not need a public inbound endpoint.
+Hub connects out to Discord through the Discord gateway. Discord does not send event webhooks to Hub, so the bot needs no public inbound HTTPS endpoint.
 
-Open **Apps → Discord**. Hub gives you the redirect URL and the exact steps to create the application, enable its bot, and copy the Application ID, Client Secret, and Bot token.
+## Set up the Discord app
 
-Under **Bot → Privileged Gateway Intents**, enable **Message Content Intent**. Without it, the bot receives empty messages and no trigger can match. Server Members Intent is not needed.
+1. Open **Apps → Discord** in Hub. Copy the redirect URL and follow the steps to create the Discord application and enable its bot.
+2. Under **Bot → Privileged Gateway Intents** in Discord, enable **Message Content Intent**. Without it, the bot receives empty messages and triggers cannot match. **Server Members Intent** is not needed.
+3. Paste the **Application ID**, **Client Secret**, and **Bot token** into Hub and choose **Verify and save**.
+4. Choose **Add to a Discord server** from Hub and authorize the server so it binds to the active Hub organization under **Integrations**.
 
-Paste the credentials into Hub and choose **Verify and save**. Then choose **Add to a Discord server** and authorize the server. Start the authorization from Hub so the server is bound to the active Hub organization.
+One Discord application and gateway connection serves every organization and server connected to this Hub. Keep the Hub process running because events that arrive while it is stopped are missed.
 
-One Discord application and gateway connection serves every organization and server connected to this Hub. Keep the Hub process running; events that arrive while it is stopped are missed.
-
-Now write a [Discord trigger](/docs/hub/triggers/discord).
+A connected Discord server supports both [Discord triggers](/docs/hub/triggers/discord) and [scoped Discord integration tools](/docs/hub/tools).
 
 ## Configure from environment
 
-Deployments that keep app secrets outside Hub can set:
+Deployments that manage app secrets outside Hub can set:
 
 ```dotenv
 DISCORD_CLIENT_ID=
@@ -30,4 +31,4 @@ DISCORD_CLIENT_SECRET=
 DISCORD_BOT_TOKEN=
 ```
 
-`DISCORD_CLIENT_ID` is the Application ID shown under **General Information**. Environment configuration takes precedence over a saved Discord application and appears as **Managed by environment** under **Apps**.
+`DISCORD_CLIENT_ID` is the **Application ID** shown under **General Information** in Discord. Environment configuration takes precedence over a saved Discord application and appears as **Managed by environment** under **Apps**.

@@ -1,0 +1,20 @@
+context platform=ios timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"agent-chat-scroll\"" 20000
+press "id=\"workspace-tab-switcher-trigger\""
+wait "label=\"Bottom Sheet\"" 10000
+gesture pan 200 650 0 -300 500
+wait 1000
+press 200 300
+wait "id=\"terminal-surface\"" 10000
+press "id=\"workspace-tab-switcher-trigger\""
+wait "label=\"Bottom Sheet\"" 10000
+gesture pan 200 650 0 -300 500
+wait 1000
+gesture pan 200 400 0 300 500
+wait 1000
+press 200 424
+wait "id=\"agent-chat-scroll\"" 10000
+close

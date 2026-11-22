@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { execFileSync, execSync, spawnSync } from "child_process";
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   rmSync,
@@ -98,16 +99,37 @@ import {
   writePaseoWorktreeMetadata,
 } from "./worktree-metadata.js";
 
+let templateRepoRoot: string | null = null;
+let templateRepoDir: string | null = null;
+
+function getTemplateRepoDir(): string {
+  if (templateRepoDir) return templateRepoDir;
+  templateRepoRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-template-")));
+  templateRepoDir = join(templateRepoRoot, "repo");
+  mkdirSync(templateRepoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: templateRepoDir });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: templateRepoDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: templateRepoDir });
+  writeFileSync(join(templateRepoDir, "file.txt"), "hello\n");
+  execFileSync("git", ["add", "."], { cwd: templateRepoDir });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: templateRepoDir,
+  });
+  return templateRepoDir;
+}
+
+afterAll(() => {
+  if (templateRepoRoot) {
+    rmSync(templateRepoRoot, { recursive: true, force: true });
+    templateRepoRoot = null;
+    templateRepoDir = null;
+  }
+});
+
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
   const repoDir = join(tempDir, "repo");
-  mkdirSync(repoDir, { recursive: true });
-  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
-  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
-  writeFileSync(join(repoDir, "file.txt"), "hello\n");
-  execFileSync("git", ["add", "."], { cwd: repoDir });
-  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], { cwd: repoDir });
+  cpSync(getTemplateRepoDir(), repoDir, { recursive: true });
   return { tempDir, repoDir };
 }
 
@@ -178,6 +200,7 @@ function createPullRequestStatus(overrides?: Partial<CurrentPullRequestStatus>) 
 
 interface RequestedPullRequestTarget {
   headRef: string;
+  currentBranch?: string;
   headSha?: string;
   headRepositoryOwner?: string;
 }
@@ -194,6 +217,7 @@ function createGitHubServiceRecordingPullRequestTargets(
   github.getCurrentPullRequestStatus = async (request) => {
     options.requestedTargets.push({
       headRef: request.headRef,
+      ...(request.currentBranch ? { currentBranch: request.currentBranch } : {}),
       ...(request.headSha ? { headSha: request.headSha } : {}),
       ...(request.headRepositoryOwner ? { headRepositoryOwner: request.headRepositoryOwner } : {}),
     });
@@ -3460,7 +3484,7 @@ const x = 1;
       { paseoHome },
     );
 
-    expect(requestedTargets).toEqual([factsTarget]);
+    expect(requestedTargets).toEqual([{ ...factsTarget, currentBranch: "tender-parrot" }]);
   });
 
   it("uses the tracked fork branch for PR worktree status lookup", async () => {
@@ -3490,7 +3514,11 @@ const x = 1;
     const status = await getPullRequestStatus(repoDir, github);
 
     expect(requestedTargets).toEqual([
-      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+      expect.objectContaining({
+        headRef: "main",
+        currentBranch: "chethanuk/main",
+        headRepositoryOwner: "chethanuk",
+      }),
     ]);
     expect(status.status?.number).toBe(345);
     expect(status.status?.headRefName).toBe("main");
@@ -3519,6 +3547,20 @@ const x = 1;
     expect(status.status?.headRefName).toBe("feature");
     expect(status.status?.isMerged).toBe(false);
     expect(status.status?.state).toBe("closed");
+  });
+
+  it("looks up PR status again when switching branches at the same commit", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    const feature = await getPullRequestStatus(repoDir, forge);
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    const main = await getPullRequestStatus(repoDir, forge);
+
+    expect(feature.status?.headRefName).toBe("feature");
+    expect(main.status?.headRefName).toBe("main");
+    expect(requestedTargets.map(({ headRef }) => headRef)).toEqual(["feature", "main"]);
   });
 
   it("caches PR status results for duplicate lookups", async () => {

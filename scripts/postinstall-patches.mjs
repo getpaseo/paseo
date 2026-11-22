@@ -82,9 +82,26 @@ const patchedPackages = [
     patchPrefix: "react-native-svg+",
     cwd: "packages/app",
   },
+  // Reconcile ResponderEventPlugin trackedTouchCount and ResponderTouchHistoryStore touchBank with
+  // nativeEvent.touches.length so an unmatched touch start or single-pointer synthetic cancel
+  // (e.g. Modal dismiss while touching, RNGH pinch takeover, or double ACTION_DOWN in
+  // ReactRootView/ReactModalHostView) self-heals instead of leaving trackedTouchCount > 0 or stale
+  // active contacts in touchBank. Remove once upstream React/React Native reconciles both.
+  {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  // Keep Android PasteTextInput aligned with RN AndroidTextInput (omit iOS-only
+  // onSelectionChangeShouldSetResponder), plus ref/eventCount/trailing-newline fixes.
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
     patchPrefix: "@mattermost+react-native-paste-input+",
+  },
+  // Backport of https://github.com/mermaid-js/mermaid/pull/8459 (lexer half): a flowchart label
+  // with an "@" parses. The patch header has the details. Remove when the app uses mermaid 12.
+  {
+    nodeModulesPath: "node_modules/mermaid",
+    patchPrefix: "mermaid+",
   },
   {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",

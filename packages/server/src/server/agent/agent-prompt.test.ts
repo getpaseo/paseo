@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import { ForegroundPromptStart } from "./agent-run-state.js";
 import type {
   AgentClient,
   AgentRunResult,
@@ -161,7 +162,7 @@ class SlowStartAgentClient implements AgentClient {
 async function createRunStartScenario(startDelayMs: number | null): Promise<{
   agentManager: AgentManager;
   agentId: string;
-  startRun: () => Promise<void>;
+  startRun: () => Promise<{ started: Promise<void> }>;
   cleanup: () => Promise<void>;
 }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-run-start-budget-"));
@@ -178,14 +179,16 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
   return {
     agentManager,
     agentId: snapshot.id,
-    // streamAgent registers the pending run synchronously, so the wait always observes it.
+    // Returns the sender's start, bound to the run streamAgent registers.
     startRun: async () => {
-      const run = agentManager.streamAgent(snapshot.id, "start the run");
+      const start = new ForegroundPromptStart(snapshot.id);
+      const run = agentManager.streamAgent(snapshot.id, "start the run", undefined, start);
       drained = (async () => {
         for await (const _event of run) {
           // Drain whatever the turn produces.
         }
       })().catch(() => undefined);
+      return { started: start.started };
     },
     cleanup: async () => {
       // Release any turn still held open, then close. The drain is deliberately not
@@ -207,8 +210,8 @@ test("waiting for a run start outlasts the slowest provider startup budget", asy
   vi.useFakeTimers();
 
   try {
-    await scenario.startRun();
-    const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId);
+    const { started } = await scenario.startRun();
+    const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId, started);
     let settled = false;
     const markSettled = () => {
       settled = true;
@@ -233,8 +236,8 @@ test("waiting for a run start still gives up at the run start budget", async () 
   vi.useFakeTimers();
 
   try {
-    await scenario.startRun();
-    const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId);
+    const { started } = await scenario.startRun();
+    const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId, started);
     const rejection = expect(wait).rejects.toThrow(
       "codex run did not start within 60 seconds (phase: run start)",
     );

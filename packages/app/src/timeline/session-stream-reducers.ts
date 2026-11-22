@@ -1,8 +1,9 @@
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentMetric, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+import { stampTimelineTurnMetrics } from "@/timeline/turn-metrics";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -133,6 +134,7 @@ interface TimelineResponseEntry {
   turnId?: string;
   item: AgentTimelineItem;
   timestamp: string;
+  turnMetrics?: AgentMetric[];
 }
 
 export interface ProcessTimelineResponseInput {
@@ -289,7 +291,10 @@ function classifySessionTimelineSeq({
   seq: number;
 }): SessionTimelineSeqDecision {
   if (!cursor) {
-    return "init";
+    // A synced chat without coverage was empty when it last caught up. Only an epoch's
+    // first row can start coverage; a later row means rows before it were missed, for
+    // example while offline, and a cursor started there would hide them from catch-up.
+    return seq === 1 ? "init" : "gap";
   }
   if (cursor.epoch !== epoch) {
     return "drop_epoch";
@@ -1265,7 +1270,8 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Convert entries to timeline units
   // ------------------------------------------------------------------
-  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+  const pageEntries = selectEntriesOwnedByTimelinePage(payload);
+  const timelineUnits = pageEntries.map((entry) => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1376,8 +1382,8 @@ export function processTimelineResponse(
     });
   }
 
-  const nextTail = timelineResult.tail;
-  const nextHead = timelineResult.head;
+  const nextTail = stampTimelineTurnMetrics(timelineResult.tail, payload.epoch, pageEntries);
+  const nextHead = stampTimelineTurnMetrics(timelineResult.head, payload.epoch, pageEntries);
   const nextCursor = timelineResult.cursor;
   const cursorChanged = timelineResult.cursorChanged;
   sideEffects.push(...timelineResult.sideEffects);
@@ -1543,14 +1549,14 @@ function processTimelineSequencingGate(input: {
     return {
       ...base,
       shouldApplyStreamEvent: false,
-      sideEffects: currentCursor
-        ? [
-            {
-              type: "catch_up",
-              cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
-            },
-          ]
-        : [],
+      sideEffects: [
+        {
+          type: "catch_up",
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : { epoch, endSeq: 0 },
+        },
+      ],
     };
   }
   if (decision === "drop_epoch" && seq === 1) {

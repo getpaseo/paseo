@@ -29,7 +29,7 @@ export default function contribute(server: PluginServerContext) {
 
 所有处理函数都必须为异步函数。轮次完成包括成功、失败和取消，请查看 `outcome`。权限完成包括所有处理结果，请查看 `resolution`。
 
-创建 Agent 会发生一次，`agent.create.before` 修改已保存的配置。打开 Agent 指启动 Provider 进程，包括首次运行、daemon 重启后恢复、读取历史、导入外部会话和重新加载。`agent.open.before` 为每次启动提供临时的环境变量、工具和 MCP 服务器。创建会打开 Agent；打开已有 Agent 不会创建它；关闭会结束运行中的实例。在应用中打开标签页不属于此操作。
+创建 Agent 会发生一次，`agent.create.before` 修改已保存的配置。打开 Agent 指启动 Provider 进程，包括首次运行、daemon 重启后恢复、读取历史、导入外部会话和重新加载。`agent.open.before` 为每次启动提供临时的环境变量、指令、工具和 MCP 服务器。创建会打开 Agent；打开已有 Agent 不会创建它；关闭会结束运行中的实例。在应用中打开标签页不属于此操作。
 
 `worktree.create.after` 在工作区注册前运行，随后是 `workspace.create.after`，两者都早于第一个 Agent 的 `agent.create.before` / `agent.open.before`。
 
@@ -47,22 +47,22 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 
 ## 钩子一览 {#hooks}
 
-| 钩子                      | 等待 | 载荷                                      | 可修改                                     |
-| ------------------------- | ---- | ----------------------------------------- | ------------------------------------------ |
-| `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                               |
-| `workspace.create.after`  | 否   | `{ workspace }`                           |                                            |
-| `workspace.archive.after` | 否   | `{ workspace }`                           |                                            |
-| `worktree.create.before`  | 是   | `{ request }`                             | 创建选项和目标路径                         |
-| `worktree.create.after`   | 是   | `{ worktree }`                            | worktree 中的文件；抛出错误中止创建        |
-| `agent.create.before`     | 是   | `{ request: { config, env?, metadata } }` | 除 `cwd` 外的已保存配置；`env`；`metadata` |
-| `agent.create.after`      | 否   | `{ agent }`                               |                                            |
-| `agent.open.before`       | 是   | `{ request }`                             | 仅用于启动的 `env`、`tools`、`mcpServers`  |
-| `agent.close.after`       | 否   | `{ agent }`                               |                                            |
-| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                            |
-| `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                            |
-| `agent.turn.after`        | 否   | `{ agent, turnId, outcome }`              |                                            |
-| `agent.permission.before` | 否   | `{ agent, request }`                      |                                            |
-| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                            |
+| 钩子                      | 等待 | 载荷                                      | 可修改                                                          |
+| ------------------------- | ---- | ----------------------------------------- | --------------------------------------------------------------- |
+| `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                                                    |
+| `workspace.create.after`  | 否   | `{ workspace }`                           |                                                                 |
+| `workspace.archive.after` | 否   | `{ workspace }`                           |                                                                 |
+| `worktree.create.before`  | 是   | `{ request }`                             | 创建选项和目标路径                                              |
+| `worktree.create.after`   | 是   | `{ worktree }`                            | worktree 中的文件；抛出错误中止创建                             |
+| `agent.create.before`     | 是   | `{ request: { config, env?, metadata } }` | 除 `cwd` 外的已保存配置；`env`；`metadata`                      |
+| `agent.create.after`      | 否   | `{ agent }`                               |                                                                 |
+| `agent.open.before`       | 是   | `{ request }`                             | 仅用于启动的 `env`、`appendSystemPrompt`、`tools`、`mcpServers` |
+| `agent.close.after`       | 否   | `{ agent }`                               |                                                                 |
+| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                                                 |
+| `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                                                 |
+| `agent.turn.after`        | 否   | `{ agent, turnId, outcome }`              |                                                                 |
+| `agent.permission.before` | 否   | `{ agent, request }`                      |                                                                 |
+| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                                                 |
 
 ## 共享载荷 {#shared-payloads}
 
@@ -205,7 +205,7 @@ server.addHook("worktree.create.before", async ({ request }) => ({
 
 Paseo 解析父目录中的符号链接并验证返回的路径。路径必须为绝对路径且不存在，不能是文件系统根目录、用户主目录、仓库根目录、`.git` 目录内的路径或仓库的祖先目录。目标已存在时创建失败，Paseo 不会为插件选择的路径添加后缀。插件应让 Paseo 创建目录。
 
-顺序：`worktree.create.before` → `git worktree add` → `worktree.create.after` → 注册工作区。恢复缺失的 worktree 时使用记录的原路径，不运行这两个创建钩子。
+顺序：`worktree.create.before` → worktree 管理器 `create`（或 `git worktree add`）→ `worktree.create.after` → 注册工作区。若要将 `git worktree add`、移除和恢复委托给 Worktrunk 等外部工具，请使用 `server.registerWorktreeManager()` 注册 [worktree 管理器](/docs/plugins/reference#worktree-managers)，而不是在 `worktree.create.before` 中创建目录。恢复缺失的 worktree 时使用记录的原路径，不运行创建钩子，并在对应管理器提供可选 `restore` 处理函数时委托给它。
 
 ## worktree.create.after {#worktreecreateafter}
 
@@ -279,7 +279,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before {#agentopenbefore}
 
-收到 `{ request }`，只能修改 `env`、`tools` 和 `mcpServers`，修改只用于此次启动。其他字段只读。抛出错误、无效返回或超时会让打开操作失败。
+收到 `{ request }`，只能修改 `env`、`appendSystemPrompt`、`tools` 和 `mcpServers`，修改只用于此次启动。其他字段只读。抛出错误、无效返回或超时会让打开操作失败。
 
 不要 await 对正在打开的 Agent 的写入，例如 `setMetadata`。该写入要等打开完成，而打开在等你的钩子，结果钩子超时，打开失败。启动写入但不要 await，它会在打开完成后立即执行：
 
@@ -324,6 +324,19 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | `reason`      | `create`、`resume`、`refresh`、`import`                                                                  |
 | `purpose`     | `interactive`、`history`                                                                                 |
 | `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。                     |
+
+### 在每次打开会话时追加指令 {#append-instructions-on-every-session-opening}
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Follow the team engineering guide."],
+}));
+```
+
+插件指令按插件顺序追加在已保存的 Agent 提示词和 daemon 指令之后。指令不会保存到 Agent 配置中，读取历史时也会忽略这些指令。插件数据更改后，重新加载插件以在下次重新打开会话时应用新指令。正在运行的轮次会继续。移除指令不会删除对话历史。内部 Agent 也会收到这些指令。ACP 适配器不会向 Provider 发送系统指令。插件 Provider 会收到组合后的提示词，但需要自行应用。
+
+更新 Codex 指令需要 Codex 0.121.0 或更新版本，且 app server 报告的版本必须可识别。版本显示为 `0.0.0` 的源码构建需要换用带版本号的构建。Paseo 会向现有会话添加当前指令快照；之前的快照仍保留在对话中。更新期间发生崩溃或回退会话时，快照可能重复。
 
 ### 在每次打开会话时注入环境变量 {#inject-environment-variables-on-every-session-opening}
 
@@ -664,12 +677,13 @@ Creation request
 
 ## 完整示例 {#complete-examples}
 
-| 插件                                                                                                   | 包含                                                      |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent、工作区和 worktree 钩子；隐去环境变量值的 JSON 日志 |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree    |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                          |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具        |
+| 插件                                                                                                   | 包含                                                              |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent、工作区和 worktree 钩子；隐去环境变量值的 JSON 日志         |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree            |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                                  |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具                |
+| [worktrunk](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)                     | worktree 管理器（`create`、`remove`、`restore`）与 Agent 活动标记 |
 
 用 `paseo plugin logs lifecycle-logger` 或主机的 `daemon.log` 读取 logger 的输出。
 

@@ -377,7 +377,9 @@ export function WorkspaceSetupDialog() {
       } catch (error) {
         const message = toErrorMessage(error);
         setErrorMessage(message);
-        toast.error(message);
+        if (!getIsStillActive()) {
+          toast.error(message);
+        }
       } finally {
         if (getIsStillActive()) {
           setPendingAction(null);
@@ -469,11 +471,10 @@ export function WorkspaceSetupDialog() {
             commandDraft={composerState?.commandDraft}
             agentControls={agentControlsWithDisabled}
             inputWrapperStyle={styles.composerInputWrapper}
+            error={errorMessage}
           />
         </KeyboardTranslateView>
       </FileDropZone>
-
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>
   );
 }
@@ -495,11 +496,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     marginHorizontal: -theme.spacing[6],
     marginVertical: -theme.spacing[2],
-  },
-  errorText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.destructive,
-    lineHeight: 20,
   },
   composerSlot: {
     paddingBottom: theme.spacing[4],

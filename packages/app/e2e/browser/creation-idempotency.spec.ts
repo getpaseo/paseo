@@ -1,3 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { gotoAppShell } from "../support/helpers/app";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
   attachComposerTestImage,
   expectAttachmentPill,
@@ -12,10 +18,12 @@ import {
   selectWorkspaceIsolation,
   connectNewWorkspaceDaemonClient,
   loadSessionMessageReaders,
+  openNewWorkspaceComposer,
 } from "../support/helpers/new-workspace";
 import {
   selectLaunchOption,
   submitTerminalLaunch,
+  seedTerminalProfiles,
   holdTerminalCreationResponse,
   pauseNextImageEncoding,
 } from "../support/helpers/new-workspace-launch";
@@ -281,12 +289,14 @@ for (const scenario of [
   test(`retrying failed agent initialization preserves its workspace${scenario.suffix}`, async ({
     creation,
     startup,
+    page,
   }) => {
     await creation.openWorkspaceForm("local");
     await creation.submitPrompt("Retry this workspace and agent together.", "Create");
     await creation.expectAgentStillStarting();
     await startup.fail();
     await creation.expectStartupFailure();
+    await expect(page.getByTestId("app-toast")).toHaveCount(0);
     await creation.expectOneCreatedWorkspace();
     await scenario.prepare(creation);
     await creation.submitPrompt("Retry this workspace and agent together.");
@@ -343,6 +353,115 @@ test("an edited agent draft starts after its first start failed", async ({
   await creation.expectPromptVisible("Start the edited task.");
   await creation.expectAgentCount(1);
   await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+});
+
+test("editing a New workspace with an uncertain provisioning failure cannot create a duplicate", async ({
+  page,
+}) => {
+  // An empty git repository naturally rejects worktree creation before workspace_ready.
+  const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-empty-git-ws-"));
+  execFileSync("git", ["init"], { cwd: repoDir, stdio: "ignore" });
+  const client = await connectNewWorkspaceDaemonClient();
+  let projectId: string | null = null;
+  try {
+    const seeded = await client.createWorkspace({
+      source: { kind: "directory", path: repoDir },
+    });
+    if (!seeded.workspace) throw new Error(seeded.error ?? "Failed to seed empty git project");
+    projectId = seeded.workspace.projectId;
+    const listed = await client.listProjects();
+    const project = listed.projects.find((entry) => entry.projectId === projectId);
+    if (!project?.projectKey) throw new Error("Seeded project has no projectKey");
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, {
+      projectKey: project.projectKey,
+      projectDisplayName: seeded.workspace.projectDisplayName,
+    });
+    await selectWorkspaceIsolation(page, "worktree");
+    await fillComposerDraft(page, "Start original worktree task.");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    const composerError = page.getByTestId("composer-error").filter({ visible: true }).first();
+    await expect(composerError).toContainText("Unable to resolve repository default branch");
+    // The failure renders once in the composer alert, not duplicated in a top toast.
+    await expect(page.getByText("Unable to resolve repository default branch")).toHaveCount(1);
+
+    await selectWorkspaceIsolation(page, "local");
+    await fillComposerDraft(page, "hi");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect(composerError).toContainText("The previous start may still be running.");
+    await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+    expect(
+      (await client.fetchWorkspaces()).entries
+        .filter((entry) => entry.projectId === projectId)
+        .map((entry) => entry.id),
+    ).toEqual([seeded.workspace.id]);
+  } finally {
+    if (projectId) await client.removeProject(projectId).catch(() => undefined);
+    await client.close();
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("switching only the launch target after a failed New workspace creation starts a new workspace", async ({
+  creation,
+  page,
+}) => {
+  const profiles = await seedTerminalProfiles([
+    {
+      id: "promptless-shell",
+      name: "Promptless Shell",
+      command: "sh",
+      args: ["-c", "echo ready; sleep 5"],
+      promptArg: "none",
+    },
+  ]);
+  let restoreDirectory: (() => void) | undefined;
+  try {
+    await creation.openWorkspaceForm("local");
+    const directory = new URL(page.url()).searchParams.get("dir");
+    if (!directory) throw new Error("Workspace form has no project directory");
+    const displaced = `${directory}-temporarily-missing`;
+    // Missing source is a conclusive rejection; a generic provisioning error can be uncertain.
+    renameSync(directory, displaced);
+    restoreDirectory = () => renameSync(displaced, directory);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(
+      page.getByTestId("composer-error").filter({ visible: true }).first(),
+    ).toContainText("Directory not found");
+    restoreDirectory();
+    restoreDirectory = undefined;
+
+    await selectLaunchOption(page, "promptless-shell");
+    await submitTerminalLaunch(page);
+    await creation.expectOneCreatedWorkspace();
+    await expect(
+      page.locator('[data-testid^="workspace-tab-terminal_"]').filter({ visible: true }).first(),
+    ).toBeVisible();
+  } finally {
+    restoreDirectory?.();
+    await profiles.restore();
+  }
+});
+
+test("failing New workspace creation after switching workspaces shows an error toast", async ({
+  creation,
+  workspaceProvision,
+  page,
+}) => {
+  await creation.openWorkspaceForm("local");
+  await workspaceProvision.hold();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.locator('[data-testid^="sidebar-workspace-row-"]').first().click();
+  await expect(page).toHaveURL(/\/workspace\//);
+
+  await workspaceProvision.fail();
+  await expect(page.getByTestId("app-toast")).toContainText(
+    "Workspace provisioning failed for test",
+  );
 });
 
 for (const entry of [
