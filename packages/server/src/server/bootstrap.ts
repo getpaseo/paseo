@@ -440,6 +440,7 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  planAcceptModeDefaults?: Record<string, string>;
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
@@ -615,6 +616,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    planAcceptModeDefaults: config.planAcceptModeDefaults,
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -1045,6 +1047,8 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     resolvePaseoToolPolicy: (provider) =>
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
+    resolvePlanAcceptModeDefault: (provider) =>
+      daemonConfigStore.get().planAcceptModeDefaults?.[provider],
     logger,
   });
   const syncPluginProviders = () => {

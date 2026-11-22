@@ -8070,6 +8070,68 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("approving a synthetic Codex plan permission applies an explicit targetModeId", async () => {
+    const session = createSession({ providerOptions: { plan_mode: true } });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("turn/started", { turn: { id: "turn-plan-4" } });
+    await asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the new flow", status: "pending" }],
+    });
+    await asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const request = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    await session.respondToPermission(request.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+      targetModeId: "full-access",
+    });
+
+    await expect(session.getCurrentMode()).resolves.toBe("full-access");
+  });
+
+  test("approving a synthetic Codex plan permission ignores an invalid targetModeId", async () => {
+    const session = createSession({ providerOptions: { plan_mode: true } });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("turn/started", { turn: { id: "turn-plan-5" } });
+    await asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the new flow", status: "pending" }],
+    });
+    await asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const request = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    await session.respondToPermission(request.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+      targetModeId: "not-a-real-mode",
+    });
+
+    await expect(session.getCurrentMode()).resolves.toBe("auto");
+  });
+
   test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
     const session = createSession({
       providerOptions: { plan_mode: true, service_tier: "fast" },

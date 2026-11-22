@@ -1,6 +1,10 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { View } from "react-native";
+import { Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import type { AgentMode } from "@getpaseo/protocol/agent-types";
+import { formatAgentModeLabel } from "@/agent-controls/labels";
+import { PlanAcceptModeMenuItem } from "@/components/plan-accept-mode-menu-item";
 import { ProviderInstallationSection } from "@/components/provider-installation-section";
 import { useProviderInstallation } from "@/components/provider-installation";
 import {
@@ -12,6 +16,13 @@ import {
 } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useHostFeature } from "@/runtime/host-features";
 import { readAcpProviderInstallGuide } from "@/hooks/use-acp-provider-catalog";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
@@ -119,6 +130,7 @@ export function ProviderDetail({
       {sections.models ? (
         <ProviderModels serverId={serverId} entry={entry} discovered={sections.models === "all"} />
       ) : null}
+      <PlanAcceptModeCard serverId={serverId} entry={entry} />
       <Troubleshooting
         serverId={serverId}
         entry={entry}
@@ -248,3 +260,69 @@ function DangerZone({ removing, onRemove }: { removing: boolean; onRemove: () =>
     </SettingsSection>
   );
 }
+
+function PlanAcceptModeCard({ serverId, entry }: { serverId: string; entry: ProviderEntry }) {
+  const { t } = useTranslation();
+  const supported = useHostFeature(serverId, "planAcceptModeSelection");
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const provider = entry.provider;
+  const modes: AgentMode[] = (entry.modes ?? []).filter((mode) => mode.id !== "plan");
+  const selectedModeId = config?.planAcceptModeDefaults?.[provider] ?? null;
+  const selectedMode = modes.find((mode) => mode.id === selectedModeId) ?? null;
+  const handleSelect = useCallback(
+    (modeId: string) => {
+      // Only this provider's key: the daemon merges it, so a stale local snapshot of the other
+      // providers' defaults cannot clobber a concurrent update from another client.
+      void patchConfig({ planAcceptModeDefaults: { [provider]: modeId } });
+    },
+    [patchConfig, provider],
+  );
+  if (!supported || modes.length === 0) return null;
+
+  return (
+    <SettingsSection title={t("settings.providers.planAcceptMode.sectionTitle")}>
+      <SettingsCard>
+        <SettingsRow label={t("settings.providers.planAcceptMode.rowTitle")}>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              testID={`provider-plan-accept-mode-trigger-${provider}`}
+              style={styles.planAcceptModeTrigger}
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.providers.planAcceptMode.pickerLabel")}
+            >
+              <Text style={styles.planAcceptModeTriggerText} numberOfLines={1}>
+                {selectedMode
+                  ? formatAgentModeLabel(selectedMode)
+                  : t("settings.providers.planAcceptMode.unset")}
+              </Text>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" testID={`provider-plan-accept-mode-menu-${provider}`}>
+              {modes.map((mode) => (
+                <PlanAcceptModeMenuItem
+                  key={mode.id}
+                  mode={mode}
+                  selected={mode.id === selectedModeId}
+                  testIdPrefix="provider-plan-accept-mode-item"
+                  onSelect={handleSelect}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SettingsRow>
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  planAcceptModeTrigger: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  planAcceptModeTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+}));
