@@ -74,6 +74,7 @@ import {
   createProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
+import { ImportedHistory } from "./provider-session-import.js";
 import { readPluginOptionState } from "./plugin-provider-options.js";
 import {
   buildCommandResolutionDiagnosticRows,
@@ -1201,8 +1202,7 @@ class PluginAgentClient implements AgentClient {
       session,
       config: { ...context.storedConfig, provider: this.provider, cwd: input.cwd },
       persistence,
-      timeline: session.timelineHistory(),
-      providerSubagentEvents: session.subagentHistory(),
+      ...session.importedHistory(),
     };
   }
 
@@ -1629,13 +1629,10 @@ class PluginAgentSession implements AgentSession {
       );
   }
 
-  subagentHistory(): NonNullable<ImportedProviderSession["providerSubagentEvents"]> {
-    return this.history
-      .read(this.provider)
-      .filter(
-        (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
-          event.type === "provider_subagent",
-      );
+  importedHistory(): ReturnType<ImportedHistory["result"]> {
+    const history = new ImportedHistory();
+    for (const event of this.history.read(this.provider)) history.add(event);
+    return history.result();
   }
 
   attachChild(
@@ -1694,6 +1691,14 @@ class PluginAgentSession implements AgentSession {
             turnId: event.turnId,
           },
         ];
+      case "session.metrics":
+        return [
+          {
+            type: "session_metrics_updated",
+            provider: this.provider,
+            metrics: event.metrics.map((metric) => ({ ...metric })),
+          },
+        ];
       case "timeline.item":
         return this.translateTimeline(event);
       case "session.permission":
@@ -1720,7 +1725,12 @@ class PluginAgentSession implements AgentSession {
     }
     if (this.currentTurnId === event.turnId) this.currentTurnId = null;
     if (event.state === "completed") {
-      return { type: "turn_completed", provider: this.provider, turnId: event.turnId };
+      return {
+        type: "turn_completed",
+        provider: this.provider,
+        turnId: event.turnId,
+        ...(event.metrics ? { metrics: event.metrics.map((metric) => ({ ...metric })) } : {}),
+      };
     }
     if (event.state === "canceled") {
       return {

@@ -354,6 +354,7 @@ export const fr: TranslationResources = {
       copyTurn: "Copier l’échange",
       copyMessage: "Copier le message",
       forkMenu: "Forker la conversation à partir d’ici",
+      turnStats: "Statistiques de l’échange",
       forkInNewTab: "Forker dans un nouvel onglet",
       forkInNewWorkspace: "Forker dans un nouvel espace de travail",
       forkUnavailable: "Mettez à jour l’hôte pour utiliser cette fonction.",

@@ -419,6 +419,8 @@ configuration, persistence, permissions, and failures are events.
 Use the single `session.prompt` input for messages, structured commands, steering, and command side
 effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
+Report measurements as `metrics` on a completed `session.turn` and through `session.metrics`. See
+[Report metrics](/docs/plugins/providers#report-metrics).
 
 Provider options are one record, `ProviderSessionConfig.providerOptions` on `session.open`. It
 includes configured defaults and per-agent overrides; validate and apply it in your provider. Report

@@ -8677,6 +8677,7 @@ export class Session {
                 seqStart: entry.seqStart,
                 seqEnd: entry.seqEnd,
                 sourceSeqRanges: entry.sourceSeqRanges,
+                turnMetrics: entry.turnMetrics,
                 turnId: undefined as string | undefined,
                 collapsed: (
                   source

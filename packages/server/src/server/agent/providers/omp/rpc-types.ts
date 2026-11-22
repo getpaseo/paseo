@@ -180,6 +180,9 @@ export const OmpSessionStatsSchema = z
       .passthrough()
       .optional(),
     cost: z.number().optional(),
+    toolCalls: z.number().optional(),
+    // Copilot bills by request rather than by token.
+    premiumRequests: z.number().optional(),
     contextUsage: OmpContextUsageSchema.optional(),
   })
   .passthrough();
