@@ -1,4 +1,16 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { createCreationScenario } from "../support/helpers/creation";
+import { gotoAppShell } from "../support/helpers/app";
+import { fillComposerDraft } from "../support/helpers/composer";
+import {
+  connectNewWorkspaceDaemonClient,
+  openNewWorkspaceComposer,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
 
@@ -178,6 +190,55 @@ test("an edited agent draft starts after its first start failed", async ({
   await creation.expectPromptVisible("Start the edited task.");
   await creation.expectAgentCount(1);
   await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+});
+
+test("editing a failed New workspace submission starts without a request key conflict", async ({
+  page,
+}) => {
+  // An empty git repository naturally rejects worktree creation before workspace_ready.
+  const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-empty-git-ws-"));
+  execFileSync("git", ["init"], { cwd: repoDir, stdio: "ignore" });
+  const client = await connectNewWorkspaceDaemonClient();
+  let projectId: string | null = null;
+  try {
+    const seeded = await client.createWorkspace({
+      source: { kind: "directory", path: repoDir },
+    });
+    if (!seeded.workspace) throw new Error(seeded.error ?? "Failed to seed empty git project");
+    projectId = seeded.workspace.projectId;
+    const listed = await client.listProjects();
+    const project = listed.projects.find((entry) => entry.projectId === projectId);
+    if (!project?.projectKey) throw new Error("Seeded project has no projectKey");
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, {
+      projectKey: project.projectKey,
+      projectDisplayName: seeded.workspace.projectDisplayName,
+    });
+    await selectWorkspaceIsolation(page, "worktree");
+    await fillComposerDraft(page, "Start original worktree task.");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    const composerError = page.getByTestId("composer-error").filter({ visible: true }).first();
+    await expect(composerError).toContainText("Unable to resolve repository default branch");
+    // The failure renders once in the composer alert, not duplicated in a top toast.
+    await expect(page.getByText("Unable to resolve repository default branch")).toHaveCount(1);
+
+    await selectWorkspaceIsolation(page, "local");
+    await fillComposerDraft(page, "hi");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect(page).toHaveURL(/\/workspace\//);
+    await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: "hi", visible: true }),
+    ).toBeVisible();
+  } finally {
+    if (projectId) await client.removeProject(projectId).catch(() => undefined);
+    await client.close();
+    rmSync(repoDir, { recursive: true, force: true });
+  }
 });
 
 for (const entry of [

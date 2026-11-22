@@ -23,7 +23,7 @@ import {
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useToast } from "@/contexts/toast-context";
+import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { getForgePresentation } from "@/git/forge";
@@ -365,10 +365,8 @@ async function createMultiplicityWorkspace(input: {
     prompt: input.prompt,
     attachments: input.attachments,
   });
-  const payload = await input.client.createWorkspace({
-    idempotencyKey: input.idempotencyKey,
+  const request: Omit<CreateWorkspaceRequestOptions, "idempotencyKey" | "onEvent"> = {
     agent: input.agent,
-    onEvent: input.onEvent,
     source: isWorktree
       ? {
           kind: "worktree",
@@ -387,6 +385,11 @@ async function createMultiplicityWorkspace(input: {
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
+  };
+  const payload = await input.client.createWorkspace({
+    ...request,
+    idempotencyKey: draftCreationKey(input.idempotencyKey, request),
+    onEvent: input.onEvent,
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -911,7 +914,6 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const toast = useToast();
   const composerEditing = useNewWorkspaceComposerEditing();
   const { leaveFullscreen } = composerEditing;
   const mergeWorkspaces = useCallback(
@@ -1443,7 +1445,6 @@ export function NewWorkspaceScreen({
         const message = toErrorMessage(error);
         setPendingAction(null);
         setErrorMessage(message);
-        toast.error(message);
       }
     },
     [
@@ -1460,7 +1461,6 @@ export function NewWorkspaceScreen({
       selectedServerId,
       supportsForgeSearch,
       t,
-      toast,
       updateFormPreferences,
       withConnectedClient,
     ],
@@ -1524,7 +1524,6 @@ export function NewWorkspaceScreen({
       const message = toErrorMessage(error);
       setPendingAction(null);
       setErrorMessage(message);
-      toast.error(message);
     }
   }, [
     ensureWorkspace,
@@ -1535,7 +1534,6 @@ export function NewWorkspaceScreen({
     selectedTerminalProfile,
     t,
     terminalPromptText,
-    toast,
     leaveFullscreen,
     updateFormPreferences,
     withConnectedClient,
@@ -1662,6 +1660,7 @@ export function NewWorkspaceScreen({
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
+      error={errorMessage}
     />
   ) : (
     <Composer
@@ -1693,6 +1692,7 @@ export function NewWorkspaceScreen({
       autoFocusKey={launchFocusKey}
       commandDraft={composerState?.commandDraft}
       agentControls={agentControlsWithDisabled}
+      error={errorMessage}
     />
   );
   return (
@@ -1705,7 +1705,6 @@ export function NewWorkspaceScreen({
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>
@@ -1866,11 +1865,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
-  },
-  errorText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.destructive,
-    lineHeight: 20,
   },
 }));
 
