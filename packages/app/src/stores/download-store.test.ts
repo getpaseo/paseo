@@ -90,6 +90,7 @@ interface StartInput {
   token?: ReturnType<typeof createTokenRequest>;
   reader?: ReturnType<typeof createFileReader>;
   saver?: ReturnType<typeof createFileSaver>;
+  fetchFile?: typeof fetch;
 }
 
 async function startDownload(input: StartInput): Promise<Download | undefined> {
@@ -108,6 +109,7 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     requestFileDownloadToken: token.request,
     readFile: reader.read,
     saveFile: saver.save,
+    fetchFile: input.fetchFile ?? (async () => new Response(FILE_BYTES)),
   });
   const { activeDownloadId, downloads } = useDownloadStore.getState();
   return activeDownloadId ? downloads.get(activeDownloadId) : undefined;
@@ -200,6 +202,57 @@ describe("download store transport selection", () => {
 
     expect(download).toMatchObject({ status: "complete" });
     expect(reader.requested).toEqual([]);
+    expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("fails with the HTTP status when a proxy in front of the host rejects the download", async () => {
+    const requests: Array<RequestInit | undefined> = [];
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async (_url, init) => {
+        requests.push(init);
+        return new Response("<h1>401 Authorization Required</h1>", {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Basic realm="Paseo"' },
+        });
+      },
+    });
+
+    expect(download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.httpFailed", { status: 401 }),
+    });
+    expect(requests).toEqual([{ credentials: "include", redirect: "error" }]);
+  });
+
+  it("fails with a readable message when the download request cannot reach the host", async () => {
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+
+    expect(download).toMatchObject({ status: "error", message: i18n.t("downloads.failed") });
+  });
+
+  it("fails with a readable message when the connection drops while the file is downloading", async () => {
+    const saver = createFileSaver();
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async () =>
+        new Response(
+          new ReadableStream({
+            start: (controller) => controller.error(new TypeError("network error")),
+          }),
+        ),
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "error", message: i18n.t("downloads.failed") });
     expect(saver.savedFiles).toEqual([]);
   });
 

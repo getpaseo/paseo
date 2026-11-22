@@ -15,6 +15,8 @@ export interface UsageSource {
   id: string;
   label: string;
   icon?: string;
+  /** Provider IDs associated with this source, used as a hint for default visibility. */
+  providers?: readonly string[];
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
 }
@@ -22,6 +24,7 @@ export interface UsageSource {
 interface Login {
   input: unknown;
   harness: string;
+  provider?: string;
 }
 
 interface KnownReport {
@@ -33,6 +36,11 @@ interface KnownReport {
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
+  resolveLaunch?(
+    provider: string,
+  ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
+  /** Whether the provider (or a custom provider derived from it) is installed and enabled. */
+  isProviderActive?(provider: string, options?: { forceRefresh?: boolean }): Promise<boolean>;
 }
 
 export interface ListUsageReportsOptions {
@@ -42,19 +50,12 @@ export interface ListUsageReportsOptions {
   onReport?: (report: UsageReportEntry) => void;
 }
 
-interface AgentReports {
-  provider: string;
-  model?: string;
-  sessionKey: string;
-  reports: Map<string, KnownReport>;
-}
-
-/** Owns account identity, ordered logins for each account, and the five-minute fetch cache. */
+/** Groups discovered logins by account and caches their usage for five minutes. */
 export class UsageSourceRegistry {
   private readonly sources = new Map<string, UsageSource>();
   private readonly known = new Map<string, KnownReport>();
   private defaults = new Map<string, KnownReport>();
-  private readonly byAgent = new Map<string, AgentReports>();
+  private readonly byAgent = new Map<string, Map<string, KnownReport>>();
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
@@ -75,10 +76,8 @@ export class UsageSourceRegistry {
   unregister(id: string): void {
     this.sources.delete(id);
     for (const key of this.defaults.keys()) if (key.startsWith(`${id}:`)) this.defaults.delete(key);
-    // Re-discover on the next session query when a source is replaced.
-    for (const [agentId, mapping] of this.byAgent) {
-      if ([...mapping.reports.values()].some((report) => report.source.id === id))
-        this.byAgent.delete(agentId);
+    for (const reports of this.byAgent.values()) {
+      for (const key of reports.keys()) if (key.startsWith(`${id}:`)) reports.delete(key);
     }
     for (const key of this.known.keys()) if (key.startsWith(`${id}:`)) this.known.delete(key);
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
@@ -94,27 +93,81 @@ export class UsageSourceRegistry {
     let ids: string[];
     let reports = this.known;
     if (options.agentId !== undefined) {
-      ids = await this.discoverAgent(options.agentId);
-      reports = this.byAgent.get(options.agentId)?.reports ?? new Map();
+      if (!this.agents.hasAgent(options.agentId))
+        throw new Error(`Unknown agent: ${options.agentId}`);
+      reports = await this.discoverAgent(options.agentId);
+      this.mergeKnown();
+      ids = [...reports.keys()];
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
-      this.defaults = await this.discover({ kind: "global" }, this.defaults);
+      const [defaults] = await Promise.all([
+        this.discover({ kind: "global" }, this.defaults),
+        ...[...this.byAgent.keys()].map((agentId) => this.discoverAgent(agentId)),
+      ]);
+      this.defaults = defaults;
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
+    const uniqueIds = [...new Set(ids)];
+    const checkProvider =
+      options.agentId === undefined
+        ? this.createProviderActivityChecker(options.forceRefresh)
+        : undefined;
     return Promise.all(
-      [...new Set(ids)].flatMap((id) => {
+      uniqueIds.flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
+        // Resolve each report's provider hint alongside its fetch so a slow provider probe
+        // never blocks unrelated reports from fetching or streaming.
         return [
-          this.fetchId(id, known, options.forceRefresh).then((entry) => {
-            options.onReport?.(entry);
-            return entry;
+          Promise.all([
+            this.fetchId(id, known, options.forceRefresh),
+            this.resolveDefaultEnabled(known, checkProvider),
+          ]).then(([entry, defaultEnabled]) => {
+            const stamped = defaultEnabled === false ? { ...entry, defaultEnabled: false } : entry;
+            options.onReport?.(stamped);
+            return stamped;
           }),
         ];
       }),
     );
+  }
+
+  private hintedProviders(known: KnownReport): string[] {
+    const fromLogins = [
+      ...new Set(known.logins.flatMap((login) => (login.provider ? [login.provider] : []))),
+    ];
+    if (fromLogins.length > 0) return fromLogins;
+    return known.source.providers ? [...new Set(known.source.providers)] : [];
+  }
+
+  private createProviderActivityChecker(
+    forceRefresh?: boolean,
+  ): ((provider: string) => Promise<boolean>) | undefined {
+    const isProviderActive = this.agents.isProviderActive;
+    if (!isProviderActive) return undefined;
+    const checks = new Map<string, Promise<boolean>>();
+    return (provider: string) => {
+      const existing = checks.get(provider);
+      if (existing) return existing;
+      const check = isProviderActive(provider, { forceRefresh }).catch((error) => {
+        this.logger.warn({ provider, err: error }, "Usage provider availability hint failed");
+        return true;
+      });
+      checks.set(provider, check);
+      return check;
+    };
+  }
+
+  private async resolveDefaultEnabled(
+    known: KnownReport,
+    checkProvider: ((provider: string) => Promise<boolean>) | undefined,
+  ): Promise<boolean | undefined> {
+    if (!checkProvider) return undefined;
+    const hinted = this.hintedProviders(known);
+    if (hinted.length === 0) return undefined;
+    return (await anyTrue(hinted.map(checkProvider))) ? undefined : false;
   }
 
   private pruneAgents(): void {
@@ -124,44 +177,37 @@ export class UsageSourceRegistry {
     this.mergeKnown();
   }
 
-  private async discoverAgent(agentId: string): Promise<string[]> {
-    if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
+  private async discoverAgent(agentId: string): Promise<Map<string, KnownReport>> {
     const session = this.agents.usageSession(agentId);
     if (!session) {
       this.byAgent.delete(agentId);
-      this.mergeKnown();
-      return [];
+      return new Map();
     }
     const previous = this.byAgent.get(agentId);
-    const sameScope =
-      previous?.sessionKey === session.sessionKey &&
-      previous.provider === session.provider &&
-      previous.model === session.model;
-    if (sameScope) return [...previous.reports.keys()];
     const reports = await this.discover({
       kind: "session",
       provider: session.provider,
       model: session.model,
       env: session.env,
+      launch: session.launch,
     });
-    // A query that finishes after a resume must not publish the previous launch's mapping.
-    if (this.agents.usageSession(agentId)?.sessionKey !== session.sessionKey) return [];
-    this.byAgent.set(agentId, {
-      sessionKey: session.sessionKey,
-      provider: session.provider,
-      model: session.model,
-      reports,
-    });
-    this.mergeKnown();
-    return [...reports.keys()];
+    const current = this.agents.usageSession(agentId);
+    if (
+      current?.sessionKey !== session.sessionKey ||
+      current.provider !== session.provider ||
+      current.model !== session.model
+    ) {
+      if (this.byAgent.get(agentId) === previous) this.byAgent.delete(agentId);
+      return new Map();
+    }
+
+    this.byAgent.set(agentId, reports);
+    return reports;
   }
 
   private mergeKnown(): void {
     this.known.clear();
-    for (const reports of [
-      this.defaults,
-      ...[...this.byAgent.values()].map((agent) => agent.reports),
-    ]) {
+    for (const reports of [this.defaults, ...this.byAgent.values()]) {
       for (const [id, report] of reports) {
         if (this.sources.get(report.source.id) !== report.source) continue;
         const known = this.known.get(id);
@@ -183,11 +229,9 @@ export class UsageSourceRegistry {
 
   private activeCacheKeys(): Set<string> {
     return new Set(
-      [
-        this.known,
-        this.defaults,
-        ...[...this.byAgent.values()].map((agent) => agent.reports),
-      ].flatMap((reports) => [...reports].map(([id, report]) => cacheIdentity(id, report))),
+      [this.known, this.defaults, ...this.byAgent.values()].flatMap((reports) =>
+        [...reports].map(([id, report]) => cacheIdentity(id, report)),
+      ),
     );
   }
 
@@ -205,6 +249,7 @@ export class UsageSourceRegistry {
                 key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
                 label: z.string().optional(),
                 harness: z.string().min(1).optional(),
+                provider: z.string().min(1).optional(),
                 input: z.json(),
               }),
             )
@@ -213,7 +258,11 @@ export class UsageSourceRegistry {
             const id = `${source.id}:${account.key}`;
             const known = reports.get(id);
             // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
-            const login = { input: account.input, harness: account.harness ?? source.label };
+            const login: Login = {
+              input: account.input,
+              harness: account.harness ?? source.label,
+              ...(account.provider ? { provider: account.provider } : {}),
+            };
             if (known) {
               if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
                 known.logins.push(login);
@@ -397,4 +446,29 @@ function cacheIdentity(id: string, known: KnownReport): string {
   return `${id}:${createHash("sha256")
     .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
     .digest("hex")}`;
+}
+
+/** Resolves true as soon as any check resolves true, or false once every check resolves false. */
+function anyTrue(checks: readonly Promise<boolean>[]): Promise<boolean> {
+  if (checks.length === 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let remaining = checks.length;
+    let settled = false;
+    for (const check of checks) {
+      void (async () => {
+        const value = await check;
+        if (settled) return;
+        if (value) {
+          settled = true;
+          resolve(true);
+          return;
+        }
+        remaining -= 1;
+        if (remaining === 0) {
+          settled = true;
+          resolve(false);
+        }
+      })();
+    }
+  });
 }

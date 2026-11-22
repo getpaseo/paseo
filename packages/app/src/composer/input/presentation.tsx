@@ -126,7 +126,8 @@ export function ComposerInputPresentation({
               </Button>
             ) : null}
           </View>
-          {fullscreen ? null : toolbar}
+          {/* Keep the agent controls mounted for composer commands in fullscreen. */}
+          {toolbar}
         </View>
       </ComposerFullscreenBody>
       {fullscreen ? (

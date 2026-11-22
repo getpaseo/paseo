@@ -6,6 +6,7 @@ import { createMacDockBadgeCountSelector } from "@/utils/desktop-badge-state";
 import { createFaviconStatusSelector, type FaviconStatus } from "@/utils/favicon-status";
 import { isNative } from "@/constants/platform";
 import { useSessionStore } from "@/stores/session-store";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
 
 type ColorScheme = "dark" | "light";
@@ -85,8 +86,16 @@ export function useFaviconStatus() {
   // The favicon reads the whole fleet, so it has to keep every host's directory loading even
   // though it no longer subscribes to the agent maps.
   useAllDirectoryDemand({ serverIds, enabled: !isNative });
-  const selectFaviconStatus = useMemo(createFaviconStatusSelector, []);
-  const selectMacDockBadgeCount = useMemo(createMacDockBadgeCountSelector, []);
+  // Background workspaces count exactly when the sidebar shows them.
+  const showBackground = useSidebarViewStore((state) => state.showBackground);
+  const selectFaviconStatus = useMemo(
+    () => createFaviconStatusSelector({ showBackground }),
+    [showBackground],
+  );
+  const selectMacDockBadgeCount = useMemo(
+    () => createMacDockBadgeCountSelector({ showBackground }),
+    [showBackground],
+  );
   const status = useSessionStore(selectFaviconStatus);
   const dockBadgeCount = useSessionStore(selectMacDockBadgeCount);
   const [colorScheme, setColorScheme] = useState<ColorScheme>(getSystemColorScheme);

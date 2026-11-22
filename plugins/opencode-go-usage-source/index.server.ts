@@ -7,6 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "opencode-go",
     label: "OpenCode Go",
     icon: "icon.svg",
+    providers: ["opencode"],
     input: inputSchema,
     discover: (scope) => (scope.kind === "global" ? discover() : Promise.resolve([])),
     fetch: fetchUsage,

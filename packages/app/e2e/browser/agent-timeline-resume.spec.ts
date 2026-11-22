@@ -14,6 +14,8 @@ import {
   answerFreshnessCheck,
   commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
+  expectEmptyChatSynced,
+  expectPromptAndWholeReply,
   expectResumeAnsweredWithoutFetch,
   expectResumeOverflowFallsBackToOneTail,
   hideTabAndReturn,
@@ -22,7 +24,11 @@ import {
   restoreUnchangedViewedTimeline,
   restoreViewedTimelineHoldingCatchUp,
   restoreViewedTimelineWithHeldResponse,
+  restoreViewedTimelineWithLiveRowsFirst,
   reopenWithFreshnessCheckUnanswered,
+  seedStreamingReplyAgent,
+  sendPromptWhileDisconnected,
+  stopStreamingReply,
   waitForResumeAnswer,
   reopenAppWatchingForUpdatingToast,
   watchForUpdatingToast,
@@ -142,6 +148,29 @@ test.describe("Agent timeline resume", () => {
       await expectTimelinePresentationUnchanged(page, presentation);
       await releaseHeldCatchUp(page, gate);
       await expectTimelinePromptVisible(page, background.newestPrompt);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("an empty chat that reconnects mid-reply keeps the prompt and the whole reply", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedStreamingReplyAgent();
+    try {
+      await openAgentTimeline(page, agent);
+      await expectEmptyChatSynced(page, gate);
+      await disconnectViewedTimeline(page, gate);
+      await sendPromptWhileDisconnected(agent);
+      await restoreViewedTimelineWithLiveRowsFirst(gate);
+      const reply = await stopStreamingReply(agent);
+      await expectPromptAndWholeReply(page, agent, reply);
+
+      await page.reload();
+      await expectPromptAndWholeReply(page, agent, reply);
     } finally {
       gate.restore();
       await agent.cleanup();

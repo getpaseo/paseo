@@ -86,6 +86,17 @@ export function setupModal(page: Page): Locator {
   return page.getByTestId("onboarding-modal").getByRole("dialog");
 }
 
+/** A sheet opened from a setup step, which should sit exactly on the setup card. */
+export function setupSheet(page: Page, testID: "provider-settings-sheet" | "add-provider-sheet") {
+  return page.getByTestId(testID).getByRole("dialog");
+}
+
+export async function expectSheetCoversSetupCard(page: Page, sheet: Locator): Promise<void> {
+  await expect(sheet).toBeVisible();
+  const card = await setupModal(page).boundingBox();
+  await expect.poll(() => sheet.boundingBox()).toEqual(card);
+}
+
 export async function expectSetupStep(page: Page, title: string): Promise<void> {
   await expect(setupModal(page).getByRole("heading", { name: title, exact: true })).toBeVisible({
     timeout: 60_000,
@@ -185,7 +196,7 @@ export interface SetupHost {
 /**
  * An isolated host whose only agent history is the Claude sessions given here, so suggestions
  * never depend on the machine running the test. Its HOME is a scratch folder, so the skills setup
- * installs never land in the real ~/.agents, ~/.claude or ~/.codex. `withBrokenProvider` adds a
+ * installs never land in the real ~/.agents, ~/.claude, ~/.codex, or ~/.gemini/config. `withBrokenProvider` adds a
  * provider that cannot start.
  */
 export async function startSetupHost(

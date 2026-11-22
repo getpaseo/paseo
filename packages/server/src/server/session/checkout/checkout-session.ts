@@ -11,6 +11,7 @@ import type {
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
+  CheckoutWorktreesListRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
   SubscribeCheckoutDiffRequest,
@@ -54,6 +55,7 @@ import {
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
+import { listGitWorktrees } from "../../../utils/worktree.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 /**
@@ -290,6 +292,23 @@ export class CheckoutSession {
     }
   }
 
+  async handleWorktreesListRequest(msg: CheckoutWorktreesListRequest): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const worktrees = await listGitWorktrees({ cwd: expandTilde(cwd) });
+      this.host.emit({
+        type: "checkout.worktrees.list.response",
+        payload: { cwd, worktrees, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.worktrees.list.response",
+        payload: { cwd, worktrees: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
   async handleCommitFileDiffRequest(
     msg: CheckoutCommitFileDiffRequest,
     signal: AbortSignal,
@@ -522,7 +541,11 @@ export class CheckoutSession {
     }
   }
 
-  emitStatusUpdate(cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
+  emitStatusUpdate(
+    cwd: string,
+    snapshot: WorkspaceGitRuntimeSnapshot,
+    options?: { force: boolean },
+  ): void {
     try {
       const requestId = `subscription:${cwd}`;
       const payload = {
@@ -538,7 +561,7 @@ export class CheckoutSession {
         }),
       };
       const fingerprint = JSON.stringify(payload);
-      if (this.statusUpdateFingerprints.get(cwd) === fingerprint) return;
+      if (!options?.force && this.statusUpdateFingerprints.get(cwd) === fingerprint) return;
       this.statusUpdateFingerprints.set(cwd, fingerprint);
       this.host.emit({
         type: "checkout_status_update",
