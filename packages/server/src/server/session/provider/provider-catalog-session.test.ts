@@ -66,6 +66,7 @@ function makeSubsystem(options: MakeOptions = {}) {
       changeHandler = handler;
     },
     off: () => {},
+    isSnapshotStale: () => false,
     ...options.snapshot,
   });
   const subsystem = new ProviderCatalogSession({
@@ -118,6 +119,67 @@ describe("ProviderCatalogSession", () => {
     const push = findByType(emitted, "providers_snapshot_update");
     const pull = findByType(emitted, "get_providers_snapshot_response");
     expect(pull?.payload.entries).toEqual(push?.payload.entries);
+  });
+
+  it("refreshes a stale per-cwd snapshot before answering a pull", async () => {
+    const refreshSnapshotForCwd = vi.fn(async () => {});
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getSnapshot: (cwd?: string) => createProviderSnapshot(makeEntries(), cwd),
+        isSnapshotStale: () => true,
+        refreshSnapshotForCwd,
+      },
+    });
+
+    await subsystem.handleGetProvidersSnapshotRequest({
+      type: "get_providers_snapshot_request",
+      requestId: "stale-cwd",
+      cwd: "/repo/sdk",
+    });
+
+    expect(refreshSnapshotForCwd).toHaveBeenCalledWith({ cwd: "/repo/sdk", providers: undefined });
+    expect(findByType(emitted, "get_providers_snapshot_response")).toBeTruthy();
+  });
+
+  it("refreshes a stale global snapshot before answering a pull without cwd", async () => {
+    const refreshSettingsSnapshot = vi.fn(async () => {});
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getSnapshot: (cwd?: string) => createProviderSnapshot(makeEntries(), cwd),
+        isSnapshotStale: () => true,
+        refreshSettingsSnapshot,
+      },
+    });
+
+    await subsystem.handleGetProvidersSnapshotRequest({
+      type: "get_providers_snapshot_request",
+      requestId: "stale-global",
+    });
+
+    expect(refreshSettingsSnapshot).toHaveBeenCalledWith({ providers: undefined });
+    expect(findByType(emitted, "get_providers_snapshot_response")).toBeTruthy();
+  });
+
+  it("does not refresh a stale snapshot while a load is already in flight", async () => {
+    const refreshSnapshotForCwd = vi.fn(async () => {});
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getSnapshot: () =>
+          createProviderSnapshot(
+            makeEntries().map((entry) => ({ ...entry, status: "loading" as const })),
+          ),
+        isSnapshotStale: () => true,
+        refreshSnapshotForCwd,
+      },
+    });
+
+    await subsystem.handleGetProvidersSnapshotRequest({
+      type: "get_providers_snapshot_request",
+      requestId: "stale-loading",
+    });
+
+    expect(refreshSnapshotForCwd).not.toHaveBeenCalled();
+    expect(findByType(emitted, "get_providers_snapshot_response")).toBeTruthy();
   });
 
   it("returns the canonical cwd used by snapshot updates", async () => {
