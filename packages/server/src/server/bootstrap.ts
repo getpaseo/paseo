@@ -518,6 +518,7 @@ export interface PaseoDaemon {
 
 export interface PaseoDaemonDependencies {
   builtinPlugins?: BuiltinPluginLoader;
+  lazyTerminalWorker?: boolean;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -736,6 +737,7 @@ export async function createPaseoDaemon(
     paseoVersion: daemonVersion,
     logger,
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    eagerLaunch: !dependencies.lazyTerminalWorker,
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 

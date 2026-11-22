@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { execFileSync, execSync, spawnSync } from "child_process";
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   rmSync,
@@ -98,16 +99,37 @@ import {
   writePaseoWorktreeMetadata,
 } from "./worktree-metadata.js";
 
+let templateRepoRoot: string | null = null;
+let templateRepoDir: string | null = null;
+
+function getTemplateRepoDir(): string {
+  if (templateRepoDir) return templateRepoDir;
+  templateRepoRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-template-")));
+  templateRepoDir = join(templateRepoRoot, "repo");
+  mkdirSync(templateRepoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: templateRepoDir });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: templateRepoDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: templateRepoDir });
+  writeFileSync(join(templateRepoDir, "file.txt"), "hello\n");
+  execFileSync("git", ["add", "."], { cwd: templateRepoDir });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: templateRepoDir,
+  });
+  return templateRepoDir;
+}
+
+afterAll(() => {
+  if (templateRepoRoot) {
+    rmSync(templateRepoRoot, { recursive: true, force: true });
+    templateRepoRoot = null;
+    templateRepoDir = null;
+  }
+});
+
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
   const repoDir = join(tempDir, "repo");
-  mkdirSync(repoDir, { recursive: true });
-  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
-  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
-  writeFileSync(join(repoDir, "file.txt"), "hello\n");
-  execFileSync("git", ["add", "."], { cwd: repoDir });
-  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], { cwd: repoDir });
+  cpSync(getTemplateRepoDir(), repoDir, { recursive: true });
   return { tempDir, repoDir };
 }
 
