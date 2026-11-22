@@ -1,56 +1,126 @@
 # Changelog
 
-## 0.17.0-beta.1 - 2026-11-19
+## 0.17.3 - 2026-11-22
 
-- **使用现有 worktree**：在已有的 worktree 中启动工作区，或从任意分支或 PR 创建 worktree。([#10190](https://github.com/getpaseo/paseo/pull/10190))
-- **Antigravity 审批和历史记录**：选择权限模式、回复工具审批、导入 CLI 会话，并在重新打开对话时查看历史记录。([#10193](https://github.com/getpaseo/paseo/pull/10193))
-- **监视 PR**：Agent 可以监视 GitHub PR，在检查、审查或评论有变化时收到通知。([#10148](https://github.com/getpaseo/paseo/pull/10148))
+### 修复
+
+- 修复 iPhone 上“Workspace 标签”等弹窗忽略主体滑动、无法展开、滚动或收起的问题 ([#10525](https://github.com/getpaseo/paseo/pull/10525))
+- 修复 Antigravity 将默认模型的思考级别套用到所有模型，导致无法打开 Orchestrator 对话的问题 ([#10524](https://github.com/getpaseo/paseo/pull/10524))
+- 修复通过窗口历史记录返回工作区后，`/` 和 `@` 选择器在刷新前一直消失的问题 ([#8954](https://github.com/getpaseo/paseo/pull/8954)，贡献者：[@viking1201](https://github.com/viking1201))
+
+## 0.17.2 - 2026-11-22
+
+- **回合和会话统计**：查看 Claude、OpenCode v2、Pi、Oh My Pi 和插件 Provider 的单轮及会话耗时、token、缓存和费用指标。([#10496](https://github.com/getpaseo/paseo/pull/10496), [#10510](https://github.com/getpaseo/paseo/pull/10510))
+- **自动刷新模型列表**：已启用的 Provider 每 30 分钟在后台刷新一次模型列表。([#10481](https://github.com/getpaseo/paseo/pull/10481))
+- **默认显示侧边栏用量**：侧边栏用量摘要现在默认开启，未启用 Provider 的用量来源默认隐藏，来源开关移至“来源”列表。([#10491](https://github.com/getpaseo/paseo/pull/10491))
+- **Agent 可引导进行中的轮次**：Agent 除了排队或中断外，现在可以引导另一个 Agent 正在运行的轮次，并在响应中收到投递指引。([#10483](https://github.com/getpaseo/paseo/pull/10483))
+
+### 新增
+
+- 在移动端工作区操作菜单中新增“归档工作区” ([#10507](https://github.com/getpaseo/paseo/pull/10507))
+- 在 Provider 设置中新增文档链接、更完整的诊断报告，以及带内联刷新按钮的可滚动 Models 列表 ([#10487](https://github.com/getpaseo/paseo/pull/10487))
+
+### 变更
+
+- 移除 OpenCode v2 对话中的“This chat uses OpenCode v2.”提示行 ([#10490](https://github.com/getpaseo/paseo/pull/10490))
+
+### 修复
+
+- 修复在斜杠菜单中按 Tab 或 Enter 时误触发过期的 `/exit` 选项并归档 Agent 的问题 ([#10484](https://github.com/getpaseo/paseo/pull/10484)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
+- 修复保存了多个主机连接时，繁忙的正常连接会断开重连的问题 ([#10395](https://github.com/getpaseo/paseo/pull/10395))
+- 修复新建工作区启动失败后，修改表单再重试时出现冲突错误的问题，并统一了 Composer 错误提示 ([#10482](https://github.com/getpaseo/paseo/pull/10482))
+- 修复 Antigravity 创建循环定时任务后轮次一直停留在运行状态的问题 ([#10469](https://github.com/getpaseo/paseo/pull/10469))
+- 修复启动 daemon 和重载本地目录插件后遗留僵尸子进程的问题 ([#10470](https://github.com/getpaseo/paseo/pull/10470))
+
+## 0.17.1 - 2026-11-21
+
+- **Antigravity 审批和历史记录**：选择权限模式、回复工具审批，以及导入或重新打开会话。需要 [Antigravity CLI 1.5.0 或更高版本](https://paseo.sh/zh-CN/docs/supported-providers/antigravity)。([#10193](https://github.com/getpaseo/paseo/pull/10193))
+- **使用现有 worktree**：在已有的 worktree 中启动工作区，或从分支或 PR 创建 worktree。([#10190](https://github.com/getpaseo/paseo/pull/10190))
+- **在 Paseo 中更新 Provider**：查看各 Provider 的状态和已安装版本，并在应用内更新受支持的 CLI。([#9568](https://github.com/getpaseo/paseo/pull/9568), [#9661](https://github.com/getpaseo/paseo/pull/9661))
+- **Provider 配额预测**：“使用情况”页面会显示配额按当前使用速度将在重置前何时用完。([#10289](https://github.com/getpaseo/paseo/pull/10289), [#10385](https://github.com/getpaseo/paseo/pull/10385))
+- **监视 PR 和 MR**：让 Agent 监视 PR 或 MR 的检查、审查和评论更新。([#10148](https://github.com/getpaseo/paseo/pull/10148), [#10279](https://github.com/getpaseo/paseo/pull/10279), [#10280](https://github.com/getpaseo/paseo/pull/10280))
 - **在后台任务中查看 heartbeat**：在 Agent 的后台任务旁查看和停止 heartbeat。([#10097](https://github.com/getpaseo/paseo/pull/10097), [#10216](https://github.com/getpaseo/paseo/pull/10216))
-- **Agent 消息排队等待**：其他 Agent 的报告和通知会在当前轮次结束后到达，不会打断当前轮次。([#9757](https://github.com/getpaseo/paseo/pull/9757))
+- **Agent 消息排队等待**：默认情况下，其他 Agent 的消息会等当前轮次结束后再送达。([#9757](https://github.com/getpaseo/paseo/pull/9757), [#10404](https://github.com/getpaseo/paseo/pull/10404))
+- **更多 goose 模型**：从 goose 中已配置的所有 Provider 选择模型。([#9719](https://github.com/getpaseo/paseo/pull/9719)，贡献者：[@i386](https://github.com/i386))
 - **插件 Agent 指令**：插件可以向 Agent 添加自己的指令。([#9781](https://github.com/getpaseo/paseo/pull/9781))
 
 ### 新增
 
+- 在“使用情况”页面和 `paseo usage` 中新增 OpenRouter 余额和 API 密钥支出 ([#10269](https://github.com/getpaseo/paseo/pull/10269))
+- 在“使用情况”页面新增 Antigravity 账号配额 ([#10232](https://github.com/getpaseo/paseo/pull/10232)，贡献者：[@luoph](https://github.com/luoph), [@RRD-dev](https://github.com/RRD-dev))
+- 在 `/` 建议中新增 Antigravity 技能 ([#10383](https://github.com/getpaseo/paseo/pull/10383))
+- 为 Antigravity 新增内置编排技能 ([#10273](https://github.com/getpaseo/paseo/pull/10273))
 - 新增 Cmd/Ctrl+/ 和 Cmd/Ctrl+Shift+/ 快捷键，用于打开模型选择器和切换思考级别 ([#10147](https://github.com/getpaseo/paseo/pull/10147))
 - 新增在发送第一条消息前通过命令中心搜索 Agent 设置 ([#10182](https://github.com/getpaseo/paseo/pull/10182)，贡献者：[@cleiter](https://github.com/cleiter))
 - 新增在命令中心回退最近轮次的操作 ([#10144](https://github.com/getpaseo/paseo/pull/10144))
-- 新增符合条件的 Claude 模型的独立 Ultracode 开关 ([#10150](https://github.com/getpaseo/paseo/pull/10150)，贡献者：[@fivetaku](https://github.com/fivetaku))
+- 新增 Claude 的独立 Ultracode 开关 ([#10150](https://github.com/getpaseo/paseo/pull/10150)，贡献者：[@fivetaku](https://github.com/fivetaku))
 - 新增 Codex Flex 速度选项 ([#9809](https://github.com/getpaseo/paseo/pull/9809)，贡献者：[@qjqqyy](https://github.com/qjqqyy))
 - 新增 shell 脚本和 Dockerfile 的语法高亮 ([#10178](https://github.com/getpaseo/paseo/pull/10178))
+- 为 Hub 会话新增列出已连接 daemon 项目的能力 ([#10392](https://github.com/getpaseo/paseo/pull/10392))
 - 新增 `paseo ls --json` 输出的标签和工作区 ID ([#10076](https://github.com/getpaseo/paseo/pull/10076))
 
 ### 变更
 
+- 将内容宽度改为默认、宽版和全宽预设，并同时调整已打开对话和 Markdown 预览的宽度 ([#10231](https://github.com/getpaseo/paseo/pull/10231))
+- Antigravity 工具卡片现在显示 shell 命令、输出和文件 diff ([#10379](https://github.com/getpaseo/paseo/pull/10379))
+- 从 GitHub 克隆时，优先显示匹配的私有仓库 ([#10264](https://github.com/getpaseo/paseo/pull/10264))
+- “使用情况”页面中健康的配额进度条改为绿色 ([#10397](https://github.com/getpaseo/paseo/pull/10397))
+- worktree 清理命令超时时保留 worktree ([#9852](https://github.com/getpaseo/paseo/pull/9852)，贡献者：[@ragokan](https://github.com/ragokan))
+- 手机端工作区导航更快响应点击 ([#9887](https://github.com/getpaseo/paseo/pull/9887))
+- 短暂重连且文件未更改时，工作区 Git 状态不再重新加载 ([#10142](https://github.com/getpaseo/paseo/pull/10142)，贡献者：[@VladimirGVP](https://github.com/VladimirGVP))
 - 连接多个 Desktop 时，`browser_new_tab` 会让 Agent 选择打开标签页的 Desktop ([#10189](https://github.com/getpaseo/paseo/pull/10189))
-- 工作区 Git 状态在短暂重连且检出的内容未更改时复用之前的快照 ([#10142](https://github.com/getpaseo/paseo/pull/10142)，贡献者：[@VladimirGVP](https://github.com/VladimirGVP))
-- 工作区导航会立即响应点击，并在手机端初始加载时减少屏幕外的对话行数 ([#9887](https://github.com/getpaseo/paseo/pull/9887))
-- worktree 清理命令默认在一分钟后停止并保留 worktree；如需更长时间，可在 `paseo.json` 中设置 `worktree.teardownTimeoutMs` ([#9852](https://github.com/getpaseo/paseo/pull/9852)，贡献者：[@ragokan](https://github.com/ragokan))
 
 ### 修复
 
+- 修复在线主机的工作区不显示的问题 ([#10318](https://github.com/getpaseo/paseo/pull/10318))
+- 修复重新连接后多个已打开的对话同时刷新时，历史记录加载超时的问题 ([#10368](https://github.com/getpaseo/paseo/pull/10368))
+- 修复 daemon 繁忙时，重新打开较长的 Claude 对话速度慢的问题 ([#10369](https://github.com/getpaseo/paseo/pull/10369))
+- 修复当前回复中的图片等待另一个对话的历史图片加载的问题 ([#10371](https://github.com/getpaseo/paseo/pull/10371))
+- 修复用 Ctrl+C 停止前台 daemon 后 Agent 恢复失败的问题 ([#10381](https://github.com/getpaseo/paseo/pull/10381))
+- 修复 daemon 重启后较长的 Antigravity 对话丢失末尾历史记录的问题 ([#10428](https://github.com/getpaseo/paseo/pull/10428))
+- 修复 Antigravity 后台命令仍在运行时轮次就已结束的问题 ([#10310](https://github.com/getpaseo/paseo/pull/10310))
+- 修复保存自定义模型后“添加模型”弹窗一直保持打开的问题 ([#10432](https://github.com/getpaseo/paseo/pull/10432))
+- 修复 Provider 返回重复命令名称时，斜杠建议列表出错的问题 ([#10275](https://github.com/getpaseo/paseo/pull/10275))
+- 修复恢复的 Codex 会话的配置和 MCP 服务器仍沿用旧工作目录的问题 ([#10390](https://github.com/getpaseo/paseo/pull/10390)，贡献者：[@tabulius-ux](https://github.com/tabulius-ux))
+- 修复重新打开或回退父对话后，Codex 子 Agent 状态未更新的问题 ([#10171](https://github.com/getpaseo/paseo/pull/10171)，贡献者：[@AnalyticETH](https://github.com/AnalyticETH))
+- 修复切换 Claude 账号后，“使用情况”页面仍显示上一个账号配额的问题 ([#10236](https://github.com/getpaseo/paseo/pull/10236))
+- 修复固定多个用量窗口时，侧边栏用量行隐藏周期标签的问题 ([#10274](https://github.com/getpaseo/paseo/pull/10274))
+- 修复恢复 worktree 后，“更改”无法立即识别检出目录的问题 ([#10224](https://github.com/getpaseo/paseo/pull/10224), [#10304](https://github.com/getpaseo/paseo/pull/10304), [#10406](https://github.com/getpaseo/paseo/pull/10406))
+- 修复拖动分屏分隔条时卡住或跟手缓慢的问题 ([#5996](https://github.com/getpaseo/paseo/pull/5996))
+- 修复 diff 中双击选词和三击选行的问题 ([#10252](https://github.com/getpaseo/paseo/pull/10252)，贡献者：[@pedrovieira](https://github.com/pedrovieira))
+- 修复启用聊天大纲时，Composer 与对话栏对不齐的问题 ([#10277](https://github.com/getpaseo/paseo/pull/10277))
+- 修复网页版 Composer 的聚焦快捷键提示遮挡占位符文字的问题 ([#6200](https://github.com/getpaseo/paseo/pull/6200))
+- 修复当前工作区所在的侧边栏分组折叠时，归档快捷键失效的问题 ([#10356](https://github.com/getpaseo/paseo/pull/10356)，贡献者：[@hiennd-ctrl](https://github.com/hiennd-ctrl), [@neihyud](https://github.com/neihyud))
+- 修复一个会话正在归档工作区时，其他会话和插件仍将其显示为活跃状态的问题 ([#10391](https://github.com/getpaseo/paseo/pull/10391)，贡献者：[@tabulius-ux](https://github.com/tabulius-ux))
+- 修复在 Android 上输入文字或缩放对话图片后，首次点击 Composer 按钮无效的问题 ([#10057](https://github.com/getpaseo/paseo/pull/10057), [#10308](https://github.com/getpaseo/paseo/pull/10308))
+- 修复在 Android 浏览器中滑动终端时弹出键盘的问题 ([#10225](https://github.com/getpaseo/paseo/pull/10225)，贡献者：[@tonylt](https://github.com/tonylt))
 - 修复启用“折叠轮次”时，空闲的 Provider 通知导致已完成的 OMP 或 Pi 回复被隐藏的问题 ([#10135](https://github.com/getpaseo/paseo/pull/10135))
-- 修复 Agent 响应后台任务时，在之前的完成状态未读的情况下重复发送完成通知的问题 ([#10200](https://github.com/getpaseo/paseo/pull/10200))
+- 修复 Agent 响应后台任务时重复发送完成通知的问题 ([#10200](https://github.com/getpaseo/paseo/pull/10200))
 - 修复空对话在回复中途重连后丢失提示词和回复开头的问题 ([#9723](https://github.com/getpaseo/paseo/pull/9723)，贡献者：[@ragokan](https://github.com/ragokan))
 - 修复切换 Claude 思考级别时停止后台任务的问题 ([#10008](https://github.com/getpaseo/paseo/pull/10008)，贡献者：[@gilad-rubin](https://github.com/gilad-rubin))
 - 修复共享 OpenCode 服务停止后轮次一直显示为运行中的问题 ([#10187](https://github.com/getpaseo/paseo/pull/10187))
 - 修复 OMP 提供会话或授权选项时拒绝已批准工具调用的问题 ([#10126](https://github.com/getpaseo/paseo/pull/10126)，贡献者：[@dsingal0](https://github.com/dsingal0))
+- 修复 Codex 消息在轮次开始前停止时显示错误而非已取消的问题 ([#9931](https://github.com/getpaseo/paseo/pull/9931)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
 - 修复 Git 元数据监听达到上限时无法打开“更改”的问题 ([#10188](https://github.com/getpaseo/paseo/pull/10188))
 - 修复将选中的回复复制到纯文本目标时出现多余 Markdown 语法的问题 ([#10079](https://github.com/getpaseo/paseo/pull/10079)，贡献者：[@danberindei](https://github.com/danberindei))
-- 修复在预览和源码之间切换时文件视图丢失滚动位置的问题，iOS 的 HTML 预览除外 ([#10195](https://github.com/getpaseo/paseo/pull/10195)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
+- 修复在预览和源码之间切换时 Markdown 预览和源码视图丢失滚动位置的问题 ([#10195](https://github.com/getpaseo/paseo/pull/10195)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
 - 修复拆分窗格中的文件标签页显示或聚焦错误文件的问题 ([#9888](https://github.com/getpaseo/paseo/pull/9888)，贡献者：[@KosmoCHE](https://github.com/KosmoCHE))
 - 修复触摸屏上的子菜单打开后立即关闭的问题 ([#10175](https://github.com/getpaseo/paseo/pull/10175)，贡献者：[@christiantwu](https://github.com/christiantwu))
 - 修复关闭另一个使用过麦克风的对话后无法听写的问题 ([#10185](https://github.com/getpaseo/paseo/pull/10185)，贡献者：[@Brandon168](https://github.com/Brandon168))
-- 修复 Android 缩放对话图片后 Composer 点击失效的问题 ([#10057](https://github.com/getpaseo/paseo/pull/10057))
 - 修复 Samsung DeX 上的文字被裁剪的问题 ([#9995](https://github.com/getpaseo/paseo/pull/9995)，贡献者：[@easyhunjune](https://github.com/easyhunjune))
 - 修复主机连接缓慢后对话中的工作区图片无法加载的问题 ([#10111](https://github.com/getpaseo/paseo/pull/10111)，贡献者：[@ragokan](https://github.com/ragokan))
 - 修复桌面浏览器截图返回全透明图片的问题 ([#9807](https://github.com/getpaseo/paseo/pull/9807)，贡献者：[@monarchmaisuriya](https://github.com/monarchmaisuriya))
 - 修复 Mermaid 流程图标签含有 `@` 时显示源码而非图表的问题 ([#10165](https://github.com/getpaseo/paseo/pull/10165)，贡献者：[@monarchmaisuriya](https://github.com/monarchmaisuriya))
 - 修复隐藏的后台工作区触发程序坞徽标和网站图标状态的问题 ([#9983](https://github.com/getpaseo/paseo/pull/9983))
 - 修复桌面侧边栏导航占满工作区列表空间的问题 ([#9903](https://github.com/getpaseo/paseo/pull/9903)，贡献者：[@pentatonic-alex](https://github.com/pentatonic-alex))
+- 修复仓库默认分支显示已关闭 PR 徽标的问题 ([#10053](https://github.com/getpaseo/paseo/pull/10053))
 - 修复 Provider 关闭会话后插件 Agent 无法重新打开的问题 ([#10153](https://github.com/getpaseo/paseo/pull/10153))
 - 修复插件页面和设置无法使用插件状态钩子的问题 ([#10049](https://github.com/getpaseo/paseo/pull/10049))
-- 修复 Codex 消息在轮次开始前停止时显示错误而非已取消的问题 ([#9931](https://github.com/getpaseo/paseo/pull/9931)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
-- 修复仓库默认分支显示历史已关闭 PR 徽标的问题 ([#10053](https://github.com/getpaseo/paseo/pull/10053))
+
+### 插件
+
+- 新增插件对 worktree 创建、移除和恢复的管理能力 ([#10278](https://github.com/getpaseo/paseo/pull/10278))
+- 新增插件导航 `focusHost` 选项，用于在侧边栏选中目标主机 ([#5574](https://github.com/getpaseo/paseo/pull/5574)，贡献者：[@discwl](https://github.com/discwl))
 
 ## 0.16.2 - 2026-11-18
 

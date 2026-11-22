@@ -906,7 +906,7 @@ test("interrupt retirement completes pending compaction before cancellation", as
   }
 });
 
-test("interrupt retirement cancels native question rows", async () => {
+test("interrupt retirement cancels a native question in the turn that opened it", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-retire-native-question-"));
   const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
   const session = await new ProcessExitCodexClient([appServer]).createSession({
@@ -914,30 +914,50 @@ test("interrupt retirement cancels native question rows", async () => {
     cwd: workdir,
     modeId: "auto",
   });
-  const statuses: string[] = [];
+  const activity: Array<{ status: string; turnId?: string }> = [];
+  const completed = Promise.withResolvers<void>();
   session.subscribe((event) => {
     if (
       event.type === "timeline" &&
       event.item.type === "tool_call" &&
       event.item.callId === "question"
     )
-      statuses.push(event.item.status);
-    if (event.type === "turn_canceled") statuses.push("turn_canceled");
+      activity.push({ status: event.item.status, turnId: event.turnId });
+    if (event.type === "turn_completed") completed.resolve();
+    if (event.type === "turn_canceled") {
+      activity.push({ status: "turn_canceled", turnId: event.turnId });
+    }
   });
   try {
-    await session.startTurn("ask me");
+    const first = await session.startTurn("ask me from a child agent");
     appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+    appServer.startsSubAgent({
+      callId: "launch-child",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
     appServer.requestUserInput({
-      threadId: "thread-1",
-      turnId: "turn",
+      threadId: "child",
+      turnId: "child-turn",
       itemId: "question",
       questions: [
         { id: "choice", header: "Choice", question: "Which?", options: [{ label: "One" }] },
       ],
     });
-    await expect.poll(() => statuses).toEqual(["running"]);
+    const runningQuestion = { status: "running", turnId: first.turnId };
+    await expect.poll(() => activity).toEqual([runningQuestion]);
+    appServer.completeTurn();
+    await completed.promise;
+
+    const second = await session.startTurn("start another parent turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
     await session.interrupt();
-    expect(statuses).toEqual(["running", "canceled", "turn_canceled"]);
+    expect(activity).toEqual([
+      runningQuestion,
+      { status: "canceled", turnId: first.turnId },
+      { status: "turn_canceled", turnId: second.turnId },
+    ]);
   } finally {
     await session.close();
     rmSync(workdir, { recursive: true, force: true });

@@ -18,7 +18,11 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  ActiveTurnBehaviorSchema,
+  AgentActiveTurnBehaviorSchema,
+  AgentProfileSchema,
+} from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
@@ -1286,15 +1290,15 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it at once and delivers the messages queued before it first, in the same turn. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
-    ),
     agentId: z.string(),
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional().describe(
+      'Leave this out unless the message cannot wait. Default "queue": the message waits until the agent\'s running turn ends. "steer": the message joins the running turn; a provider that cannot steer interrupts the turn instead. "interrupt": the running turn stops and a new turn starts with the message. A steer or interrupt carries the messages you queued before it, in order.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1305,6 +1309,9 @@ function createToolCatalog(
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
+      'Default "interrupt": the running turn stops and a new turn starts with the prompt. "steer": the prompt joins the running turn; a provider that cannot steer interrupts the turn instead.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1974,13 +1981,16 @@ function createToolCatalog(
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt. The recipient reads messages in the order they were queued: a steer follows two quiet seconds and waits for the current turn to end; an interrupt replaces the turn at once and takes the messages queued before it along. A later message does not cancel an earlier one. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        scope === "agent"
+          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them. A steer the recipient has not read is lost if its turn stops or is interrupted, along with the messages it carried. Completion reports include the target’s last response by default. Paseo supplies caller identity."
+          : "Send a prompt to an agent. A running turn is interrupted unless activeTurnBehavior is steer.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
         deliveryStatus: z.literal("queued").optional(),
         messageId: z.string().optional(),
+        activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
         status: AgentStatusEnum,
         guidance: z.string().optional(),
       },
@@ -1990,7 +2000,7 @@ function createToolCatalog(
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
-      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
+      activeTurnBehavior,
     }) => {
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
@@ -2049,12 +2059,11 @@ function createToolCatalog(
             success: true,
             deliveryStatus: receipt.status,
             messageId: receipt.messageId,
+            activeTurnBehavior: receipt.activeTurnBehavior,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
-            guidance: `${
-              activeTurnBehavior === "interrupt"
-                ? "Queued to replace the current turn now, after the messages queued before it."
-                : "Queued for delivery after two quiet seconds and the current turn ends."
-            } ${notifying ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE : "Provider dispatch has not occurred."}`,
+            guidance: notifying
+              ? `${receipt.guidance} ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
+              : receipt.guidance,
           },
         };
       }

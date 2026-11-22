@@ -5979,6 +5979,7 @@ export class CodexAppServerAgentSession implements AgentSession {
             questions: pending.questions ?? [],
             status: "canceled",
           }),
+          turnId: this.runningRootToolTurnId(itemId),
         });
       }
       pending.resolve({ decision: "cancel" });
@@ -6326,6 +6327,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         turnId: this.runningToolRows.get(key)?.turnId ?? turnId,
       });
     else this.runningToolRows.delete(key);
+  }
+
+  private runningRootToolTurnId(callId: string): string | undefined {
+    return this.runningToolRows.get(JSON.stringify([null, callId]))?.turnId;
   }
 
   private cancelRunningToolRows(): void {
@@ -6901,7 +6906,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!cardChanged || (state.parentCallId && state.parentCallId !== callId)) {
       return;
     }
-    const turnId = this.runningToolRows.get(JSON.stringify([null, callId]))?.turnId;
+    const turnId = this.runningRootToolTurnId(callId);
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall, turnId });
   }
 

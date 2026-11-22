@@ -123,11 +123,16 @@ export function Switch({
   const pressableStyle = useMemo(
     () => [
       styles.switchControl,
-      { minHeight: geometry.reservedHeight },
+      // The press area is a full control tall and grows out of the track; the layout only sees
+      // the track.
+      {
+        minHeight: geometry.hitHeight,
+        marginVertical: (geometry.trackHeight - geometry.hitHeight) / 2,
+      },
       disabled ? styles.disabled : null,
       style,
     ],
-    [disabled, geometry.reservedHeight, style],
+    [disabled, geometry.hitHeight, geometry.trackHeight, style],
   );
 
   return (

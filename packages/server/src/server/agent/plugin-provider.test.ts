@@ -60,6 +60,24 @@ interface ProviderHarnessOptions {
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
+interface ModelThinking {
+  id: string;
+  thinkingOptions?: readonly { id: string }[];
+  defaultThinkingOptionId?: string;
+}
+
+function modelThinking(model: ModelThinking) {
+  return {
+    id: model.id,
+    thinkingOptions: model.thinkingOptions?.map(optionId),
+    defaultThinkingOptionId: model.defaultThinkingOptionId,
+  };
+}
+
+function optionId(option: { id: string }): string {
+  return option.id;
+}
+
 function controlKey(control: { key: string }): string {
   return control.key;
 }
@@ -2131,6 +2149,48 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("keeps a model's own thinking options and default instead of the catalog's", async () => {
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (input.type !== "catalog") return false;
+        emit({
+          type: "catalog",
+          requestId: input.requestId,
+          catalog: {
+            models: [
+              { id: "shared", label: "Shared" },
+              {
+                id: "fast",
+                label: "Fast",
+                thinkingOptions: [{ id: "light", label: "Light" }],
+                defaultThinkingOptionId: "light",
+              },
+              { id: "planner", label: "Planner", thinkingOptions: [] },
+            ],
+            modes: [],
+            thinkingOptions: [{ id: "deep", label: "Deep" }],
+            defaultModel: "shared",
+            defaultThinkingOption: "deep",
+          },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const catalog = await client.fetchCatalog({ scope: "global", force: false });
+      expect(catalog.models.map(modelThinking)).toEqual([
+        { id: "shared", thinkingOptions: ["deep"], defaultThinkingOptionId: "deep" },
+        { id: "fast", thinkingOptions: ["light"], defaultThinkingOptionId: "light" },
+        { id: "planner", thinkingOptions: [], defaultThinkingOptionId: undefined },
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {
     const harness = createProviderHarness();
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -2219,6 +2279,73 @@ describe("PluginAgentClientRegistry", () => {
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
 
+  test("carries a plugin's session and turn metrics into the agent stream", async () => {
+    const turnMetrics = [
+      { label: "Model", value: "plugin-model" },
+      { label: "Cache", value: "82%", tone: "ok" as const },
+    ];
+    const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "turn-1" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "started",
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "completed",
+          metrics: turnMetrics,
+        });
+        emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("hello", { clientMessageId: "client-message" });
+
+      expect(eventsOfType(events, "turn_completed")).toEqual([
+        {
+          type: "turn_completed",
+          provider: "plugin-direct",
+          turnId: "turn-1",
+          metrics: turnMetrics,
+        },
+      ]);
+      expect(eventsOfType(events, "session_metrics_updated")).toEqual([
+        { type: "session_metrics_updated", provider: "plugin-direct", metrics: sessionMetrics },
+      ]);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(eventsOfType(history, "turn_completed")).toContainEqual({
+        type: "turn_completed",
+        provider: "plugin-direct",
+        turnId: "turn-1",
+        metrics: turnMetrics,
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("delivers a supported steer to the active turn", async () => {
     const harness = createProviderHarness({
       capabilities: [...CAPABILITIES, "prompt.steer"],
@@ -2259,7 +2386,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("returns unavailable when steering a provider without prompt.steer capability", async () => {
+  test("offers no steering when the provider did not negotiate prompt.steer", async () => {
     const harness = createProviderHarness({
       capabilities: [
         "prompt.message",
@@ -2276,9 +2403,7 @@ describe("PluginAgentClientRegistry", () => {
       cwd: "/workspace",
     });
     try {
-      const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
-      expect(result).toEqual({ status: "unavailable" });
-      expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+      expect(session.steerActiveTurn).toBeUndefined();
     } finally {
       await session.close();
       registry.replace([]);
@@ -2500,6 +2625,9 @@ describe("pending provider responses", () => {
   );
 });
 
+/** A diagnostic context for a provider that does not report its installation. */
+const NO_INSTALLATION = { inspectInstallation: async () => undefined };
+
 describe("plugin provider launch and status", () => {
   test("resolves the executable against the provider's PATH override", async () => {
     const harness = createProviderHarness();
@@ -2511,7 +2639,13 @@ describe("plugin provider launch and status", () => {
       const definition = registry.definitions()[registration.id]!;
       const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report[0]).toBe("Plugin direct");
+      expect(report).toContain("  Daemon PATH: /paseo-nonexistent-bin");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: node not found on PATH",
+      ]);
     } finally {
       await registry.shutdown();
     }
@@ -2591,6 +2725,51 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("the diagnostic reports the launch, the version and the provider's own rows", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [process.execPath, "agent"],
+      async status() {
+        return { available: true, diagnostic: "Sign-in: work account\nPlan: Pro" };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      const { diagnostic } = await client.getDiagnostic!({
+        inspectInstallation: async () => ({ status: "installed", version: "1.2.3" }),
+      });
+      // The daemon's PATH and shell rows depend on the host; the formatter's own tests cover them.
+      const hostRows = /^ {2}Daemon (PATH|shell): /;
+      expect(diagnostic.split("\n").filter((row) => !hostRows.test(row))).toEqual([
+        "Plugin direct",
+        "  Command source: default",
+        `  Configured command: ${process.execPath} agent`,
+        "  PATH matches: not checked",
+        `  Resolved path: ${process.execPath}`,
+        "  Version: 1.2.3",
+        "  Sign-in: work account",
+        "  Plan: Pro",
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a provider without a command reports only its own rows", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      expect(await client.getDiagnostic!(NO_INSTALLATION)).toEqual({ diagnostic: "Plugin direct" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("a missing executable is unavailable with a diagnostic without connecting", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = {
@@ -2602,9 +2781,13 @@ describe("plugin provider launch and status", () => {
     try {
       const client = registry.clients()[registration.id]!;
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({
-        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
-      });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report).toContain("  Configured command: paseo-nonexistent-provider-executable");
+      expect(report).toContain("  PATH matches: none");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: paseo-nonexistent-provider-executable not found on PATH",
+      ]);
       expect(harness.inputs).toEqual([]);
     } finally {
       await registry.shutdown();
@@ -2817,6 +3000,63 @@ test("plugin provider import launches with runtime MCP servers and returns only 
       }),
     );
     expect(imported.config).toEqual(storedConfig);
+    await imported.session.close();
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test("plugin provider import keeps the stats the plugin reported with its history", async () => {
+  const turnMetrics = [{ label: "Model", value: "plugin-model" }];
+  const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+  const harness = createProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type !== "session.open" || input.history !== "replay") return false;
+      emit({
+        type: "session.opened",
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        capabilities: CAPABILITIES,
+        restoration: "core",
+        persistence: input.persistence ?? { version: 1, data: { token: "root" } },
+        cwd: input.config.cwd,
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "user_message", id: "user-1", text: "go" },
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "assistant_message", id: "answer-1", text: "Done" },
+      });
+      emit({
+        type: "session.turn",
+        sessionId: input.sessionId,
+        turnId: "turn-1",
+        state: "completed",
+        metrics: turnMetrics,
+      });
+      emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+      emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+      return true;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const storedConfig = { provider: harness.registration.id, cwd: "/project" };
+  try {
+    const imported = await client.importSession!(
+      { providerHandleId: 'plugin:{"version":1,"data":{"token":"root"}}', cwd: "/project" },
+      { config: storedConfig, storedConfig },
+    );
+    expect(imported.sessionMetrics).toEqual(sessionMetrics);
+    expect(imported.timeline.map((entry) => entry.turnMetrics ?? null)).toEqual([
+      null,
+      turnMetrics,
+    ]);
     await imported.session.close();
   } finally {
     await registry.shutdown();
