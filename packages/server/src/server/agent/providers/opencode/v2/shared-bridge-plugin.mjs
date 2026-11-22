@@ -11,8 +11,7 @@ export function isRefused(error) {
 // live, per-session bindings over the authenticated OpenCode RPC channel.
 export async function registerSharedBridge(context) {
   const state = await import(new URL("./state.mjs", import.meta.url).href);
-  const locationState = state.stateFor(context.location);
-  const { bindings, definitions } = locationState;
+  const { bindings, definitions } = state.stateFor(context.location);
   const registrations = new Map();
   let updating = Promise.resolve();
   async function request(binding, pathname, body, allowMissing = false, signal) {
@@ -24,8 +23,8 @@ export async function registerSharedBridge(context) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (allowMissing && response.status === 404) return null;
-    const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      const payload = await response.json().catch(() => null);
       const detail = formatErrorDetail(payload?.issues ?? payload?.details);
       const message = payload?.error ?? `Paseo tool bridge returned HTTP ${response.status}`;
       const error = new Error(detail ? `${message}: ${detail}` : message);
@@ -33,7 +32,7 @@ export async function registerSharedBridge(context) {
       if (detail) error.details = detail;
       throw error;
     }
-    return payload;
+    return await response.json();
   }
   async function find(sessionID) {
     const seen = new Set();
@@ -45,40 +44,56 @@ export async function registerSharedBridge(context) {
     }
     return null;
   }
+  async function readBoundContext(sessionID, binding, query = "") {
+    try {
+      return await request(
+        binding,
+        `/sessions/${encodeURIComponent(sessionID)}/context${query}`,
+        undefined,
+        true,
+      );
+    } catch (error) {
+      // A refusal or rejected credentials means this bridge no longer serves the binding.
+      if (error?.status !== 401 && !isRefused(error)) throw error;
+      return null;
+    }
+  }
   async function install(binding) {
     const manifest = await request(
       binding,
       `/tools?sessionID=${encodeURIComponent(binding.sessionID)}`,
     );
-    await reconcileManifest(manifest.tools);
+    const conflicts = manifest.tools.filter((tool) => {
+      const registered = definitions.get(tool.name);
+      return registered && JSON.stringify(registered) !== JSON.stringify(tool);
+    });
+    if (conflicts.length > 0) await retireUnusedDefinitions(conflicts);
+    for (const definition of manifest.tools) await installDefinition(definition);
   }
-  // Compare the whole manifest against the last installed one. A drifted
-  // manifest means the owning daemon was upgraded or reconfigured: replace the
-  // entire tool set so removed tools disappear and changed ones are refreshed,
-  // rather than letting the first per-tool difference fail the bind.
-  async function reconcileManifest(tools) {
-    const serialized = JSON.stringify(tools);
-    if (locationState.manifest === serialized) return;
-    await Promise.all(
-      [...registrations.values()].map(({ registration }) => registration.dispose()),
+  async function retireUnusedDefinitions(conflicts) {
+    // A tool name is registered once per location. Another session can still
+    // use that definition, even when the session being rebound no longer does.
+    const contexts = await Promise.all(
+      [...bindings].map(async ([sessionID, binding]) => [
+        sessionID,
+        await readBoundContext(sessionID, binding, "?tools"),
+      ]),
     );
-    registrations.clear();
-    definitions.clear();
-    for (const definition of tools) await installDefinition(definition);
-    locationState.manifest = serialized;
+    const inUse = new Set(contexts.flatMap(([, scope]) => (scope ? scope.tools : [])));
+    for (const { name } of conflicts) {
+      if (inUse.has(name)) throw new Error(`Conflicting Paseo tool definition: ${name}`);
+    }
+    for (const [sessionID, scope] of contexts) {
+      if (!scope) bindings.delete(sessionID);
+    }
+    for (const { name } of conflicts) {
+      await registrations.get(name)?.dispose();
+      registrations.delete(name);
+      definitions.delete(name);
+    }
   }
   async function installDefinition(definition) {
-    const signature = JSON.stringify(definition);
-    const known = definitions.get(definition.name);
-    const old = registrations.get(definition.name);
-    if (known && old && JSON.stringify(known) === signature) return;
-    if (old) {
-      // The Paseo daemon ships a changed tool definition: replace the stale
-      // registration instead of throwing. A signature mismatch here means the
-      // bridge upgraded, not a genuine conflict between two live bridges.
-      await old.registration.dispose();
-      registrations.delete(definition.name);
-    }
+    if (registrations.has(definition.name)) return;
     const registration = await context.tool.transform((editor) => {
       editor.add({
         name: `paseo_${definition.name}`,
@@ -102,17 +117,14 @@ export async function registerSharedBridge(context) {
         },
       });
     });
-    registrations.set(definition.name, { signature, registration });
+    registrations.set(definition.name, registration);
     definitions.set(definition.name, definition);
   }
   async function clearUnusedDefinitions() {
     if (bindings.size) return;
-    await Promise.all(
-      [...registrations.values()].map(({ registration }) => registration.dispose()),
-    );
+    await Promise.all([...registrations.values()].map((registration) => registration.dispose()));
     registrations.clear();
     definitions.clear();
-    locationState.manifest = null;
   }
   // Reinstall live tools before this plugin generation is made visible.
   // Definitions are kept in memory, so unavailable owners cannot delay reload.
@@ -144,19 +156,7 @@ export async function registerSharedBridge(context) {
               previous &&
               (previous.baseUrl !== input.baseUrl || previous.token !== input.token)
             ) {
-              let active;
-              try {
-                active = await request(
-                  previous,
-                  `/sessions/${encodeURIComponent(input.sessionID)}/context`,
-                  undefined,
-                  true,
-                );
-              } catch (error) {
-                // Refusal or rejected credentials mean this endpoint no longer
-                // serves the previous binding. Other failures are inconclusive.
-                if (error?.status !== 401 && !isRefused(error)) throw error;
-              }
+              const active = await readBoundContext(input.sessionID, previous);
               if (active)
                 return { error: "OpenCode session is already bound to another Paseo bridge" };
               bindings.delete(input.sessionID);
@@ -207,9 +207,7 @@ export async function registerSharedBridge(context) {
   return async () => {
     await filter.dispose();
     await rpc.dispose();
-    await Promise.all(
-      [...registrations.values()].map(({ registration }) => registration.dispose()),
-    );
+    await Promise.all([...registrations.values()].map((registration) => registration.dispose()));
   };
 }
 

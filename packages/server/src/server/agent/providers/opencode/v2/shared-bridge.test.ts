@@ -18,6 +18,11 @@ interface TestTool {
   name: string;
   execute(input: { value: string }, call: { sessionID: string }): Promise<unknown>;
 }
+interface ToolDefinition {
+  name: string;
+  description: string;
+}
+
 interface TestContext {
   sessionID: string;
   tools: Record<string, unknown>;
@@ -232,193 +237,142 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
   }
 });
 
-test("a changed tool definition replaces the stale registration instead of failing the bind", async () => {
-  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-upgrade-"));
-  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
-  const v1 = { name: "echo", description: "echo v1", inputSchema: { value: z.string() } };
-  const v2 = { name: "echo", description: "echo v2", inputSchema: { value: z.string() } };
-  const toolsV1 = new Map([[v1.name, v1]]);
-  const toolsV2 = new Map([[v2.name, v2]]);
-  bridge.setManifestCatalog({ tools: new Map() });
-  await bridge.start();
-  const makeBinding = (tools: Map<string, unknown>) => ({
-    tools,
-    getTool: (name: string) => tools.get(name),
-    executeTool: async (_name: unknown, input: unknown) => ({
-      content: [{ type: "text", text: String((input as { value: string }).value) }],
-    }),
-  });
-  const unbindV1 = bridge.bindSession({ sessionId: "paseo", env: {}, tools: makeBinding(toolsV1) });
-  const unbindV2 = bridge.bindSession({
-    sessionId: "paseo-2",
+function addSession(
+  bridge: OpenCodeBridge,
+  sessionId: string,
+  descriptions: Record<string, string>,
+) {
+  const tools = new Map(
+    Object.entries(descriptions).map(([name, description]) => [
+      name,
+      { name, description, inputSchema: { value: z.string() } },
+    ]),
+  );
+  return bridge.bindSession({
+    sessionId,
     env: {},
-    tools: makeBinding(toolsV2),
+    tools: {
+      tools,
+      getTool: (name) => tools.get(name),
+      executeTool: async () => ({ content: [] }),
+    },
   });
-  try {
-    const plugin = {
-      package: await bridge.materializeV2Plugin(),
-      options: bridge.sharedV2Connection(),
-    };
-    const module = await import(
-      pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
-    );
-    const installed = new Map<string, TestTool & { description?: string }>();
-    const disposed: string[] = [];
-    let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
-    const context = {
-      options: {},
-      location: { directory: home },
-      provider: { reload: async () => {} },
-      model: { reload: async () => {} },
-      agent: { reload: async () => {} },
-      command: { reload: async () => {} },
-      skill: { reload: async () => {} },
-      rpc: {
-        register: async (_definition: unknown, handlers: typeof rpc) => {
-          rpc = handlers;
-          return { dispose: async () => {} };
-        },
-      },
-      tool: {
-        transform: async (
-          fn: (editor: { add(item: TestTool & { description?: string }): void }) => void,
-        ) => {
-          const added: string[] = [];
-          fn({
-            add: (item) => {
-              added.push(item.name);
-              installed.set(item.name, item);
-            },
-          });
-          return {
-            dispose: async () => {
-              for (const name of added) {
-                disposed.push(name);
-                installed.delete(name);
-              }
-            },
-          };
-        },
-      },
-      session: {
-        context: async () => [],
-        get: async () => ({ parentID: "" }),
-        hook: async () => ({ dispose: async () => {} }),
-      },
-    };
-    const dispose = await module.default.setup(context);
-    try {
-      await rpc.bind({ sessionID: "paseo", ...plugin.options });
-      expect(installed.get("paseo_echo")?.description).toBe("echo v1");
-      // The owning daemon ships a changed definition for the same tool. The
-      // bind must succeed and the registered tool must reflect the new schema.
-      await rpc.bind({ sessionID: "paseo-2", ...plugin.options });
-      expect(installed.get("paseo_echo")?.description).toBe("echo v2");
-      // The stale registration was disposed, not left alongside the new one.
-      expect(disposed).toContain("paseo_echo");
-    } finally {
-      await dispose();
-    }
-  } finally {
-    unbindV1();
-    unbindV2();
-    await bridge.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
+}
 
-test("a manifest drift drops tools the new manifest no longer ships", async () => {
-  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-drift-"));
-  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
-  const echo = { name: "echo", description: "echo", inputSchema: { value: z.string() } };
-  const extra = { name: "extra", description: "extra", inputSchema: { value: z.string() } };
-  const toolsBoth = new Map([
-    [echo.name, echo],
-    [extra.name, extra],
-  ]);
-  const toolsEcho = new Map([[echo.name, echo]]);
-  bridge.setManifestCatalog({ tools: new Map() });
-  await bridge.start();
-  const makeBinding = (tools: Map<string, unknown>) => ({
-    tools,
-    getTool: (name: string) => tools.get(name),
-    executeTool: async (_name: unknown, input: unknown) => ({
-      content: [{ type: "text", text: String((input as { value: string }).value) }],
-    }),
-  });
-  const unbindBoth = bridge.bindSession({
-    sessionId: "paseo",
-    env: {},
-    tools: makeBinding(toolsBoth),
-  });
-  const unbindEcho = bridge.bindSession({
-    sessionId: "paseo-2",
-    env: {},
-    tools: makeBinding(toolsEcho),
-  });
-  try {
-    const plugin = {
-      package: await bridge.materializeV2Plugin(),
-      options: bridge.sharedV2Connection(),
-    };
-    const module = await import(
-      pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
-    );
-    const installed = new Map<string, TestTool>();
-    let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
-    const context = {
-      options: {},
-      location: { directory: home },
-      provider: { reload: async () => {} },
-      model: { reload: async () => {} },
-      agent: { reload: async () => {} },
-      command: { reload: async () => {} },
-      skill: { reload: async () => {} },
-      rpc: {
-        register: async (_definition: unknown, handlers: typeof rpc) => {
-          rpc = handlers;
-          return { dispose: async () => {} };
-        },
+async function registerAtLocation(bridge: OpenCodeBridge, home: string) {
+  const pluginPath = fileURLToPath(await bridge.materializeV2Plugin());
+  const plugin = await import(pathToFileURL(path.join(pluginPath, "server.js")).href);
+  const tools: Record<string, ToolDefinition> = {};
+  const hooks: Array<(context: TestContext) => Promise<void>> = [];
+  let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+  const dispose = await plugin.default.setup({
+    options: {},
+    location: { directory: home },
+    rpc: {
+      register: async (_definition: unknown, handlers: typeof rpc) => {
+        rpc = handlers;
+        return { dispose: async () => {} };
       },
-      tool: {
-        transform: async (fn: (editor: { add(item: TestTool): void }) => void) => {
-          const added: string[] = [];
-          fn({
-            add: (item) => {
-              if (!item.name.startsWith("paseo_")) return;
-              added.push(item.name);
-              installed.set(item.name, item);
-            },
-          });
-          return {
-            dispose: async () => {
-              for (const name of added) installed.delete(name);
-            },
-          };
-        },
+    },
+    tool: {
+      transform: async (apply: (editor: { add(item: ToolDefinition): void }) => void) => {
+        const added: string[] = [];
+        apply({
+          add: (item) => {
+            added.push(item.name);
+            tools[item.name] = item;
+          },
+        });
+        return {
+          dispose: async () => {
+            for (const name of added) delete tools[name];
+          },
+        };
       },
-      session: {
-        context: async () => [],
-        get: async () => ({ parentID: "" }),
-        hook: async () => ({ dispose: async () => {} }),
+    },
+    session: {
+      context: async () => [],
+      get: async () => ({ parentID: "" }),
+      hook: async (event: string, handler: (context: TestContext) => Promise<void>) => {
+        if (event === "context") hooks.push(handler);
+        return { dispose: async () => {} };
       },
-    };
-    const dispose = await module.default.setup(context);
+    },
+  });
+  return {
+    bind: (owner: OpenCodeBridge, sessionID: string) =>
+      rpc.bind!({ sessionID, ...owner.sharedV2Connection() }),
+    visible: async (sessionID: string) => {
+      const context = { sessionID, tools: { ...tools }, system: [] };
+      for (const hook of hooks) await hook(context);
+      return context.tools;
+    },
+    dispose,
+  };
+}
+
+test.each([false, true])(
+  "rebinds an existing session after an owner stops and its definition changes (second retained session: %s)",
+  async (second) => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-upgrade-repro-"));
+    const old = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    const peer = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    const next = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    let location: Awaited<ReturnType<typeof registerAtLocation>> | undefined;
     try {
-      await rpc.bind({ sessionID: "paseo", ...plugin.options });
-      const paseoTools = () =>
-        [...installed.keys()].filter((name) => name !== "paseo_structured_output").sort();
-      expect(paseoTools()).toEqual(["paseo_echo", "paseo_extra"]);
-      // The daemon's new manifest no longer ships "extra": the next bind must
-      // drop it from the tool registry.
-      await rpc.bind({ sessionID: "paseo-2", ...plugin.options });
-      expect(paseoTools()).toEqual(["paseo_echo"]);
+      await old.start();
+      addSession(old, "first", { echo: "echo v1" });
+      location = await registerAtLocation(old, home);
+      await location.bind(old, "first");
+      expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo v1");
+      if (second) {
+        addSession(old, "second", { echo: "echo v1" });
+        await location.bind(old, "second");
+      }
+
+      await peer.start();
+      addSession(peer, "peer", { extra: "extra" });
+      await location.bind(peer, "peer");
+
+      // The OpenCode location survives, while the old daemon's HTTP service stops.
+      await old.close();
+      await next.start();
+      addSession(next, "first", { echo: "echo v2" });
+      await expect(location.bind(next, "first")).resolves.toEqual({});
+      expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo v2");
+      expect(await location.visible("peer")).toHaveProperty("paseo_extra");
     } finally {
-      await dispose();
+      await location?.dispose();
+      await old.close();
+      await next.close();
+      await peer.close();
+      await rm(home, { recursive: true, force: true });
     }
+  },
+);
+
+test("binding another session at the same location preserves the first session's tools", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-upgrade-scope-repro-"));
+  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  let location: Awaited<ReturnType<typeof registerAtLocation>> | undefined;
+  try {
+    await bridge.start();
+    addSession(bridge, "first", { echo: "echo", extra: "extra" });
+    addSession(bridge, "second", { echo: "echo" });
+    location = await registerAtLocation(bridge, home);
+    await location.bind(bridge, "first");
+    expect(await location.visible("first")).toHaveProperty("paseo_extra");
+    await location.bind(bridge, "second");
+    expect(await location.visible("second")).not.toHaveProperty("paseo_extra");
+    expect(await location.visible("first")).toHaveProperty("paseo_extra");
+
+    addSession(bridge, "conflict", { echo: "echo different" });
+    await expect(location.bind(bridge, "conflict")).rejects.toThrow(
+      "Conflicting Paseo tool definition: echo",
+    );
+    expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo");
   } finally {
-    unbindBoth();
-    unbindEcho();
+    await location?.dispose();
     await bridge.close();
     await rm(home, { recursive: true, force: true });
   }
