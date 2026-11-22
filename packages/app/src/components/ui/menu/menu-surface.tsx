@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Pressable, Text, View, useWindowDimensions, type PointerEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ChevronLeft } from "lucide-react-native";
@@ -30,6 +30,7 @@ import { useMenuContext, MenuContextProvider } from "./menu-context";
 import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
+import { isHoverPointer } from "./menu-pointer";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
 import type { Alignment, Placement } from "../anchor";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
@@ -327,7 +328,19 @@ function MenuFlyout({
   const menu = useMenuContext("MenuFlyout");
   const { hoverClose, cancelHoverClose } = useMenuSurface("MenuFlyout");
   const handleClose = useCallback(() => menu.setOpen(false), [menu]);
-  const handleHoverOut = useCallback(() => hoverClose(depth), [hoverClose, depth]);
+  const handleHoverIn = useCallback(
+    (event: PointerEvent) => {
+      if (isHoverPointer(event)) cancelHoverClose();
+    },
+    [cancelHoverClose],
+  );
+  // A tap inside the flyout ends with the finger leaving it, which is not the pointer walking off.
+  const handleHoverOut = useCallback(
+    (event: PointerEvent) => {
+      if (isHoverPointer(event)) hoverClose(depth);
+    },
+    [hoverClose, depth],
+  );
 
   if (!anchorRef) return null;
 
@@ -344,7 +357,7 @@ function MenuFlyout({
       maxHeight={maxHeight}
       scrollable={scrollable}
       backdrop={false}
-      onPointerEnter={cancelHoverClose}
+      onPointerEnter={handleHoverIn}
       onPointerLeave={handleHoverOut}
       testID={testID}
     >

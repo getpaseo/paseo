@@ -44,6 +44,15 @@ worktree 默认存放在 `$PASEO_HOME/worktrees/` 下，按源检出路径的哈
 
 ## 创建由 worktree 支撑的工作区 {#create-a-worktree-backed-workspace}
 
+在应用中，将 **隔离** 设为 **新建 worktree**，然后选择一个分支或 Pull Request。在列表旁边选择新 worktree 如何处理你的选择：
+
+- **新建分支** 从它创建一个新分支。分支默认使用这个选项。
+- **检出** 直接在该分支上工作。Pull Request 默认使用这个选项。
+
+从 Pull Request 新建分支时，新分支从 Pull Request 的最新提交开始，并且没有上游分支。推送不会进入 Pull Request 的分支。工作区的基础分支是 Pull Request 的分支。对于来自 fork 的 Pull Request，基础分支是该 Pull Request 要合并进的分支。
+
+Git 同一时间只允许一个 worktree 检出某个分支。如果你检出的分支已经在某个 worktree 中，Paseo 会在 **已有 worktree** 下选中那个 worktree，而不是再复制一份。
+
 下面的示例以当前目录作为源检出。传入 `--path ~/dev/my-app` 可以从另一个检出创建工作区。
 
 从基础分支分出新分支：
@@ -79,6 +88,16 @@ paseo workspace create \
 ```
 
 当 Paseo 无法从源检出推断代码托管平台时，添加 `--forge <name>`。
+
+## 在已有 worktree 中工作 {#work-in-an-existing-worktree}
+
+要在磁盘上已有的 worktree 中继续工作，将 **隔离** 设为 **已有 worktree** 并选择它。列表显示仓库的所有 git worktree，包括你用 `git worktree add` 创建的。工作区沿用该 worktree 当前检出的分支。Paseo 不会创建分支，也不会运行 setup。
+
+在 CLI 中，在该 worktree 的目录上创建一个本地工作区：
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app-feature
+```
 
 ## 使用 .worktreeinclude 复制本地文件 {#copy-local-files-with-worktreeinclude}
 
@@ -119,6 +138,19 @@ paseo workspace create \
 两个字段都接受多行 shell 脚本或命令数组；无论哪种形式，命令都按顺序运行。
 
 命令以 worktree 作为 `cwd` 运行。使用 `$PASEO_SOURCE_CHECKOUT_PATH` 访问原始检出中的文件（未跟踪的配置、本地缓存等）。
+
+teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修改它，单位为毫秒：
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+达到时限后，Paseo 会尝试停止命令及其子进程，并停止等待输出。如果 teardown 失败或达到时限，工作区仍会归档，worktree 会保留在磁盘上。`teardownTimeoutMs` 接受 1 到 2147483647 之间的整数。其他值使用默认时限。
 
 ## 脚本与服务 {#scripts-and-services}
 

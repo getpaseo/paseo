@@ -528,6 +528,14 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
   z.object({ type: z.literal("model_changed") }).passthrough(),
+  z
+    .object({
+      type: z.literal("thinking_level_changed"),
+      thinkingLevel: z.string().optional(),
+      // The user's selector ("auto") when it differs from the level OMP runs.
+      configured: z.string().optional(),
+    })
+    .passthrough(),
 ]);
 
 const OmpCommandBase = { id: z.string().optional() };

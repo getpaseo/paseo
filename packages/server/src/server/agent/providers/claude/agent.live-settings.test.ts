@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { convertLegacyClaudeUltracode } from "../../option-controls.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
 
@@ -18,6 +19,7 @@ function deferred<T>() {
 class ForegroundQuery {
   readonly work = deferred<void>();
   readonly closed = deferred<void>();
+  readonly flagSettings: Parameters<Query["applyFlagSettings"]>[0][] = [];
   private stopped = false;
   private readonly output: AsyncGenerator<SDKMessage>;
 
@@ -72,6 +74,9 @@ class ForegroundQuery {
   }
   async setPermissionMode() {}
   async setModel() {}
+  async applyFlagSettings(settings: Parameters<Query["applyFlagSettings"]>[0]) {
+    this.flagSettings.push(settings);
+  }
   async supportedCommands() {
     return [];
   }
@@ -123,7 +128,8 @@ test.each(["mode", "model", "commands"] as const)(
     try {
       await session.startTurn("Run the foreground command");
       await running.promise;
-      expect(await session.setThinkingOption?.("medium")).toMatchObject({
+      // Ultracode is launched with the query, so the change waits for a restart.
+      expect(await session.setThinkingOption?.("ultracode")).toMatchObject({
         message: "Thinking level applies next turn",
       });
       if (control === "mode") await session.setMode("acceptEdits");
@@ -149,9 +155,128 @@ test.each(["mode", "model", "commands"] as const)(
       await session.startTurn("Run another command with the new thinking level");
       queries[1].work.resolve();
       expect(await terminal.promise).toBe("turn_completed");
-      expect(efforts).toEqual(["low", "medium"]);
+      expect(efforts).toEqual(["low", "xhigh"]);
     } finally {
       await session.close();
     }
   },
 );
+
+test("Ultracode toggles at Medium and stays enabled when effort changes live", async () => {
+  const queries: ForegroundQuery[] = [];
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.284",
+    queryFactory: (input) => {
+      const query = new ForegroundQuery(input);
+      queries.push(query);
+      launchOptions.push(input.options);
+      return query as unknown as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: "medium",
+    providerOptions: { ultracode: false },
+  });
+  try {
+    expect(session.controls).toContainEqual(
+      expect.objectContaining({ key: "ultracode", type: "toggle" }),
+    );
+    await session.startTurn("Start at Medium");
+    expect(launchOptions[0]).toMatchObject({ effort: "medium", settings: { ultracode: false } });
+    await session.applyOptions?.({ ultracode: true });
+    await session.setThinkingOption?.("high");
+    await session.applyOptions?.({ ultracode: false });
+    expect(queries).toHaveLength(1);
+    expect(queries[0].flagSettings).toEqual([
+      { fastMode: false, ultracode: false },
+      { ultracode: true },
+      { effortLevel: "high", ultracode: true },
+      { ultracode: false },
+    ]);
+  } finally {
+    await session.close();
+  }
+});
+
+test.each([
+  ["xhigh", true],
+  ["high", false],
+] as const)("older Claude Code launches %s with Ultracode set to %s", async (effort, enabled) => {
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.283",
+    queryFactory: (input) => {
+      launchOptions.push(input.options);
+      return new ForegroundQuery(input) as unknown as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: effort,
+    providerOptions: { ultracode: true },
+  });
+  try {
+    expect(session.controls?.some((control) => control.key === "ultracode")).toBe(false);
+    await session.startTurn("Start the agent");
+    expect(launchOptions[0]).toMatchObject({ effort, settings: { ultracode: enabled } });
+  } finally {
+    await session.close();
+  }
+});
+
+test("reopens an older Claude Code agent with Ultracode after choosing Ultra Code again", async () => {
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.283",
+    queryFactory: (input) => {
+      launchOptions.push(input.options);
+      return new ForegroundQuery(input) as unknown as Query;
+    },
+  });
+  const config = {
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: "xhigh",
+    providerOptions: { ultracode: true },
+  };
+  const session = await client.createSession(config);
+  let savedOptions = config.providerOptions;
+  session.subscribe((event) => {
+    if (event.type === "options_changed" && typeof event.patch.ultracode === "boolean") {
+      savedOptions = { ultracode: event.patch.ultracode };
+    }
+  });
+  try {
+    await session.setThinkingOption?.("high");
+    expect(savedOptions.ultracode).toBe(false);
+    await session.setThinkingOption?.("ultracode");
+  } finally {
+    await session.close();
+  }
+  const reopened = await client.createSession(
+    convertLegacyClaudeUltracode({
+      ...config,
+      thinkingOptionId: "ultracode",
+      providerOptions: savedOptions,
+    }),
+  );
+  try {
+    await reopened.startTurn("Start the agent");
+    expect(launchOptions[0]).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
+  } finally {
+    await reopened.close();
+  }
+});
