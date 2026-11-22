@@ -6,9 +6,11 @@ nav: OpenCode
 
 # OpenCode {#opencode}
 
-使用你现有的 `opencode` 安装、凭据和配置，在 Paseo 中运行 OpenCode。
+Paseo 通过你已安装的 `opencode` CLI 运行 OpenCode。它使用你现有的凭据和配置。
 
 ## 开始使用 {#getting-started}
+
+OpenCode 内置于 Paseo 且默认启用。
 
 1. 在 daemon 主机上安装 [OpenCode](https://opencode.ai/)：
 

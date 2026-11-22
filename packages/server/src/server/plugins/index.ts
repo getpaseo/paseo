@@ -24,7 +24,7 @@ import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-sou
 import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
-import { PluginRuntime } from "./runtime.js";
+import { PluginRuntime, type PluginWorktreeManagerRuntime } from "./runtime.js";
 import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type {
@@ -50,6 +50,10 @@ interface PluginRuntimePort {
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   wait?: PluginLifecycle["wait"];
+  hasWorktreeManager?: PluginWorktreeManagerRuntime["hasWorktreeManager"];
+  createWorktree?: PluginWorktreeManagerRuntime["createWorktree"];
+  removeWorktree?: PluginWorktreeManagerRuntime["removeWorktree"];
+  restoreWorktree?: PluginWorktreeManagerRuntime["restoreWorktree"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   startSubscription: PluginRuntime["startSubscription"];
@@ -190,6 +194,31 @@ export class PluginService {
       return this.runtime.before(name, request);
     }
     return request;
+  };
+
+  readonly hasWorktreeManager: PluginWorktreeManagerRuntime["hasWorktreeManager"] = (options) => {
+    return this.runtime.hasWorktreeManager?.(options) ?? false;
+  };
+
+  readonly createWorktree: PluginWorktreeManagerRuntime["createWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.createWorktree?.(request, options)) ?? null;
+  };
+
+  readonly removeWorktree: PluginWorktreeManagerRuntime["removeWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.removeWorktree?.(request, options)) ?? null;
+  };
+
+  readonly restoreWorktree: PluginWorktreeManagerRuntime["restoreWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.restoreWorktree?.(request, options)) ?? null;
   };
 
   subscribeSettings(listener: (pluginId: string, settingsId: string) => void): () => void {
@@ -683,6 +712,7 @@ export class PluginService {
           id: source.id,
           label: source.label,
           icon: source.icon,
+          providers: source.providers ?? (source.provider ? [source.provider] : undefined),
           discover: async (scope) => {
             const launch =
               scope.kind === "global" && source.provider
@@ -744,6 +774,7 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          docsUrl: provider.docsUrl,
           command: provider.command,
           requiresConfiguration: provider.requiresConfiguration,
           status: provider.hasStatus

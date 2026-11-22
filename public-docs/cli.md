@@ -322,7 +322,12 @@ paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
 ```
 
-Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
+Leave `--behavior` out unless the message cannot wait. The defaults depend on who sends:
+
+- From an agent (`PASEO_AGENT_ID` set), the default is `queue`. The message waits until the recipient's running turn ends. `--behavior steer` adds the message to the running turn, and `--behavior interrupt` stops the turn and starts a new one with the message. A steer or interrupt also delivers the messages you queued before it, in order.
+- From a person, the default is `interrupt`. `--behavior steer` adds the message to the running turn instead.
+
+If the recipient's provider cannot steer, `steer` interrupts the running turn instead. With `--no-wait`, the output says what happened to an agent's message and how to deliver a queued message now.
 
 ## Viewing logs
 
@@ -447,21 +452,29 @@ paseo hub deploy -p <project>   # Deploy an existing legacy project bundle
 paseo hub logout               # Remove the active stored CLI login
 ```
 
-Run deploy from the repository root. By default it reads every direct `.paseo/triggers/*.yml` file in deterministic path order. It validates all triggers before installing them one at a time. If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` only validates; it does not create or activate revisions.
+Run `paseo hub deploy` from the repository root. By default, it reads every direct `.paseo/triggers/*.yml` file in deterministic path order and validates all triggers before installing them one at a time.
 
-Pass `-p, --project <slug>` for an existing legacy bundle: `.paseo/hub.yml`, direct `.paseo/workflows/*.yml` files, and referenced workflow partials. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
+If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` validates without creating or activating revisions. Pass `-p, --project <slug>` for an existing legacy project bundle.
 
-`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal it offers to connect this daemon, then separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to Hub's **Triggers** page and prints `paseo hub init` for setup as code. `--json` and non-TTY login remain login-only and never prompt. The stored login is separate from the daemon relationship created by `connect`.
+`paseo hub login` opens the Hub approval page and stores an organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal, it offers to connect this daemon (default yes) and separately asks whether to grant `hub.execute` (default no).
 
-`init` requires a TTY. It signs in and connects the daemon as needed, then lists the organization's app connections that can back a starter trigger. One usable connection is selected automatically; with several, you choose a **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
+`--json` and non-TTY logins never prompt. The stored CLI login stays separate from the daemon relationship created by `connect`.
 
-Setup asks which agent provider, model, and mode to run. Providers must be enabled and expose both a selectable model and an execution mode. Suggested model and mode entries are the daemon's defaults; a mode is still selected explicitly when there is no default. Hub validates the choice against the daemon before deploying, and accepts only Claude, Codex, and OpenCode for its unattended runs. `deploy` applies the same checks, so it needs the named daemon connected. Setup then asks for the identity allowed to trigger the bot: a GitHub username, Slack member ID, or Discord user ID. It validates the trigger, writes `.paseo/triggers/<provider>-help.yml`, and asks whether to deploy. Replacing that file requires confirmation; existing legacy bundles and other trigger files are preserved. See the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger).
+`paseo hub init` requires a TTY, signs in and connects the daemon as needed, and selects a ready integration (or sends you to **Hub → Apps** if none is ready). It then prompts for an enabled provider on your daemon that exposes both a selectable model and at least one execution mode.
 
-Interactive logout checks the same-origin daemon relationship and asks whether to disconnect before deleting the login. Declining removes only the login. JSON and noninteractive logout never prompt or disconnect implicitly; `--disconnect-daemon` is the explicit automation path, and `--force` applies to that daemon disconnection. If a requested disconnection fails, the login is preserved.
+Providers that report zero execution modes (such as Pi) are filtered out by `paseo hub init`, but can still be configured in the Hub dashboard or in `.paseo/triggers/*.yml` and deployed with `paseo hub deploy`.
 
-Every command resolves and normalizes its destination before Hub or daemon work. Origin precedence is an explicit command origin or `--hub`, then `PASEO_HUB_URL`, then the active stored login origin, then the hosted default `https://hub.paseo.sh`. The hosted default never overrides an active login. Credential precedence is `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login for the exact resolved origin. A stored credential is never sent to a different origin. API keys passed through flags or the environment are not stored.
+Setup next asks for the allowed sender identity (GitHub username, Slack member ID, or Discord user ID), validates the trigger against the connected daemon, writes `.paseo/triggers/<provider>-help.yml`, and asks whether to deploy. Replacing an existing starter file requires confirmation while preserving other trigger files. See the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger).
 
-Human output reports the resolved destination before each action. JSON output keeps stdout machine-readable and includes the normalized Hub origin. Bundle diagnostics identify paths without printing configuration contents or credentials.
+Interactive `paseo hub logout` checks for a daemon connected to the same Hub and asks whether to disconnect it before deleting the login. JSON and non-interactive logouts never prompt or disconnect unless you pass `--disconnect-daemon` (with optional `--force`). If disconnection fails, the login stays intact.
+
+Every Hub command resolves its destination and credentials in order:
+
+- Origin precedence: explicit `[url]` or `--hub`, then `PASEO_HUB_URL`, then the active stored login, then `https://hub.paseo.sh`.
+- Credential precedence: `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login matching the exact resolved origin.
+- API keys passed via flags or environment variables are never written to disk, and stored credentials are never sent to another origin.
+
+Human output prints the resolved destination before each action, while `--json` writes machine-readable output including the normalized Hub origin. Diagnostics name file paths without printing contents or credentials.
 
 See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
 

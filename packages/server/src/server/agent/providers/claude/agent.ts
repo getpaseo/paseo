@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { ClaudeResultMeter } from "./metrics.js";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
@@ -124,6 +125,7 @@ import {
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
+  type AgentMetric,
   type AgentMode,
   type AgentModelDefinition,
   type AgentPermissionRequest,
@@ -1780,6 +1782,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.version = Promise.resolve(claudeCodeVersion);
     const env = this.buildProviderEnv();
     let discoveredModelIds = new Set<string>();
+    let incomplete = false;
     try {
       const advertisedModels = await runProviderRefreshActivity(context, "models", () =>
         this.discoverModels({
@@ -1796,6 +1799,7 @@ export class ClaudeAgentClient implements AgentClient {
       );
     } catch (error) {
       context?.signal.throwIfAborted();
+      incomplete = true;
       this.logger.warn(
         { err: error },
         "Claude model discovery failed; omitting discovery-required models",
@@ -1813,6 +1817,7 @@ export class ClaudeAgentClient implements AgentClient {
     return {
       models,
       ...modeCatalog,
+      ...(incomplete ? { incomplete } : {}),
     };
   }
 
@@ -2539,6 +2544,7 @@ class ClaudeAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
+  private readonly resultMeter = new ClaudeResultMeter();
   private compacting = false;
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
@@ -3859,6 +3865,7 @@ class ClaudeAgentSession implements AgentSession {
     this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
+    this.resultMeter.queryStarted();
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -5371,6 +5378,25 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
+    const metrics = this.resultMeter.observe(
+      message,
+      this.lastRuntimeModel ?? this.config.model ?? null,
+    );
+    this.appendTurnOutcomeEvents(message, metrics.turn, events);
+    if (metrics.session?.length) {
+      events.push({
+        type: "session_metrics_updated",
+        provider: "claude",
+        metrics: metrics.session,
+      });
+    }
+  }
+
+  private appendTurnOutcomeEvents(
+    message: Extract<SDKMessage, { type: "result" }>,
+    turnMetrics: AgentMetric[],
+    events: AgentStreamEvent[],
+  ): void {
     const usage = this.convertUsage(message);
     // Claude Code reports a turn that stopped on an API error (a usage limit, an overloaded or
     // rejected request) as `success` with `is_error`, carrying the error text in `result`.
@@ -5414,7 +5440,7 @@ class ClaudeAgentSession implements AgentSession {
           },
         });
       }
-      events.push({ type: "turn_completed", provider: "claude", usage });
+      events.push({ type: "turn_completed", provider: "claude", usage, metrics: turnMetrics });
       return;
     }
     const errorMessage =

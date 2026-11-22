@@ -1,6 +1,6 @@
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
-import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -284,9 +284,7 @@ export function createHostResolver(input: {
                   : undefined,
                 sourceAgentId: input.callerAgentId,
                 sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
-                activeTurnBehavior:
-                  (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
-                  (input.callerAgentId ? "steer" : "interrupt"),
+                activeTurnBehavior: args.activeTurnBehavior as AgentActiveTurnBehavior | undefined,
               })
               .catch((error) => {
                 if (isAmbiguousPromptFailure(error)) throw error;
@@ -298,7 +296,11 @@ export function createHostResolver(input: {
               status: agent.status,
               guidance:
                 receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                  ? `${
+                      // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after
+                      // 2027-05-22 once connected-host floor >= v0.17.2. Older hosts return no guidance.
+                      receipt.guidance ?? "Queued for delivery after the current turn ends."
+                    } You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false.`
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },

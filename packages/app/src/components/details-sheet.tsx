@@ -1,7 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { View, useWindowDimensions } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useTranslation } from "react-i18next";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SheetHeaderView, SHEET_HORIZONTAL_PADDING_SCALE } from "@/components/adaptive-modal-sheet";
@@ -23,23 +22,24 @@ const ThemedBottomSheetModal = withUnistyles(IsolatedBottomSheetModal, (theme) =
 }));
 
 /**
- * The context window meter's details on compact screens, in a sheet as tall as its content.
- * Gorhom mounts the content only while the sheet is presented, so whatever it fetches stops once
- * the sheet closes.
+ * What a hover card or tooltip shows on wide screens, shown on compact screens in a sheet as tall
+ * as its content. Gorhom mounts the content only while the sheet is presented, so whatever it
+ * fetches stops once the sheet closes.
  */
-export function ContextWindowSheet({
+export function DetailsSheet({
   open,
   onClose,
+  title,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  title: string;
   children: ReactNode;
 }) {
-  const { t } = useTranslation();
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const header = useMemo(() => ({ title: t("contextWindow.title") }), [t]);
+  const header = useMemo(() => ({ title }), [title]);
   const scrollContentStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: open,
@@ -50,7 +50,8 @@ export function ContextWindowSheet({
     <ThemedBottomSheetModal
       ref={sheetRef}
       contextBridge={null}
-      // Content-sized rather than fixed snap points: the usage cards stream in one at a time.
+      // Content-sized rather than fixed snap points: a few rows of details, or usage cards that
+      // stream in one at a time.
       enableDynamicSizing
       maxDynamicContentSize={height * 0.8}
       onChange={handleSheetChange}

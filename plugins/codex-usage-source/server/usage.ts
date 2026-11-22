@@ -73,7 +73,12 @@ export async function discover(
   for (const input of candidates) {
     const auth = await readAuth(input, lookup);
     if (auth)
-      present.push({ ...accountIdentity(auth, input), harness: harnessLabel(input), input });
+      present.push({
+        ...accountIdentity(auth, input),
+        harness: harnessLabel(input),
+        provider: input.route.store,
+        input,
+      });
   }
   return present;
 }

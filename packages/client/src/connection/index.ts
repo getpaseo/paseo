@@ -125,6 +125,7 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
 // Protocol support belongs to the installed client. Only browser hosting needs
 // a resource supplied by the caller. Keep this exhaustive as the protocol evolves.
 export const DEFAULT_CLIENT_CAPABILITIES = {
+  [CLIENT_CAPS.agentActiveTurnBehaviors]: true,
   [CLIENT_CAPS.terminalChunkedReplay]: true,
   [CLIENT_CAPS.binaryChunkingV1]: true,
   [CLIENT_CAPS.helloRejection]: true,

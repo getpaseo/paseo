@@ -15,6 +15,8 @@ export interface UsageSource {
   id: string;
   label: string;
   icon?: string;
+  /** Provider IDs associated with this source, used as a hint for default visibility. */
+  providers?: readonly string[];
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
 }
@@ -22,6 +24,7 @@ export interface UsageSource {
 interface Login {
   input: unknown;
   harness: string;
+  provider?: string;
 }
 
 interface KnownReport {
@@ -36,6 +39,8 @@ export interface AgentUsageLookup {
   resolveLaunch?(
     provider: string,
   ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
+  /** Whether the provider (or a custom provider derived from it) is installed and enabled. */
+  isProviderActive?(provider: string, options?: { forceRefresh?: boolean }): Promise<boolean>;
 }
 
 export interface ListUsageReportsOptions {
@@ -104,18 +109,65 @@ export class UsageSourceRegistry {
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
+    const uniqueIds = [...new Set(ids)];
+    const checkProvider =
+      options.agentId === undefined
+        ? this.createProviderActivityChecker(options.forceRefresh)
+        : undefined;
     return Promise.all(
-      [...new Set(ids)].flatMap((id) => {
+      uniqueIds.flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
+        // Resolve each report's provider hint alongside its fetch so a slow provider probe
+        // never blocks unrelated reports from fetching or streaming.
         return [
-          this.fetchId(id, known, options.forceRefresh).then((entry) => {
-            options.onReport?.(entry);
-            return entry;
+          Promise.all([
+            this.fetchId(id, known, options.forceRefresh),
+            this.resolveDefaultEnabled(known, checkProvider),
+          ]).then(([entry, defaultEnabled]) => {
+            const stamped = defaultEnabled === false ? { ...entry, defaultEnabled: false } : entry;
+            options.onReport?.(stamped);
+            return stamped;
           }),
         ];
       }),
     );
+  }
+
+  private hintedProviders(known: KnownReport): string[] {
+    const fromLogins = [
+      ...new Set(known.logins.flatMap((login) => (login.provider ? [login.provider] : []))),
+    ];
+    if (fromLogins.length > 0) return fromLogins;
+    return known.source.providers ? [...new Set(known.source.providers)] : [];
+  }
+
+  private createProviderActivityChecker(
+    forceRefresh?: boolean,
+  ): ((provider: string) => Promise<boolean>) | undefined {
+    const isProviderActive = this.agents.isProviderActive;
+    if (!isProviderActive) return undefined;
+    const checks = new Map<string, Promise<boolean>>();
+    return (provider: string) => {
+      const existing = checks.get(provider);
+      if (existing) return existing;
+      const check = isProviderActive(provider, { forceRefresh }).catch((error) => {
+        this.logger.warn({ provider, err: error }, "Usage provider availability hint failed");
+        return true;
+      });
+      checks.set(provider, check);
+      return check;
+    };
+  }
+
+  private async resolveDefaultEnabled(
+    known: KnownReport,
+    checkProvider: ((provider: string) => Promise<boolean>) | undefined,
+  ): Promise<boolean | undefined> {
+    if (!checkProvider) return undefined;
+    const hinted = this.hintedProviders(known);
+    if (hinted.length === 0) return undefined;
+    return (await anyTrue(hinted.map(checkProvider))) ? undefined : false;
   }
 
   private pruneAgents(): void {
@@ -197,6 +249,7 @@ export class UsageSourceRegistry {
                 key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
                 label: z.string().optional(),
                 harness: z.string().min(1).optional(),
+                provider: z.string().min(1).optional(),
                 input: z.json(),
               }),
             )
@@ -205,7 +258,11 @@ export class UsageSourceRegistry {
             const id = `${source.id}:${account.key}`;
             const known = reports.get(id);
             // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
-            const login = { input: account.input, harness: account.harness ?? source.label };
+            const login: Login = {
+              input: account.input,
+              harness: account.harness ?? source.label,
+              ...(account.provider ? { provider: account.provider } : {}),
+            };
             if (known) {
               if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
                 known.logins.push(login);
@@ -389,4 +446,29 @@ function cacheIdentity(id: string, known: KnownReport): string {
   return `${id}:${createHash("sha256")
     .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
     .digest("hex")}`;
+}
+
+/** Resolves true as soon as any check resolves true, or false once every check resolves false. */
+function anyTrue(checks: readonly Promise<boolean>[]): Promise<boolean> {
+  if (checks.length === 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let remaining = checks.length;
+    let settled = false;
+    for (const check of checks) {
+      void (async () => {
+        const value = await check;
+        if (settled) return;
+        if (value) {
+          settled = true;
+          resolve(true);
+          return;
+        }
+        remaining -= 1;
+        if (remaining === 0) {
+          settled = true;
+          resolve(false);
+        }
+      })();
+    }
+  });
 }

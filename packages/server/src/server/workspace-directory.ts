@@ -78,6 +78,7 @@ export interface WorkspaceDirectoryDeps {
     listActive(): Promise<PersistedWorkspaceRecord[]>;
     get(id: string): Promise<PersistedWorkspaceRecord | null>;
   };
+  getArchivingAt(workspaceId: string): string | null;
   listAgentPayloads(workspaceIds?: Iterable<string>): Promise<AgentSnapshotPayload[]>;
   workspaceLastUserMessageTimes(
     workspaceIds?: Iterable<string>,
@@ -171,7 +172,6 @@ function activeWorkspaceRecords(
 }
 
 export class WorkspaceDirectory {
-  private readonly archivingByWorkspaceId = new Map<string, string>();
   /**
    * Per-workspace last-seen winning bucket + entered-at. Persists across
    * `buildDescriptorMap` calls inside the daemon process; reset on cold start.
@@ -204,18 +204,6 @@ export class WorkspaceDirectory {
   });
 
   constructor(private readonly deps: WorkspaceDirectoryDeps) {}
-
-  markArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.set(workspaceId, archivingAt);
-    }
-  }
-
-  clearArchiving(workspaceIds: Iterable<string>): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.delete(workspaceId);
-    }
-  }
 
   async buildDescriptorMap(options: {
     includeGitData: boolean;
@@ -273,7 +261,7 @@ export class WorkspaceDirectory {
         ...workspaceDescriptors[i],
         createdAt: includedWorkspaces[i].createdAt,
         lastUserMessageAt: lastUserMessageTimes.get(workspaceId) ?? null,
-        archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
+        archivingAt: this.deps.getArchivingAt(workspaceId),
       });
     }
 

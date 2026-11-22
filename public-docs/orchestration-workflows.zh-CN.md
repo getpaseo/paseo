@@ -49,7 +49,7 @@ Agent 可以通过 **Agent ID** 相互发送提示词，Agent ID 是 Paseo 用�
 
 > 用 Paseo 把这段提示词发送给 Agent [在此粘贴 Agent ID]：“审查你工作区中解析器的改动，并报告缺失的测试用例。”
 
-接收方 Agent 会在它现有的对话中收到这段提示词。由 Agent 发起的发送默认会引导正在进行的一轮；无法引导时则退回为中断。把 MCP 的 `activeTurnBehavior` 或 CLI 的 `--behavior` 设置为 `steer` 或 `interrupt` 可以覆盖这个默认行为。如果希望它另外回发一条消息，请把发送方的 Agent ID 也告诉它。
+接收方 Agent 会在它现有的对话中收到这段提示词。如果接收方 Agent 正在工作，这段提示词会等到它当前的轮次结束。对于不能等待的消息，发送方 Agent 把 MCP 的 `activeTurnBehavior` 或 CLI 的 `--behavior` 设置为 `steer` 或 `interrupt`：`steer` 把消息加入正在进行的轮次，`interrupt` 停止该轮次并开始新的一轮。响应会告诉发送方 Agent 实际发生了什么。如果希望它另外回发一条消息，请把发送方的 Agent ID 也告诉它。
 
 在底层，Agent 会用接收方的 `agentId` 和一段 `prompt` 调用 `send_agent_prompt`。Agent 也可以用 `list_agents` 发现 ID；CLI 使用 [`paseo send <id>`](/docs/cli#sending-messages)。对于另一台主机，请使用[远程 CLI 工作流](#work-on-another-machine)。
 
