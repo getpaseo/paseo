@@ -2,6 +2,7 @@ import type { AudioEngine, AudioEngineCallbacks, AudioEngineOptions } from "./au
 
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
+import { Platform } from "react-native";
 import { playFile } from "./file-playback";
 import { createNativeAudioEngine, type NativeAudioEngineDeps } from "./native-audio-engine";
 
@@ -34,6 +35,7 @@ async function playEncodedAudio(
       allowsRecording: false,
       interruptionMode: "duckOthers",
       interruptionModeAndroid: "duckOthers",
+      ...(Platform.OS === "ios" ? { shouldPlayInBackground: true } : {}),
     });
   }
   if (signal.aborted) throw new Error("Playback stopped");
