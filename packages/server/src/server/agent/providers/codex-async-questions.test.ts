@@ -8,6 +8,7 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { CodexAsyncQuestions } from "./codex/async-questions.js";
 import { AgentManager } from "../agent-manager.js";
 
 const questionItem = {
@@ -433,4 +434,36 @@ test("restores unanswered questions and does not reopen answered questions on du
   } finally {
     await resumed.session.close();
   }
+});
+
+test("preserves structured async questions and answers for live and restored timelines", () => {
+  const questions = new CodexAsyncQuestions(undefined);
+  questions.receive(questionItem);
+  const expected = [
+    {
+      id: "0",
+      header: "Question 1",
+      question: "Which color?",
+      options: [{ label: "Blue" }, { label: "Green" }],
+      isOther: true,
+    },
+  ];
+  expect(questions.timeline(questionItem.id)?.metadata).toEqual({
+    questions: expected,
+    questionStatus: "pending",
+  });
+  const timeline = questions.prepareResponse(`permission-${questionItem.id}`, answer).complete();
+  expect(timeline.metadata).toEqual({
+    questions: expected,
+    answers: { "0": ["Green"] },
+    questionStatus: "answered",
+  });
+  const restored = new CodexAsyncQuestions(questions.serialize());
+  expect(restored.timeline(questionItem.id)).toEqual(timeline);
+  const dismissed = new CodexAsyncQuestions(undefined);
+  dismissed.receive(questionItem);
+  expect(
+    dismissed.prepareResponse(`permission-${questionItem.id}`, { behavior: "deny" }).complete()
+      .metadata,
+  ).toEqual({ questions: expected, questionStatus: "dismissed" });
 });
