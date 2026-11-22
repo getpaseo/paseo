@@ -521,7 +521,7 @@ test.describe("Sidebar workspace list", () => {
       await gotoAppShell(page);
 
       const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
-      await expect(row.getByTestId("workspace-status-indicator-done")).toBeVisible();
+      await expect(row.getByTestId("workspace-status-indicator-needs_follow_up")).toBeVisible();
       await (await openWorkspaceReadAction(page, workspace.workspaceId, "unread")).click();
       await openWorkspaceReadAction(page, workspace.workspaceId, "read");
 

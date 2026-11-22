@@ -4,8 +4,7 @@ import { Maximize2, Minimize2 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { ComposerFullscreenBody, ComposerFullscreenFooter } from "@/composer/dock";
-import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { isWeb } from "@/constants/platform";
+import { keepEditorFocused, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import {
   iconSizeFor,
   TOOLBAR_CONTROL_HEIGHT,
@@ -15,10 +14,6 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
-
-function keepEditorFocused(event: import("react-native").PointerEvent) {
-  if (isWeb) event.preventDefault();
-}
 
 /**
  * One tree for both layout modes. The editing surface keeps its position so the

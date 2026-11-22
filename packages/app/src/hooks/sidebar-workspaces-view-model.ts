@@ -1,3 +1,7 @@
+import {
+  getWorkspaceDisplayStatus,
+  type WorkspaceDisplayStatus,
+} from "@getpaseo/protocol/agent-state-bucket";
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
@@ -17,7 +21,7 @@ import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+export type SidebarStateBucket = WorkspaceDisplayStatus;
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -141,6 +145,17 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+function deriveSidebarWorkspaceStatus(input: Parameters<typeof deriveEffectiveWorkspaceStatus>[0]) {
+  const effective = deriveEffectiveWorkspaceStatus(input);
+  return {
+    ...effective,
+    status: getWorkspaceDisplayStatus({
+      status: effective.status,
+      reviewResults: input.workspace.reviewResults,
+    }),
+  };
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -149,7 +164,7 @@ export function createSidebarWorkspaceEntry(input: {
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
-  const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const effectiveStatus = deriveSidebarWorkspaceStatus(input);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -226,7 +241,7 @@ export function deriveProjectStatusBucket(input: {
       const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : undefined;
       if (!workspace) continue;
       buckets.push(
-        deriveEffectiveWorkspaceStatus({
+        deriveSidebarWorkspaceStatus({
           serverId,
           workspace,
           pendingCreateAttempts: input.pendingCreateAttempts,

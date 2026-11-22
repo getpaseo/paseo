@@ -10,7 +10,8 @@ import {
   deriveAgentStateBucket,
   isAgentRunning,
   getWorkspaceStateBucketPriority,
-  type WorkspaceStateBucket,
+  getWorkspaceDisplayStatus,
+  type WorkspaceDisplayStatus,
 } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
@@ -39,12 +40,12 @@ const FETCH_WORKSPACES_SORT_KEYS = [
  * agent or terminal contributes activity.
  */
 interface WorkspaceBucketHistoryEntry {
-  bucket: WorkspaceStateBucket;
+  bucket: WorkspaceDisplayStatus;
   enteredAt: string;
 }
 
 interface WorkspaceBucketTimestampEntry {
-  bucket: WorkspaceStateBucket;
+  bucket: WorkspaceDisplayStatus;
   changedAtIso: string;
 }
 
@@ -190,7 +191,7 @@ export class WorkspaceDirectory {
     getSortValue: (workspace, key) => {
       switch (key) {
         case "status_priority":
-          return getWorkspaceStateBucketPriority(workspace.status);
+          return getWorkspaceStateBucketPriority(getWorkspaceDisplayStatus(workspace));
         case "activity_at":
           return workspace.activityAt ? Date.parse(workspace.activityAt) : null;
         case "name":
@@ -300,9 +301,14 @@ export class WorkspaceDirectory {
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+      for (const review of descriptor.reviewResults ?? []) {
+        if (!review.nested && review.followUpAt) {
+          activityEntries.push({ bucket: "needs_follow_up", changedAtIso: review.followUpAt });
+        }
+      }
       const result = this.resolveStatusEnteredAt({
         workspaceId,
-        winningBucket: descriptor.status,
+        winningBucket: getWorkspaceDisplayStatus(descriptor),
         contributingAgents,
         activityEntries,
         previous: this.bucketHistoryByWorkspaceId.get(workspaceId) ?? null,
@@ -381,6 +387,18 @@ export class WorkspaceDirectory {
         continue;
       }
       const isWorkspaceRoot = workspaceAgent.id === agent.id;
+      const descriptor = workspaceAgent.workspaceId
+        ? descriptorsByWorkspaceId.get(workspaceAgent.workspaceId)
+        : undefined;
+      if (!descriptor) continue;
+      if (agent.reviewResult) {
+        (descriptor.reviewResults ??= []).push({
+          ...agent.reviewResult,
+          agentId: agent.id,
+          title: agent.title,
+          ...(!isWorkspaceRoot ? { nested: true } : {}),
+        });
+      }
       if (!isWorkspaceRoot && !isAgentRunning(agent)) {
         continue;
       }
@@ -394,18 +412,10 @@ export class WorkspaceDirectory {
           })
         : "running";
 
-      const workspaceId = workspaceAgent.workspaceId;
-      if (!workspaceId) {
-        continue;
-      }
-      const existing = descriptorsByWorkspaceId.get(workspaceId);
-      if (!existing) {
-        continue;
-      }
       if (
-        getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
+        getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(descriptor.status)
       ) {
-        existing.status = bucket;
+        descriptor.status = bucket;
       }
     }
   }
@@ -458,7 +468,7 @@ export class WorkspaceDirectory {
   //     the previous done timestamp or stamp the transition to done now.
   private resolveStatusEnteredAt(params: {
     workspaceId: string;
-    winningBucket: WorkspaceStateBucket;
+    winningBucket: WorkspaceDisplayStatus;
     contributingAgents: AgentSnapshotPayload[];
     activityEntries: WorkspaceBucketTimestampEntry[];
     previous: WorkspaceBucketHistoryEntry | null;
@@ -531,7 +541,7 @@ export class WorkspaceDirectory {
   private findNewestTimestampInBucket(
     contributingAgents: AgentSnapshotPayload[],
     activityEntries: WorkspaceBucketTimestampEntry[],
-    winningBucket: WorkspaceStateBucket,
+    winningBucket: WorkspaceDisplayStatus,
   ): string | null {
     const agentTimestamps = contributingAgents
       .filter((agent) => {

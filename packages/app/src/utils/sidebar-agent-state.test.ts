@@ -1,3 +1,4 @@
+import { getWorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
 import { describe, expect, it } from "vitest";
 import {
   aggregateSidebarStateBuckets,
@@ -52,6 +53,21 @@ describe("deriveSidebarStateBucket", () => {
 });
 
 describe("aggregateSidebarStateBuckets", () => {
+  it("keeps a reminder below every active status and above Done", () => {
+    const result = { followUpAt: "2026-11-22T12:00:00Z" };
+    for (const status of ["needs_input", "failed", "running", "attention"] as const) {
+      expect(getWorkspaceDisplayStatus({ status, reviewResults: [result] })).toBe(status);
+      expect(aggregateSidebarStateBuckets(["needs_follow_up", status])).toBe(status);
+    }
+    expect(getWorkspaceDisplayStatus({ status: "done", reviewResults: [result] })).toBe(
+      "needs_follow_up",
+    );
+    expect(
+      getWorkspaceDisplayStatus({ status: "done", reviewResults: [{ ...result, nested: true }] }),
+    ).toBe("done");
+    expect(aggregateSidebarStateBuckets(["needs_follow_up", "done"])).toBe("needs_follow_up");
+  });
+
   it("returns done for a project with no workspaces", () => {
     expect(aggregateSidebarStateBuckets([])).toBe("done");
   });

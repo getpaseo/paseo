@@ -1,3 +1,4 @@
+import { SidebarStatusDot } from "./sidebar-status-dot";
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -10,14 +11,10 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import {
   getProjectStatusBadgeContent,
   type ProjectStatusBadgeContent,
-  type ProjectStatusBadgeDotBucket,
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
-import {
-  STATUS_INDICATOR_ALERT_SIZE,
-  STATUS_INDICATOR_FILLED_DOT_SIZE,
-} from "@/utils/status-indicator-geometry";
+import { STATUS_INDICATOR_ALERT_SIZE } from "@/utils/status-indicator-geometry";
 import { StatusRing } from "@/components/status-ring";
 import { getStatusRingOffset } from "@/components/status-ring/geometry";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -197,10 +194,11 @@ function ProjectStatusBadge({
       style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
-      {content.kind === "alert" ? (
+      {content.kind === "alert" && (
         <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
-      ) : (
-        <ProjectStatusDot bucket={content.bucket} />
+      )}
+      {content.kind === "dot" && (
+        <SidebarStatusDot bucket={content.bucket} testID="project-status-dot" />
       )}
     </View>
   );
@@ -217,10 +215,6 @@ function getStatusBadgeBackdropStyle(backdrop: SidebarSurfaceBackdrop): ViewStyl
     case "surface2":
       return styles.statusBadgeOnSurface2;
   }
-}
-
-function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
-  return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
 }
 
 function ProjectIcon({
@@ -253,73 +247,50 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
-  if (bucket === "failed") return styles.statusDotFailed;
-  if (bucket === "running") return styles.statusDotRunning;
-  return styles.statusDotAttention;
-}
-
-const styles = StyleSheet.create((theme) => {
-  // Dot statuses sit *inside* the shell rather than replacing it, so they carry the same ring
-  // the alert does. The geometry is shared here and baked into each colored variant so the
-  // style prop stays a single stable object; the colors come from the one bucket-to-color map
-  // so this badge can't drift from the status dots everywhere else.
-  const statusDot = (bucket: ProjectStatusBadgeDotBucket) =>
-    ({
-      width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-      height: STATUS_INDICATOR_FILLED_DOT_SIZE,
-      borderRadius: theme.borderRadius.full,
-      backgroundColor: getStatusDotColor({ theme, bucket }) ?? undefined,
-    }) as const;
-
-  return {
-    // The slot is as tall as the title's line box, not as tall as the icon, and centers the
-    // icon inside it. Rows lay their leading visual out with alignItems:flex-start, so a slot
-    // only as tall as the icon puts it above the title and the kebab — which is why the
-    // workspace status indicator is as tall as `LEADING_SLOT_HEIGHT`.
-    projectLeadingVisualSlot: {
-      width: densityIconBox("md"),
-      height: LEADING_SLOT_HEIGHT,
-      flexShrink: 0,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    // Anchors the corner badge to the icon rather than to the taller slot.
-    projectIconBox: {
-      position: "relative",
-      width: densityIconBox("md"),
-      height: densityIconBox("md"),
-    },
-    projectIconFallbackText: {
-      fontSize: 9,
-    },
-    // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
-    // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
-    // it is filled with the colour of the row behind it, which is what makes the ring around the
-    // dot read as a gap in the icon rather than as a white halo drawn on top of it.
-    statusBadge: {
-      position: "absolute",
-      right: STATUS_BADGE_OFFSET,
-      bottom: STATUS_BADGE_OFFSET,
-      width: STATUS_BADGE_SIZE,
-      height: STATUS_BADGE_SIZE,
-      borderRadius: theme.borderRadius.full,
-      alignItems: "center",
-      justifyContent: "center",
-      overflow: "hidden",
-    },
-    // Same corner as the shell, re-centred for the wider ring.
-    statusRingAnchor: {
-      position: "absolute",
-      right: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
-      bottom: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
-    },
-    statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
-    statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
-    statusBadgeOnSidebarSelected: { backgroundColor: theme.colors.surfaceSidebarSelected },
-    statusBadgeOnSurface2: { backgroundColor: theme.colors.surface2 },
-    statusDotRunning: statusDot("running"),
-    statusDotFailed: statusDot("failed"),
-    statusDotAttention: statusDot("attention"),
-  };
-});
+const styles = StyleSheet.create((theme) => ({
+  // The slot is as tall as the title's line box, not as tall as the icon, and centers the
+  // icon inside it. Rows lay their leading visual out with alignItems:flex-start, so a slot
+  // only as tall as the icon puts it above the title and the kebab — which is why the
+  // workspace status indicator is as tall as `LEADING_SLOT_HEIGHT`.
+  projectLeadingVisualSlot: {
+    width: densityIconBox("md"),
+    height: LEADING_SLOT_HEIGHT,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Anchors the corner badge to the icon rather than to the taller slot.
+  projectIconBox: {
+    position: "relative",
+    width: densityIconBox("md"),
+    height: densityIconBox("md"),
+  },
+  projectIconFallbackText: {
+    fontSize: 9,
+  },
+  // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
+  // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
+  // it is filled with the colour of the row behind it, which is what makes the ring around the
+  // dot read as a gap in the icon rather than as a white halo drawn on top of it.
+  statusBadge: {
+    position: "absolute",
+    right: STATUS_BADGE_OFFSET,
+    bottom: STATUS_BADGE_OFFSET,
+    width: STATUS_BADGE_SIZE,
+    height: STATUS_BADGE_SIZE,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  // Same corner as the shell, re-centred for the wider ring.
+  statusRingAnchor: {
+    position: "absolute",
+    right: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
+    bottom: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
+  },
+  statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
+  statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
+  statusBadgeOnSidebarSelected: { backgroundColor: theme.colors.surfaceSidebarSelected },
+  statusBadgeOnSurface2: { backgroundColor: theme.colors.surface2 },
+}));

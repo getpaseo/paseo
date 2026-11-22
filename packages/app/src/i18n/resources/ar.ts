@@ -56,6 +56,7 @@ export const ar: TranslationResources = {
       noOptionsMatchSearch: "لا توجد خيارات تطابق بحثك.",
     },
     states: {
+      saving: "جارٍ الحفظ...",
       loading: "تحميل...",
       starting: "جارٍ البدء...",
       copied: "منقول",
@@ -1214,6 +1215,7 @@ export const ar: TranslationResources = {
     statusBucket: {
       needsInput: "تحتاج إدخالاً",
       failed: "فشل",
+      needsFollowUp: "بحاجة إلى متابعة",
       readyToReview: "جاهزة للمراجعة",
       working: "قيد العمل",
       done: "تم",
@@ -1362,6 +1364,8 @@ export const ar: TranslationResources = {
         createWorkspaceFor: "قم بإنشاء مساحة عمل جديدة لـ{{projectName}}",
         copyPath: "نسخ المسار",
         copyBranchName: "انسخ اسم الفرع",
+        markDone: "تحديد كمكتمل",
+        markChatDone: "تحديد {{chat}} كمكتمل",
         rename: "إعادة تسمية مساحة العمل",
         pin: "تثبيت في الأعلى",
         unpin: "إلغاء التثبيت",

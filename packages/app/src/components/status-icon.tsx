@@ -37,23 +37,11 @@ export function StatusIcon({
 }: StatusIconProps): ReactElement {
   const bucket = statusBucket;
   const isRunning = bucket === "running";
-  let statusDotColor: string | undefined;
-  if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
-  else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
+  const showDot = bucket === "failed" || bucket === "attention" || bucket === "needs_follow_up";
   const showNeedsInputAlert = bucket === "needs_input";
   const agentIconWrapperStyle = useMemo(
     () => [styles.agentIconWrapper, { width: size, height: size }],
     [size],
-  );
-  const statusDotStyle = useMemo(
-    () => [
-      styles.statusDot,
-      {
-        backgroundColor: statusDotColor,
-        borderColor: statusDotBorderColor ?? styles[backdrop].borderColor,
-      },
-    ],
-    [statusDotColor, statusDotBorderColor, backdrop],
   );
 
   return (
@@ -68,7 +56,12 @@ export function StatusIcon({
           <StatusRing backdrop={backdrop} />
         </View>
       ) : null}
-      {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {showDot ? (
+        <View
+          testID="agent-status-dot"
+          style={styles.statusDot(bucket, backdrop, statusDotBorderColor)}
+        />
+      ) : null}
       {showNeedsInputAlert ? (
         <View style={styles.statusAlertOverlay}>
           <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />
@@ -85,7 +78,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     flexShrink: 0,
   },
-  statusDot: {
+  statusDot: (bucket: SidebarStateBucket, backdrop: SurfaceBackdrop, borderColor?: string) => ({
     position: "absolute",
     right: DEFAULT_STATUS_DOT_OFFSET,
     bottom: DEFAULT_STATUS_DOT_OFFSET,
@@ -93,27 +86,17 @@ const styles = StyleSheet.create((theme) => ({
     height: STATUS_INDICATOR_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
-  },
+    backgroundColor: getStatusDotColor({ theme, bucket }) ?? undefined,
+    borderColor: borderColor ?? theme.colors[backdrop],
+  }),
   statusRing: {
     position: "absolute",
     right: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
     bottom: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
   },
-  surface0: { borderColor: theme.colors.surface0 },
-  surface1: { borderColor: theme.colors.surface1 },
-  surface2: { borderColor: theme.colors.surface2 },
-  surfaceSidebar: { borderColor: theme.colors.surfaceSidebar },
-  surfaceSidebarHover: { borderColor: theme.colors.surfaceSidebarHover },
-  surfaceSidebarSelected: { borderColor: theme.colors.surfaceSidebarSelected },
   statusAlertOverlay: {
     position: "absolute",
     right: STATUS_ALERT_OFFSET,
     bottom: STATUS_ALERT_OFFSET,
-  },
-  statusDotFailed: {
-    color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
-  },
-  statusDotAttention: {
-    color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
 }));

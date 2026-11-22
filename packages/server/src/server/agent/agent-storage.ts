@@ -7,6 +7,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import {
   AgentFeatureSchema,
+  AgentReviewResultSchema,
   AgentMetricSchema,
   AgentOptionControlSchema,
   AgentStatusSchema,
@@ -84,6 +85,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().nullable().optional(),
+  reviewResult: AgentReviewResultSchema.nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -108,15 +110,28 @@ type RawStoredAgentRecord = z.infer<typeof RAW_STORED_AGENT_SCHEMA>;
 type RawStoredAgentConfig = NonNullable<RawStoredAgentRecord["config"]>;
 
 /** Records carry `providerOptions` and `controls` only; legacy fields are folded when read. */
-export type StoredAgentRecord = Omit<RawStoredAgentRecord, "config" | "features"> & {
+export type StoredAgentRecord = Omit<
+  RawStoredAgentRecord,
+  "config" | "features" | "reviewResult"
+> & {
+  reviewResult?: NonNullable<RawStoredAgentRecord["reviewResult"]>;
   config?: Omit<RawStoredAgentConfig, "featureValues"> | null;
 };
 
 // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
 function foldLegacyRecordFields(record: RawStoredAgentRecord): StoredAgentRecord {
-  const { features, config, controls, ...rest } = record;
+  const { features, config, controls, reviewResult, ...rest } = record;
+  // COMPAT(agentFollowUp): added in v0.17.2, remove after 2027-11-22.
+  // An outstanding finish is the only evidence available in older records.
+  const legacyFinish =
+    reviewResult === undefined &&
+    record.requiresAttention &&
+    record.attentionReason === "finished" &&
+    record.attentionTimestamp;
   return {
     ...rest,
+    reviewResult:
+      reviewResult ?? (legacyFinish ? { id: `legacy-${record.id}-${legacyFinish}` } : undefined),
     ...(config ? { config: foldFeatureValues(config) } : { config }),
     ...((controls ?? features) ? { controls: controls ?? controlsFromFeatures(features) } : {}),
   };
@@ -335,7 +350,7 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await writeJsonFileAtomic(nextPath, { ...record, reviewResult: record.reviewResult ?? null });
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {

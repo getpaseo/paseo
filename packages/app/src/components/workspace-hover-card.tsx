@@ -30,6 +30,8 @@ import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { useWorkspaceChatStatusSummary } from "@/hooks/use-workspace-chat-status-summary";
+import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 import { useHosts } from "@/runtime/host-runtime";
 import {
   COUNTED_CHECK_PRESENTATIONS,
@@ -87,6 +89,8 @@ function WorkspaceHoverCardContent({
   prHint: PrHint | null;
 }): ReactElement {
   const { t } = useTranslation();
+  const chatSummary = useWorkspaceChatStatusSummary(workspace.serverId, workspace.workspaceId);
+  const status = getStatusBucketLabel(workspace.statusBucket, t);
   return (
     <>
       <View style={styles.cardHeader}>
@@ -94,6 +98,13 @@ function WorkspaceHoverCardContent({
           {workspace.name}
         </Text>
       </View>
+      {workspace.statusBucket !== "done" || chatSummary ? (
+        <View style={styles.cardInfoRow}>
+          <Text testID="hover-card-workspace-status" style={styles.cardInfoText}>
+            {chatSummary ?? status}
+          </Text>
+        </View>
+      ) : null}
       {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
       {workspace.diffStat ? (
         <View style={styles.cardInfoRow}>

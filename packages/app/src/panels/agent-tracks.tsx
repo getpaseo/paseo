@@ -3,6 +3,7 @@ import { memo, useCallback, useMemo, type ReactElement } from "react";
 import { BackgroundWorkTrack, createHostBackgroundWorkModel } from "@/background-work";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { AgentTaskList } from "@/composer/task-list";
+import { ReviewResultPill } from "@/composer/review-result-pill";
 import { ComposerTrackBar } from "@/composer/tracks";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
@@ -51,7 +52,7 @@ export const AgentTracks = memo(function AgentTracks({
     parentAgentId: agentId,
     rows: subagentRows,
   });
-  const { tabId } = usePaneContext();
+  const { tabId, host } = usePaneContext();
   const backgroundWorkCount = useSessionStore((state) => {
     const session = state.sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
@@ -121,6 +122,9 @@ export const AgentTracks = memo(function AgentTracks({
 
   return (
     <ComposerTrackBar>
+      {host !== "sheet" ? (
+        <ReviewResultPill key={agentId} serverId={serverId} agentId={agentId} />
+      ) : null}
       <BackgroundWorkTrack model={backgroundModel} count={backgroundWorkCount} />
       {parentAgentId ? <ParentAgentPill serverId={serverId} parentAgentId={parentAgentId} /> : null}
       <AgentTaskList tasks={tasks} />

@@ -105,6 +105,7 @@ export function toStoredAgentRecord(
     persistence,
     ...projectSessionMetrics(agent.sessionMetrics),
     lastError: agent.lastError ?? undefined,
+    reviewResult: agent.reviewResult,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -186,6 +187,7 @@ export function toAgentPayload(
   }
 
   // Handle attention state
+  payload.reviewResult = agent.reviewResult;
   payload.requiresAttention = agent.attention.requiresAttention;
   if (agent.attention.requiresAttention) {
     payload.attentionReason = agent.attention.attentionReason;
@@ -323,6 +325,7 @@ export function buildStoredAgentPayload(
     pendingPermissions: [],
     persistence,
     title: record.title ?? null,
+    reviewResult: record.reviewResult,
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,

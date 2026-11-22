@@ -2,6 +2,27 @@ import type { AgentLifecycleStatus } from "./agent-lifecycle.js";
 import type { AgentBackgroundWorkSummary, WorkspaceStateBucket } from "./messages.js";
 
 export type { WorkspaceStateBucket };
+export type WorkspaceDisplayStatus = WorkspaceStateBucket | "needs_follow_up";
+
+export function getWorkspaceDisplayStatus(workspace: {
+  status: WorkspaceStateBucket;
+  reviewResults?: readonly { followUpAt?: string; nested?: boolean }[];
+}): WorkspaceDisplayStatus {
+  return workspace.status === "done" &&
+    workspace.reviewResults?.some((result) => !result.nested && result.followUpAt)
+    ? "needs_follow_up"
+    : workspace.status;
+}
+
+// A later autonomous finish can reuse an unread notification's timestamp.
+export function getAttentionKey(input: {
+  attentionReason?: AgentAttentionReason;
+  attentionTimestamp?: string | null;
+  reviewResult?: { id: string };
+}): string | null {
+  if (!input.attentionTimestamp) return null;
+  return JSON.stringify([input.attentionReason, input.attentionTimestamp, input.reviewResult?.id]);
+}
 export type AgentAttentionReason = "finished" | "error" | "permission" | null | undefined;
 
 export interface AgentStateBucketInput {
@@ -25,8 +46,9 @@ const WORKSPACE_STATE_BUCKET_PRIORITY = {
   failed: 1,
   running: 2,
   attention: 3,
-  done: 4,
-} as const satisfies Record<WorkspaceStateBucket, number>;
+  needs_follow_up: 4,
+  done: 5,
+} as const satisfies Record<WorkspaceDisplayStatus, number>;
 
 // An error is a notification like a finish: once the user has seen it, the agent stops showing as
 // failed even though its lifecycle stays "error" until the next turn starts.
@@ -50,7 +72,7 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   return "done";
 }
 
-export function getWorkspaceStateBucketPriority(bucket: WorkspaceStateBucket): number {
+export function getWorkspaceStateBucketPriority(bucket: WorkspaceDisplayStatus): number {
   return WORKSPACE_STATE_BUCKET_PRIORITY[bucket];
 }
 

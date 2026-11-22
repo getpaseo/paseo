@@ -38,6 +38,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type {
   AgentBackgroundWorkSummary,
+  AgentReviewResult,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -106,6 +107,7 @@ export interface Agent {
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
+  reviewResult?: AgentReviewResult;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
   /** Background agents stay out of tabs, the subagent track and agent lists. Open them by id. */
@@ -136,6 +138,7 @@ export interface WorkspaceDescriptor {
   title?: string | null;
   pinnedAt?: string | null;
   labels?: string[];
+  reviewResults?: WorkspaceDescriptorPayload["reviewResults"];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -182,6 +185,7 @@ export function normalizeWorkspaceDescriptor(
     pinnedAt: payload.pinnedAt ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
+    reviewResults: payload.reviewResults,
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,

@@ -57,6 +57,7 @@ export const ru: TranslationResources = {
       noOptionsMatchSearch: "Нет вариантов, соответствующих вашему запросу.",
     },
     states: {
+      saving: "Сохранение...",
       loading: "Загрузка...",
       starting: "Начало...",
       copied: "Скопировано",
@@ -1232,6 +1233,7 @@ export const ru: TranslationResources = {
     statusBucket: {
       needsInput: "Ожидает ввода",
       failed: "Ошибка",
+      needsFollowUp: "Требует продолжения",
       readyToReview: "На проверку",
       working: "В работе",
       done: "Готово",
@@ -1381,6 +1383,8 @@ export const ru: TranslationResources = {
         createWorkspaceFor: "Создать новое рабочее пространство для {{projectName}}",
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать имя ветки",
+        markDone: "Отметить как завершённый",
+        markChatDone: "Отметить «{{chat}}» как завершённый",
         rename: "Переименовать рабочее пространство",
         pin: "Закрепить вверху",
         unpin: "Открепить",

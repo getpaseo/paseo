@@ -103,7 +103,7 @@ import {
 import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
-import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
+import { getAgentStatusPriority, getAttentionKey } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
@@ -281,7 +281,10 @@ import {
   WorkspaceDirectory,
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
-import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
+import {
+  shouldEmitPendingBootstrapUpdate,
+  type BootstrapUpdateSnapshot,
+} from "./workspace-bootstrap-dedupe.js";
 import {
   createPaseoWorktree,
   type CreatePaseoWorktreeInput,
@@ -3332,7 +3335,7 @@ export class Session {
       case "agent_permission_response":
         return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
-        return this.handleClearAgentAttention(msg.agentId, msg.requestId);
+        return this.handleClearAgentAttention(msg.agentId, msg.requestId, msg.expectedAttentionKey);
       default:
         return undefined;
     }
@@ -3582,6 +3585,8 @@ export class Session {
         return this.handleWorkspaceRecoveryRestoreRequest(msg);
       case "workspace.archive.undo.request":
         return this.handleWorkspaceArchiveUndoRequest(msg);
+      case "agent.mark_done.request":
+        return this.handleAgentMarkDone(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
@@ -5541,6 +5546,7 @@ export class Session {
   private async handleClearAgentAttention(
     agentId: string | string[],
     requestId?: string,
+    expectedAttentionKey?: string | null,
   ): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
@@ -5550,7 +5556,9 @@ export class Session {
           throw new Error(`Agent not found: ${id}`);
         }
       }
-      await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
+      await Promise.all(
+        agentIds.map((id) => this.agentManager.clearAgentAttention(id, expectedAttentionKey)),
+      );
       if (requestId) {
         const agents = (
           await Promise.all(
@@ -6494,10 +6502,7 @@ export class Session {
   private flushBootstrappedWorkspaceUpdates(
     subscription: WorkspaceUpdatesSubscriptionState,
     options?: {
-      snapshotByWorkspaceId?: Map<
-        string,
-        { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
-      >;
+      snapshotByWorkspaceId?: Map<string, BootstrapUpdateSnapshot>;
     },
   ): void {
     if (
@@ -6518,14 +6523,9 @@ export class Session {
           ? Date.parse(payload.workspace.activityAt)
           : null;
         const shouldEmit = shouldEmitPendingBootstrapUpdate({
-          snapshot: snapshot
-            ? {
-                status: snapshot.status,
-                statusEnteredAt: snapshot.statusEnteredAt,
-                activityAtMs: snapshot.activityAtMs,
-              }
-            : null,
+          snapshot: snapshot ?? null,
           update: {
+            reviewResults: payload.workspace.reviewResults,
             status: payload.workspace.status,
             statusEnteredAt: payload.workspace.statusEnteredAt ?? null,
             activityAtMs: Number.isNaN(updateActivityAtMs) ? null : updateActivityAtMs,
@@ -7415,18 +7415,13 @@ export class Session {
   // change (e.g. a fresh unmask time), AND a fresher activity all still
   // ship to the client.
   private buildBootstrapSnapshot(entries: FetchWorkspacesResponseEntry[]): {
-    snapshotByWorkspaceId: Map<
-      string,
-      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
-    >;
+    snapshotByWorkspaceId: Map<string, BootstrapUpdateSnapshot>;
   } {
-    const snapshotByWorkspaceId = new Map<
-      string,
-      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
-    >();
+    const snapshotByWorkspaceId = new Map<string, BootstrapUpdateSnapshot>();
     for (const entry of entries) {
       const parsedActivity = entry.activityAt ? Date.parse(entry.activityAt) : null;
       snapshotByWorkspaceId.set(entry.id, {
+        reviewResults: entry.reviewResults,
         status: entry.status,
         statusEnteredAt: entry.statusEnteredAt ?? null,
         activityAtMs: Number.isNaN(parsedActivity) ? null : parsedActivity,
@@ -8430,33 +8425,22 @@ export class Session {
         // Clearing attention is scoped to the workspace that OWNS the agent, by
         // workspaceId — never by comparing cwd strings. A sibling workspace
         // sharing the same directory keeps its own agents' attention.
-        const clearableAgentIds = agents
-          .filter((agent) => !agent.archivedAt)
-          .filter((agent) => agent.workspaceId === workspace.workspaceId)
-          .filter((agent) => agent.requiresAttention === true)
-          .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
-          .filter((agent) => agent.attentionReason !== "permission")
-          .map((agent) => agent.id);
+        const clearableAgents = agents.filter(
+          (agent) =>
+            !agent.archivedAt &&
+            agent.workspaceId === workspace.workspaceId &&
+            agent.requiresAttention &&
+            !agent.pendingPermissions?.length &&
+            agent.attentionReason !== "permission" &&
+            (!agent.reviewResult ||
+              !request.observedResultIds ||
+              request.observedResultIds.includes(agent.reviewResult.id)),
+        );
 
-        for (const agentId of clearableAgentIds) {
-          const liveAgent = this.agentManager.getAgent(agentId);
-          if (liveAgent) {
-            await this.agentManager.clearAgentAttention(agentId);
-            clearedAgentIds.push(agentId);
-            continue;
+        for (const agent of clearableAgents) {
+          if (await this.agentManager.clearAgentAttention(agent.id, getAttentionKey(agent))) {
+            clearedAgentIds.push(agent.id);
           }
-
-          const record = await this.agentStorage.get(agentId);
-          if (
-            !record ||
-            record.internal ||
-            record.archivedAt ||
-            record.requiresAttention !== true
-          ) {
-            continue;
-          }
-          await this.agentManager.clearAgentAttention(agentId);
-          clearedAgentIds.push(agentId);
         }
 
         await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
@@ -8500,6 +8484,23 @@ export class Session {
                 .join("; "),
       },
     });
+  }
+
+  private async handleAgentMarkDone(
+    request: Extract<SessionInboundMessage, { type: "agent.mark_done.request" }>,
+  ): Promise<void> {
+    const { agentId, resultId, requestId } = request;
+    let error: string | null = null;
+    try {
+      const agent = this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
+      if (!agent || agent.internal || !this.isProviderVisibleToClient(agent.provider)) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      await this.agentManager.markAgentDone(agentId, resultId);
+    } catch (cause) {
+      error = getErrorMessage(cause);
+    }
+    this.emit({ type: "agent.mark_done.response", payload: { requestId, error } });
   }
 
   private async handleWorkspaceMarkUnreadRequest(

@@ -257,6 +257,13 @@ function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
   };
 }
 
+async function finishReview(seed: CompactProject["seed"], agentId: string) {
+  const snapshot = await seed.client.fetchAgent({ agentId });
+  const result = snapshot?.agent.reviewResult;
+  if (!result) throw new Error("Expected a completed result");
+  await seed.client.markAgentDone(agentId, result.id);
+}
+
 async function expectActiveOverflowTransitions(page: Page, { seed, ids, agent }: CompactProject) {
   const { rows } = compactProjectRows(page, seed);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));
@@ -265,7 +272,7 @@ async function expectActiveOverflowTransitions(page: Page, { seed, ids, agent }:
   await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[11]]);
   await seed.client.waitForFinish(agent.id, 15_000);
   await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[11]]);
-  await seed.client.clearWorkspaceAttention(seed.workspaceId);
+  await finishReview(seed, agent.id);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));
 }
 
@@ -288,7 +295,7 @@ async function expectRevealSurvivesSortingAndCollapse(
   await expectWorkspaceOrder(rows, ids);
   await seed.client.sendAgentMessage(agent.id, "expanded overflow");
   await seed.client.waitForFinish(agent.id, 15_000);
-  await seed.client.clearWorkspaceAttention(seed.workspaceId);
+  await finishReview(seed, agent.id);
   await expectWorkspaceOrder(rows, ids);
   await selectWorkspaceSort(page, "Last prompt");
   await expectWorkspaceOrder(rows, [ids[11], ...ids.slice(0, 11)]);
@@ -321,7 +328,7 @@ async function expectStatusBucketsRetainActiveOverflow(
       .getByText("Oldest workspace", { exact: true }),
   ).toBeVisible();
   await expect(doneRows).toHaveCount(11);
-  await seed.client.clearWorkspaceAttention(seed.workspaceId);
+  await finishReview(seed, agent.id);
   await expect(doneRows).toHaveCount(12);
   await revealWorkspaces(done, "Show less");
   await expect(doneRows).toHaveCount(7);
@@ -345,7 +352,7 @@ async function expectStatusBucketsRetainActiveOverflow(
   const attention = page.getByTestId("sidebar-status-group-rows-attention");
   await expect(attention.locator('[data-testid^="sidebar-workspace-row-"]')).toHaveCount(8);
   await expect(attention.getByLabel("Show more", { exact: true })).toHaveCount(0);
-  for (const workspaceId of ids.slice(0, 8)) await seed.client.clearWorkspaceAttention(workspaceId);
+  for (const active of activeAgents) await finishReview(seed, active.id);
   await expect(doneRows).toHaveCount(7);
   await selectProjectGrouping(page);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));

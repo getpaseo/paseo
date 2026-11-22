@@ -56,6 +56,7 @@ export const zhCN: TranslationResources = {
       noOptionsMatchSearch: "没有匹配搜索的选项。",
     },
     states: {
+      saving: "正在保存...",
       loading: "加载中...",
       starting: "正在开始...",
       copied: "已复制",
@@ -1206,6 +1207,7 @@ export const zhCN: TranslationResources = {
     statusBucket: {
       needsInput: "需要输入",
       failed: "失败",
+      needsFollowUp: "待跟进",
       readyToReview: "待查看",
       working: "运行中",
       done: "已完成",
@@ -1352,6 +1354,8 @@ export const zhCN: TranslationResources = {
         createWorkspaceFor: "为 {{projectName}} 新建 workspace",
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
+        markDone: "标记为已完成",
+        markChatDone: "将「{{chat}}」标记为已完成",
         rename: "重命名 workspace",
         pin: "置顶",
         unpin: "取消置顶",

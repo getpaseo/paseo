@@ -178,6 +178,7 @@ describe("buildStatusGroups", () => {
         statusBucket: "running",
         statusEnteredAt: d("2026-01-01T00:00:00Z"),
       }),
+      ws({ workspaceKey: "srv:follow-up", statusBucket: "needs_follow_up", statusEnteredAt: null }),
       ws({ workspaceKey: "srv:dn", statusBucket: "done", statusEnteredAt: null }),
     ];
 
@@ -240,6 +241,7 @@ describe("getStatusBucketLabel", () => {
         "Attend une réponse",
         "Échec",
         "À relire",
+        "À suivre",
         "En cours",
         "Terminé",
       ]);

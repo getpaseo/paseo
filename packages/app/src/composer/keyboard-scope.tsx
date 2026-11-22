@@ -5,6 +5,12 @@ import {
   type PropsWithChildren,
   type ReactElement,
 } from "react";
+import type { PointerEvent } from "react-native";
+import { isWeb } from "@/constants/platform";
+
+export function keepEditorFocused(event: PointerEvent) {
+  if (isWeb) event.preventDefault();
+}
 
 interface ComposerKeyboardScopeValue {
   /**

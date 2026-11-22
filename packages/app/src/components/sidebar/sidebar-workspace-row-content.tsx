@@ -1,3 +1,4 @@
+import { SidebarStatusDot } from "./sidebar-status-dot";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -239,10 +240,10 @@ function WorkspaceStatusIndicator({
     );
   }
 
-  if (bucket === "attention") {
+  if (bucket === "attention" || bucket === "needs_follow_up") {
     return (
-      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-attention">
-        <View style={styles.standaloneStatusDot} />
+      <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
+        <SidebarStatusDot bucket={bucket} />
       </View>
     );
   }
@@ -544,12 +545,6 @@ const styles = StyleSheet.create((theme) => ({
     height: STATUS_INDICATOR_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
-  },
-  standaloneStatusDot: {
-    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   idleStatusDot: {
     width: STATUS_INDICATOR_FILLED_DOT_SIZE,

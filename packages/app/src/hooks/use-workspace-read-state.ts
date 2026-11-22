@@ -20,6 +20,11 @@ export function useWorkspaceReadState({
   workspaceId: string;
 }): WorkspaceReadStateController {
   const status = useWorkspaceFields(serverId, workspaceId, (workspace) => workspace.status);
+  const reviewResults = useWorkspaceFields(
+    serverId,
+    workspaceId,
+    (workspace) => workspace.reviewResults,
+  );
   const supportsMarkUnread = useHostFeature(serverId, "workspaceMarkUnread");
   const hasClearableAttention = status === "attention" || status === "failed";
   const canMarkUnread = supportsMarkUnread && status === "done";
@@ -32,8 +37,11 @@ export function useWorkspaceReadState({
     if (!client) {
       throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }
-    await client.clearWorkspaceAttention(workspaceId);
-  }, [hasClearableAttention, serverId, workspaceId]);
+    await client.clearWorkspaceAttention(
+      workspaceId,
+      reviewResults?.map((result) => result.id) ?? [],
+    );
+  }, [hasClearableAttention, serverId, workspaceId, reviewResults]);
 
   const markUnread = useCallback(async () => {
     if (!canMarkUnread) {

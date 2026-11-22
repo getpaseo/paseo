@@ -15,6 +15,7 @@ describe("agent attention acknowledgement", () => {
       focused: true,
       ready: true,
       requiresAttention: false,
+      attentionKey: "result-one",
       attentionReason: "finished" as const,
       focusRequest: null as object | null,
     };
@@ -92,6 +93,24 @@ describe("agent attention acknowledgement", () => {
     expect(calls).toEqual(["clear"]);
   });
 
+  it("acknowledges the result seen on each deliberate focus while an older read is pending", () => {
+    const keys: (string | null)[] = [];
+    const controller = createAgentAttentionController({
+      clear: (key) => {
+        keys.push(key);
+        return new Promise<void>(() => {});
+      },
+      onError: () => {},
+    });
+    const { state } = setup();
+    controller.update({ ...state, requiresAttention: true });
+    controller.update({ ...state, requiresAttention: true, attentionKey: "new" });
+    expect(keys).toEqual(["result-one"]);
+    controller.focus();
+    controller.focus();
+    expect(keys).toEqual(["result-one", "new"]);
+  });
+
   it("reports failure and allows the next interaction to retry", async () => {
     const errors: unknown[] = [];
     let calls = 0;
@@ -106,6 +125,7 @@ describe("agent attention acknowledgement", () => {
       focused: true,
       ready: true,
       requiresAttention: true,
+      attentionKey: "result-two",
       attentionReason: "finished",
       focusRequest: null,
     });

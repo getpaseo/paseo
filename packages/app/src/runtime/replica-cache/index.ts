@@ -4,6 +4,8 @@ import {
   AgentBackgroundWorkSummarySchema,
   AgentMetricSchema,
   AgentStatusSchema,
+  AgentReviewResultSchema,
+  WorkspaceReviewResultSchema,
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
   WorkspaceGitHubRuntimePayloadSchema,
@@ -260,6 +262,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   background: z.boolean().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  reviewResult: AgentReviewResultSchema.optional(),
   attentionTimestamp: IsoDateSchema.nullable().optional(),
   archivedAt: IsoDateSchema.nullable().optional(),
 });
@@ -332,6 +335,7 @@ const StoredWorkspaceSchema = z.strictObject({
   // current on reconnect, so the daemon has nothing newer to send back.
   labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
+  reviewResults: z.array(WorkspaceReviewResultSchema).optional(),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
@@ -706,6 +710,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     requiresAttention: agent.requiresAttention ?? false,
     backgroundWork: agent.backgroundWork,
     attentionReason: agent.attentionReason ?? null,
+    reviewResult: agent.reviewResult,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
   };
@@ -762,6 +767,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     pinnedAt: workspace.pinnedAt ?? null,
     labels: workspace.labels,
     status: workspace.status,
+    reviewResults: workspace.reviewResults,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,

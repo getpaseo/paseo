@@ -25,6 +25,13 @@ describe("getProjectStatusBadgeContent", () => {
     expect(getProjectStatusBadgeContent("done")).toBeNull();
   });
 
+  it("uses the same dot for a read result that needs follow-up", () => {
+    expect(getProjectStatusBadgeContent("needs_follow_up")).toEqual({
+      kind: "dot",
+      bucket: "needs_follow_up",
+    });
+  });
+
   it("shows nothing when there is no aggregate bucket to surface", () => {
     expect(getProjectStatusBadgeContent(null)).toBeNull();
   });

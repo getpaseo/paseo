@@ -920,6 +920,17 @@ export const AgentBackgroundWorkSummarySchema = z.object({
 
 export type AgentBackgroundWorkSummary = z.infer<typeof AgentBackgroundWorkSummarySchema>;
 
+export const AgentReviewResultSchema = z.object({
+  id: z.string(),
+  followUpAt: z.string().optional(),
+});
+export type AgentReviewResult = z.infer<typeof AgentReviewResultSchema>;
+export const WorkspaceReviewResultSchema = AgentReviewResultSchema.extend({
+  agentId: z.string(),
+  title: z.string().nullable(),
+  nested: z.boolean().optional(),
+});
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -956,6 +967,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  reviewResult: AgentReviewResultSchema.optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
@@ -3039,7 +3051,15 @@ export const WorkspaceCreateRequestSchema = z.object({
 
 export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
+  observedResultIds: z.array(z.string()).optional(),
   workspaceId: z.union([z.string(), z.array(z.string())]),
+  requestId: z.string(),
+});
+
+export const AgentMarkDoneRequestSchema = z.object({
+  type: z.literal("agent.mark_done.request"),
+  agentId: z.string(),
+  resultId: z.string(),
   requestId: z.string(),
 });
 
@@ -3229,6 +3249,7 @@ export const FileUploadRequestSchema = z.object({
 
 export const ClearAgentAttentionMessageSchema = z.object({
   type: z.literal("clear_agent_attention"),
+  expectedAttentionKey: z.string().nullable().optional(),
   agentId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string().optional(),
 });
@@ -3750,6 +3771,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentCreateRequestSchema,
   CreationSubscribeRequestSchema,
   WorkspaceClearAttentionRequestSchema,
+  AgentMarkDoneRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
@@ -4140,6 +4162,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
+        // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
+        agentFollowUp: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
         hubRelationship: z.boolean().optional(),
         // COMPAT(relayProtectedSecurity): added in v0.13.0. A capable daemon always advertises
@@ -4545,6 +4569,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    reviewResults: z.array(WorkspaceReviewResultSchema).optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to
@@ -5519,6 +5544,14 @@ export const WorkspaceClearAttentionResponseSchema = z.object({
       }),
     ),
     success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentMarkDoneResponseSchema = z.object({
+  type: z.literal("agent.mark_done.response"),
+  payload: z.object({
+    requestId: z.string(),
     error: z.string().nullable(),
   }),
 });
@@ -7770,6 +7803,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentCreationUpdateSchema,
   CreationSubscribeResponseSchema,
   WorkspaceClearAttentionResponseSchema,
+  AgentMarkDoneResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,

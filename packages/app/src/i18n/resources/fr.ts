@@ -57,6 +57,7 @@ export const fr: TranslationResources = {
       noOptionsMatchSearch: "Aucune option ne correspond à votre recherche.",
     },
     states: {
+      saving: "Enregistrement…",
       loading: "Chargement…",
       starting: "Démarrage…",
       copied: "Copié",
@@ -1243,6 +1244,7 @@ export const fr: TranslationResources = {
     statusBucket: {
       needsInput: "Attend une réponse",
       failed: "Échec",
+      needsFollowUp: "À suivre",
       readyToReview: "À relire",
       working: "En cours",
       done: "Terminé",
@@ -1392,6 +1394,8 @@ export const fr: TranslationResources = {
         createWorkspaceFor: "Créer un espace de travail pour {{projectName}}",
         copyPath: "Copier le chemin",
         copyBranchName: "Copier le nom de la branche",
+        markDone: "Marquer comme terminé",
+        markChatDone: "Marquer {{chat}} comme terminé",
         rename: "Renommer l’espace de travail",
         pin: "Épingler en haut",
         unpin: "Désépingler",

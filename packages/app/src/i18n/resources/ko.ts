@@ -56,6 +56,7 @@ export const ko: TranslationResources = {
       noOptionsMatchSearch: "검색과 일치하는 옵션이 없습니다.",
     },
     states: {
+      saving: "저장하는 중...",
       loading: "불러오는 중...",
       starting: "시작 중...",
       copied: "복사됨",
@@ -1221,6 +1222,7 @@ export const ko: TranslationResources = {
     statusBucket: {
       needsInput: "입력 필요",
       failed: "실패",
+      needsFollowUp: "후속 조치 필요",
       readyToReview: "검토 대기",
       working: "실행 중",
       done: "완료",
@@ -1369,6 +1371,8 @@ export const ko: TranslationResources = {
         createWorkspaceFor: "{{projectName}}을(를) 위한 새 워크스페이스 생성",
         copyPath: "경로 복사",
         copyBranchName: "브랜치 이름 복사",
+        markDone: "완료로 표시",
+        markChatDone: "{{chat}} 완료로 표시",
         rename: "워크스페이스 이름 변경",
         pin: "상단에 고정",
         unpin: "고정 해제",

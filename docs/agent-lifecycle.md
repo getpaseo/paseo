@@ -352,11 +352,19 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
+Acknowledging a successful completion marks that chat **Needs follow-up**. The chat tab shows its own
+purple dot, including when another tab is selected. Its workspace shows a
+purple dot once Needs input, Failed, Working and Ready to review have cleared. Each workspace
+counts once in its sidebar status group. For mixed chat states, the workspace hover card and row
+menu show how many chats are in each state.
+Use **Mark done** in the floating status pill above the composer or choose the chat in the workspace row menu to resolve
+that result. An accepted reply also resolves it. Read, follow-up and resolution survive restarts.
+
 A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
 attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
 `error` and `finished` otherwise, without sending a new notification. Opening a workspace restores
 its selected tab; attention on another agent remains unread until that agent is focused or the
-workspace is explicitly marked read.
+workspace is explicitly marked read. Marking a result unread keeps its reminder. Marking a resolved chat unread only restores its unread indicator.
 
 Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
 interaction with its chat, including repeat clicks in an already focused pane. A completion

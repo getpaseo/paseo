@@ -1,3 +1,4 @@
+import { SidebarStatusDot } from "./sidebar-status-dot";
 import { useWorkspaceRowPress } from "../../../modules/paseo-press-feedback";
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import {
@@ -86,9 +87,6 @@ const needsInputGroupIconProps = densityIconProps("sm", (theme) => ({
 }));
 const failedGroupIconProps = densityIconProps("sm", (theme) => ({
   color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
-}));
-const attentionGroupIconProps = densityIconProps("sm", (theme) => ({
-  color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
 }));
 const runningGroupIconProps = densityIconProps("sm", (theme) => ({
   color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
@@ -456,7 +454,7 @@ function StatusGroupHeader({
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
@@ -471,12 +469,13 @@ function StatusGroupHeader({
     [isHovered],
   );
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const workspaceCount = group.rows.length.toLocaleString(i18n.resolvedLanguage);
 
   return (
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={t("sidebar.statusGroupAccessibility", { label: group.label })}
+        accessibilityLabel={`${t("sidebar.statusGroupAccessibility", { label: group.label })} (${workspaceCount})`}
         accessibilityState={accessibilityState}
         style={rowStyle}
         highlightStyle={styles.statusGroupRowPressed}
@@ -495,6 +494,7 @@ function StatusGroupHeader({
             <Text style={styles.statusGroupTitle} numberOfLines={1}>
               {group.label}
             </Text>
+            <Text style={styles.statusGroupCount}>{workspaceCount}</Text>
           </View>
         </View>
       </Pressable>
@@ -526,8 +526,9 @@ function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
       return <ThemedCircleAlert uniProps={needsInputGroupIconProps} />;
     case "failed":
       return <ThemedCircleX uniProps={failedGroupIconProps} />;
+    case "needs_follow_up":
     case "attention":
-      return <ThemedCircleCheck uniProps={attentionGroupIconProps} />;
+      return <SidebarStatusDot bucket={bucket} />;
     case "running":
       return <ThemedCircleDot uniProps={runningGroupIconProps} />;
     case "done":
@@ -1129,6 +1130,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
+  },
+  statusGroupCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontVariant: ["tabular-nums"],
   },
   statusGroupTitle: {
     color: theme.colors.foregroundMuted,

@@ -55,6 +55,7 @@ import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { getAttentionKey } from "@getpaseo/protocol/agent-state-bucket";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInputDraft, type AgentInputDraft } from "@/composer/draft/input-draft";
 import {
@@ -134,6 +135,7 @@ interface ChatAgentStateShape {
 
 interface ChatAgentSelectedState extends ChatAgentStateShape {
   archivedAt: Date | null;
+  attentionKey: string | null;
   requiresAttention: boolean;
   attentionReason: Agent["attentionReason"] | null;
 }
@@ -164,6 +166,7 @@ const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
   cwd: null,
   lastError: null,
   archivedAt: null,
+  attentionKey: null,
   requiresAttention: false,
   attentionReason: null,
 };
@@ -191,6 +194,11 @@ function selectChatAgentState(
     controls: agent.controls,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
+    attentionKey: getAttentionKey({
+      attentionReason: agent.attentionReason,
+      attentionTimestamp: agent.attentionTimestamp?.toISOString(),
+      reviewResult: agent.reviewResult,
+    }),
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
   };
@@ -781,6 +789,7 @@ function ChatAgentContent({
     client,
     isConnected,
     isAgentDataReady: agentHistorySyncGeneration === historySyncGeneration,
+    attentionKey: agentState.attentionKey,
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,

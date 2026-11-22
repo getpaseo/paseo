@@ -77,6 +77,7 @@ describe("shared agent descriptor", () => {
       pendingPermissionCount: 0,
       requiresAttention: false,
       attentionReason: null,
+      needsFollowUp: false,
       isTurnActive: false,
       icon: TestIcon,
       ...overrides,
@@ -103,6 +104,20 @@ describe("shared agent descriptor", () => {
 
   it("shows an active turn as running before the lifecycle update arrives", () => {
     expect(describeAgent({ isTurnActive: true }).statusBucket).toBe("running");
+  });
+
+  it("keeps a read result visible on its chat tab until resolved", () => {
+    expect(describeAgent({ needsFollowUp: true }).statusBucket).toBe("needs_follow_up");
+    expect(describeAgent({ needsFollowUp: false }).statusBucket).toBe("done");
+  });
+
+  it.each([
+    [{ isTurnActive: true }, "running"],
+    [{ requiresAttention: true, attentionReason: "finished" }, "attention"],
+    [{ requiresAttention: true, attentionReason: "error" }, "failed"],
+    [{ pendingPermissionCount: 1 }, "needs_input"],
+  ] as const)("shows a higher-priority chat state ahead of follow-up", (overrides, bucket) => {
+    expect(describeAgent({ needsFollowUp: true, ...overrides }).statusBucket).toBe(bucket);
   });
 
   it("shows background work as running without making the turn active", () => {

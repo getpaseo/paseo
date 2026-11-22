@@ -1,3 +1,6 @@
+import { useWorkspaceChatStatusSummary } from "@/hooks/use-workspace-chat-status-summary";
+import { useMarkAgentDone } from "@/hooks/use-mark-agent-done";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { PressableStateCallbackType } from "react-native";
@@ -25,6 +28,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -182,6 +186,32 @@ function SidebarWorkspaceMenuItems({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
+  const markDone = useMarkAgentDone(serverId);
+  const chatSummary = useWorkspaceChatStatusSummary(serverId, workspaceId);
+  const results = useWorkspaceFields(
+    serverId ?? null,
+    workspaceId ?? null,
+    (workspace) => workspace.reviewResults,
+  );
+  const doneActions = useMemo(() => {
+    if (!markDone || !results) return [];
+    return results.map((result) => {
+      const uniqueTitle =
+        result.title &&
+        !results.some((other) => other.agentId !== result.agentId && other.title === result.title);
+      const chat = uniqueTitle
+        ? result.title
+        : [result.title, `#${result.agentId.slice(0, 7)}`].filter(Boolean).join(" ");
+      return {
+        agentId: result.agentId,
+        label:
+          results.length === 1
+            ? t("sidebar.workspace.actions.markDone")
+            : t("sidebar.workspace.actions.markChatDone", { chat }),
+        onSelect: () => void markDone(result.agentId, result.id),
+      };
+    });
+  }, [markDone, results, t]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -193,6 +223,9 @@ function SidebarWorkspaceMenuItems({
 
   return (
     <>
+      {chatSummary ? (
+        <DropdownMenuLabel testID="workspace-menu-chat-status">{chatSummary}</DropdownMenuLabel>
+      ) : null}
       {onCopyPath ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -223,6 +256,17 @@ function SidebarWorkspaceMenuItems({
           {t("sidebar.workspace.actions.rename")}
         </WorkspaceMenuItem>
       ) : null}
+      {doneActions.map((action) => (
+        <WorkspaceMenuItem
+          key={action.agentId}
+          surface={surface}
+          testID={`sidebar-workspace-mark-done-${action.agentId}`}
+          leading={markAsReadLeadingIcon}
+          onSelect={action.onSelect}
+        >
+          {action.label}
+        </WorkspaceMenuItem>
+      ))}
       {onMarkAsRead ? (
         <WorkspaceMenuItem
           surface={surface}

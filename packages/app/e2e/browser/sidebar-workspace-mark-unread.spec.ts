@@ -7,9 +7,18 @@ import {
 } from "../support/helpers/mock-agent";
 import { expectOpenTabCount } from "../support/helpers/sheet";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import {
+  composerLocator,
+  expectComposerDraft,
+  expectComposerFocused,
+} from "../support/helpers/composer";
 import { expectReconnectingToastGone } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
-import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
+import {
+  closeMobileAgentSidebar,
+  openMobileAgentSidebar,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 
 interface FinishedWorkspaces {
   subject: MockAgentWorkspace;
@@ -65,10 +74,14 @@ async function markAsUnread(page: Page, workspaceId: string) {
 
 async function markAsRead(page: Page, workspaceId: string) {
   await chooseReadAction(page, workspaceId, "read");
-  await expectStatus(page, workspaceId, "done");
+  await expectStatus(page, workspaceId, "needs_follow_up");
 }
 
-async function expectStatus(page: Page, workspaceId: string, status: "done" | "attention") {
+async function expectStatus(
+  page: Page,
+  workspaceId: string,
+  status: "done" | "attention" | "needs_follow_up",
+) {
   await expect(
     workspaceRow(page, workspaceId).getByTestId(`workspace-status-indicator-${status}`),
   ).toBeVisible();
@@ -78,7 +91,7 @@ async function markBackgroundWorkspaceAndReopen(page: Page, workspaceId: string)
   await test.step("background workspace gains green dot and clears when clicked", async () => {
     await markAsUnread(page, workspaceId);
     await openWorkspace(page, workspaceId);
-    await expectStatus(page, workspaceId, "done");
+    await expectStatus(page, workspaceId, "needs_follow_up");
   });
 }
 
@@ -97,7 +110,7 @@ async function leaveMarkedWorkspaceAndReopen(page: Page, { subject, other }: Fin
     await openWorkspace(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "needs_follow_up");
   });
 }
 
@@ -109,7 +122,7 @@ async function completeTurnAndLeave(page: Page, { subject, other }: FinishedWork
     await openWorkspace(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "needs_follow_up");
   });
 }
 
@@ -139,7 +152,7 @@ async function leaveMarkedWorkspaceAndReopenOnCompact(
     await openWorkspaceOnCompact(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "needs_follow_up");
   });
 }
 
@@ -153,7 +166,7 @@ async function completeTurnAndLeaveOnCompact(page: Page, { subject, other }: Fin
     await openWorkspaceOnCompact(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "needs_follow_up");
   });
 }
 
@@ -195,7 +208,7 @@ async function markUnreadThenResumeChat(page: Page, workspaceId: string) {
     await closeMobileAgentSidebar(page);
     await page.getByRole("textbox", { name: "Message agent..." }).click();
     await openMobileAgentSidebar(page);
-    await expectStatus(page, workspaceId, "done");
+    await expectStatus(page, workspaceId, "needs_follow_up");
   });
 }
 
@@ -294,7 +307,124 @@ test("clicking the already focused timeline acknowledges a new completion", asyn
   await workspaces.subject.client.waitForFinish(workspaces.subject.agentId, 20_000);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
   await page.getByText("Finish another turn.", { exact: true }).click();
-  await expectStatus(page, workspaces.subject.workspaceId, "done");
+  await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
+});
+
+test("each chat tab keeps its own follow-up dot when switching or marking done", async ({
+  page,
+  workspaces: { subject },
+}, testInfo) => {
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, subject);
+  const tab = (id: string) =>
+    page.getByTestId(`workspace-tab-agent_${id}`).filter({ visible: true });
+  const firstDot = tab(subject.agentId).getByTestId("agent-status-dot");
+  const workspaceDot = workspaceRow(page, subject.workspaceId)
+    .getByTestId("workspace-status-indicator-needs_follow_up")
+    .locator(":scope > *");
+  await expect(workspaceDot).toBeVisible();
+  const purple = await workspaceDot.evaluate((dot) => getComputedStyle(dot).backgroundColor);
+  await expect(firstDot).toHaveCSS("background-color", purple);
+
+  const second = await addFinishedAgent(subject);
+  await openAgentRoute(page, { workspaceId: subject.workspaceId, agentId: second.id });
+  await expectSelectedAgent(page, second.id);
+  const secondDot = tab(second.id).getByTestId("agent-status-dot");
+  await expect(firstDot).toHaveCSS("background-color", purple);
+  await expect(secondDot).toHaveCount(0);
+
+  await subject.client.sendAgentMessage(second.id, "Finish the second chat");
+  await subject.client.waitForFinish(second.id, 20_000);
+  await expectStatus(page, subject.workspaceId, "attention");
+  await expect(secondDot).toBeVisible();
+  await expect(secondDot).not.toHaveCSS("background-color", purple);
+  await expect(firstDot).toHaveCSS("background-color", purple);
+  const reviewPill = page
+    .getByTestId("composer-track-scroll")
+    .filter({ visible: true })
+    .getByTestId("composer-mark-done");
+  await expect(reviewPill).toHaveAccessibleName("Ready to review · Mark done");
+  await reviewPill.screenshot({ path: testInfo.outputPath("ready.png") });
+  await page.getByText("Finish the second chat", { exact: true }).click();
+  await expect(secondDot).toHaveCSS("background-color", purple);
+  await expect(reviewPill).toHaveAccessibleName("Needs follow-up · Mark done");
+  const restingFill = await reviewPill.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const restingBounds = await reviewPill.boundingBox();
+  await reviewPill.screenshot({ path: testInfo.outputPath("rest.png") });
+  await reviewPill.hover();
+  await expect(reviewPill).not.toHaveCSS("background-color", restingFill);
+  expect(await reviewPill.boundingBox()).toEqual(restingBounds);
+  await reviewPill.screenshot({ path: testInfo.outputPath("hover.png") });
+  await page.mouse.move(0, 0);
+  await expect(reviewPill).toHaveCSS("background-color", restingFill);
+  const ack = "agent.mark_done.response";
+  gate.holdNextServerMessage(ack);
+  await reviewPill.click();
+  await gate.waitForHeldServerMessage(ack);
+  await expect(secondDot).toHaveCount(0);
+  await expect(reviewPill).toHaveAccessibleName("Needs follow-up · Saving...");
+  await expect(reviewPill).toHaveText("Needs follow-up · Saving...");
+  await expect(reviewPill).toHaveCSS("background-color", restingFill);
+  await expect(reviewPill).toHaveCSS("opacity", "1");
+  await reviewPill.screenshot({ path: testInfo.outputPath("saving.png") });
+  await expect(firstDot).toHaveCSS("background-color", purple);
+  await expectStatus(page, subject.workspaceId, "needs_follow_up");
+  await subject.client.sendAgentMessage(second.id, "A newer result");
+  await subject.client.waitForFinish(second.id, 20_000);
+  await expect(reviewPill).toHaveAccessibleName("Ready to review · Mark done");
+  gate.releaseHeldServerMessage(ack);
+  await expect(reviewPill).toBeEnabled();
+  await expect(reviewPill).toHaveAccessibleName("Ready to review · Mark done");
+  gate.holdNextServerMessage(ack);
+  await reviewPill.click();
+  await gate.waitForHeldServerMessage(ack);
+  await expect(reviewPill).toHaveAccessibleName("Ready to review · Saving...");
+  gate.releaseHeldServerMessage(ack);
+  await expect(reviewPill).toHaveText("Done");
+});
+
+test("compact review pill preserves the draft and retries an interrupted save", async ({
+  page,
+  workspaces: { subject },
+}, testInfo) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, subject);
+  const pill = page.getByTestId("composer-track-scroll").getByTestId("composer-mark-done");
+  await expect(pill).toHaveAccessibleName("Needs follow-up · Mark done");
+  const bounds = await pill.boundingBox();
+  if (!bounds) throw new Error("The review action must have a touch target");
+  expect(bounds.height).toBeGreaterThanOrEqual(44);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(375);
+  await page.screenshot({ path: testInfo.outputPath("review-pill-compact.png") });
+  await composerLocator(page).fill("Keep my follow-up draft");
+
+  const request = "agent.mark_done.request";
+  gate.holdNextClientRequest(request);
+  await pill.click();
+  await gate.waitForHeldClientRequest();
+  await expect(pill).toBeDisabled();
+  await expect(pill).toHaveText("Needs follow-up · Saving...");
+  await page.screenshot({ path: testInfo.outputPath("review-pill-compact-saving.png") });
+  await expectComposerFocused(page);
+  await gate.drop();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Dropped by reconnect test" }),
+  ).toBeVisible();
+  await gate.waitForBlockedConnection();
+  gate.restore();
+  await expect(pill).toBeEnabled({ timeout: 30000 });
+  await expect(pill).toContainText("Mark done");
+  await expectComposerDraft(page, "Keep my follow-up draft");
+
+  gate.holdNextClientRequest(request);
+  await pill.click();
+  await gate.waitForHeldClientRequest();
+  expect(gate.getClientRequestCount(request)).toBe(2);
+  gate.releaseHeldClientRequest();
+  await expect(pill).toHaveText("Done");
+  await expect(pill).toHaveCount(0);
+  await expectComposerDraft(page, "Keep my follow-up draft");
 });
 
 async function reconnectWithoutInteracting(
@@ -324,7 +454,7 @@ test("reconnecting a focused chat preserves its unread completion until another 
   await reconnectWithoutInteracting(page, gate);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
   await page.getByText("Unread across reconnect.", { exact: true }).click();
-  await expectStatus(page, workspaces.subject.workspaceId, "done");
+  await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
 });
 
 test("a cached read chat acknowledges a completion that arrived while the app was closed", async ({
@@ -332,10 +462,56 @@ test("a cached read chat acknowledges a completion that arrived while the app wa
   workspaces,
 }) => {
   await openCompactWorkspace(page, workspaces.subject);
-  await expectStatus(page, workspaces.subject.workspaceId, "done");
+  await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
   await closeMobileAgentSidebar(page);
   await reopenWorkspaceAfterBackgroundTurn(page, workspaces.subject);
   await expectRestoredCompactChat(page);
   await openMobileAgentSidebar(page);
-  await expectStatus(page, workspaces.subject.workspaceId, "done");
+  await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
+});
+
+test("Mark done resolves only the selected chat from the row and composer", async ({
+  page,
+  workspaces,
+}) => {
+  const { subject } = workspaces;
+  await openAgentRoute(page, subject);
+  await expectStatus(page, subject.workspaceId, "needs_follow_up");
+  await selectSidebarStatusGrouping(page);
+  const groupedRow = (status: string) =>
+    page
+      .getByTestId(`sidebar-status-group-rows-${status}`)
+      .getByTestId(`sidebar-workspace-row-${getServerId()}:${subject.workspaceId}`);
+  const followUpDot = groupedRow("needs_follow_up").getByTestId("project-status-dot");
+  await expect(followUpDot).toBeVisible();
+  const readDotColor = await followUpDot.evaluate((dot) => getComputedStyle(dot).backgroundColor);
+  const second = await addFinishedAgent(subject);
+  await subject.client.sendAgentMessage(second.id, "Another pending result");
+  await subject.client.waitForFinish(second.id, 20_000);
+  const unreadRow = groupedRow("attention");
+  const unreadDot = unreadRow.getByTestId("project-status-dot");
+  await expect(unreadDot).toBeVisible();
+  await expect(unreadDot).not.toHaveCSS("background-color", readDotColor);
+  await expect(unreadRow).toHaveAccessibleName(/Ready to review/);
+  await expect(page.getByTestId("sidebar-status-group-attention")).toContainText("1");
+  await unreadRow.hover();
+  const mixedStatus = "1 Ready to review · 1 Needs follow-up";
+  await expect(page.getByTestId("hover-card-workspace-status")).toHaveText(mixedStatus);
+  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await expect(page.getByTestId("workspace-menu-chat-status")).toHaveText(mixedStatus);
+  await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click();
+  await expect(groupedRow("needs_follow_up")).toBeVisible();
+  await expect(page.getByTestId("sidebar-status-group-needs_follow_up")).toContainText("2");
+  await workspaceRow(page, subject.workspaceId).hover();
+  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await page.getByRole("menuitem", { name: "Mark Newest agent done", exact: true }).click();
+  await expect(groupedRow("needs_follow_up")).toBeVisible();
+  await page.reload();
+  await page.getByTestId("composer-mark-done").click();
+  await expect(groupedRow("done")).toBeVisible();
+  await expect(page.getByTestId("composer-mark-done")).toHaveCount(0);
+  await chooseReadAction(page, subject.workspaceId, "unread");
+  await expect(groupedRow("attention")).toBeVisible();
+  await chooseReadAction(page, subject.workspaceId, "read");
+  await expect(groupedRow("done")).toBeVisible();
 });

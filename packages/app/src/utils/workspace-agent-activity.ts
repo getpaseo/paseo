@@ -1,6 +1,10 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
-import { deriveSidebarStateBucket } from "./sidebar-agent-state";
+import {
+  deriveChatStatusBucket,
+  deriveSidebarStateBucket,
+  type SidebarStateBucket,
+} from "./sidebar-agent-state";
 
 export interface WorkspaceAgentActivity {
   agentId: string;
@@ -13,6 +17,37 @@ function workspaceAgentStatus(agent: Agent): Agent["status"] {
   return agent.status === "running" ? "idle" : agent.status;
 }
 
+function isVisibleWorkspaceChat(agent: Agent, agents: ReadonlyMap<string, Agent>): boolean {
+  const parent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
+  return !agent.archivedAt && !agent.background && isWorkspaceRootAgent(agent, parent);
+}
+
+function workspaceAgentState(agent: Agent) {
+  return {
+    status: workspaceAgentStatus(agent),
+    backgroundWork: agent.backgroundWork,
+    pendingPermissionCount: agent.pendingPermissions.length,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason,
+  };
+}
+
+export function countWorkspaceChatStatuses(
+  agents: ReadonlyMap<string, Agent>,
+  workspaceId: string,
+) {
+  const counts: Partial<Record<SidebarStateBucket, number>> = {};
+  for (const agent of agents.values()) {
+    if (agent.workspaceId !== workspaceId || !isVisibleWorkspaceChat(agent, agents)) continue;
+    const bucket = deriveChatStatusBucket(
+      workspaceAgentState(agent),
+      Boolean(agent.reviewResult?.followUpAt),
+    );
+    counts[bucket] = (counts[bucket] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function buildWorkspaceAgentActivityIndex(
   agents: ReadonlyMap<string, Agent>,
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
@@ -21,15 +56,7 @@ export function buildWorkspaceAgentActivityIndex(
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
 
   for (const agent of agents.values()) {
-    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
-    if (
-      agent.archivedAt ||
-      agent.background ||
-      !agent.workspaceId ||
-      !isWorkspaceRootAgent(agent, parentAgent)
-    ) {
-      continue;
-    }
+    if (!agent.workspaceId || !isVisibleWorkspaceChat(agent, agents)) continue;
 
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
     const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
@@ -38,13 +65,7 @@ export function buildWorkspaceAgentActivityIndex(
     }
     latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
 
-    const status = deriveSidebarStateBucket({
-      status: workspaceAgentStatus(agent),
-      backgroundWork: agent.backgroundWork,
-      pendingPermissionCount: agent.pendingPermissions.length,
-      requiresAttention: agent.requiresAttention,
-      attentionReason: agent.attentionReason,
-    });
+    const status = deriveSidebarStateBucket(workspaceAgentState(agent));
     activityByWorkspaceId.set(agent.workspaceId, {
       agentId: agent.id,
       status,

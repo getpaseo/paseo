@@ -24,6 +24,7 @@ export function getStatusDotColor(input: {
   if (bucket === "running") {
     return theme.colors.statusDotRunning;
   }
+  if (bucket === "needs_follow_up") return theme.colors.statusDotFollowUp;
   if (bucket === "attention") {
     return theme.colors.statusDotSuccess;
   }

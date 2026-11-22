@@ -4,7 +4,7 @@ import { i18n } from "@/i18n/i18next";
 import { useProviderIcon } from "@/components/provider-icons";
 import type { PanelDescriptor } from "@/panels/panel-registry";
 import { useSessionStore, selectAgentTurnPresentation, type Agent } from "@/stores/session-store";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveChatStatusBucket } from "@/utils/sidebar-agent-state";
 
 function formatProviderLabel(provider: Agent["provider"]): string {
   if (!provider) {
@@ -40,7 +40,7 @@ export function useAgentDescriptor(
     useShallow((state) => {
       const session = state.sessions[context.serverId];
       const agent =
-        session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
+        session?.agents.get(target.agentId) ?? session?.agentDetails.get(target.agentId);
       return {
         provider: agent?.provider ?? "codex",
         title: agent?.title ?? null,
@@ -49,6 +49,7 @@ export function useAgentDescriptor(
         pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
+        needsFollowUp: Boolean(agent?.reviewResult?.followUpAt),
         isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
       };
     }),
@@ -65,19 +66,23 @@ export function buildAgentDescriptor(input: {
   pendingPermissionCount: number;
   requiresAttention: boolean;
   attentionReason: Agent["attentionReason"];
+  needsFollowUp: boolean;
   isTurnActive: boolean;
   icon: PanelDescriptor["icon"];
 }): PanelDescriptor {
   const provider = input.provider;
   const label = resolveAgentLabel(input.title);
   const statusBucket = input.status
-    ? deriveSidebarStateBucket({
-        status: input.isTurnActive ? "running" : input.status,
-        backgroundWork: input.backgroundWork,
-        pendingPermissionCount: input.pendingPermissionCount,
-        requiresAttention: input.requiresAttention,
-        attentionReason: input.attentionReason,
-      })
+    ? deriveChatStatusBucket(
+        {
+          status: input.isTurnActive ? "running" : input.status,
+          backgroundWork: input.backgroundWork,
+          pendingPermissionCount: input.pendingPermissionCount,
+          requiresAttention: input.requiresAttention,
+          attentionReason: input.attentionReason,
+        },
+        input.needsFollowUp,
+      )
     : null;
 
   return {

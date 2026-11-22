@@ -13,6 +13,7 @@ import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
+import { getAttentionKey } from "@getpaseo/protocol/agent-state-bucket";
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -446,6 +447,37 @@ export type AttentionState =
       attentionTimestamp: Date;
     };
 
+type ReviewAction =
+  | { kind: "read"; expectedKey?: string | null }
+  | { kind: "done"; resultId: string };
+
+function applyReviewAction(
+  state: Pick<
+    StoredAgentRecord,
+    "requiresAttention" | "attentionReason" | "attentionTimestamp" | "reviewResult"
+  >,
+  action: ReviewAction,
+): { clearAttention: boolean; reviewResult: StoredAgentRecord["reviewResult"] } | null {
+  const { reviewResult, requiresAttention, attentionReason } = state;
+  if (action.kind === "done") {
+    if (reviewResult?.id !== action.resultId) return null;
+    return {
+      reviewResult: undefined,
+      clearAttention: requiresAttention === true && attentionReason === "finished",
+    };
+  }
+  if (!requiresAttention || attentionReason === "permission") return null;
+  if (action.expectedKey !== undefined && action.expectedKey !== getAttentionKey(state))
+    return null;
+  return {
+    clearAttention: true,
+    reviewResult:
+      attentionReason === "finished" && reviewResult && !reviewResult.followUpAt
+        ? { ...reviewResult, followUpAt: new Date().toISOString() }
+        : reviewResult,
+  };
+}
+
 /** Private helpers and background agents report to their creator, never to the user. */
 function raisesAttention(agent: Pick<ManagedAgent, "internal" | "background">): boolean {
   return !agent.internal && !agent.background;
@@ -519,6 +551,7 @@ interface ManagedAgentBase {
   /** Provider-owned session metrics, replaced whole on every provider update. */
   sessionMetrics?: AgentMetric[];
   lastError?: string;
+  reviewResult?: StoredAgentRecord["reviewResult"];
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -1734,6 +1767,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       background?: boolean;
+      reviewResult?: StoredAgentRecord["reviewResult"];
       attention?: AttentionState;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1768,6 +1802,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       background?: boolean;
+      reviewResult?: StoredAgentRecord["reviewResult"];
       attention?: AttentionState;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1839,6 +1874,7 @@ export class AgentManager {
       ...(record
         ? {
             metadata: record.metadata,
+            reviewResult: record.reviewResult,
             attention: extractAttention(record),
             // Shown until the reopened session reports its own.
             sessionMetrics: record.sessionMetrics,
@@ -2071,6 +2107,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         sessionMetrics: preservedSessionMetrics,
         lastError: preservedLastError,
+        reviewResult: existing.reviewResult,
         attention: preservedAttention,
         restoring: true,
       });
@@ -2529,6 +2566,7 @@ export class AgentManager {
         lastUsage: undefined,
         sessionMetrics: record.sessionMetrics,
         lastError: record.lastError ?? undefined,
+        reviewResult: record.reviewResult,
         attention,
         internal: record.internal,
         background: record.background,
@@ -2894,38 +2932,81 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async clearAgentAttention(agentId: string): Promise<void> {
-    return this.runLifecycleMutation(agentId, () => this.clearAgentAttentionUnlocked(agentId));
+  async clearAgentAttention(agentId: string, expectedKey?: string | null): Promise<boolean> {
+    return this.updateAgentReview(agentId, { kind: "read", expectedKey });
   }
 
-  private async clearAgentAttentionUnlocked(agentId: string): Promise<void> {
-    const agent = this.agents.get(agentId);
-    if (agent) {
-      if (agent.attention.requiresAttention) {
-        agent.attention = { requiresAttention: false };
-        await this.persistSnapshot(agent);
+  async markAgentDone(agentId: string, resultId: string): Promise<void> {
+    await this.updateAgentReview(agentId, { kind: "done", resultId });
+  }
+
+  private updateAgentReview(agentId: string, action: ReviewAction): Promise<boolean> {
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = this.agents.get(agentId);
+      if (agent) {
+        if (action.kind === "read" && agent.pendingPermissions.size > 0) return false;
+        const change = applyReviewAction(
+          {
+            ...agent.attention,
+            attentionTimestamp: agent.attention.requiresAttention
+              ? agent.attention.attentionTimestamp.toISOString()
+              : null,
+            reviewResult: agent.reviewResult,
+          },
+          action,
+        );
+        if (!change) return false;
+        await this.persistAgentReview(agent, {
+          attention: change.clearAttention ? { requiresAttention: false } : agent.attention,
+          reviewResult: change.reviewResult,
+        });
+        return true;
+      }
+
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record || record.internal || record.archivedAt) return false;
+      const change = applyReviewAction(record, action);
+      if (!change) return false;
+      const nextRecord: StoredAgentRecord = {
+        ...record,
+        updatedAt: this.nextStoredUpdatedAt(record),
+        reviewResult: change.reviewResult,
+        ...(change.clearAttention
+          ? { requiresAttention: false, attentionReason: null, attentionTimestamp: null }
+          : {}),
+      };
+      await registry.upsert(nextRecord);
+      this.dispatchStoredAgentState(nextRecord);
+      return true;
+    });
+  }
+
+  private async persistAgentReview(
+    agent: ManagedAgent,
+    change: Pick<ManagedAgent, "attention" | "reviewResult">,
+  ): Promise<void> {
+    const previous = { attention: agent.attention, reviewResult: agent.reviewResult };
+    Object.assign(agent, change);
+    this.touchUpdatedAt(agent);
+    try {
+      await this.persistSnapshot(agent);
+    } catch (error) {
+      // Provider events can publish a newer result while the filesystem write is pending.
+      if (agent.attention === change.attention && agent.reviewResult === change.reviewResult) {
+        Object.assign(agent, previous);
         this.emitState(agent, { persist: false });
       }
-      return;
+      throw error;
     }
-
-    const registry = this.requireRegistry();
-    const record = await registry.get(agentId);
-    if (!record || record.internal || record.archivedAt || record.requiresAttention !== true) {
-      return;
-    }
-    const nextRecord: StoredAgentRecord = {
-      ...record,
-      updatedAt: this.nextStoredUpdatedAt(record),
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    };
-    await registry.upsert(nextRecord);
-    this.dispatchStoredAgentState(nextRecord);
+    this.emitState(agent, { persist: false });
   }
 
   async markAgentUnread(agentId: string): Promise<void> {
+    return this.runLifecycleMutation(agentId, () => this.markAgentUnreadUnlocked(agentId));
+  }
+
+  private async markAgentUnreadUnlocked(agentId: string): Promise<void> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       const attentionReason = unreadAttentionReason(liveAgent.lifecycle);
@@ -2935,13 +3016,10 @@ export class AgentManager {
       if (!canMarkUnread) {
         throw new Error(`Agent is no longer settled and read: ${agentId}`);
       }
-      liveAgent.attention = {
-        requiresAttention: true,
-        attentionReason,
-        attentionTimestamp: new Date(),
-      };
-      await this.persistSnapshot(liveAgent);
-      this.emitState(liveAgent, { persist: false });
+      await this.persistAgentReview(liveAgent, {
+        attention: { requiresAttention: true, attentionReason, attentionTimestamp: new Date() },
+        reviewResult: liveAgent.reviewResult,
+      });
       return;
     }
 
@@ -3481,6 +3559,7 @@ export class AgentManager {
       this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
+      agent.reviewResult = undefined;
       agent.attention = { requiresAttention: false };
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
@@ -3875,7 +3954,15 @@ export class AgentManager {
     expectedTurnId: string,
     providerMessageId: string | undefined,
   ): Promise<void> {
+    const hadReviewResult = Boolean(agent.reviewResult);
+    if (hadReviewResult) {
+      agent.reviewResult = undefined;
+      if (agent.attention.requiresAttention && agent.attention.attentionReason === "finished") {
+        agent.attention = { requiresAttention: false };
+      }
+    }
     if (!clientMessageId) {
+      if (hadReviewResult) this.emitState(agent);
       return;
     }
     this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
@@ -4520,6 +4607,7 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       sessionMetrics?: AgentMetric[];
       lastError?: string;
+      reviewResult?: StoredAgentRecord["reviewResult"];
       attention?: AttentionState;
       /**
        * Bringing a known agent back, rather than starting a new one. Its timestamps and
@@ -4731,6 +4819,7 @@ export class AgentManager {
           lastUsage?: AgentUsage;
           sessionMetrics?: AgentMetric[];
           lastError?: string;
+          reviewResult?: StoredAgentRecord["reviewResult"];
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
@@ -4785,6 +4874,7 @@ export class AgentManager {
       lastUsage: options?.lastUsage,
       sessionMetrics: options?.sessionMetrics,
       lastError: options?.lastError,
+      reviewResult: options?.reviewResult,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       background: params.background,
@@ -5528,6 +5618,7 @@ export class AgentManager {
         return this.onStreamTimelineEvent({ agent, event, options, flags });
       case "turn_completed":
         this.onStreamTurnCompleted({
+          options,
           agent,
           event,
           eventTurnId,
@@ -5653,6 +5744,7 @@ export class AgentManager {
   private onStreamTurnCompleted(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
+    options?: HandleStreamEventOptions;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
@@ -5670,6 +5762,18 @@ export class AgentManager {
       "agent.manager.turn.completed",
     );
     if (terminalDisposition === "stale") return;
+    // Lifecycle also returns to idle after cancellation. Only a live successful turn
+    // owns a review result, including a newer autonomous finish while still unread.
+    if (
+      !params.options?.fromHistory &&
+      agent.lifecycle === "running" &&
+      (isForegroundEvent || !agent.activeForegroundTurnId) &&
+      !agent.pendingReplacement &&
+      raisesAttention(agent)
+    ) {
+      agent.reviewResult = { id: randomUUID() };
+    }
+
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
@@ -6101,6 +6205,7 @@ export class AgentManager {
     if (agent.attention.requiresAttention && agent.attention.attentionReason !== "finished") {
       return;
     }
+    if (!agent.reviewResult?.followUpAt) agent.reviewResult = undefined;
     agent.attention = {
       requiresAttention: true,
       attentionReason: "error",

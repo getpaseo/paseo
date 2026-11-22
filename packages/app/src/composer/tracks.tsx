@@ -360,6 +360,8 @@ function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
       return styles.dotFailed;
     case "attention":
       return styles.dotAttention;
+    case "needs_follow_up":
+      return styles.dotFollowUp;
     case "done":
       return styles.dotDone;
   }
@@ -449,6 +451,7 @@ const styles = StyleSheet.create((theme) => {
     dotNeedsInput: statusDot("needs_input"),
     dotFailed: statusDot("failed"),
     dotAttention: statusDot("attention"),
+    dotFollowUp: statusDot("needs_follow_up"),
     dotDone: statusDot("done"),
   };
 });

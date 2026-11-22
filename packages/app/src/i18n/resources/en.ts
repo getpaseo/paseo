@@ -54,6 +54,7 @@ export const en = {
       noOptionsMatchSearch: "No options match your search.",
     },
     states: {
+      saving: "Saving...",
       loading: "Loading...",
       starting: "Starting...",
       copied: "Copied",
@@ -1224,6 +1225,7 @@ export const en = {
     statusBucket: {
       needsInput: "Needs input",
       failed: "Failed",
+      needsFollowUp: "Needs follow-up",
       readyToReview: "Ready to review",
       working: "Working",
       done: "Done",
@@ -1372,6 +1374,8 @@ export const en = {
         createWorkspaceFor: "Create a new workspace for {{projectName}}",
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
+        markDone: "Mark done",
+        markChatDone: "Mark {{chat}} done",
         rename: "Rename workspace",
         pin: "Pin to top",
         unpin: "Unpin",

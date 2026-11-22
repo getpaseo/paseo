@@ -70,8 +70,9 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
       : ({ status: "not_running" } as const);
   }
 
-  async clearAgentAttention(agentId: string): Promise<void> {
+  async clearAgentAttention(agentId: string): Promise<boolean> {
     this.clearedAttentionAgentIds.push(agentId);
+    return true;
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {

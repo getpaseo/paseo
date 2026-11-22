@@ -205,6 +205,7 @@ const darkStatusTints = statusTints(darkStatusColors, "29"); // 16%
 // read as related.
 const lightStatusDotColors = {
   // L=0.62, chroma 90% of gamut max
+  statusDotFollowUp: baseColors.purple[600],
   statusDotSuccess: "#299f51",
   statusDotDanger: "#f12e2f",
   statusDotWarning: "#b37824",
@@ -213,6 +214,7 @@ const lightStatusDotColors = {
 
 const darkStatusDotColors = {
   // L=0.72, chroma 90% of gamut max
+  statusDotFollowUp: baseColors.purple[500],
   statusDotSuccess: "#35c264",
   statusDotDanger: "#f7796d",
   statusDotWarning: "#db932e",

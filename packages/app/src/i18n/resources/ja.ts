@@ -57,6 +57,7 @@ export const ja: TranslationResources = {
       noOptionsMatchSearch: "検索に一致するオプションがありません。",
     },
     states: {
+      saving: "保存中...",
       loading: "読み込み中...",
       starting: "起動中...",
       copied: "コピーしました",
@@ -1227,6 +1228,7 @@ export const ja: TranslationResources = {
     statusBucket: {
       needsInput: "入力待ち",
       failed: "失敗",
+      needsFollowUp: "要フォローアップ",
       readyToReview: "レビュー待ち",
       working: "実行中",
       done: "完了",
@@ -1376,6 +1378,8 @@ export const ja: TranslationResources = {
         createWorkspaceFor: "{{projectName}}の新しいワークスペースを作成",
         copyPath: "パスをコピー",
         copyBranchName: "ブランチ名をコピー",
+        markDone: "完了にする",
+        markChatDone: "「{{chat}}」を完了にする",
         rename: "ワークスペースの名前を変更",
         pin: "上部に固定",
         unpin: "固定解除",

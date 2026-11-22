@@ -9,6 +9,7 @@ export { STATUS_BUCKET_ORDER };
 const STATUS_BUCKET_LABEL_KEYS = {
   needs_input: "sidebar.statusBucket.needsInput",
   failed: "sidebar.statusBucket.failed",
+  needs_follow_up: "sidebar.statusBucket.needsFollowUp",
   attention: "sidebar.statusBucket.readyToReview",
   running: "sidebar.statusBucket.working",
   done: "sidebar.statusBucket.done",

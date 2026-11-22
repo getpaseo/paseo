@@ -50,6 +50,7 @@ export interface SeedDaemonClient {
   }>;
   setWorkspaceTitle(workspaceId: string, title: string | null): Promise<{ title: string | null }>;
   setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
+  markAgentDone(agentId: string, resultId: string): Promise<void>;
   clearWorkspaceAttention(workspaceId: string): Promise<void>;
   setWorkspaceLabel(input: {
     workspaceId: string;
@@ -169,9 +170,9 @@ export interface SeedDaemonClient {
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   refreshAgent(agentId: string): Promise<unknown>;
-  fetchAgent(options: {
-    agentId: string;
-  }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
+  fetchAgent(options: { agentId: string }): Promise<{
+    agent: { id: string; archivedAt?: string | null; reviewResult?: { id: string } };
+  } | null>;
   getLastServerInfoMessage(): {
     features?: {
       projectAdd?: boolean;

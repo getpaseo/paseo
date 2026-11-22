@@ -57,6 +57,7 @@ export const ptBR: TranslationResources = {
       noOptionsMatchSearch: "Nenhuma opção corresponde à sua busca.",
     },
     states: {
+      saving: "Salvando...",
       loading: "Carregando...",
       starting: "Iniciando...",
       copied: "Copiado",
@@ -1240,6 +1241,7 @@ export const ptBR: TranslationResources = {
     statusBucket: {
       needsInput: "Precisa de resposta",
       failed: "Com falha",
+      needsFollowUp: "Precisa de acompanhamento",
       readyToReview: "Para revisar",
       working: "Em execução",
       done: "Concluído",
@@ -1388,6 +1390,8 @@ export const ptBR: TranslationResources = {
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
+        markDone: "Marcar como concluído",
+        markChatDone: "Marcar {{chat}} como concluído",
         rename: "Renomear workspace",
         pin: "Fixar no topo",
         unpin: "Desafixar",

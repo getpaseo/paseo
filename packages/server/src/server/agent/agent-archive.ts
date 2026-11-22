@@ -17,6 +17,7 @@ export function buildArchivedAgentRecord(
     archivedAt: options.archivedAt,
     updatedAt: latestTimestamp(record.updatedAt, options.updatedAt),
     lastStatus: normalizeArchivedStatus(record.lastStatus),
+    reviewResult: undefined,
     requiresAttention: false,
     attentionReason: null,
     attentionTimestamp: null,

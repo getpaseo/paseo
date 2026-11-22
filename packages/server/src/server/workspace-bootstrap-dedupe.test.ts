@@ -11,6 +11,16 @@ const SNAPSHOT_DONE_10_30: BootstrapUpdateSnapshot = {
 };
 
 describe("shouldEmitPendingBootstrapUpdate", () => {
+  test("emits a changed chat result even while another chat keeps the same workspace status", () => {
+    const result = { id: "a", agentId: "chat", title: null };
+    expect(
+      shouldEmitPendingBootstrapUpdate({
+        snapshot: { ...SNAPSHOT_DONE_10_30, reviewResults: [result] },
+        update: { ...SNAPSHOT_DONE_10_30, reviewResults: [{ ...result, id: "b" }] },
+      }),
+    ).toBe(true);
+  });
+
   test("emits when there is no snapshot (first-time subscription)", () => {
     expect(
       shouldEmitPendingBootstrapUpdate({

@@ -14,6 +14,7 @@ interface UseAgentAttentionClearParams {
   isConnected: boolean;
   isAgentDataReady: boolean;
   requiresAttention: boolean;
+  attentionKey: string | null;
   attentionReason: AttentionReason;
   isScreenFocused: boolean;
   focusRequest: object | null;
@@ -31,14 +32,15 @@ export function useAgentAttentionClear({
   isConnected,
   isAgentDataReady,
   requiresAttention,
+  attentionKey,
   attentionReason,
   isScreenFocused,
   focusRequest,
   onError,
 }: UseAgentAttentionClearParams): AgentAttentionClearController {
   const [isAppVisible, setIsAppVisible] = useState<boolean>(() => getIsAppActivelyVisible());
-  const clearAttention = useStableEvent(async (id: string) => {
-    if (client) await client.clearAgentAttention(id);
+  const clearAttention = useStableEvent(async (id: string, observedKey: string | null) => {
+    if (client) await client.clearAgentAttention(id, observedKey);
   });
   const reportError = useStableEvent((error: unknown) => {
     // The timeline's reconnect status already explains a lost connection.
@@ -48,8 +50,8 @@ export function useAgentAttentionClear({
   const controller = useMemo(
     () =>
       createAgentAttentionController({
-        clear: async () => {
-          if (agentId) await clearAttention(agentId);
+        clear: async (key) => {
+          if (agentId) await clearAttention(agentId, key);
         },
         onError: reportError,
       }),
@@ -86,6 +88,7 @@ export function useAgentAttentionClear({
       focused: isScreenFocused && isAppVisible,
       ready: Boolean(client && agentId && isConnected && isAgentDataReady),
       requiresAttention,
+      attentionKey,
       attentionReason,
       focusRequest,
     });
@@ -98,6 +101,7 @@ export function useAgentAttentionClear({
     isScreenFocused,
     isAppVisible,
     requiresAttention,
+    attentionKey,
     attentionReason,
     focusRequest,
   ]);

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
-import { buildWorkspaceAgentActivityIndex } from "./workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  countWorkspaceChatStatuses,
+} from "./workspace-agent-activity";
 
 function agent(input: {
   id: string;
@@ -68,6 +71,36 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("counts each visible workspace chat in its own highest-priority state", () => {
+    const base = { workspaceId: "ws", updatedAt: "2026-01-01T00:00:00Z" };
+    const read = { id: "result", followUpAt: base.updatedAt };
+    const chats = [
+      { ...agent({ ...base, id: "reviewed" }), reviewResult: read },
+      {
+        ...agent({ ...base, id: "unread", requiresAttention: true, attentionReason: "finished" }),
+        reviewResult: read,
+      },
+      agent({ ...base, id: "waiting", status: "running", pendingPermissionCount: 1 }),
+      agent({ ...base, id: "running", status: "running" }),
+      agent({ ...base, id: "failed", requiresAttention: true, attentionReason: "error" }),
+      agent({ ...base, id: "done" }),
+      agent({ ...base, id: "nested", parentAgentId: "done" }),
+      agent({ ...base, id: "archived", archivedAt: base.updatedAt }),
+      agent({ ...base, id: "hidden", background: true }),
+      agent({ ...base, id: "other", workspaceId: "sibling" }),
+      agent({ ...base, id: "cross-workspace", parentAgentId: "other" }),
+    ];
+    expect(countWorkspaceChatStatuses(new Map(chats.map((chat) => [chat.id, chat])), "ws")).toEqual(
+      {
+        needs_input: 1,
+        failed: 1,
+        running: 1,
+        attention: 1,
+        needs_follow_up: 1,
+        done: 2,
+      },
+    );
+  });
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([

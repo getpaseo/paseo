@@ -15,6 +15,7 @@ import { describe, expect, test } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./messages.js";
+import { getWorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
 import { WorkspaceDirectory } from "./workspace-directory.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
@@ -272,6 +273,7 @@ interface AgentState {
   lastUserMessageAt?: string | null;
   archivedAt?: string | null;
   pendingPermissionCount?: number;
+  reviewResult?: AgentSnapshotPayload["reviewResult"];
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
   backgroundWork?: AgentSnapshotPayload["backgroundWork"];
@@ -319,6 +321,7 @@ function createAgent(
     },
     title: null,
     labels: input.labels ?? {},
+    reviewResult: input.reviewResult,
     requiresAttention: input.requiresAttention ?? false,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
@@ -327,6 +330,49 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("projects each root review while higher priorities retain the workspace indicator", async () => {
+    const workspace = new WorkspaceStatus();
+    const reviewResult = { id: "result", followUpAt: NOW };
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle", reviewResult });
+    workspace.hasDelegatedAgent({
+      id: "child",
+      status: "idle",
+      reviewResult: { id: "nested", followUpAt: "2026-11-22T00:00:00.000Z" },
+    });
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("done");
+    expect(descriptor.statusEnteredAt).toBe(NOW);
+    expect(descriptor.reviewResults).toEqual([
+      { ...reviewResult, agentId: "parent-agent", title: null },
+      {
+        id: "nested",
+        followUpAt: "2026-11-22T00:00:00.000Z",
+        agentId: "child",
+        title: null,
+        nested: true,
+      },
+    ]);
+    expect(getWorkspaceDisplayStatus(descriptor)).toBe("needs_follow_up");
+    workspace.hasRootAgent({
+      id: "second",
+      status: "idle",
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    expect(getWorkspaceDisplayStatus(await workspace.workspaceDescriptor())).toBe("attention");
+    workspace.hasWorkingTerminal(Date.parse(NOW));
+    expect(getWorkspaceDisplayStatus(await workspace.workspaceDescriptor())).toBe("running");
+    workspace.hasRootAgent({
+      id: "failed",
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(getWorkspaceDisplayStatus(await workspace.workspaceDescriptor())).toBe("failed");
+    workspace.hasRootAgent({ id: "waiting", status: "running", pendingPermissionCount: 1 });
+    expect(getWorkspaceDisplayStatus(await workspace.workspaceDescriptor())).toBe("needs_input");
+  });
+
   test("treats background work as running without changing foreground status", async () => {
     const workspace = new WorkspaceStatus();
     workspace.hasRootAgent({

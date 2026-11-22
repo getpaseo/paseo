@@ -2499,10 +2499,14 @@ export class DaemonClient {
     }
   }
 
-  async clearAgentAttention(agentId: string | string[]): Promise<void> {
+  async clearAgentAttention(
+    agentId: string | string[],
+    expectedAttentionKey?: string | null,
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "clear_agent_attention",
+      expectedAttentionKey,
       agentId,
       requestId,
     });
@@ -2522,10 +2526,14 @@ export class DaemonClient {
     });
   }
 
-  async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
+  async clearWorkspaceAttention(
+    workspaceId: string | string[],
+    observedResultIds?: string[],
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "workspace.clear_attention.request",
+      observedResultIds,
       workspaceId,
       requestId,
     });
@@ -2546,6 +2554,13 @@ export class DaemonClient {
     if (!response.success) {
       throw new Error(response.error ?? "Failed to clear workspace attention");
     }
+  }
+
+  async markAgentDone(agentId: string, resultId: string): Promise<void> {
+    const response = await this.sendNamespacedCorrelatedSessionRequest<"agent.mark_done.response">({
+      message: { type: "agent.mark_done.request", agentId, resultId },
+    });
+    if (response.error) throw new Error(response.error);
   }
 
   async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {

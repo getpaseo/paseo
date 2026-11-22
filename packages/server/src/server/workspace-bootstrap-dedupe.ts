@@ -1,3 +1,6 @@
+import equal from "fast-deep-equal";
+import type { WorkspaceDescriptorPayload } from "./messages.js";
+
 /**
  * Pure dedupe decision for the bootstrap flush.
  *
@@ -6,19 +9,11 @@
  * which buffered updates still carry new information and which are
  * redundant with what the client just received in the snapshot.
  *
- * Returns `true` (emit) when ANY of:
- *   - the status changed from the snapshot
- *   - the statusEnteredAt changed from the snapshot (including the
- *     null↔value transition that the unmask case produces)
- *   - the update's activityAtMs is strictly newer than the snapshot's
- *   - the snapshot has no activityAtMs and the update has one (new activity
- *     where there was none)
- *
- * Returns `false` (drop) when the status pair is unchanged AND the update
- * is not strictly newer than the snapshot in activity. The both-null
- * activity case falls through to drop — there is genuinely no new info.
+ * A remaining chat can keep the bucket and its timestamp unchanged while a
+ * different chat is resolved. The buffered result list must reach the menu too.
  */
 export interface BootstrapUpdateSnapshot {
+  reviewResults?: WorkspaceDescriptorPayload["reviewResults"];
   status: string;
   statusEnteredAt: string | null;
   activityAtMs: number | null;
@@ -38,7 +33,7 @@ export function shouldEmitPendingBootstrapUpdate(input: BootstrapUpdateCheckInpu
     return true;
   }
 
-  if (snapshot.status !== update.status) {
+  if (snapshot.status !== update.status || !equal(snapshot.reviewResults, update.reviewResults)) {
     return true;
   }
 
