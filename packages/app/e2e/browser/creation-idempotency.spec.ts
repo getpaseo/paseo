@@ -133,12 +133,14 @@ for (const scenario of [
   test(`retrying failed agent initialization preserves its workspace${scenario.suffix}`, async ({
     creation,
     startup,
+    page,
   }) => {
     await creation.openWorkspaceForm("local");
     await creation.submitPrompt("Retry this workspace and agent together.", "Create");
     await creation.expectAgentStillStarting();
     await startup.fail();
     await creation.expectStartupFailure();
+    await expect(page.getByTestId("app-toast")).toHaveCount(0);
     await creation.expectOneCreatedWorkspace();
     await scenario.prepare(creation);
     await creation.submitPrompt("Retry this workspace and agent together.");

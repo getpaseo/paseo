@@ -516,7 +516,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   });
   const images = await encodeImages(wirePayload.images);
   let navigated = false;
-  let outcome: SubmitOutcome = "background";
+  const delivery: { outcome: SubmitOutcome } = { outcome: "background" };
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
     config: {
       provider,
@@ -553,7 +553,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
           provider,
           composerState,
         });
-        outcome = submitWorkspaceDraft({
+        delivery.outcome = submitWorkspaceDraft({
           clearConsumedDraft,
           draftKey: input.draftKey,
           draftContextScopeKey: input.draftContextScopeKey,
@@ -579,9 +579,15 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   };
   // A retry after a failed agent start belongs to the ready workspace's draft, not to this creation.
   const agentCreation = { result: Promise.resolve().then(() => execute()) };
-  await agentCreation.result;
-  if (outcome === "background") clearConsumedDraft();
-  return outcome;
+  try {
+    await agentCreation.result;
+  } catch (error) {
+    // Once handed off to the workspace draft tab, that tab owns surfacing agent startup errors.
+    if (delivery.outcome === "navigated") return delivery.outcome;
+    throw error;
+  }
+  if (delivery.outcome === "background") clearConsumedDraft();
+  return delivery.outcome;
 }
 
 function buildComposerConfig(input: {
