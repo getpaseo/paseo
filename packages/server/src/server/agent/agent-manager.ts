@@ -9,11 +9,12 @@ import {
   projectTimelineRows,
   TimelineProjection,
 } from "./timeline-projection.js";
-import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
+import type { PluginLifecycle, PluginBeforeResults } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -132,6 +133,53 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
+
+interface SessionOpenContribution {
+  env: Record<string, string>;
+  tools: Array<{
+    pluginId: string;
+    pluginInstanceId: string;
+    name: string;
+    title?: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+  mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+  appendSystemPrompt?: string[];
+}
+
+interface SessionOpenProbe {
+  generation: number;
+  transformed: PluginBeforeResults["agent.open.before"];
+  contribution: SessionOpenContribution;
+  unchanged: boolean;
+}
+
+function sessionOpenContribution(input: {
+  purpose: PluginSessionOpenRequest["purpose"];
+  env: Record<string, string> | undefined;
+  tools: readonly AttachedAgentTool[];
+  mcpServers: AgentSessionConfig["mcpServers"];
+  appendSystemPrompt?: string[];
+}): SessionOpenContribution {
+  const interactive = input.purpose === "interactive";
+  return {
+    env: { ...input.env },
+    tools: interactive
+      ? input.tools.map((tool) => ({
+          pluginId: tool.pluginId,
+          pluginInstanceId: tool.pluginInstanceId,
+          name: tool.name,
+          title: tool.title,
+          description: tool.description,
+          inputSchema: structuredClone(tool.inputSchema),
+        }))
+      : [],
+    mcpServers: interactive ? structuredClone(input.mcpServers ?? {}) : {},
+    appendSystemPrompt:
+      interactive && input.appendSystemPrompt?.length ? [...input.appendSystemPrompt] : undefined,
+  };
+}
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
@@ -939,6 +987,7 @@ export class AgentManager {
   private readonly mcpAuthToken: string | null;
   private sessionOpenGeneration = 0;
   private readonly sessionOpenGenerations = new Map<string, number>();
+  private readonly sessionOpenContributions = new Map<string, SessionOpenContribution>();
   private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
   private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
   private paseoToolsEnabled = true;
@@ -1072,9 +1121,55 @@ export class AgentManager {
     await this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, async () => {
         if (!this.needsPluginSessionReload(agentId)) return;
-        await this.reloadAgentSessionInternal(agentId);
+        const generation = this.sessionOpenGeneration;
+        // A hook that only observes the open must not kill the provider process.
+        // Reload only when env, tools, or MCP servers would actually change.
+        const probe = await this.probeSessionOpen(agentId);
+        if (!this.needsPluginSessionReload(agentId)) return;
+        if (probe?.unchanged && this.sessionOpenGeneration === generation) {
+          this.sessionOpenGenerations.set(agentId, generation);
+          return;
+        }
+        await this.reloadAgentSessionInternal(agentId, undefined, {
+          probedLaunchContext: probe && probe.generation === generation ? probe : undefined,
+        });
       }),
     );
+  }
+
+  private async probeSessionOpen(agentId: string): Promise<SessionOpenProbe | undefined> {
+    const agent = this.getAgent(agentId);
+    const previous = this.sessionOpenContributions.get(agentId);
+    const client = agent ? this.clients.get(agent.provider) : undefined;
+    if (!agent || !client || !this.pluginLifecycle) return undefined;
+    const generation = this.sessionOpenGeneration;
+    const transformed = await this.pluginLifecycle.before("agent.open.before", {
+      agentId,
+      provider: client.provider,
+      cwd: agent.cwd,
+      workspaceId: agent.workspaceId ?? null,
+      reason: "refresh",
+      purpose: "interactive",
+      env: { ...agent.launchEnv },
+      title: await this.resolveInitialPersistedTitle(agentId, agent.config, null),
+      background: agent.background === true,
+      ...agentEntityData(agent),
+      tools: [],
+      mcpServers: {},
+    });
+    const contribution = sessionOpenContribution({
+      purpose: "interactive",
+      env: transformed.env,
+      tools: transformed.tools as AttachedAgentTool[],
+      mcpServers: transformed.mcpServers,
+      appendSystemPrompt: transformed.appendSystemPrompt,
+    });
+    return {
+      generation,
+      transformed,
+      contribution,
+      unchanged: previous !== undefined && isDeepStrictEqual(previous, contribution),
+    };
   }
 
   private needsPluginSessionReload(agentId: string): boolean {
@@ -1116,6 +1211,7 @@ export class AgentManager {
   private detachPluginTools(agentId: string): void {
     this.attachedPluginTools.delete(agentId);
     this.sessionOpenGenerations.delete(agentId);
+    this.sessionOpenContributions.delete(agentId);
     this.pluginAgentTools?.detachTools(agentId);
   }
 
@@ -1971,7 +2067,10 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: {
+      rehydrateFromDisk?: boolean;
+      probedLaunchContext?: SessionOpenProbe;
+    },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
@@ -2000,6 +2099,8 @@ export class AgentManager {
     );
     const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
     const previousPaseoToolPolicy = this.paseoToolPolicies.get(agentId);
+    const previousSessionOpenGeneration = this.sessionOpenGenerations.get(agentId);
+    const previousSessionOpenContribution = this.sessionOpenContributions.get(agentId);
     const launchContext = await this.buildLaunchContext(
       agentId,
       client,
@@ -2014,6 +2115,7 @@ export class AgentManager {
         background: existing.background,
         labels: existing.labels,
         metadata: existing.metadata,
+        probedLaunchContext: options?.probedLaunchContext,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -2075,14 +2177,7 @@ export class AgentManager {
         restoring: true,
       });
     } catch (error) {
-      if (closedExisting) {
-        this.emitClosedAgent(closedExisting, { persist: false });
-      } else if (this.agents.get(agentId) === existing) {
-        existing.lifecycle = "error";
-        existing.lastError = error instanceof Error ? error.message : String(error);
-        this.raiseErrorAttention(existing);
-        this.emitState(existing);
-      }
+      this.handleReloadFailure(agentId, existing, closedExisting, error);
       throw error;
     } finally {
       if (!handedToRegistration) {
@@ -2092,10 +2187,48 @@ export class AgentManager {
         } else {
           this.paseoToolPolicies.delete(agentId);
         }
+        this.rollbackSessionOpenBaseline(
+          agentId,
+          previousSessionOpenGeneration,
+          previousSessionOpenContribution,
+        );
         if (session) {
           await this.closeUnregisteredSession(session);
         }
       }
+    }
+  }
+
+  private rollbackSessionOpenBaseline(
+    agentId: string,
+    previousGeneration: number | undefined,
+    previousContribution: SessionOpenContribution | undefined,
+  ): void {
+    if (previousGeneration !== undefined) {
+      this.sessionOpenGenerations.set(agentId, previousGeneration);
+    } else {
+      this.sessionOpenGenerations.delete(agentId);
+    }
+    if (previousContribution !== undefined) {
+      this.sessionOpenContributions.set(agentId, previousContribution);
+    } else {
+      this.sessionOpenContributions.delete(agentId);
+    }
+  }
+
+  private handleReloadFailure(
+    agentId: string,
+    existing: ActiveManagedAgent,
+    closedExisting: ManagedAgentClosed | undefined,
+    error: unknown,
+  ): void {
+    if (closedExisting) {
+      this.emitClosedAgent(closedExisting, { persist: false });
+    } else if (this.agents.get(agentId) === existing) {
+      existing.lifecycle = "error";
+      existing.lastError = error instanceof Error ? error.message : String(error);
+      this.raiseErrorAttention(existing);
+      this.emitState(existing);
     }
   }
 
@@ -6481,45 +6614,29 @@ export class AgentManager {
       background?: boolean;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
+      probedLaunchContext?: SessionOpenProbe;
     },
   ): Promise<AgentLaunchContext> {
     // A plugin changing during this open must still make the resulting session stale.
     const generation = this.sessionOpenGeneration;
-    this.detachPluginTools(agentId);
-    let appendSystemPrompt: string[] | undefined;
-    let mcpServers: AgentSessionConfig["mcpServers"];
-    let mcpServerOwners: Record<string, string> | undefined;
-    if (this.pluginLifecycle) {
-      const request = {
-        agentId,
-        provider: client.provider,
-        cwd,
-        workspaceId: opening?.workspaceId ?? null,
-        reason: opening?.reason ?? "resume",
-        purpose: opening?.purpose ?? "interactive",
-        env: { ...env },
-        title: opening?.title ?? null,
-        background: opening?.background === true,
-        ...agentEntityData(opening),
-        tools: [],
-        mcpServers: {},
-      };
-      const transformed = await this.pluginLifecycle.before("agent.open.before", request);
-      env = transformed.env;
-      if (request.purpose === "interactive") {
-        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
-        appendSystemPrompt = transformed.appendSystemPrompt;
-        mcpServers = transformed.mcpServers;
-        mcpServerOwners = transformed.mcpServerOwners;
-      }
+    if (opening?.probedLaunchContext?.generation !== generation) {
+      this.detachPluginTools(agentId);
     }
+    const hooks = await this.resolveSessionOpenHooks(
+      agentId,
+      client,
+      cwd,
+      env ?? {},
+      generation,
+      opening,
+    );
     const context: AgentLaunchContext = {
       agentId,
-      ...pluginPromptContext(appendSystemPrompt),
-      mcpServers,
-      mcpServerOwners,
+      ...pluginPromptContext(hooks.appendSystemPrompt),
+      mcpServers: hooks.mcpServers,
+      mcpServerOwners: hooks.mcpServerOwners,
       env: {
-        ...env,
+        ...hooks.env,
         ...agentIdentityEnv({ agentId, cwd, opening }),
       },
     };
@@ -6543,7 +6660,83 @@ export class AgentManager {
       }
     }
     this.sessionOpenGenerations.set(agentId, generation);
+    this.sessionOpenContributions.set(agentId, hooks.contribution);
     return context;
+  }
+
+  private async resolveSessionOpenHooks(
+    agentId: string,
+    client: AgentClient,
+    cwd: string,
+    env: Record<string, string>,
+    generation: number,
+    opening?: {
+      reason: PluginSessionOpenRequest["reason"];
+      purpose: PluginSessionOpenRequest["purpose"];
+      workspaceId?: string | null;
+      title?: string | null;
+      background?: boolean;
+      labels?: Record<string, string>;
+      metadata?: AgentMetadata;
+      probedLaunchContext?: SessionOpenProbe;
+    },
+  ): Promise<{
+    env: Record<string, string>;
+    appendSystemPrompt: string[] | undefined;
+    mcpServers: AgentSessionConfig["mcpServers"];
+    mcpServerOwners: Record<string, string> | undefined;
+    contribution: SessionOpenContribution;
+  }> {
+    const purpose = opening?.purpose ?? "interactive";
+    let contribution = sessionOpenContribution({
+      purpose,
+      env,
+      tools: [],
+      mcpServers: {},
+    });
+    let appendSystemPrompt: string[] | undefined;
+    let mcpServers: AgentSessionConfig["mcpServers"];
+    let mcpServerOwners: Record<string, string> | undefined;
+
+    let transformed: PluginBeforeResults["agent.open.before"] | undefined;
+    if (opening?.probedLaunchContext && opening.probedLaunchContext.generation === generation) {
+      transformed = opening.probedLaunchContext.transformed;
+      contribution = opening.probedLaunchContext.contribution;
+    } else if (this.pluginLifecycle) {
+      transformed = await this.pluginLifecycle.before("agent.open.before", {
+        agentId,
+        provider: client.provider,
+        cwd,
+        workspaceId: opening?.workspaceId ?? null,
+        reason: opening?.reason ?? "resume",
+        purpose,
+        env: { ...env },
+        title: opening?.title ?? null,
+        background: opening?.background === true,
+        ...agentEntityData(opening),
+        tools: [],
+        mcpServers: {},
+      });
+      contribution = sessionOpenContribution({
+        purpose,
+        env: transformed.env,
+        tools: transformed.tools as AttachedAgentTool[],
+        mcpServers: transformed.mcpServers,
+        appendSystemPrompt: transformed.appendSystemPrompt,
+      });
+    }
+
+    if (transformed) {
+      env = transformed.env;
+      if (purpose === "interactive") {
+        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
+        appendSystemPrompt = transformed.appendSystemPrompt;
+        mcpServers = transformed.mcpServers;
+        mcpServerOwners = transformed.mcpServerOwners;
+      }
+    }
+
+    return { env, appendSystemPrompt, mcpServers, mcpServerOwners, contribution };
   }
 
   private resolveProviderLaunchConfig(
