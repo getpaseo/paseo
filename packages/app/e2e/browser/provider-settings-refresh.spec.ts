@@ -118,7 +118,8 @@ async function exerciseProviderSettingsStack(page: Page) {
 
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expectProviderSettingsVisible(page);
-  await expect(page.getByText("Checked just now", { exact: true })).toBeVisible({
+  // The Models header puts the model count before it: "12 · Checked just now".
+  await expect(page.getByText(/Checked just now$/)).toBeVisible({
     timeout: 30_000,
   });
 }

@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { HeadingTrailing } from "./heading-trailing";
 import { SettingsInfoTip } from "./settings-info-tip";
 
 interface SettingsGroupProps {
@@ -40,7 +41,7 @@ export function SettingsGroup({
             />
           ) : null}
         </View>
-        {trailing}
+        <HeadingTrailing>{trailing}</HeadingTrailing>
       </View>
       {children}
     </View>

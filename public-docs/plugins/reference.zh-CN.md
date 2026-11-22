@@ -422,6 +422,38 @@ Provider 设置中的 **刷新** 会跳过保留的结果，并清除失败的�
 
 Paseo 按原样显示 `version`、`versions` 和 `message`，不解析或排序它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
 
+#### Provider 故障排查 {#provider-troubleshooting}
+
+**需要 Paseo 0.18**。较旧的版本会忽略 `docsUrl`，并且只显示 `diagnostic` 文本。Provider 设置中有一个 **故障排查** 部分，其中包含 **诊断报告** 和 **文档**。用户会把报告复制到问题反馈中，所以请把能解释错误结果的事实写进报告。
+
+`ProviderRegistration.docsUrl` 是 **文档** 打开的 `http` 或 `https` 页面。请让它指向说明如何设置该 Provider 以及如何解决常见问题的页面。它是其他类型的 URL 时，插件会启动失败。没有声明时，Paseo 会隐藏 **文档**。
+
+报告由 Provider 的 `label` 和若干行组成，每行是一个 `Label: value`。Paseo 会写入以下各行：
+
+| 行                                                             | 显示条件                                                  |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `Command source`、`Configured command`                         | 声明了 `command`                                          |
+| `Daemon PATH`、`Daemon shell`、`PATH matches`、`Resolved path` | 声明了 `command`                                          |
+| `Version`                                                      | Paseo 找到了可执行文件，且你声明了 `installation.inspect` |
+| `Models`、`Status`                                             | 始终显示                                                  |
+
+`status(request)` 会在这些行之后添加你的行。`request.launch` 是会话将使用的启动配置。
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| 结果                               | 效果                                                             |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `{ available: true, diagnostic? }` | `diagnostic` 的每一行是报告中的一行。每行请写成 `Label: value`。 |
+| `{ available: false, diagnostic }` | Provider 不可用。报告在 `Error` 行中显示 `diagnostic`。          |
+
+Paseo 每次检查 Provider 是否可用时都会调用 `status`，不只是在生成报告时。报告不会自动换行，所以每一行请写得简短。
+
 ### 用量来源 {#usage-sources}
 
 **需要 Paseo 0.11**。在服务端入口中用 `server.registerUsageSource()` 注册一个来源。从 `@getpaseo/plugin/server/usage` 导入它的契约和辅助函数。

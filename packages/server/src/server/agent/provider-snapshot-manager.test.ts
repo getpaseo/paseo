@@ -216,12 +216,14 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("carries a plugin provider icon in snapshot metadata", () => {
+  test("carries a plugin provider icon and docs link in snapshot metadata", () => {
     const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const docsUrl = "https://example.com/docs";
     const registration: ProviderRegistration = {
       id: "icon-provider",
       label: "Icon Provider",
       icon: iconSvg,
+      docsUrl,
       async connect() {
         throw new Error("not opened by this test");
       },
@@ -232,7 +234,13 @@ describe("ProviderSnapshotManager public surface", () => {
       manager.replacePluginProviders([registration]);
 
       expect(manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry)).toContainEqual(
-        expect.objectContaining({ provider: "icon-provider", iconSvg }),
+        expect.objectContaining({ provider: "icon-provider", iconSvg, docsUrl }),
+      );
+      expect(manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry)).toContainEqual(
+        expect.objectContaining({
+          provider: "claude",
+          docsUrl: "https://paseo.sh/docs/supported-providers/claude-code",
+        }),
       );
     } finally {
       manager.destroy();

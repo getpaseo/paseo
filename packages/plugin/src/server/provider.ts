@@ -39,6 +39,8 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** http(s) page that helps users set up and troubleshoot the provider. Paseo opens it. */
+  docsUrl?: string;
   /** How users install the provider's CLI and which version they run. Every member is optional. */
   installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;

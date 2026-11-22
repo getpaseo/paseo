@@ -548,6 +548,37 @@ version, so a CLI updated outside Paseo is checked again once the inspection exp
 `update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
 See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
 
+## Help users fix problems
+
+A user who gets a wrong result opens the provider's settings before they ask for help. Give that
+page what they need: declare `docsUrl`, and return the facts that explain a wrong result from
+`status`.
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**Docs** opens `docsUrl`. **Diagnostic report** shows the command, the path of the executable and
+the version that Paseo found, then your `Profile` row. Report what the CLI reads from its
+environment, such as the account, the profile, or the configuration file in use. Those differ
+between the daemon and the user's terminal, and the user cannot see them from the app.
+See the [troubleshooting reference](/docs/plugins/reference#provider-troubleshooting) for the rows
+that Paseo writes and for the rules of `status`.
+
 ## Adapt an ACP agent
 
 Use the ACP shim when the agent already speaks ACP:

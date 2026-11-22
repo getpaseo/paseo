@@ -73,6 +73,12 @@ import {
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 import { readPluginOptionState } from "./plugin-provider-options.js";
+import {
+  buildCommandResolutionDiagnosticRows,
+  formatProviderDiagnostic,
+  toDiagnosticErrorMessage,
+  type DiagnosticEntry,
+} from "./providers/diagnostic-utils.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -136,6 +142,9 @@ function isProviderRequestReply(
   );
 }
 
+// The CLI answers its version in well under this; a hung one must not hold the report.
+const VERSION_ROW_TIMEOUT_MS = 10_000;
+
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
   connectedLaunch: ProviderLaunch | undefined;
@@ -165,8 +174,8 @@ class ProviderRuntime {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  /** The effective launch, including when its executable does not resolve. */
-  private async resolveEffectiveLaunch(): Promise<ProviderInstallationLaunch | undefined> {
+  /** The launch after overrides, and where its executable resolves. */
+  private async resolveConfiguredLaunch() {
     const command = this.registration.command;
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
@@ -176,7 +185,14 @@ class ProviderRuntime {
     if (launch.source !== "override") launch.args.unshift(...command.slice(1));
     const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
-    const availability = await checkProviderLaunchAvailable(launch);
+    return { launch, env, availability: await checkProviderLaunchAvailable(launch) };
+  }
+
+  /** The effective launch, including when its executable does not resolve. */
+  private async resolveEffectiveLaunch(): Promise<ProviderInstallationLaunch | undefined> {
+    const configured = await this.resolveConfiguredLaunch();
+    if (!configured) return undefined;
+    const { launch, env, availability } = configured;
     if (!availability.resolvedPath)
       return { command: launch.command, args: launch.args, env, resolved: false };
     return {
@@ -222,6 +238,35 @@ class ProviderRuntime {
     const launch = await this.resolveEffectiveLaunch();
     context.signal.throwIfAborted();
     return await update.call(this.registration.installation, { ...context, launch });
+  }
+
+  /** What the daemon launches, where it found the executable and which version it runs. */
+  async launchDiagnosticRows(): Promise<DiagnosticEntry[]> {
+    const configured = await this.resolveConfiguredLaunch();
+    if (!configured) return [];
+    const { launch, env, availability } = configured;
+    const rows = [
+      ...(await buildCommandResolutionDiagnosticRows(launch, {
+        knownBinaryNames: [launch.command],
+        pathValue: env.PATH,
+      })),
+      { label: "Resolved path", value: availability.resolvedPath ?? "not found" },
+    ];
+    if (availability.resolvedPath && this.registration.installation?.inspect)
+      rows.push({ label: "Version", value: await this.readInstalledVersion() });
+    return rows;
+  }
+
+  private async readInstalledVersion(): Promise<string> {
+    try {
+      const inspection = await this.inspectInstallation(
+        AbortSignal.timeout(VERSION_ROW_TIMEOUT_MS),
+      );
+      if (inspection.status === "not_installed") return "not installed";
+      return inspection.version?.trim() || "unknown";
+    } catch (error) {
+      return `error: ${toDiagnosticErrorMessage(error)}`;
+    }
   }
 
   async status(): Promise<ProviderStatus> {
@@ -1000,6 +1045,7 @@ function createPluginProviderDefinition(
     label: registration.label,
     description: registration.description ?? `Plugin provider ${registration.label}`,
     iconSvg: registration.icon,
+    docsUrl: registration.docsUrl,
     requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
     modes: [],
@@ -1015,6 +1061,7 @@ interface PendingChild {
 
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
+  private readonly label: string;
   private readonly runtime: ProviderRuntime;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
@@ -1024,6 +1071,7 @@ class PluginAgentClient implements AgentClient {
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.label = registration.label;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1110,8 +1158,19 @@ class PluginAgentClient implements AgentClient {
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
-    const status = await this.runtime.status();
-    return { diagnostic: status.diagnostic ?? "Provider is available" };
+    const [rows, status] = await Promise.all([
+      this.runtime.launchDiagnosticRows(),
+      this.runtime.status(),
+    ]);
+    const report = [formatProviderDiagnostic(this.label, rows)];
+    if (!status.available) report.push(`  Error: ${status.diagnostic}`);
+    // An available provider adds its own rows, one per line.
+    else if (status.diagnostic) {
+      for (const line of status.diagnostic.split("\n")) {
+        if (line.trim()) report.push(`  ${line.trim()}`);
+      }
+    }
+    return { diagnostic: report.join("\n") };
   }
 
   async listImportableSessions(
