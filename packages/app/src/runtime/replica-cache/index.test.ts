@@ -806,6 +806,28 @@ describe("ReplicaCache", () => {
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
   });
 
+  it("keeps a turn's stats on its footer row across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const answer: StreamItem = {
+      ...(timelineItem("Done") as Extract<StreamItem, { kind: "assistant_message" }>),
+      turnMetrics: [
+        { label: "Model", value: "gemini-3.6-flash" },
+        { label: "Cache", value: "64%", tone: "ok" },
+      ],
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [answer],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: false,
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([answer]);
+  });
+
   it("round-trips plugin timeline items", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
