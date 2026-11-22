@@ -247,7 +247,11 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/app/*config.{cjs,js,ts}",
       "packages/app/package.json",
     ],
-    app: ["packages/app/**", "packages/expo-two-way-audio/**"],
+    app: [
+      "packages/app/**",
+      "packages/expo-two-way-audio/**",
+      "packages/react-native-enriched-markdown/**",
+    ],
     sdk: [
       "packages/plugin/**",
       "plugin-examples/**",
@@ -277,6 +281,7 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/app/index.ts",
       "packages/app/*config.{cjs,js,ts}",
       "packages/app/package.json",
+      "packages/react-native-enriched-markdown/**",
     ],
     relay: ["packages/relay/**"],
     cli: ["packages/cli/**"],
@@ -356,6 +361,7 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     "packages/app/index.ts",
     "packages/app/*config.{cjs,js,ts}",
     "packages/app/package.json",
+    "packages/react-native-enriched-markdown/**",
   ]);
 });
 

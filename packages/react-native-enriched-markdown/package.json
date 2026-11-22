@@ -1,56 +1,14 @@
 {
   "name": "react-native-enriched-markdown",
-  "version": "1.2.0-nightly-20261014-766fc0e67",
+  "version": "0.17.1",
+  "private": true,
   "description": "Markdown-based Rich Text solution for React Native",
   "main": "./lib/module/index",
   "module": "./lib/module/index",
   "source": "./src/index.tsx",
   "types": "./lib/typescript/src/index.d.ts",
-  "files": [
-    "src",
-    "lib",
-    "android",
-    "ios",
-    "cpp",
-    "*.podspec",
-    "jest.js",
-    "jest.d.ts",
-    "react-native.config.js",
-    "postinstall.mjs",
-    "vendor-grammars.mjs",
-    "vendor-ratex.mjs",
-    "ratex-version.json",
-    "!ios/build",
-    "!ios/vendor",
-    "!android/build",
-    "!android/gradle",
-    "!android/gradlew",
-    "!android/gradlew.bat",
-    "!android/local.properties",
-    "!android/src/test",
-    "!**/__tests__",
-    "!**/__fixtures__",
-    "!**/__mocks__",
-    "!**/.*"
-  ],
   "scripts": {
-    "postinstall": "node postinstall.mjs",
-    "build:wasm": "bash ../core/cpp/wasm/build.sh",
-    "typecheck": "tsc",
-    "test": "jest",
-    "lint-clang:ios": "find ios/ \\( -iname \"*.h\" -o -iname \"*.m\" -o -iname \"*.mm\" \\) | grep -v -e Pods -e build | xargs npx clang-format -i -n --Werror",
-    "lint-clang:ios:fix": "find ios/ \\( -iname \"*.h\" -o -iname \"*.m\" -o -iname \"*.mm\" \\) | grep -v -e Pods -e build | xargs npx clang-format -i",
-    "lint-clang:android": "find android/ \\( -iname \"*.h\" -o -iname \"*.cpp\" \\) | grep -v -e build | xargs npx clang-format -i -n --Werror",
-    "lint-clang:android:fix": "find android/ \\( -iname \"*.h\" -o -iname \"*.cpp\" \\) | grep -v -e build | xargs npx clang-format -i",
-    "lint-clang": "yarn lint-clang:ios && yarn lint-clang:android",
-    "lint-clang:fix": "yarn lint-clang:ios:fix && yarn lint-clang:android:fix",
-    "clean": "del-cli android/build lib",
-    "sync-md4c": "bash ../../scripts/fetch-md4c.sh",
-    "vendor-grammars": "node ../../vendor/vendor-grammars.mjs",
-    "vendor-ratex": "node ../../vendor/vendor-ratex.mjs",
-    "prepack": "bash ../../scripts/prepare-npm-publish.sh prepack",
-    "postpack": "bash ../../scripts/prepare-npm-publish.sh postpack",
-    "prepare": "yarn vendor-grammars && yarn vendor-ratex && bob build"
+    "postinstall": "node postinstall.mjs"
   },
   "keywords": [
     "react-native",
@@ -73,9 +31,6 @@
     "url": "https://github.com/software-mansion/enriched-markdown/issues"
   },
   "homepage": "https://enriched.swmansion.com/markdown",
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org/"
-  },
   "peerDependencies": {
     "katex": ">=0.16.0",
     "react": "*",
@@ -85,60 +40,6 @@
     "katex": {
       "optional": true
     }
-  },
-  "devDependencies": {
-    "@babel/core": "^7.25.0",
-    "@react-native/babel-preset": "0.85.0",
-    "@react-native/jest-preset": "0.85.0",
-    "@tree-sitter-grammars/tree-sitter-markdown": "0.3.2",
-    "@tree-sitter-grammars/tree-sitter-yaml": "0.7.1",
-    "@types/jest": "^29.5.0",
-    "@types/node": "^22.0.0",
-    "@types/react": "^19.2.0",
-    "babel-jest": "^29.7.0",
-    "clang-format": "^1.8.0",
-    "del-cli": "^7.0.0",
-    "jest": "^29.7.0",
-    "react": "19.2.3",
-    "react-native": "0.85.0",
-    "react-native-builder-bob": "^0.41.0",
-    "test-renderer": "^1.0.0",
-    "tree-sitter-bash": "0.23.3",
-    "tree-sitter-c": "0.23.5",
-    "tree-sitter-c-sharp": "0.23.1",
-    "tree-sitter-cpp": "0.23.4",
-    "tree-sitter-css": "0.23.2",
-    "tree-sitter-go": "0.23.4",
-    "tree-sitter-html": "0.23.2",
-    "tree-sitter-java": "0.23.5",
-    "tree-sitter-javascript": "0.23.1",
-    "tree-sitter-json": "0.24.8",
-    "tree-sitter-php": "0.24.2",
-    "tree-sitter-python": "0.23.6",
-    "tree-sitter-ruby": "0.23.1",
-    "tree-sitter-rust": "0.23.2",
-    "tree-sitter-swift": "0.7.0",
-    "tree-sitter-typescript": "0.23.2",
-    "typescript": "^6.0.2"
-  },
-  "react-native-builder-bob": {
-    "source": "src",
-    "output": "lib",
-    "targets": [
-      "codegen",
-      [
-        "module",
-        {
-          "esm": true
-        }
-      ],
-      [
-        "typescript",
-        {
-          "project": "tsconfig.build.json"
-        }
-      ]
-    ]
   },
   "codegenConfig": {
     "name": "EnrichedMarkdownTextSpec",
@@ -165,15 +66,5 @@
       }
     },
     "includesGeneratedCode": true
-  },
-  "create-react-native-library": {
-    "type": "fabric-view",
-    "languages": "kotlin-objc",
-    "tools": [
-      "eslint",
-      "lefthook",
-      "release-it"
-    ],
-    "version": "0.62.0"
   }
 }

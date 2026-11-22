@@ -125,7 +125,7 @@
     "react-native": "0.86.3",
     "react-native-draggable-flatlist": "^4.0.3",
     "react-native-edge-to-edge": "^1.7.0",
-    "react-native-enriched-markdown": "1.2.0-nightly-20261014-766fc0e67",
+    "react-native-enriched-markdown": "*",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-keyboard-controller": "1.21.12",
     "react-native-nitro-modules": "0.35.5",
