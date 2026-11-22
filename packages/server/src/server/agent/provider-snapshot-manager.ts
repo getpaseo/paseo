@@ -993,7 +993,8 @@ export class ProviderSnapshotManager {
     if (!definition.enabled) return;
     const currentBinding = () => this.targets.get(snapshotCwd)?.bindings.get(provider);
     const client = this.ensureClient(provider, definition);
-    const catalogOptions = createFetchCatalogOptions(options.catalogScope, refresh !== undefined);
+    // Only a requested refresh asks the provider to bypass its own caches or rotate servers.
+    const catalogOptions = createFetchCatalogOptions(options.catalogScope, refresh === "manual");
     let key: string;
     try {
       const sharedKey = client.getCatalogCacheKey
@@ -1056,9 +1057,9 @@ export class ProviderSnapshotManager {
             if (!isCurrent()) return false;
             const result = identifyEntry(structuredClone(entry));
             if (background && current.result && keepsPublishedResult(current.result, result)) {
-              if (entry.status === "error") {
+              if (entry.status !== "ready") {
                 this.logger.warn(
-                  { provider, target: catalogOptions, error: entry.error },
+                  { provider, target: catalogOptions, status: entry.status, error: entry.error },
                   "Background provider refresh failed; keeping the last catalogue",
                 );
               }
@@ -1283,14 +1284,17 @@ function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {
   return { entry, contentHash };
 }
 
-/** A background result replaces neither unchanged content nor a ready catalogue with a failure. */
+/**
+ * A background result replaces neither unchanged content nor a ready catalogue with a result that
+ * is not ready. Providers report a failed startup probe as unavailable, so both count as transient.
+ */
 function keepsPublishedResult(
   published: ProviderSnapshotRecord,
   next: ProviderSnapshotRecord,
 ): boolean {
   return (
     published.contentHash === next.contentHash ||
-    (next.entry.status === "error" && published.entry.status === "ready")
+    (published.entry.status === "ready" && next.entry.status !== "ready")
   );
 }
 

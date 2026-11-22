@@ -3,6 +3,8 @@ import type { Logger } from "pino";
 import type { AgentProvider } from "./agent-sdk-types.js";
 
 export const PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS = 30 * 60_000;
+/** Timers may fire a little early; a provider refreshed on a tick is still due on its next slot. */
+const TIMER_SLACK_MS = 1_000;
 
 /** Clock and one-shot timers the schedule runs on; tests drive a fake. */
 export interface ProviderRefreshTimers {
@@ -29,13 +31,14 @@ export interface ProviderRefreshScheduleOptions {
 
 /**
  * Keeps each provider refreshed about once per interval without bursts. One timer ticks
- * `interval / providers` apart and each tick refreshes at most the provider refreshed longest
- * ago, so refreshes spread across the interval and a recent refresh pushes its provider back.
+ * `interval / providers` apart and each tick starts at most one refresh: the provider refreshed
+ * longest ago, if that was an interval ago and it has no background refresh running. Ticks do not
+ * wait for refreshes, so a slow provider never delays the others.
  */
 export class ProviderRefreshSchedule {
   private readonly refreshedAt = new Map<AgentProvider, number>();
+  private readonly running = new Set<AgentProvider>();
   private cancelTick: (() => void) | null = null;
-  private refreshing = false;
   private disposed = false;
 
   constructor(private readonly options: ProviderRefreshScheduleOptions) {}
@@ -67,6 +70,7 @@ export class ProviderRefreshSchedule {
     this.cancelTick?.();
     this.cancelTick = null;
     this.refreshedAt.clear();
+    this.running.clear();
   }
 
   private tickMs(): number {
@@ -76,38 +80,34 @@ export class ProviderRefreshSchedule {
   private scheduleTick(): void {
     this.cancelTick?.();
     this.cancelTick = null;
-    // The tick after a running refresh is scheduled when it settles.
-    if (this.disposed || this.refreshing || this.refreshedAt.size === 0) return;
-    this.cancelTick = this.options.timers.schedule(() => void this.tick(), this.tickMs());
+    if (this.disposed || this.refreshedAt.size === 0) return;
+    this.cancelTick = this.options.timers.schedule(() => this.tick(), this.tickMs());
   }
 
-  private async tick(): Promise<void> {
+  private tick(): void {
     this.cancelTick = null;
+    this.scheduleTick();
     const provider = this.dueProvider();
-    if (!provider) {
-      this.scheduleTick();
-      return;
-    }
+    if (provider) void this.run(provider);
+  }
+
+  private async run(provider: AgentProvider): Promise<void> {
     this.recordRefresh([provider]);
-    this.refreshing = true;
+    this.running.add(provider);
     try {
       await this.options.refresh(provider);
     } catch (error) {
       this.options.logger.warn({ err: error, provider }, "Background provider refresh failed");
     } finally {
-      this.refreshing = false;
-      this.scheduleTick();
+      this.running.delete(provider);
     }
   }
 
   private dueProvider(): AgentProvider | undefined {
-    const now = this.options.timers.now();
-    // Half a tick of slack: a provider refreshed on a tick is due exactly one interval of ticks
-    // later, and timer jitter must not push it to the slot after.
-    const dueBefore = now - this.options.intervalMs + this.tickMs() / 2;
+    const dueBefore = this.options.timers.now() - this.options.intervalMs + TIMER_SLACK_MS;
     let oldest: { provider: AgentProvider; refreshedAt: number } | undefined;
     for (const [provider, refreshedAt] of this.refreshedAt) {
-      if (refreshedAt > dueBefore) continue;
+      if (refreshedAt > dueBefore || this.running.has(provider)) continue;
       if (!oldest || refreshedAt < oldest.refreshedAt) oldest = { provider, refreshedAt };
     }
     return oldest?.provider;

@@ -228,13 +228,22 @@ that were still active when the deadline expired.
 Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
 Providers change their model lists on the server without a CLI update, so the daemon refreshes
 each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
-`30 min / enabled providers` apart, and each tick refreshes at most the provider refreshed longest
-ago, so provider CLIs never start in a burst. Any forced refresh, configuration change, or newly
-enabled provider counts as a refresh and pushes that provider's next one back a full interval.
-The background refresh takes the settings refresh path for one provider, with three differences:
-it joins discovery already in flight, an unchanged catalogue keeps the published record and its
-`fetchedAt` so idle clients receive no update, and a failure keeps a ready catalogue instead of
-publishing the error. A manual refresh still publishes failures.
+`30 min / enabled providers` apart, and each tick starts at most one refresh: the provider refreshed
+longest ago, if that was a full interval ago. Ticks do not wait for refreshes, so a provider that
+probes many workspace targets does not delay the others, and provider CLIs never start in a burst.
+Any forced refresh, configuration change, or newly enabled provider counts as a refresh and pushes
+that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with these differences:
+
+- It joins discovery already in flight.
+- It passes `force: false`, because providers treat `force` as a requested hard refresh. OpenCode
+  rotates its shared server on it.
+- An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
+  no update.
+- A result that is not ready keeps a ready catalogue. Plugin status probes report a failed startup
+  as unavailable, so an unavailable result counts as transient too. A manual refresh still
+  publishes both.
+
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 

@@ -68,6 +68,9 @@ function model(provider: AgentProvider, id: string): AgentModelDefinition {
 interface TestProvider {
   models: AgentModelDefinition[];
   failure?: Error;
+  available: boolean;
+  /** `force` of each catalogue request, in order. */
+  forces: boolean[];
   /** Holds the next probe open until the test releases it. */
   hold?: Promise<void>;
 }
@@ -78,7 +81,11 @@ function createHarness(options: { enabled: AgentProvider[]; disabled?: AgentProv
   const providers = new Map<AgentProvider, TestProvider>();
   const extraClients: Partial<Record<AgentProvider, AgentClient>> = {};
   for (const provider of [...options.enabled, ...(options.disabled ?? [])]) {
-    const state: TestProvider = { models: [model(provider, `${provider}-1`)] };
+    const state: TestProvider = {
+      models: [model(provider, `${provider}-1`)],
+      available: true,
+      forces: [],
+    };
     providers.set(provider, state);
     extraClients[provider] = createClient(provider, state, () =>
       probes.push({ minute: timers.minute, provider }),
@@ -131,10 +138,11 @@ function createClient(
       throw new Error("not implemented");
     },
     async isAvailable() {
-      return true;
+      return state.available;
     },
-    async fetchCatalog() {
+    async fetchCatalog(options) {
       onProbe();
+      state.forces.push(options.force === true);
       const hold = state.hold;
       state.hold = undefined;
       await hold;
@@ -174,14 +182,46 @@ describe("ProviderSnapshotManager background refresh", () => {
   test("a manual refresh pushes that provider's background refresh one interval later", async () => {
     const harness = createHarness({ enabled: ["codex"] });
     try {
-      await harness.timers.advanceMinutes(20);
+      await harness.timers.advanceMinutes(10);
       await harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
-      await harness.timers.advanceMinutes(40);
+      await harness.timers.advanceMinutes(50);
 
       expect(harness.probes).toEqual([
-        { minute: 20, provider: "codex" },
+        { minute: 10, provider: "codex" },
         { minute: 60, provider: "codex" },
       ]);
+    } finally {
+      harness.manager.destroy();
+    }
+  });
+
+  test("a slow refresh does not delay other providers' slots", async () => {
+    const harness = createHarness({ enabled: ["codex", "claude"] });
+    try {
+      const held = deferred();
+      harness.provider("claude").hold = held.promise;
+      await harness.timers.advanceMinutes(50);
+      held.resolve();
+      await settle();
+      await harness.timers.advanceMinutes(10);
+
+      expect(harness.probes).toEqual([
+        { minute: 30, provider: "claude" },
+        { minute: 45, provider: "codex" },
+        { minute: 60, provider: "claude" },
+      ]);
+    } finally {
+      harness.manager.destroy();
+    }
+  });
+
+  test("background probes do not ask providers for a forced refresh", async () => {
+    const harness = createHarness({ enabled: ["codex"] });
+    try {
+      await harness.timers.advanceMinutes(30);
+      await harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
+
+      expect(harness.provider("codex").forces).toEqual([false, true]);
     } finally {
       harness.manager.destroy();
     }
@@ -232,7 +272,7 @@ describe("ProviderSnapshotManager background refresh", () => {
     }
   });
 
-  test("keeps the ready catalogue when a background refresh fails", async () => {
+  test("keeps the ready catalogue when a background refresh fails or finds the provider unavailable", async () => {
     const harness = createHarness({ enabled: ["codex"] });
     try {
       await harness.manager.listProviders({ providers: ["codex"], wait: true });
@@ -246,6 +286,15 @@ describe("ProviderSnapshotManager background refresh", () => {
       expect(harness.changes).toEqual([]);
       expect(harness.globalEntry("codex")).toBe(warmed);
 
+      harness.provider("codex").failure = undefined;
+      harness.provider("codex").available = false;
+      await harness.timers.advanceMinutes(30);
+
+      expect(harness.changes).toEqual([]);
+      expect(harness.globalEntry("codex")).toBe(warmed);
+
+      harness.provider("codex").available = true;
+      harness.provider("codex").failure = new Error("network unreachable");
       await harness.manager.refreshSettingsSnapshot({ providers: ["codex"] });
       expect(harness.globalEntry("codex")).toMatchObject({
         status: "error",
