@@ -251,7 +251,10 @@ export class ReplayedTurns<Message> {
   observe(message: Message): AgentMetric[] {
     const prompt = this.reader.prompt(message);
     if (prompt) {
-      const unclear = this.turn?.endedOnTools === true;
+      // Prompts queued behind one another, with no reply between, share the first one's doubt.
+      const unclear =
+        this.turn !== null &&
+        (this.turn.endedOnTools || (this.turn.unclear && this.turn.steps.length === 0));
       const closed = this.end();
       this.turn = this.open(prompt.startedAt);
       this.turn.unclear = unclear;

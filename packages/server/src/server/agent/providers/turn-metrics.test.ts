@@ -230,6 +230,20 @@ describe("replayed turns after a turn that ended on tools", () => {
   });
 });
 
+describe("replayed turns after steers queued together", () => {
+  test("every prompt queued behind a turn that ended on tools shares its doubt", () => {
+    const { out } = replay([
+      { role: "user", at: 0 },
+      { role: "assistant", step: step({ endedAt: 1_000 }), final: false, endedOnTools: true },
+      { role: "tool", run: [1_000, 1_500] },
+      { role: "user", at: 2_000 },
+      { role: "user", at: 2_100 },
+      { role: "assistant", step: step({ endedAt: 3_000 }), final: true },
+    ]);
+    expect(out).toEqual([]);
+  });
+});
+
 describe("session metrics reporter", () => {
   test("reports only changes, starting from nothing reported", () => {
     const reported: unknown[] = [];

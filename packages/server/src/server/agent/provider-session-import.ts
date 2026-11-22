@@ -41,9 +41,7 @@ export async function importSessionFromPersistence(input: {
     session,
     config: storedConfig,
     persistence: canonicalImportPersistence(persistence, session),
-    timeline: history.timeline,
-    ...(history.sessionMetrics ? { sessionMetrics: history.sessionMetrics } : {}),
-    providerSubagentEvents: history.providerSubagentEvents,
+    ...history,
   };
 }
 
@@ -84,36 +82,51 @@ function buildImportPersistenceHandle(
   };
 }
 
-async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>): Promise<{
-  timeline: ImportedTimelineEntry[];
-  sessionMetrics?: AgentMetric[];
-  providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
-}> {
-  const timeline: ImportedTimelineEntry[] = [];
-  const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-  let sessionMetrics: AgentMetric[] | undefined;
-  for await (const event of events) {
-    if (event.type === "provider_subagent") {
-      providerSubagentEvents.push(event);
-      continue;
+/** What an import keeps of a provider's replayed history, whichever way the events arrive. */
+export class ImportedHistory {
+  readonly timeline: ImportedTimelineEntry[] = [];
+  readonly providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+  sessionMetrics: AgentMetric[] | undefined;
+
+  add(event: AgentStreamEvent): void {
+    switch (event.type) {
+      case "provider_subagent":
+        this.providerSubagentEvents.push(event);
+        return;
+      case "session_metrics_updated":
+        this.sessionMetrics = sanitizeAgentMetrics(event.metrics);
+        return;
+      case "turn_completed": {
+        const metrics = sanitizeAgentMetrics(event.metrics);
+        const last = this.timeline.at(-1);
+        if (last && metrics.length > 0) last.turnMetrics = metrics;
+        return;
+      }
+      case "timeline":
+        this.timeline.push({
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        });
+        return;
+      default:
+        return;
     }
-    if (event.type === "session_metrics_updated") {
-      sessionMetrics = sanitizeAgentMetrics(event.metrics);
-      continue;
-    }
-    if (event.type === "turn_completed") {
-      const metrics = sanitizeAgentMetrics(event.metrics);
-      const last = timeline.at(-1);
-      if (last && metrics.length > 0) last.turnMetrics = metrics;
-      continue;
-    }
-    if (event.type !== "timeline") {
-      continue;
-    }
-    timeline.push({
-      item: event.item,
-      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
-    });
   }
-  return { timeline, sessionMetrics, providerSubagentEvents };
+
+  result(): Pick<
+    ImportedProviderSession,
+    "timeline" | "sessionMetrics" | "providerSubagentEvents"
+  > {
+    return {
+      timeline: this.timeline,
+      ...(this.sessionMetrics ? { sessionMetrics: this.sessionMetrics } : {}),
+      providerSubagentEvents: this.providerSubagentEvents,
+    };
+  }
+}
+
+async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>) {
+  const history = new ImportedHistory();
+  for await (const event of events) history.add(event);
+  return history.result();
 }

@@ -127,16 +127,21 @@ export function piSessionMetrics(
 const CONTENT_START_EVENTS = new Set(["text_start", "thinking_start", "toolcall_start"]);
 
 /**
- * Times a live reply's first token: from the reply's start to its first content,
- * on the adapter's clock.
+ * Times a live reply's first token, on the adapter's clock: from when the request went out
+ * (`turn_start`) to the reply's first content. A reply's `message_start` only arrives once
+ * the response headers have, so it stands in for the request only when no `turn_start` came.
  */
 export class PiFirstTokenTimer {
   private startedAt: number | null = null;
   private firstTokenAt: number | null = null;
 
-  replyStarted(now: number): void {
+  requestSent(now: number): void {
     this.startedAt = now;
     this.firstTokenAt = null;
+  }
+
+  replyStarted(now: number): void {
+    if (this.startedAt === null) this.requestSent(now);
   }
 
   replyUpdated(event: { type: string; delta?: unknown }, now: number): void {

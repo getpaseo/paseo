@@ -2253,6 +2253,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "turn_start":
+        this.firstToken.requestSent(Date.now());
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         if (this.activeTurnStartedEmitted) {

@@ -338,6 +338,20 @@ describe("turn metrics", () => {
     });
   });
 
+  it("keeps the stats on a message whose chunks the projection merges", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "go" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "Do" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "ne" }, { turnId: "turn-1" });
+    store.stampTurnMetrics("a", metrics, { turnId: "turn-1" });
+
+    const projected = store.fetch("a").rows;
+
+    expect(projected).toHaveLength(2);
+    expect(projected[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
+  });
+
   it("restores stamped rows when a timeline is seeded from stored rows", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("live");

@@ -111,6 +111,12 @@ describe("Pi first token timer", () => {
     timer.replyUpdated({ type: "thinking_delta", delta: "hmm" }, 2_050);
     expect(timer.replyEnded()).toBe(50);
 
+    // The request going out starts the clock; the reply's start arrives later, with the headers.
+    timer.requestSent(5_000);
+    timer.replyStarted(8_000);
+    timer.replyUpdated({ type: "text_start" }, 8_050);
+    expect(timer.replyEnded()).toBe(3_050);
+
     // A reply whose start was not seen, or that never produced content, is not timed.
     timer.replyUpdated({ type: "text_start" }, 3_000);
     expect(timer.replyEnded()).toBeNull();
@@ -207,7 +213,10 @@ describe("Pi metrics through the session", () => {
       { label: "Model time", value: "4.0s" },
       // Tools ran from 101.5s to 104s.
       { label: "Tool time", value: "2.5s" },
-      { label: "Average TTFT", value: "0.2s" },
+      // The first reply's clock starts when the request went out (turn_start, 100.0s), before its
+      // headers arrived: 0.8s. The second has no turn_start, so it starts at its message_start:
+      // 0.1s.
+      { label: "Average TTFT", value: "0.5s" },
       { label: "Steps", value: "2" },
       { label: "Tokens", value: "2.0K ↑ · 1.2K ↓" },
       { label: "Cache", value: "75%", tone: "ok" },

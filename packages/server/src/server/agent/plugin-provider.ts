@@ -72,6 +72,7 @@ import {
   createProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
+import { ImportedHistory } from "./provider-session-import.js";
 import { readPluginOptionState } from "./plugin-provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
@@ -1149,8 +1150,7 @@ class PluginAgentClient implements AgentClient {
       session,
       config: { ...context.storedConfig, provider: this.provider, cwd: input.cwd },
       persistence,
-      timeline: session.timelineHistory(),
-      providerSubagentEvents: session.subagentHistory(),
+      ...session.importedHistory(),
     };
   }
 
@@ -1577,13 +1577,10 @@ class PluginAgentSession implements AgentSession {
       );
   }
 
-  subagentHistory(): NonNullable<ImportedProviderSession["providerSubagentEvents"]> {
-    return this.history
-      .read(this.provider)
-      .filter(
-        (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
-          event.type === "provider_subagent",
-      );
+  importedHistory(): ReturnType<ImportedHistory["result"]> {
+    const history = new ImportedHistory();
+    for (const event of this.history.read(this.provider)) history.add(event);
+    return history.result();
   }
 
   attachChild(
