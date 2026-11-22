@@ -280,6 +280,106 @@ describe("daemon bearer auth", () => {
     }
   });
 
+  test("admits a scoped credential as its own principal and enforces its denied modes", async () => {
+    const delegatorHash = await hash("delegator-secret", 4);
+    const viewerHash = await hash("viewer-secret", 4);
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: {
+        password: CORRECT_PASSWORD_HASH,
+        credentials: [
+          {
+            name: "delegator",
+            password: delegatorHash,
+            permissions: ["daemon.read", "workspace.read", "workspace.write"],
+            denyModes: ["bypassPermissions"],
+          },
+          { name: "viewer", password: viewerHash, permissions: ["workspace.read"], denyModes: [] },
+        ],
+      },
+    });
+    const origin = `http://127.0.0.1:${daemonHandle.port}`;
+    try {
+      // Scoped credentials do not unlock the owner-only HTTP API.
+      const status = await fetch(`${origin}/api/status`, {
+        headers: { Authorization: "Bearer delegator-secret" },
+      });
+      expect(status.status).toBe(401);
+
+      const { ws } = await connectWebSocket({ port: daemonHandle.port });
+      const frames: Array<Record<string, unknown>> = [];
+      ws.on("message", (data) => frames.push(JSON.parse(data.toString())));
+      const rpcError = new Promise<unknown>((resolve) => {
+        ws.on("message", (data) => {
+          const frame = JSON.parse(data.toString()) as {
+            type?: string;
+            message?: { type?: string; payload?: unknown };
+          };
+          if (frame.message?.type === "rpc_error") resolve(frame.message.payload);
+        });
+      });
+      ws.send(
+        JSON.stringify({
+          type: "hello",
+          clientId: "delegator-client",
+          clientType: "cli",
+          protocolVersion: 1,
+          auth: { kind: "password", password: "delegator-secret" },
+        }),
+      );
+      await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      expect(frames[0]).toMatchObject({
+        type: "session",
+        message: { payload: { status: "server_info" } },
+      });
+      ws.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "set_agent_mode_request",
+            agentId: "agent-1",
+            modeId: "bypassPermissions",
+            requestId: "mode-1",
+          },
+        }),
+      );
+      await expect(rpcError).resolves.toEqual({
+        requestId: "mode-1",
+        requestType: "set_agent_mode_request",
+        error: "Agent mode 'bypassPermissions' is not allowed for this credential",
+        code: "access_denied",
+      });
+      ws.close();
+
+      const mcpRequest = (token: string) =>
+        fetch(`${origin}/mcp/agents`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json, text/event-stream",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "set_agent_mode",
+              arguments: { agentId: "agent-1", modeId: "bypassPermissions" },
+            },
+          }),
+        });
+      expect((await mcpRequest("wrong")).status).toBe(401);
+      expect((await mcpRequest("viewer-secret")).status).toBe(403);
+      const denied = await mcpRequest("delegator-secret");
+      expect(denied.status).toBe(200);
+      expect(await denied.text()).toContain(
+        "Agent mode 'bypassPermissions' is not allowed for this credential",
+      );
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   test("rejects a wrong hello password with a protocol frame before close", async () => {
     const daemonHandle = await createTestPaseoDaemon({ auth: { password: CORRECT_PASSWORD_HASH } });
     try {

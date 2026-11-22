@@ -313,6 +313,7 @@ interface SessionForTestOptions {
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
+  deniedModes?: readonly string[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
@@ -468,6 +469,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
+    ...(options.deniedModes ? { deniedModes: options.deniedModes } : {}),
   };
   if (options.sendToSource) sessionOptions.onMessageToSource = options.sendToSource;
   return new Session(sessionOptions);
@@ -5854,6 +5856,78 @@ describe("agent config setters", () => {
         error: "mode boom",
       },
     });
+  });
+
+  test("set_agent_mode_request: a denied mode is rejected without touching the agent", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const setAgentMode = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      deniedModes: ["bypassPermissions"],
+      agentManager: liveAgentManager({ setAgentMode }),
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "bypassPermissions",
+      requestId: "req-mode-denied",
+    });
+
+    expect(setAgentMode).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "req-mode-denied",
+          requestType: "set_agent_mode_request",
+          error: "Agent mode 'bypassPermissions' is not allowed for this credential",
+          code: "access_denied",
+        },
+      },
+    ]);
+  });
+
+  test("set_agent_mode_request: modes outside the deny list still apply", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const setAgentMode = vi.fn().mockResolvedValue(undefined);
+    const session = createSessionForTest({
+      messages,
+      deniedModes: ["bypassPermissions"],
+      agentManager: liveAgentManager({ setAgentMode }),
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "plan",
+      requestId: "req-mode-allowed",
+    });
+
+    expect(setAgentMode).toHaveBeenCalledWith("agent-1", "plan");
+    expect(messages.map((m) => m.type)).toEqual(["set_agent_mode_response"]);
+  });
+
+  test("agent.config.apply.request: a denied mode is rejected", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const setAgentMode = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      deniedModes: ["bypassPermissions"],
+      agentManager: liveAgentManager({ setAgentMode }),
+    });
+
+    await session.handleMessage({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { modeId: "bypassPermissions" },
+      requestId: "req-apply-denied",
+    });
+
+    expect(setAgentMode).not.toHaveBeenCalled();
+    expect(messages).toMatchObject([
+      { type: "rpc_error", payload: { requestId: "req-apply-denied", code: "access_denied" } },
+    ]);
   });
 
   test("set_agent_model_request: success emits accepted response with no notice", async () => {

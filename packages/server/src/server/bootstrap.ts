@@ -156,6 +156,11 @@ import {
   type PaseoToolHostDependencies,
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
+import {
+  type AgentMcpAccess,
+  mergePaseoToolPolicies,
+  resolveAgentMcpAccess,
+} from "./authorization/agent-mcp-policy.js";
 import { createAgentProviderRuntime } from "./agent/provider-runtime.js";
 import { PROVIDER_BACKGROUND_REFRESH_INTERVAL_MS } from "./agent/provider-refresh-schedule.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
@@ -231,7 +236,7 @@ import { withTimeout } from "../utils/promise-timeout.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
-  isAgentMcpRequestAuthorized,
+  resolveAgentMcpRequestPrincipal,
   type DaemonAuthConfig,
 } from "./auth.js";
 import { deleteLocalCredential, writeLocalCredential } from "./local-credential.js";
@@ -1595,10 +1600,15 @@ export async function createPaseoDaemon(
       return wsServer.agentMessages;
     },
     serverId,
-    hosts: () => {
-      if (!wsServer) throw new Error("Daemon is not accepting host operations");
-      return wsServer.toolHosts();
-    },
+    // Scoped credentials stay on this host: routed operations would run with owner authority.
+    ...(runtime.localOnly
+      ? {}
+      : {
+          hosts: () => {
+            if (!wsServer) throw new Error("Daemon is not accepting host operations");
+            return wsServer.toolHosts();
+          },
+        }),
     agentManager,
     agentStorage,
     terminalManager,
@@ -1656,6 +1666,7 @@ export async function createPaseoDaemon(
     paseoToolPolicy:
       runtime.paseoToolPolicy ??
       (runtime.callerAgentId ? agentManager.getPaseoToolPolicy(runtime.callerAgentId) : undefined),
+    ...(runtime.deniedModes ? { deniedModes: runtime.deniedModes } : {}),
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
@@ -1681,13 +1692,21 @@ export async function createPaseoDaemon(
   {
     const agentMcpRoute = "/mcp/agents";
 
-    const createAgentMcpSession = async (callerAgentId?: string) => {
+    const createAgentMcpSession = async (
+      callerAgentId: string | undefined,
+      access: Exclude<AgentMcpAccess, { kind: "denied" }>,
+    ) => {
+      const callerPolicy = callerAgentId
+        ? agentManager.getPaseoToolPolicy(callerAgentId)
+        : undefined;
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
-          paseoToolPolicy: callerAgentId
-            ? agentManager.getPaseoToolPolicy(callerAgentId)
-            : undefined,
+          paseoToolPolicy:
+            access.kind === "scoped"
+              ? mergePaseoToolPolicies(callerPolicy, access.toolPolicy)
+              : callerPolicy,
+          ...(access.kind === "scoped" ? { deniedModes: access.deniedModes, localOnly: true } : {}),
         }),
       );
 
@@ -1724,14 +1743,18 @@ export async function createPaseoDaemon(
       // authenticates here using the injected capability token (or a valid
       // daemon password). Without this, a password-protected daemon would be
       // wide open on its agent control plane.
-      if (
-        !(await isAgentMcpRequestAuthorized({
-          password: config.auth?.password,
-          capabilityToken: agentMcpAuthToken,
-          authorizationHeader: req.header("authorization"),
-        }))
-      ) {
+      const principal = await resolveAgentMcpRequestPrincipal({
+        auth: config.auth,
+        capabilityToken: agentMcpAuthToken,
+        authorizationHeader: req.header("authorization"),
+      });
+      if (!principal) {
         res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      const access = resolveAgentMcpAccess(principal);
+      if (access.kind === "denied") {
+        res.status(403).json({ error: "Credential lacks workspace.write" });
         return;
       }
       if (config.mcpDebug) {
@@ -1768,7 +1791,7 @@ export async function createPaseoDaemon(
         } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
           callerAgentId = callerAgentIdRaw[0];
         }
-        const { server, transport } = await createAgentMcpSession(callerAgentId);
+        const { server, transport } = await createAgentMcpSession(callerAgentId, access);
         res.on("close", () => {
           void transport.close();
           void server.close();

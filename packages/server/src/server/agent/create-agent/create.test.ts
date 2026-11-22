@@ -10,6 +10,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
+import { AgentModeDeniedError } from "../../authorization/mode-policy.js";
 import { ForegroundPromptStart } from "../agent-run-state.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
@@ -180,6 +181,57 @@ test("session create applies the resolved mode from the provider create config",
     undefined,
     expect.anything(),
   );
+});
+
+function modeGateDependencies(resolvedModeId: string) {
+  const createAgent = vi.fn();
+  const stub = createProviderSnapshotManagerStub();
+  stub.resolveCreateConfig.mockResolvedValue({ modeId: resolvedModeId });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: { createAgent } as unknown as Parameters<
+      typeof createAgentCommand
+    >[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: stub.manager,
+  };
+  return { createAgent, dependencies, resolveCreateConfig: stub.resolveCreateConfig };
+}
+
+test("session create rejects a provider default mode the principal may not use", async () => {
+  const { createAgent, dependencies } = modeGateDependencies("bypassPermissions");
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "claude", cwd: "/tmp/paseo-create-test" },
+      workspaceId: "ws-create-test",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      deniedModes: ["bypassPermissions"],
+    }),
+  ).rejects.toThrow(AgentModeDeniedError);
+  expect(createAgent).not.toHaveBeenCalled();
+});
+
+test("mcp create rejects an explicitly denied mode before resolving provider config", async () => {
+  const { createAgent, dependencies, resolveCreateConfig } = modeGateDependencies("default");
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "mcp",
+      provider: "claude",
+      cwd: "/tmp/paseo-create-test",
+      workspaceId: "ws-create-test",
+      title: "denied",
+      mode: "bypassPermissions",
+      notifyOnFinish: false,
+      deniedModes: ["bypassPermissions"],
+    }),
+  ).rejects.toThrow("Agent mode 'bypassPermissions' is not allowed for this credential");
+  expect(resolveCreateConfig).not.toHaveBeenCalled();
+  expect(createAgent).not.toHaveBeenCalled();
 });
 
 test("mcp create accepts provider-only internal input and leaves model undefined", async () => {

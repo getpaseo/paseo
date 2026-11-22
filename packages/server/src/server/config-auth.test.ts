@@ -57,4 +57,58 @@ describe("daemon auth config", () => {
       await isBearerTokenValidAsync({ password: config.auth?.password, token: "from-env" }),
     ).toBe(true);
   });
+
+  test("loads scoped credentials alongside the owner password", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: {
+        auth: {
+          password: CONFIG_PASSWORD_HASH,
+          credentials: [
+            {
+              name: "delegator",
+              password: CONFIG_PASSWORD_HASH,
+              permissions: ["workspace.read", "workspace.write"],
+              denyModes: ["bypassPermissions"],
+            },
+            { name: "viewer", password: CONFIG_PASSWORD_HASH, permissions: ["workspace.read"] },
+          ],
+        },
+      },
+    });
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.auth?.credentials).toEqual([
+      {
+        name: "delegator",
+        password: CONFIG_PASSWORD_HASH,
+        permissions: ["workspace.read", "workspace.write"],
+        denyModes: ["bypassPermissions"],
+      },
+      {
+        name: "viewer",
+        password: CONFIG_PASSWORD_HASH,
+        permissions: ["workspace.read"],
+        denyModes: [],
+      },
+    ]);
+  });
+
+  test("refuses scoped credentials without an owner password", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: {
+        auth: {
+          credentials: [
+            { name: "delegator", password: CONFIG_PASSWORD_HASH, permissions: ["workspace.read"] },
+          ],
+        },
+      },
+    });
+
+    expect(() => loadConfig(paseoHome, { env: {} })).toThrow(
+      "daemon.auth.credentials requires an owner password",
+    );
+  });
 });

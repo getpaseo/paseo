@@ -123,6 +123,7 @@ import {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import { assertAgentModeAllowed } from "../../authorization/mode-policy.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
@@ -170,6 +171,8 @@ export interface PaseoToolHostDependencies {
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
+  /** Agent modes the calling principal may not create agents in or switch agents to. */
+  deniedModes?: readonly string[];
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -1676,6 +1679,7 @@ function createToolCatalog(
               : {}),
           },
           mode: parsedArgs.settings?.modeId,
+          ...(options.deniedModes ? { deniedModes: options.deniedModes } : {}),
           promptFailure: "throw",
           notifyOnFinish,
           background: parsedArgs.background,
@@ -2328,6 +2332,7 @@ function createToolCatalog(
     },
     async ({ agentId, name, labels, settings }) => {
       if (settings?.modeId !== undefined) {
+        assertAgentModeAllowed(settings.modeId, options.deniedModes);
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
       if (settings?.model !== undefined) {
@@ -3309,6 +3314,7 @@ function createToolCatalog(
       },
     },
     async ({ agentId, modeId }) => {
+      assertAgentModeAllowed(modeId, options.deniedModes);
       const result = await setAgentModeCommand({ agentManager }, { agentId, modeId });
       return {
         content: [],

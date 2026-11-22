@@ -39,6 +39,14 @@ Owner, operator, and viewer are UI presets expanded into explicit permissions. D
 
 Permissions are additive allows. Missing authority denies the operation. Do not add deny precedence.
 
+## Scoped credentials
+
+`daemon.auth.credentials` defines named secrets beside the owner password. Each resolves to the principal `credential:<name>` with its listed permissions (`resolveDaemonSecret` in `packages/server/src/server/auth.ts`). The WebSocket hello, the WebSocket bearer, and `/mcp/agents` accept them; the rest of the HTTP API stays owner-only because its routes have no permission classification.
+
+A credential's `denyModes` attenuates the agent modes its sessions may use. It is not a permission and does not deny anything another grant allows. Check it where the mode is final: `createAgentCommand` checks the resolved mode, so provider defaults and inherited parent modes are covered, and the session gate checks mode changes on existing agents. It keeps a delegating system from starting dangerous-mode sessions; it does not contain code. `workspace.write` already lets agents and terminals run code as the daemon user, and agents call the agent MCP with the daemon's capability token, which carries no restriction. Schedules also run without the creator's restriction, so do not grant `automation.manage` to a credential with `denyModes`.
+
+The agent MCP endpoint has no per-tool classification, so a scoped credential needs `workspace.write` to use it. `packages/server/src/server/authorization/agent-mcp-policy.ts` hides tools that need more than that.
+
 ## Resources
 
 Permissions are daemon-wide today. Future grants may select workspaces or agents, but operation classification remains inside the authorization module:
