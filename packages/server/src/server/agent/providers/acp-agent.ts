@@ -1363,22 +1363,21 @@ export class ACPAgentClient implements AgentClient {
       signal,
       client: this.buildProbeClient((params) => history.accept(params)),
     });
-    let sessions: ImportableProviderSession[];
     try {
-      sessions = await this.listImportableSessionsFromProbe(probe, history, options, signal);
-    } catch (error) {
-      await this.closeProbe(probe);
-      throw error;
+      return await this.listImportableSessionsFromProbe(probe, history, options, signal);
+    } finally {
+      if (signal.aborted) {
+        await this.closeProbe(probe);
+      } else {
+        // Deliver the provider's result while its probe finishes shutting down.
+        void this.closeProbe(probe).catch((error) => {
+          this.logger.warn(
+            { err: error, provider: this.provider },
+            "Failed to close ACP listing probe",
+          );
+        });
+      }
     }
-
-    // A completed listing is ready even while its probe is shutting down.
-    void this.closeProbe(probe).catch((error) => {
-      this.logger.warn(
-        { err: error, provider: this.provider },
-        "Failed to close ACP listing probe",
-      );
-    });
-    return sessions;
   }
 
   private async listImportableSessionsFromProbe(

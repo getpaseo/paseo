@@ -2905,7 +2905,11 @@ describe("ACPAgentClient import listing deadlines", () => {
   type ListingPhase = "spawn" | "initialize" | "session/list";
   const phases: ListingPhase[] = ["initialize", "session/list"];
 
-  function createBlockedListing(phase: ListingPhase, terminator = new FakeTerminator()) {
+  function createBlockedListing(
+    phase: ListingPhase,
+    terminator = new FakeTerminator(),
+    listingError?: RequestError,
+  ) {
     const child = createProbeChildStub();
     const clientToAgent = new PassThrough();
     const agentToClient = new PassThrough();
@@ -2939,6 +2943,7 @@ describe("ACPAgentClient import listing deadlines", () => {
           markStarted();
           await blocked;
         }
+        if (listingError) throw listingError;
         return { sessions: [] };
       },
       async newSession() {
@@ -3026,32 +3031,44 @@ describe("ACPAgentClient import listing deadlines", () => {
     }
   });
 
-  test("returns a timely listing while its probe is still shutting down", async () => {
-    vi.useFakeTimers();
-    const terminator = new FakeTerminator("deferred");
-    const probe = createBlockedListing("session/list", terminator);
-    const listing = listSessionsThroughManager(probe.client);
+  test.each([
+    { outcome: "success", listingError: undefined, providerErrors: [] },
+    {
+      outcome: "provider error",
+      listingError: new RequestError(-32001, "Provider rejected listing"),
+      providerErrors: [
+        { provider: "test-acp", message: expect.stringContaining("Provider rejected listing") },
+      ],
+    },
+  ])(
+    "returns a timely $outcome while its probe is still shutting down",
+    async ({ listingError, providerErrors }) => {
+      vi.useFakeTimers();
+      const terminator = new FakeTerminator("deferred");
+      const probe = createBlockedListing("session/list", terminator, listingError);
+      const listing = listSessionsThroughManager(probe.client);
 
-    try {
-      await probe.started;
-      await vi.advanceTimersByTimeAsync(88_000);
-      probe.release();
-      await vi.advanceTimersByTimeAsync(2_000);
+      try {
+        await probe.started;
+        await vi.advanceTimersByTimeAsync(88_000);
+        probe.release();
+        await vi.advanceTimersByTimeAsync(2_000);
 
-      expect(terminator.terminated.map((child) => child.pid)).toEqual([probe.child.pid]);
-      expect(probe.child.stdout.destroyed).toBe(false);
-      await expect(listing).resolves.toEqual({ sessions: [], providerErrors: [] });
-      terminator.releaseAll();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(probe.child.stdout.destroyed).toBe(true);
-    } finally {
-      probe.release();
-      terminator.releaseAll();
-      await listing;
-      await vi.advanceTimersByTimeAsync(0);
-      vi.useRealTimers();
-    }
-  });
+        expect(terminator.terminated.map((child) => child.pid)).toEqual([probe.child.pid]);
+        expect(probe.child.stdout.destroyed).toBe(false);
+        await expect(listing).resolves.toEqual({ sessions: [], providerErrors });
+        terminator.releaseAll();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(probe.child.stdout.destroyed).toBe(true);
+      } finally {
+        probe.release();
+        terminator.releaseAll();
+        await listing;
+        await vi.advanceTimersByTimeAsync(0);
+        vi.useRealTimers();
+      }
+    },
+  );
 
   test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
     vi.useFakeTimers();
