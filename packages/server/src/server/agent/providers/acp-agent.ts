@@ -1358,57 +1358,76 @@ export class ACPAgentClient implements AgentClient {
   ): Promise<ImportableProviderSession[]> {
     const history = new ACPImportHistoryCollector();
     const signal = options?.signal ?? new AbortController().signal;
-    let probe: SpawnedACPProcess | undefined;
+    signal.throwIfAborted();
+    const probe = await this.spawnProcess(PROBE_ENV, {
+      signal,
+      client: this.buildProbeClient((params) => history.accept(params)),
+    });
+    let sessions: ImportableProviderSession[];
     try {
-      signal.throwIfAborted();
-      probe = await this.spawnProcess(PROBE_ENV, {
-        signal,
-        client: this.buildProbeClient((params) => history.accept(params)),
-      });
-      if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
-        return [];
-      }
-
-      const sessions: ImportableProviderSession[] = [];
-      const resultLimit = options?.limit ?? Number.POSITIVE_INFINITY;
-      const scanLimit = Math.min(options?.scanLimit ?? 500, 500);
-      const canLoadHistory = probe.initialize.agentCapabilities.loadSession === true;
-      const historyDeadline = this.now() + ACP_IMPORT_HISTORY_BUDGET_MS;
-      let scanned = 0;
-      let cursor: string | null | undefined;
-      for (;;) {
-        signal.throwIfAborted();
-        const connection = probe.connection;
-        const page: ListSessionsResponse = await raceProviderRefreshAbort(
-          signal,
-          this.runACPRequest(() =>
-            connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
-          ),
-        );
-        for (const session of page.sessions) {
-          signal.throwIfAborted();
-          if (scanned >= scanLimit || sessions.length >= resultLimit) break;
-          scanned += 1;
-          const descriptor = await this.describeImportableSession(
-            probe,
-            history,
-            session,
-            canLoadHistory,
-            historyDeadline,
-            signal,
-          );
-          if (descriptor) sessions.push(descriptor);
-        }
-        cursor = page.nextCursor ?? null;
-        if (!cursor) break;
-        if (scanned >= scanLimit || sessions.length >= resultLimit) break;
-      }
-
-      signal.throwIfAborted();
-      return sessions;
-    } finally {
-      if (probe) await this.closeProbe(probe);
+      sessions = await this.listImportableSessionsFromProbe(probe, history, options, signal);
+    } catch (error) {
+      await this.closeProbe(probe);
+      throw error;
     }
+
+    // A completed listing is ready even while its probe is shutting down.
+    void this.closeProbe(probe).catch((error) => {
+      this.logger.warn(
+        { err: error, provider: this.provider },
+        "Failed to close ACP listing probe",
+      );
+    });
+    return sessions;
+  }
+
+  private async listImportableSessionsFromProbe(
+    probe: SpawnedACPProcess,
+    history: ACPImportHistoryCollector,
+    options: ListImportableSessionsOptions | undefined,
+    signal: AbortSignal,
+  ): Promise<ImportableProviderSession[]> {
+    signal.throwIfAborted();
+    if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
+      return [];
+    }
+
+    const sessions: ImportableProviderSession[] = [];
+    const resultLimit = options?.limit ?? Number.POSITIVE_INFINITY;
+    const scanLimit = Math.min(options?.scanLimit ?? 500, 500);
+    const canLoadHistory = probe.initialize.agentCapabilities.loadSession === true;
+    const historyDeadline = this.now() + ACP_IMPORT_HISTORY_BUDGET_MS;
+    let scanned = 0;
+    let cursor: string | null | undefined;
+    for (;;) {
+      signal.throwIfAborted();
+      const page: ListSessionsResponse = await raceProviderRefreshAbort(
+        signal,
+        this.runACPRequest(() =>
+          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+        ),
+      );
+      for (const session of page.sessions) {
+        signal.throwIfAborted();
+        if (scanned >= scanLimit || sessions.length >= resultLimit) break;
+        scanned += 1;
+        const descriptor = await this.describeImportableSession(
+          probe,
+          history,
+          session,
+          canLoadHistory,
+          historyDeadline,
+          signal,
+        );
+        if (descriptor) sessions.push(descriptor);
+      }
+      cursor = page.nextCursor ?? null;
+      if (!cursor) break;
+      if (scanned >= scanLimit || sessions.length >= resultLimit) break;
+    }
+
+    signal.throwIfAborted();
+    return sessions;
   }
 
   private async describeImportableSession(

@@ -3026,6 +3026,33 @@ describe("ACPAgentClient import listing deadlines", () => {
     }
   });
 
+  test("returns a timely listing while its probe is still shutting down", async () => {
+    vi.useFakeTimers();
+    const terminator = new FakeTerminator("deferred");
+    const probe = createBlockedListing("session/list", terminator);
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(88_000);
+      probe.release();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(terminator.terminated.map((child) => child.pid)).toEqual([probe.child.pid]);
+      expect(probe.child.stdout.destroyed).toBe(false);
+      await expect(listing).resolves.toEqual({ sessions: [], providerErrors: [] });
+      terminator.releaseAll();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(probe.child.stdout.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      terminator.releaseAll();
+      await listing;
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+    }
+  });
+
   test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
     vi.useFakeTimers();
     const probe = createBlockedListing(phase);
