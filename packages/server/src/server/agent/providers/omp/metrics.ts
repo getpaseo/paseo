@@ -80,7 +80,13 @@ const reader: TurnMessageReader<OmpAgentMessage> = {
       : null,
   reply: (message) => {
     const step = ompReplyStep(message);
-    return step ? { step, final: isFinalReply(message) } : null;
+    return step
+      ? {
+          step,
+          final: isFinalReply(message),
+          endedOnTools: message.role === "assistant" && message.stopReason === "toolUse",
+        }
+      : null;
   },
 };
 

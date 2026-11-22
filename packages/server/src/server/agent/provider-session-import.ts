@@ -1,5 +1,7 @@
+import { sanitizeAgentMetrics } from "./agent-metrics.js";
 import type {
   AgentClient,
+  AgentMetric,
   AgentPersistenceHandle,
   AgentProvider,
   AgentSessionConfig,
@@ -40,6 +42,7 @@ export async function importSessionFromPersistence(input: {
     config: storedConfig,
     persistence: canonicalImportPersistence(persistence, session),
     timeline: history.timeline,
+    ...(history.sessionMetrics ? { sessionMetrics: history.sessionMetrics } : {}),
     providerSubagentEvents: history.providerSubagentEvents,
   };
 }
@@ -83,13 +86,25 @@ function buildImportPersistenceHandle(
 
 async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>): Promise<{
   timeline: ImportedTimelineEntry[];
+  sessionMetrics?: AgentMetric[];
   providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }> {
   const timeline: ImportedTimelineEntry[] = [];
   const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+  let sessionMetrics: AgentMetric[] | undefined;
   for await (const event of events) {
     if (event.type === "provider_subagent") {
       providerSubagentEvents.push(event);
+      continue;
+    }
+    if (event.type === "session_metrics_updated") {
+      sessionMetrics = sanitizeAgentMetrics(event.metrics);
+      continue;
+    }
+    if (event.type === "turn_completed") {
+      const metrics = sanitizeAgentMetrics(event.metrics);
+      const last = timeline.at(-1);
+      if (last && metrics.length > 0) last.turnMetrics = metrics;
       continue;
     }
     if (event.type !== "timeline") {
@@ -100,5 +115,5 @@ async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>):
       ...(event.timestamp ? { timestamp: event.timestamp } : {}),
     });
   }
-  return { timeline, providerSubagentEvents };
+  return { timeline, sessionMetrics, providerSubagentEvents };
 }

@@ -207,7 +207,7 @@ export interface TurnMessageReader<Message> {
   /** When the message is a prompt, the time it was sent; null when it is not a prompt. */
   prompt(message: Message): { startedAt: number | null } | null;
   /** When the message is a model reply, its step and whether the turn ended with it. */
-  reply(message: Message): { step: MeasuredStep; final: boolean } | null;
+  reply(message: Message): { step: MeasuredStep; final: boolean; endedOnTools?: boolean } | null;
   /**
    * When the tool behind a tool result ran: undefined for other messages, null when
    * unrecorded. Readers whose transcripts never record it leave this out.
@@ -221,6 +221,14 @@ interface ReplayedTurn {
   /** Null once any run is unrecorded, so a partial tool time is never shown. */
   toolRuns: TimeInterval[] | null;
   final: boolean;
+  /** The last reply asked for tools, so the turn may have gone on or been cut off there. */
+  endedOnTools: boolean;
+  /**
+   * A prompt followed a turn that ended on tools. The transcript cannot say whether that
+   * prompt steered the turn (live, one turn spanning both) or began another after a stop
+   * (live, only the later steps), so no total is claimed for it.
+   */
+  unclear: boolean;
 }
 
 /**
@@ -243,8 +251,10 @@ export class ReplayedTurns<Message> {
   observe(message: Message): AgentMetric[] {
     const prompt = this.reader.prompt(message);
     if (prompt) {
+      const unclear = this.turn?.endedOnTools === true;
       const closed = this.end();
       this.turn = this.open(prompt.startedAt);
+      this.turn.unclear = unclear;
       return closed;
     }
     const reply = this.reader.reply(message);
@@ -252,6 +262,7 @@ export class ReplayedTurns<Message> {
       this.turn ??= this.open(null);
       this.turn.steps.push(reply.step);
       this.turn.final = reply.final;
+      this.turn.endedOnTools = reply.endedOnTools === true;
       this.latestReply = reply.step;
       return [];
     }
@@ -266,7 +277,7 @@ export class ReplayedTurns<Message> {
   end(): AgentMetric[] {
     const turn = this.turn;
     this.turn = null;
-    if (!turn?.final) return [];
+    if (!turn?.final || turn.unclear) return [];
     return measuredTurnMetrics({
       steps: turn.steps,
       startedAt: turn.startedAt,
@@ -276,6 +287,13 @@ export class ReplayedTurns<Message> {
   }
 
   private open(startedAt: number | null): ReplayedTurn {
-    return { startedAt, steps: [], toolRuns: this.reader.toolRun ? [] : null, final: false };
+    return {
+      startedAt,
+      steps: [],
+      toolRuns: this.reader.toolRun ? [] : null,
+      final: false,
+      endedOnTools: false,
+      unclear: false,
+    };
   }
 }

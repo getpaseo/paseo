@@ -126,14 +126,16 @@ describe("turn meter", () => {
 
 type Message =
   | { role: "user"; at: number }
-  | { role: "assistant"; step: MeasuredStep; final: boolean }
+  | { role: "assistant"; step: MeasuredStep; final: boolean; endedOnTools?: boolean }
   | { role: "tool"; run: [number, number] | null }
   | { role: "note" };
 
 const reader: TurnMessageReader<Message> = {
   prompt: (message) => (message.role === "user" ? { startedAt: message.at } : null),
   reply: (message) =>
-    message.role === "assistant" ? { step: message.step, final: message.final } : null,
+    message.role === "assistant"
+      ? { step: message.step, final: message.final, endedOnTools: message.endedOnTools }
+      : null,
   toolRun: (message) => (message.role === "tool" ? message.run : undefined),
 };
 
@@ -206,6 +208,25 @@ describe("replayed turns", () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.labels).not.toContain("Tool time");
     expect(out[0]!.values[out[0]!.labels!.indexOf("Elapsed")]).toBe("3.0s");
+  });
+});
+
+describe("replayed turns after a turn that ended on tools", () => {
+  test("claims no total for a turn the transcript cannot tell from a steered one, and none for the turn before it", () => {
+    const { out } = replay([
+      { role: "user", at: 0 },
+      { role: "assistant", step: step({ endedAt: 1_000 }), final: false, endedOnTools: true },
+      { role: "tool", run: [1_000, 1_500] },
+      // Live, this prompt steered the turn above, so one turn spans both replies. After a
+      // stop it would have begun another. The transcript reads the same either way.
+      { role: "user", at: 2_000 },
+      { role: "assistant", step: step({ endedAt: 3_000 }), final: true },
+      { role: "user", at: 4_000 },
+      { role: "assistant", step: step({ endedAt: 5_000 }), final: true },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.before).toBe(7);
+    expect(out[0]!.labels).toContain("Elapsed");
   });
 });
 

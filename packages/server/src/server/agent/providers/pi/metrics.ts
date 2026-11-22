@@ -87,7 +87,13 @@ const reader: TurnMessageReader<PiAgentMessage> = {
       : null,
   reply: (message) => {
     const step = piReplyStep(message);
-    return step ? { step, final: isFinalReply(message) } : null;
+    return step
+      ? {
+          step,
+          final: isFinalReply(message),
+          endedOnTools: message.role === "assistant" && message.stopReason === "toolUse",
+        }
+      : null;
   },
   // A tool result is stamped when the tool finished.
   toolRun: (message) => {
