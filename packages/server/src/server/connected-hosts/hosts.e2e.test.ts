@@ -2128,6 +2128,57 @@ test(
 );
 
 test(
+  "a remote child without a mode starts in its same-provider caller's mode",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon({ mcpEnabled: true });
+    const b = await daemon();
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const workspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "bypassPermissions" },
+      title: "Mode parent",
+    });
+    const mcp = new Client({ name: "mode-parent", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    const remoteMode = async (provider: string, settings?: { modeId: string }) => {
+      const response = await mcp.callTool({
+        name: "create_agent",
+        arguments: {
+          serverId: directory.hosts[0]!.serverId,
+          workspaceId: remoteWorkspace.id,
+          provider,
+          title: "Mode child",
+          initialPrompt: "Report your mode",
+          settings,
+        },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const childId = (response.structuredContent as { agentId: string }).agentId;
+      return (await destination.client.fetchAgent(childId))?.agent.currentModeId;
+    };
+
+    expect(await remoteMode("claude/claude-test")).toBe("bypassPermissions");
+    expect(await remoteMode("claude/claude-test", { modeId: "default" })).toBe("default");
+    // Another provider's modes are unknown here, so the destination applies its own default.
+    expect(await remoteMode("codex/gpt-5.4")).toBeNull();
+  },
+);
+
+test(
   "remote finish observation survives a permission checkpoint until resumed completion",
   { timeout: 30000 },
   async () => {

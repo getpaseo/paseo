@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { QueryClient, CancelledError } from "@tanstack/react-query";
+import { QueryClient, CancelledError, QueryObserver } from "@tanstack/react-query";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
@@ -307,6 +307,14 @@ describe("provider snapshot publication identity", () => {
       snapshotHash: "next-hash",
       compactSnapshot: compactProviderSnapshot([{ ...entries[0]!, label: "Updated provider" }]),
     };
+    // Announcements only publish into a directory a screen is showing.
+    const shownKey = providersSnapshotQueryKey(serverId, snapshot.cwd);
+    queryClient.setQueryData(shownKey, snapshot);
+    const unsubscribe = new QueryObserver(queryClient, {
+      queryKey: shownKey,
+      queryFn: async () => snapshot,
+      staleTime: Infinity,
+    }).subscribe(() => {});
     try {
       for (const body of [snapshot, changed, changed]) {
         await applyProvidersSnapshotUpdate({
@@ -325,6 +333,7 @@ describe("provider snapshot publication identity", () => {
         expect(published.entries[0]!.models).toBe(canonical.entries[0]!.models);
       }
     } finally {
+      unsubscribe();
       queryClient.clear();
     }
   });

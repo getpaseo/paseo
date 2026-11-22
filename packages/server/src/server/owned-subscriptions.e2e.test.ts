@@ -15,7 +15,9 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonClient } from "./test-utils/daemon-client.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import {
   SessionInboundMessageSchema,
   type SessionInboundMessage,
@@ -1645,6 +1647,69 @@ test("request outcomes for import and attention reach only their requesting sock
   }
 });
 
+test("clearing a closed agent's attention does not resume its provider session", async () => {
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await daemon.daemon.agentManager.markAgentUnread(agent.id);
+    await client.clearAgentAttention(agent.id);
+    expect(daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+class SessionGoneAgentClient extends MockLoadTestAgentClient {
+  resumeCalls = 0;
+
+  override async resumeSession(): Promise<never> {
+    this.resumeCalls += 1;
+    throw new Error("Session not found");
+  }
+}
+
+test("clearing a closed agent's attention succeeds when its provider session is gone", async () => {
+  const agentClient = new SessionGoneAgentClient();
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: agentClient },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await client.markWorkspaceUnread(agent.workspaceId!);
+    expect((await client.fetchAgent(agent.id))?.agent.requiresAttention).toBe(true);
+
+    await withTimeout(
+      client.clearAgentAttention(agent.id),
+      5_000,
+      "clear_agent_attention got no response",
+    );
+
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+    expect(agentClient.resumeCalls).toBe(0);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("SDK import failure settles without waiting for the request timeout", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -1909,6 +1974,77 @@ test("public project subscriptions request updates and release their producer de
   } finally {
     await api.dispose();
     await client.close();
+    await daemon.close();
+  }
+});
+
+test("another session lists and receives the archiving timestamp during agent teardown", async () => {
+  const teardownStarted = Promise.withResolvers<void>();
+  const teardownReleased = Promise.withResolvers<void>();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: createTestAgentClients({
+      closeSession: async () => {
+        teardownStarted.resolve();
+        await teardownReleased.promise;
+      },
+    }),
+  });
+  const url = `ws://127.0.0.1:${daemon.port}/ws`;
+  const initiator = new DaemonClient({ url });
+  const observer = new DaemonClient({ url });
+  const paseo = createPaseoApi(observer);
+
+  try {
+    await Promise.all([initiator.connect(), observer.connect()]);
+    const created = await initiator.createWorkspace({
+      source: { kind: "directory", path: daemon.staticDir },
+    });
+    if (!created.workspace) throw new Error(created.error ?? "Failed to create workspace");
+    const workspaceId = created.workspace.id;
+    await initiator.createAgent({ provider: "codex", cwd: daemon.staticDir, workspaceId });
+
+    const initial = await paseo.workspaces.list({ subscribe: {} });
+    expect(initial.entries.find((entry) => entry.id === workspaceId)?.archivingAt).toBeNull();
+    const timestamps: Array<string | null> = [];
+    initial.subscription.subscribe({
+      snapshot: () => {},
+      update: ({ type, payload }) => {
+        if (
+          type === "workspace_update" &&
+          payload.kind === "upsert" &&
+          payload.workspace.id === workspaceId
+        ) {
+          timestamps.push(payload.workspace.archivingAt);
+        }
+      },
+    });
+
+    const archive = initiator.archiveWorkspace(workspaceId);
+    try {
+      await Promise.race([
+        teardownStarted.promise,
+        archive.then(() => {
+          throw new Error("Archive completed before agent teardown started");
+        }),
+      ]);
+
+      const initiating = await initiator.fetchWorkspaces();
+      const archivingAt = initiating.entries.find((entry) => entry.id === workspaceId)?.archivingAt;
+      expect(archivingAt).toEqual(expect.any(String));
+
+      const observed = await paseo.workspaces.list();
+      expect(observed.entries.find((entry) => entry.id === workspaceId)?.archivingAt).toBe(
+        archivingAt,
+      );
+      expect(timestamps).toContain(archivingAt);
+    } finally {
+      teardownReleased.resolve();
+      await archive;
+    }
+  } finally {
+    teardownReleased.resolve();
+    await paseo.dispose();
+    await Promise.all([initiator.close(), observer.close()]);
     await daemon.close();
   }
 });

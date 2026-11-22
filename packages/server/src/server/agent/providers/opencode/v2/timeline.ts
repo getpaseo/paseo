@@ -59,11 +59,16 @@ export class V2Timeline {
 
   // Publish each cursor advance in the same synchronous step. Buffering snapshot
   // events until image IO finishes lets live deltas overtake already committed text.
+  // `published` runs once a message's items are out, so a caller can place its own
+  // events between messages.
   messages(
     messages: SessionMessageInfo[],
     publish: (event: AgentStreamEvent) => void,
+    published?: (message: SessionMessageInfo) => void,
   ): Promise<void> {
-    const result = this.pendingMessages.then(() => this.publishMessages(messages, publish));
+    const result = this.pendingMessages.then(() =>
+      this.publishMessages(messages, publish, published),
+    );
     this.pendingMessages = result.catch(() => {});
     return result;
   }
@@ -71,6 +76,7 @@ export class V2Timeline {
   private async publishMessages(
     messages: SessionMessageInfo[],
     publish: (event: AgentStreamEvent) => void,
+    published?: (message: SessionMessageInfo) => void,
   ): Promise<void> {
     const state: TimelineState = { structured: false, accepted: false };
     for (const message of messages) {
@@ -80,6 +86,7 @@ export class V2Timeline {
       if (message.type === "user") this.userMessage(message, state, push);
       else if (message.type === "assistant") await this.assistantMessage(message, state, push);
       else if (message.type === "compaction") this.compactionMessage(message, push);
+      published?.(message);
     }
   }
 

@@ -153,6 +153,56 @@ describe("Claude SDK env", () => {
     }
   });
 
+  test("resume uses current plugin instructions and excludes them from persistence", async () => {
+    const prompts: unknown[] = [];
+    const queryFactory = ({ options }: ClaudeQueryInput) => {
+      prompts.push(options.systemPrompt);
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "persisted-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        { type: "assistant", message: { content: "done" } },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]);
+    };
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const first = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      pluginAppendSystemPrompt: ["Plugin instructions"],
+    });
+    await first.run("first");
+    const handle = first.describePersistence()!;
+    expect(handle.metadata).not.toHaveProperty("pluginAppendSystemPrompt");
+    await first.close();
+    const resumed = await client.resumeSession(handle, {
+      cwd: process.cwd(),
+      pluginAppendSystemPrompt: undefined,
+    });
+    try {
+      await resumed.run("after disable");
+      expect(prompts).toEqual([
+        { type: "preset", preset: "claude_code", append: "Plugin instructions" },
+        { type: "preset", preset: "claude_code", append: "" },
+      ]);
+    } finally {
+      await resumed.close();
+    }
+  });
+
   test("forwards launch-context env through Claude resume env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     const launchContext: AgentLaunchContext = {
