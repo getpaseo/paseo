@@ -187,25 +187,32 @@ function createProviderWithFakeAppServer(
   options?: {
     runtimeSettings?: ConstructorParameters<typeof CodexAppServerAgentClient>[1];
     customProvider?: { id: string; label: string; extends: string };
+    goalsEnabled?: boolean;
+    onSpawn?: (args: string[]) => void;
   },
 ): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger(), options?.runtimeSettings, {
     customProvider: options?.customProvider,
-    appServerProcess: createFakeCodexAppServerProcess(() => appServer.child),
+    appServerProcess: createFakeCodexAppServerProcess(({ args }) => {
+      options?.onSpawn?.(args);
+      return appServer.child;
+    }),
   });
   const internals = castInternals<{
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
   }>(provider);
-  internals.goalsEnabledPromise = Promise.resolve(false);
+  internals.goalsEnabledPromise = Promise.resolve(options?.goalsEnabled ?? false);
   internals.autoReviewEnabledPromise = Promise.resolve(false);
   return provider;
 }
 
-function createFakeCodexAppServerProcess(spawn: () => ChildProcessWithoutNullStreams) {
+function createFakeCodexAppServerProcess(
+  spawn: (input: { args: string[] }) => ChildProcessWithoutNullStreams,
+) {
   return {
     resolvePrefix: async () => ({ command: "codex", args: [] }),
-    spawn: () => spawn(),
+    spawn,
   };
 }
 
@@ -1835,6 +1842,27 @@ describe("Codex app-server provider", () => {
     expect(startCall).toBeDefined();
     expect(startCall?.params).toMatchObject({ ephemeral: true });
   });
+
+  test.each([true, false])(
+    "enables goals only for persisted Codex sessions (persistSession: %s)",
+    async (persistSession) => {
+      const appServer = createFakeCodexAppServer({});
+      const onSpawn = vi.fn();
+      const provider = createProviderWithFakeAppServer(appServer, { goalsEnabled: true, onSpawn });
+      const session = await provider.createSession(createConfig(), undefined, { persistSession });
+      try {
+        const expectedArgs = persistSession ? ["app-server", "--enable", "goals"] : ["app-server"];
+        expect(onSpawn).toHaveBeenCalledExactlyOnceWith(expectedArgs);
+        const commands = await session.listCommands!();
+        expect(
+          commands.some((command) => command.name === "goal" && command.kind === "command"),
+        ).toBe(persistSession);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("omits ephemeral from thread/start by default", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
