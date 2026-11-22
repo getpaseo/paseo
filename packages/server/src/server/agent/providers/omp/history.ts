@@ -67,13 +67,17 @@ function buildOmpModelId(provider: unknown, model: unknown): string | null {
   return normalizedProvider && normalizedModel ? `${normalizedProvider}/${normalizedModel}` : null;
 }
 
-export async function* streamOmpHistory(input: {
+export interface OmpHistoryStreamInput {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
   bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
-}): AsyncGenerator<AgentStreamEvent> {
+}
+
+export async function* streamOmpHistory(
+  input: OmpHistoryStreamInput,
+): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
     return;
   }
@@ -132,6 +136,32 @@ export async function* streamOmpHistory(input: {
   }
   for (const transcript of readSubagentTranscripts(messages, input.sessionFile)) {
     yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles);
+  }
+}
+
+/**
+ * Replays the session, then the current todo snapshot. The snapshot has no session entry of
+ * its own, so it takes the last replayed timestamp. Without one, the daemon stamps it with
+ * the reload time and the last turn's footer ends there.
+ */
+export async function* streamOmpHistoryWithTodos(
+  input: OmpHistoryStreamInput & {
+    readTodos: () => Promise<readonly AgentTimelineItem[]> | readonly AgentTimelineItem[];
+  },
+): AsyncGenerator<AgentStreamEvent> {
+  const { readTodos, ...history } = input;
+  let lastTimestamp: string | undefined;
+  for await (const event of streamOmpHistory(history)) {
+    if (event.type === "timeline" && event.timestamp) lastTimestamp = event.timestamp;
+    yield event;
+  }
+  for (const item of await readTodos()) {
+    yield {
+      type: "timeline",
+      provider: input.provider,
+      item,
+      ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
+    };
   }
 }
 

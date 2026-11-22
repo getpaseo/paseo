@@ -103,7 +103,7 @@ import {
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
 import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./commands.js";
-import { readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
+import { readOmpHistoryTodoState, streamOmpHistoryWithTodos } from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -618,13 +618,15 @@ class OmpHistorySession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* streamOmpHistory({
+    yield* streamOmpHistoryWithTodos({
       sessionFile: this.sessionFile,
       provider: this.provider,
       bridgedTools: this.bridgedTools,
+      readTodos: async () => {
+        const todo = await readOmpHistoryTodoState(this.sessionFile);
+        return todo ? [todo] : [];
+      },
     });
-    const todo = await readOmpHistoryTodoState(this.sessionFile);
-    if (todo) yield { type: "timeline", provider: this.provider, item: todo };
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -1010,19 +1012,13 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* streamOmpHistory({
+    yield* streamOmpHistoryWithTodos({
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
       provider: this.provider,
       bridgedTools: this.hostTools?.bridge?.toolIdentities(),
+      readTodos: () => mapOmpTodoState(this.state),
     });
-    for (const item of mapOmpTodoState(this.state)) {
-      yield {
-        type: "timeline",
-        provider: this.provider,
-        item,
-      };
-    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
