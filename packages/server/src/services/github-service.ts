@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   isGitHubHost,
   parseGitHubRemoteUrl,
+  parseGitHubRemoteIdentity,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -1327,7 +1328,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     // otherwise default to github.com regardless of the resolved repository,
     // which silently queries the wrong server on GitHub Enterprise. GH_HOST is
     // safe even for auto-routing subcommands because it matches the repo's host.
-    const host = await resolveRepoHostCached(runOptions.cwd);
+    const host = runOptions.envOverlay?.GH_HOST ?? (await resolveRepoHostCached(runOptions.cwd));
     const effectiveOptions: GitHubCommandRunnerOptions = host
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
@@ -2487,8 +2488,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       // transient `gh repo view` failure can't block PR creation on github.com.
       // `gh repo view` is the fallback: it auto-routes to the cwd remote's host
       // (covering GitHub Enterprise Server) and survives a renamed repo.
-      let slug = await resolveGitHubSlugFromOrigin(input.cwd);
-      if (!slug) {
+      const approved = input.repositoryUrl ? parseGitRemoteLocation(input.repositoryUrl) : null;
+      if (input.repositoryUrl && !approved)
+        throw new Error("Invalid approved GitHub repository URL");
+      let slug = approved
+        ? (parseGitHubRemoteIdentity(approved.path)?.repo ?? null)
+        : await resolveGitHubSlugFromOrigin(input.cwd);
+      if (!slug && !input.repositoryUrl) {
         const repoView = await getGitHubRepoView({ cwd: input.cwd, run });
         slug =
           repoView?.owner?.login && repoView.name
@@ -2509,7 +2515,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
       const parsed = await runGhJson(
         args,
-        { cwd: input.cwd },
+        { cwd: input.cwd, ...(approved ? { envOverlay: { GH_HOST: approved.host } } : {}) },
         z.object({
           url: z.string(),
           number: z.number(),

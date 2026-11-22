@@ -4728,6 +4728,29 @@ describe("ForgeService", () => {
     expect(runner.calls[1]?.args).toContain("-F");
   });
 
+  it("uses the approved repository and host without consulting mutable origin", async () => {
+    const runner = createRunner([
+      JSON.stringify({ url: "https://approved.example/acme/repo/pull/8", number: 8 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        throw new Error("Live origin must not be read");
+      },
+    });
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "https://approved.example/acme/repo.git",
+    });
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.args).toContain("repos/acme/repo/pulls");
+    expect(runner.calls[0]?.envOverlay?.GH_HOST).toBe("approved.example");
+  });
+
   it("routes gh calls to the resolved GitHub Enterprise host via GH_HOST", async () => {
     const runner = createRunner([
       JSON.stringify({ owner: { login: "acme" }, name: "repo" }),

@@ -429,6 +429,7 @@ export type SearchIssuesAndPrsOptions = {
 } & ForgeReadOptions;
 
 export interface CreatePullRequestOptions {
+  repositoryUrl?: string;
   cwd: string;
   title: string;
   head: string;

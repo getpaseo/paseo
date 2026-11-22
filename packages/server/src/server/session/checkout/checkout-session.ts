@@ -106,6 +106,8 @@ interface PrIssueCandidate {
 }
 
 interface PrCreateInput {
+  approvedRepositoryUrl?: string;
+  approvedOriginConfig?: Array<[string, string]>;
   approvedPushUrls?: string[];
   approvedHeadSha?: string;
   head?: string;
@@ -1068,6 +1070,12 @@ export class CheckoutSession {
           ...(input.head ? { head: input.head } : {}),
           ...(input.approvedHeadSha ? { approvedHeadSha: input.approvedHeadSha } : {}),
           ...(input.approvedPushUrls ? { approvedPushUrls: input.approvedPushUrls } : {}),
+          ...(input.approvedRepositoryUrl
+            ? { approvedRepositoryUrl: input.approvedRepositoryUrl }
+            : {}),
+          ...(input.approvedOriginConfig
+            ? { approvedOriginConfig: input.approvedOriginConfig }
+            : {}),
         },
         service,
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
@@ -1184,6 +1192,8 @@ export class CheckoutSession {
       head: proposal.checkoutState.head,
       approvedHeadSha: proposal.checkoutState.headSha,
       approvedPushUrls: proposal.checkoutState.pushUrls,
+      approvedRepositoryUrl: proposal.checkoutState.origin,
+      approvedOriginConfig: proposal.checkoutState.originConfig,
       title: proposal.title,
       body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),
       draft: proposal.draft,

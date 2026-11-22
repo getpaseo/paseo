@@ -1,6 +1,6 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1959,6 +1959,7 @@ it("previews related issues and creates only explicitly approved issue links", a
         title: "Fix retry failure",
         body: "Retries transient failures.\n\nCloses https://example.com/issues/7",
         draft: true,
+        repositoryUrl: remote,
       },
     ]);
 
@@ -2100,6 +2101,14 @@ it("previews related issues and creates only explicitly approved issue links", a
     expect(requests).toHaveLength(2);
     git(repo, "config", "--unset", "remote.origin.pushurl");
     git(repo, "branch", "-D", "main");
+    const receivePack = join(root, "receive-pack");
+    const marker = join(root, "receive-pack-invoked");
+    writeFileSync(
+      receivePack,
+      `#!/bin/sh\nprintf invoked > "${marker}"\nexec git-receive-pack "$@"\n`,
+    );
+    chmodSync(receivePack, 0o755);
+    git(repo, "config", "remote.origin.receivepack", receivePack);
     const approved = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
     expect(approved.baseSha).toBe(git(repo, "rev-parse", "origin/main"));
     expect(approved.pushUrls).toEqual([remote]);
@@ -2108,6 +2117,9 @@ it("previews related issues and creates only explicitly approved issue links", a
     git(created.worktreePath, "commit", "--allow-empty", "-m", "after approval");
     git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main");
     git(repo, "update-ref", "-d", `refs/remotes/origin/${created.branchName}`);
+    const hook = join(repo, ".git", "hooks", "pre-push");
+    writeFileSync(hook, `#!/bin/sh\ngit remote set-url origin "${otherRemote}"\n`);
+    chmodSync(hook, 0o755);
     await createPullRequest(
       created.worktreePath,
       {
@@ -2117,6 +2129,8 @@ it("previews related issues and creates only explicitly approved issue links", a
         base: approved.base,
         approvedHeadSha: approved.headSha,
         approvedPushUrls: approved.pushUrls,
+        approvedRepositoryUrl: approved.origin,
+        approvedOriginConfig: approved.originConfig,
       },
       service,
       { paseoHome },
@@ -2132,6 +2146,9 @@ it("previews related issues and creates only explicitly approved issue links", a
       `refs/heads/${created.branchName}`,
     );
     expect(requests).toHaveLength(3);
+    expect(requests.at(-1)?.repositoryUrl).toBe(remote);
+    expect(git(repo, "remote", "get-url", "origin")).toBe(otherRemote);
+    expect(readFileSync(marker, "utf8")).toBe("invoked");
     expect(() =>
       git(root, "--git-dir", otherRemote, "rev-parse", `refs/heads/${created.branchName}`),
     ).toThrow();

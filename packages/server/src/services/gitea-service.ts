@@ -2097,6 +2097,14 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       if (input.draft) {
         args.push("--draft");
       }
+      if (input.repositoryUrl) {
+        const location = parseGitRemoteLocation(input.repositoryUrl);
+        if (!location) throw new Error("Invalid approved Gitea repository URL");
+        const logins = await run(["login", "list", "-o", "json"], { cwd: input.cwd });
+        const login = findTeaLoginNameForHost(logins, location.host);
+        if (!login) throw new Error("No login for the approved Gitea host");
+        args.push("--repo", location.path, "--login", login);
+      }
       const stdout = await run(args, { cwd: input.cwd });
       const url = extractPullRequestUrl(stdout);
       if (!url) {

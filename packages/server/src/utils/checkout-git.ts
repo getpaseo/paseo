@@ -1,4 +1,5 @@
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
+import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename } from "path";
 import {
   open as openFile,
@@ -4310,6 +4311,8 @@ function parseHeadPushRefspec(refspec: string | null): string | null {
 }
 
 export interface CreatePullRequestOptions {
+  approvedRepositoryUrl?: string;
+  approvedOriginConfig?: Array<[string, string]>;
   approvedPushUrls?: string[];
   approvedHeadSha?: string;
   title: string;
@@ -4387,6 +4390,18 @@ export async function capturePrCheckoutState(
   const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
   if (!head || !base) throw new Error("Unable to determine PR head and base");
   const git = async (...args: string[]) => (await runGitCommand(args, { cwd })).stdout.trim();
+  const config = await runGitCommand(["config", "--null", "--get-regexp", "^remote\\.origin\\."], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const originConfig = config.stdout
+    .split("\0")
+    .filter(Boolean)
+    .map((entry): [string, string] => {
+      const separator = entry.indexOf("\n");
+      return [entry.slice("remote.origin.".length, separator), entry.slice(separator + 1)];
+    })
+    .filter(([key]) => key !== "url" && key !== "pushurl");
   return {
     head,
     base,
@@ -4394,6 +4409,7 @@ export async function capturePrCheckoutState(
     baseSha: await git("rev-parse", await resolveBestComparisonBaseRef(cwd, base)),
     origin: await git("remote", "get-url", "origin"),
     pushUrls: (await git("remote", "get-url", "--push", "--all", "origin")).split("\n"),
+    originConfig,
   };
 }
 
@@ -4420,17 +4436,30 @@ export async function createPullRequest(
   }
   const normalizedBase = branchNameFromRef(base);
 
-  // The push deliberately happens before the adapter resolves the target
-  // repository: slug resolution is adapter-internal (e.g. `gh repo view`, which
-  // handles GHES and renamed repos), and the RPC path only reaches here after
-  // the forge resolver has already matched the origin remote to a forge. If the
-  // adapter still fails after the push, retrying is safe — the non-force push
-  // of the head branch is idempotent.
+  // Approved workflows pin both the transport and API repository before any
+  // hook can change origin. Legacy callers still let the adapter resolve it.
   // Push the approved commit rather than a branch tip that may have moved
   // since confirmation. This remains a non-force push.
   for (const destination of options.approvedPushUrls ?? ["origin"]) {
+    const remote = `paseo-approved-${randomUUID()}`;
+    const remoteConfig = options.approvedOriginConfig
+      ? [
+          "-c",
+          `remote.${remote}.url=${destination}`,
+          ...options.approvedOriginConfig.flatMap(([key, value]) => [
+            "-c",
+            `remote.${remote}.${key}=${value}`,
+          ]),
+        ]
+      : [];
     const pushArgs = options.approvedHeadSha
-      ? ["push", "--", destination, `${options.approvedHeadSha}:refs/heads/${head}`]
+      ? [
+          ...remoteConfig,
+          "push",
+          "--",
+          remoteConfig.length ? remote : destination,
+          `${options.approvedHeadSha}:refs/heads/${head}`,
+        ]
       : ["push", "-u", "origin", head];
     await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
   }
@@ -4449,6 +4478,7 @@ export async function createPullRequest(
 
   const result = await forgeService.createPullRequest({
     cwd,
+    ...(options.approvedRepositoryUrl ? { repositoryUrl: options.approvedRepositoryUrl } : {}),
     title: options.title,
     body: options.body,
     draft: options.draft,

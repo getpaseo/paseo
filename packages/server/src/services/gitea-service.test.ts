@@ -2583,6 +2583,24 @@ describe("createGiteaService", () => {
     expect(calls[0]).toContain("--draft");
   });
 
+  it("pins PR creation to the approved repository and host login", async () => {
+    const { service, calls } = makeService((args) =>
+      args[0] === "login"
+        ? ok(JSON.stringify([{ name: "approved-login", url: "https://approved.example" }]))
+        : ok("https://approved.example/team/project/pulls/7"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "https://approved.example/team/project.git",
+    });
+    expect(calls[1]).toEqual(
+      expect.arrayContaining(["--repo", "team/project", "--login", "approved-login"]),
+    );
+  });
+
   it("merges a mergeable pull request with the requested style", async () => {
     const { service, calls } = makeService(() => ok(""));
 
