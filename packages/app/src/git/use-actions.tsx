@@ -312,7 +312,8 @@ function useWorkspaceScreenArchiveController({
 
   return {
     ...controller,
-    isArchiving: workspaceDescriptor?.archivingAt != null || isHidingWorkspace,
+    isArchiving:
+      workspaceDescriptor?.archivingAt != null || isHidingWorkspace || controller.isConfirming,
     canArchive: canArchiveWorkspace(workspaceDescriptor, archiveRisk),
   };
 }
