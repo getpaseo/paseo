@@ -15,8 +15,15 @@ function deriveInitialAgentTitle(prompt: string): string | null {
   if (!normalized) {
     return null;
   }
-  const clamped = normalized.slice(0, MAX_INITIAL_AGENT_TITLE_CHARS).trim();
-  return clamped.length > 0 ? clamped : null;
+  if (normalized.length <= MAX_INITIAL_AGENT_TITLE_CHARS) {
+    return normalized;
+  }
+  const limit = MAX_INITIAL_AGENT_TITLE_CHARS - 1;
+  const boundary = normalized.lastIndexOf(" ", limit);
+  const prefix = normalized
+    .slice(0, boundary > 0 ? boundary : limit)
+    .replace(/[\uD800-\uDBFF]$/, "");
+  return `${prefix}…`;
 }
 
 export function resolveCreateAgentTitles(options: {
