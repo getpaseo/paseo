@@ -100,10 +100,15 @@ export function createAntigravityProvider(): ProviderRegistration {
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {
           const input = toolCall.input;
-          if (typeof input === "object" && input !== null && !Array.isArray(input)) {
-            return input.IsDaemon !== true;
-          }
-          return true;
+          if (typeof input !== "object" || input === null || Array.isArray(input)) return true;
+          if (input.IsDaemon === true) return false;
+
+          // agy leaves recurring schedules in progress after registering them.
+          const recurringSchedule =
+            toolCall.name === "schedule" &&
+            typeof input.CronExpression === "string" &&
+            input.CronExpression.trim().length > 0;
+          return !recurringSchedule;
         },
       },
       autoAcceptMode: {
