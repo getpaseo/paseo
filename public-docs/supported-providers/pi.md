@@ -20,11 +20,14 @@ Pi is built into Paseo and enabled by default.
 
 Pi appears in Paseo when the daemon can launch `pi`. If `pi` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary).
 
-## Modes, sessions, and timeouts
+## Modes and sessions
 
 - Pi has no permission modes, so Paseo shows no mode selector for a Pi agent.
 - Paseo can import sessions that you started in a terminal. It reads them from `~/.pi/agent/sessions`, or from the session directory that you configured in Pi.
-- Paseo waits 60 seconds for Pi to answer a control request, such as a request for the model list. If Pi needs longer on your host, raise `rpcTimeoutMs` in [Provider options](/docs/custom-providers#provider-options).
+
+## Timeouts
+
+Paseo waits 60 seconds for Pi to answer a control request, such as a request for the model list. If Pi needs longer on your host, raise `rpcTimeoutMs` in [Provider options](/docs/custom-providers#provider-options).
 
 ## See also
 

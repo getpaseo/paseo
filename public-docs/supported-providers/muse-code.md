@@ -60,7 +60,7 @@ To change defaults for every Muse agent, configure `agents.providers.muse.option
 }
 ```
 
-You can also pass per-agent `providerOptions` when you create an agent. The daemon merges provider defaults with per-agent options and saves them with the agent for refresh or resume. Invalid values or unknown keys fail session creation with a `providerOptions` error. See [Provider options](/docs/sdk/provider-options) for details.
+You can also pass per-agent `providerOptions` when you create an agent. The daemon saves the per-agent options and merges them with the current provider defaults when the session opens. Invalid values or unknown keys fail session creation with a `providerOptions` error. See [Provider options](/docs/sdk/provider-options) for details.
 
 ## Limitations in Muse 1.4.1
 

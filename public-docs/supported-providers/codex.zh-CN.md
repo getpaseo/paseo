@@ -26,7 +26,7 @@ Codex 内置于 Paseo 且默认启用。
 
 3. 在 Paseo 中启动 Agent 时选择 **Codex**。
 
-如需通过 OpenAI Platform API key 计费，请将 `OPENAI_API_KEY` 通过管道传给 `codex login --with-api-key`。各平台的登录命令见 [Codex 认证](https://learn.chatgpt.com/docs/auth)。
+如需通过 OpenAI Platform API key 计费，请在 macOS 或 Linux 上运行 `printenv OPENAI_API_KEY | codex login --with-api-key`。在 Windows PowerShell 上运行 `$env:OPENAI_API_KEY | codex login --with-api-key`。更多登录说明见 [Codex 认证](https://learn.chatgpt.com/docs/auth)。
 
 如果 `codex` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)。
 

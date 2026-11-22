@@ -28,7 +28,7 @@ Codex is built into Paseo and enabled by default.
 
 3. In Paseo, choose **Codex** when you start an agent.
 
-To bill through an OpenAI Platform API key instead, pipe `OPENAI_API_KEY` into `codex login --with-api-key`. See [Codex authentication](https://learn.chatgpt.com/docs/auth) for platform-specific sign-in commands.
+To bill through an OpenAI Platform API key instead, run `printenv OPENAI_API_KEY | codex login --with-api-key` on macOS or Linux. On Windows PowerShell, run `$env:OPENAI_API_KEY | codex login --with-api-key`. See [Codex authentication](https://learn.chatgpt.com/docs/auth) for more sign-in details.
 
 If `codex` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary).
 

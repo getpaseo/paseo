@@ -18,7 +18,7 @@ Antigravity is built into Paseo and enabled by default. You do not need a plugin
 2. Run `agy` in a terminal and sign in.
 3. In Paseo, choose **Antigravity** when you start an agent.
 
-If `agy` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` in the arguments.
+If `agy` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` and `--disable-telemetry` in the arguments.
 
 ## Permissions
 

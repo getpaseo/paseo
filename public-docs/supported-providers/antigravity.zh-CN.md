@@ -16,7 +16,7 @@ Antigravity 内置于 Paseo 且默认启用，无需安装插件或额外配置�
 2. 在终端中运行 `agy` 并登录。
 3. 在 Paseo 中启动 Agent 时选择 **Antigravity**。
 
-如果 `agy` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)，并在参数中保留 `acp`。
+如果 `agy` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)，并在参数中保留 `acp` 和 `--disable-telemetry`。
 
 ## 权限 {#permissions}
 

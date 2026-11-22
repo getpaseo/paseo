@@ -58,7 +58,7 @@ Muse Code 内置于 Paseo 且默认启用。请使用 Muse 1.3.0 或更高版本
 }
 ```
 
-创建 Agent 时，你也可以传入每个 Agent 各自的 `providerOptions`。daemon 会将 Provider 默认值与每个 Agent 的选项合并，并随 Agent 保存，以便刷新或恢复时使用。无效的值或未知的键会使会话创建失败，并报告 `providerOptions` 错误。详情见 [Provider 选项](/docs/sdk/provider-options)。
+创建 Agent 时，你也可以传入每个 Agent 各自的 `providerOptions`。daemon 会保存每个 Agent 的选项，并在会话打开时将它们与当前的 Provider 默认值合并。无效的值或未知的键会使会话创建失败，并报告 `providerOptions` 错误。详情见 [Provider 选项](/docs/sdk/provider-options)。
 
 ## Muse 1.4.1 中的限制 {#limitations-in-muse-141}
 
