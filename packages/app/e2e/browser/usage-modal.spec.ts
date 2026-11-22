@@ -333,7 +333,16 @@ test.describe("usage modal", () => {
       await expect(page.getByTestId("usage-options-sources")).toContainText("2 of 4");
       await qaScreenshot(page, `usage-sources-${size}-settings`);
 
-      await openUsageSources(page);
+      if (size === "compact") {
+        // Compact sheets expose menu rows in the browser Tab order so keyboard users can open
+        // Sources and toggle checkboxes without a pointer.
+        await page.getByTestId("usage-options-sources").focus();
+        await expect(page.getByTestId("usage-options-sources")).toBeFocused();
+        await expect(page.getByTestId("usage-options-sources")).toHaveAttribute("tabindex", "0");
+        await page.keyboard.press("Enter");
+      } else {
+        await openUsageSources(page);
+      }
       const claudeToggle = page.getByRole("checkbox", { name: /^Claude/ });
       const copilotToggle = page.getByRole("checkbox", { name: /^GitHub Copilot/ });
       const cursorToggle = page.getByRole("checkbox", { name: /^Cursor/ });
@@ -343,7 +352,14 @@ test.describe("usage modal", () => {
       await qaScreenshot(page, `usage-sources-${size}-list`);
 
       // Opting into a default-off source brings its card and summary window in immediately.
-      await cursorToggle.click();
+      if (size === "compact") {
+        await cursorToggle.focus();
+        await expect(cursorToggle).toBeFocused();
+        await expect(cursorToggle).toHaveAttribute("tabindex", "0");
+        await page.keyboard.press("Space");
+      } else {
+        await cursorToggle.click();
+      }
       await expect(cursorToggle).toBeChecked();
       await closeUsageOptions(page);
       await expectUsageCardOrder(page, ["claude:default", "codex:default", "cursor:default"]);
