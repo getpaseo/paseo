@@ -44,3 +44,52 @@ Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。在 **Default*
 Paseo 可以导入 CLI 会话，并在重新打开聊天时恢复对话历史。Antigravity 通过 ACP 提供斜杠命令、接收图片附件，也会使用为 Agent 配置的 MCP 服务器。
 
 你可以在当前轮次结束后发送后续消息，也可以中断当前轮次来改变方向。
+
+## 故障排查 {#troubleshooting}
+
+在 Paseo 中打开 **设置 → Providers → Antigravity** 并选择 **诊断报告**。报告会显示 Paseo 运行的命令、daemon 找到 `agy` 的位置、`agy` 的版本、模型数量，以及 `agy` 是否在 SSH 会话中运行。
+
+### 缺少新模型 {#new-models-are-missing}
+
+Paseo 在 daemon 启动时和你选择 **刷新** 时从 `agy` 读取模型列表。如果你的账号在此之后获得了新模型，请打开 **设置 → Providers → Antigravity** 并选择 **刷新**。
+
+### Paseo 显示的模型与 `agy models` 不同 {#paseo-shows-different-models-than-agy-models}
+
+`agy` 在同一台机器上保存两份登录状态。在 SSH 会话中，`agy` 从 token 文件读取登录状态。在 SSH 会话之外，`agy` 从操作系统的密钥环读取登录状态。如果两份登录状态使用不同的 Google 账号，你的终端和 Paseo 会显示不同的模型。[Antigravity CLI issue 1336](https://github.com/google-antigravity/antigravity-cli/issues/1336) 跟踪此行为。
+
+Paseo 使用 daemon 的环境运行 `agy`。从 SSH 会话启动的 daemon 会在 SSH 会话中运行 `agy`。由桌面会话或服务管理器启动的 daemon 会在 SSH 会话之外运行 `agy`。诊断报告中的 `SSH session` 行会显示当前属于哪种情况。
+
+如果该行显示 `SSH session: no`，请在 daemon 主机的终端中执行以下步骤：
+
+1. 列出 Paseo 所用登录状态下的模型：
+
+   ```bash
+   env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY agy models
+   ```
+
+2. 如果列表与预期不符，请用同一份登录状态启动 `agy`：
+
+   ```bash
+   env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY agy
+   ```
+
+3. 运行 `/logout`，然后用拥有你的订阅计划的账号登录。
+4. 在 Paseo 中打开 **设置 → Providers → Antigravity** 并选择 **刷新**。
+
+如果该行显示 `SSH session: yes`，请在非 SSH 会话的终端中执行相同步骤。第 1 步使用 `SSH_CONNECTION=1 agy models`，第 2 步使用 `SSH_CONNECTION=1 agy`。
+
+如果想保留两份登录状态，并让 Paseo 使用 SSH 终端的那一份，请在 `~/.paseo/config.json` 中为该 Provider 设置一个 SSH 变量：
+
+```json
+{
+  "agents": {
+    "providers": {
+      "antigravity": {
+        "env": { "SSH_CONNECTION": "paseo" }
+      }
+    }
+  }
+}
+```
+
+运行 `paseo reload`，然后选择 **刷新**。之后该行会显示 `SSH session: yes (SSH_CONNECTION)`。

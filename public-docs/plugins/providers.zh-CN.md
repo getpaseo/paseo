@@ -449,6 +449,30 @@ Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从�
 
 Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。只要 `inspect` 报告的版本不变，它就把 `checkForUpdates` 的 `current` 或 `available` 结果保留一小时，所以在 Paseo 之外更新的 CLI 会在 `inspect` 的结果过期后重新检查。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
 
+## 帮助用户解决问题 {#help-users-fix-problems}
+
+用户得到错误结果时，会先打开 Provider 的设置，然后才去寻求帮助。请在这个页面提供他们需要的内容：声明 `docsUrl`，并从 `status` 返回能解释错误结果的事实。
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**文档** 会打开 `docsUrl`。**诊断报告** 会显示命令、可执行文件的路径和 Paseo 找到的版本，然后是你的 `Profile` 行。请报告 CLI 从环境中读取的内容，例如账号、profile 或正在使用的配置文件。这些内容在 daemon 和用户的终端之间可能不同，用户在应用中也看不到。Paseo 写入的各行以及 `status` 的规则见[故障排查参考](/docs/plugins/reference#provider-troubleshooting)。
+
 ## 适配 ACP Agent {#adapt-an-acp-agent}
 
 当 Agent 已经支持 ACP 时，使用 ACP 适配层：

@@ -518,6 +518,44 @@ shapes is an error. **Update** appears once `inspect` reports the CLI installed 
 `update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
 offers `updateUrl` on the same terms.
 
+#### Provider troubleshooting
+
+**Requires Paseo 0.18.** Older versions ignore `docsUrl` and show only the `diagnostic` text.
+The provider's settings have a **Troubleshooting** section with a **Diagnostic report** and
+**Docs**. Users copy the report into a bug report, so put the facts
+that explain a wrong result into it.
+
+`ProviderRegistration.docsUrl` is the `http` or `https` page that **Docs** opens. Point it at the
+page that says how to set up the provider and how to fix its common problems. The plugin fails to
+start when it is another kind of URL. Paseo hides **Docs** when you declare none.
+
+The report is your provider's `label` and one `Label: value` row per line. Paseo writes these rows:
+
+| Row                                                            | Shown                                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `Command source`, `Configured command`                         | When you declare `command`                                             |
+| `Daemon PATH`, `Daemon shell`, `PATH matches`, `Resolved path` | When you declare `command`                                             |
+| `Version`                                                      | When Paseo found the executable and you declare `installation.inspect` |
+| `Models`, `Status`                                             | Always                                                                 |
+
+`status(request)` adds your rows after them. `request.launch` is the launch a session would use.
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| Answer                             | Result                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `{ available: true, diagnostic? }` | Each line of `diagnostic` is one row. Write each line as `Label: value`.       |
+| `{ available: false, diagnostic }` | The provider is unavailable. The report shows `diagnostic` in the `Error` row. |
+
+Paseo calls `status` each time it checks whether the provider is available, not only for the
+report. The report does not wrap lines, so write short rows.
+
 ### Usage sources
 
 **Requires Paseo 0.11.** Register a source from your server entry with

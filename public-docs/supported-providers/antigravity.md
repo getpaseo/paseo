@@ -46,3 +46,52 @@ Finish or stop the current turn before you switch to or from **Full access**.
 Paseo can import CLI sessions and restore conversation history when it reopens a chat. Antigravity publishes slash commands and accepts image attachments through ACP. It also receives the MCP servers configured for the agent.
 
 Send a follow-up after the current turn finishes, or interrupt the turn to change direction.
+
+## Troubleshooting
+
+In Paseo, open **Settings → Providers → Antigravity** and select **Diagnostic report**. The report shows the command that Paseo runs, where the daemon found `agy`, the `agy` version, the number of models, and whether `agy` runs in an SSH session.
+
+### New models are missing
+
+Paseo reads the model list from `agy` when the daemon starts and when you select **Refresh**. If your account gets new models after that, open **Settings → Providers → Antigravity** and select **Refresh**.
+
+### Paseo shows different models than `agy models`
+
+`agy` keeps two sign-ins on one machine. In an SSH session, `agy` reads its sign-in from a token file. Outside an SSH session, `agy` reads its sign-in from the keyring of the operating system. If the two sign-ins use different Google accounts, your terminal and Paseo show different models. [Antigravity CLI issue 1336](https://github.com/google-antigravity/antigravity-cli/issues/1336) tracks this behavior.
+
+Paseo runs `agy` with the environment of the daemon. A daemon that you started from an SSH session runs `agy` in an SSH session. A daemon that a desktop session or a service manager started runs `agy` outside one. The `SSH session` row of the diagnostic report shows which one applies.
+
+If the row shows `SSH session: no`, do these steps in a terminal on the daemon host:
+
+1. List the models of the sign-in that Paseo uses:
+
+   ```bash
+   env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY agy models
+   ```
+
+2. If the list is not the one you expect, start `agy` with the same sign-in:
+
+   ```bash
+   env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY agy
+   ```
+
+3. Run `/logout`, then sign in with the account that has your plan.
+4. In Paseo, open **Settings → Providers → Antigravity** and select **Refresh**.
+
+If the row shows `SSH session: yes`, do the same steps in a terminal that is not an SSH session. Use `SSH_CONNECTION=1 agy models` in step 1 and `SSH_CONNECTION=1 agy` in step 2.
+
+To keep both sign-ins and make Paseo use the one from your SSH terminal, set an SSH variable for the provider in `~/.paseo/config.json`:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "antigravity": {
+        "env": { "SSH_CONNECTION": "paseo" }
+      }
+    }
+  }
+}
+```
+
+Run `paseo reload`, then select **Refresh**. The row then shows `SSH session: yes (SSH_CONNECTION)`.

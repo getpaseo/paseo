@@ -2498,6 +2498,9 @@ describe("pending provider responses", () => {
   );
 });
 
+/** A diagnostic context for a provider that does not report its installation. */
+const NO_INSTALLATION = { inspectInstallation: async () => undefined };
+
 describe("plugin provider launch and status", () => {
   test("resolves the executable against the provider's PATH override", async () => {
     const harness = createProviderHarness();
@@ -2509,7 +2512,13 @@ describe("plugin provider launch and status", () => {
       const definition = registry.definitions()[registration.id]!;
       const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report[0]).toBe("Plugin direct");
+      expect(report).toContain("  Daemon PATH: /paseo-nonexistent-bin");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: node not found on PATH",
+      ]);
     } finally {
       await registry.shutdown();
     }
@@ -2589,6 +2598,51 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("the diagnostic reports the launch, the version and the provider's own rows", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [process.execPath, "agent"],
+      async status() {
+        return { available: true, diagnostic: "Sign-in: work account\nPlan: Pro" };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      const { diagnostic } = await client.getDiagnostic!({
+        inspectInstallation: async () => ({ status: "installed", version: "1.2.3" }),
+      });
+      // The daemon's PATH and shell rows depend on the host; the formatter's own tests cover them.
+      const hostRows = /^ {2}Daemon (PATH|shell): /;
+      expect(diagnostic.split("\n").filter((row) => !hostRows.test(row))).toEqual([
+        "Plugin direct",
+        "  Command source: default",
+        `  Configured command: ${process.execPath} agent`,
+        "  PATH matches: not checked",
+        `  Resolved path: ${process.execPath}`,
+        "  Version: 1.2.3",
+        "  Sign-in: work account",
+        "  Plan: Pro",
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a provider without a command reports only its own rows", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      expect(await client.getDiagnostic!(NO_INSTALLATION)).toEqual({ diagnostic: "Plugin direct" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("a missing executable is unavailable with a diagnostic without connecting", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = {
@@ -2600,9 +2654,13 @@ describe("plugin provider launch and status", () => {
     try {
       const client = registry.clients()[registration.id]!;
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({
-        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
-      });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report).toContain("  Configured command: paseo-nonexistent-provider-executable");
+      expect(report).toContain("  PATH matches: none");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: paseo-nonexistent-provider-executable not found on PATH",
+      ]);
       expect(harness.inputs).toEqual([]);
     } finally {
       await registry.shutdown();
