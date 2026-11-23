@@ -1313,6 +1313,8 @@ export const ptBR: TranslationResources = {
       hosts: "Hosts",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      collapseMenu: "Recolher menu",
+      expandMenu: "Expandir menu",
       moreActions: "Mais ações",
     },
     footer: {

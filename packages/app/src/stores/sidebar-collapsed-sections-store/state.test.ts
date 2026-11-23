@@ -4,6 +4,7 @@ import {
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
+  toggleNavCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
@@ -14,6 +15,7 @@ function emptyState(): CollapsedProjectsState {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
     collapsedPinned: false,
+    collapsedNav: false,
   };
 }
 
@@ -35,12 +37,14 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
       collapsedPinned: true,
+      collapsedNav: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
       collapsedPinned: true,
+      collapsedNav: true,
     });
   });
 
@@ -50,6 +54,14 @@ describe("sidebar collapsed projects transitions", () => {
 
     const restored = mergePersistedCollapsedProjects({ collapsedPinned: true }, emptyState());
     expect(restored.collapsedPinned).toBe(true);
+  });
+
+  it("toggles and restores the nav block collapse flag", () => {
+    const toggled = toggleNavCollapsed(emptyState());
+    expect(toggled.collapsedNav).toBe(true);
+
+    const restored = mergePersistedCollapsedProjects({ collapsedNav: true }, emptyState());
+    expect(restored.collapsedNav).toBe(true);
   });
 
   it("rejects the complete value when a persisted project key is invalid", () => {

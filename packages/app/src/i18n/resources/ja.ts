@@ -1301,6 +1301,8 @@ export const ja: TranslationResources = {
       hosts: "ホスト",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
+      collapseMenu: "メニューを折りたたむ",
+      expandMenu: "メニューを展開",
       moreActions: "その他のアクション",
     },
     footer: {

@@ -1286,6 +1286,8 @@ export const ar: TranslationResources = {
       hosts: "المضيفون",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+      collapseMenu: "طي القائمة",
+      expandMenu: "توسيع القائمة",
       moreActions: "المزيد من الإجراءات",
     },
     footer: {
