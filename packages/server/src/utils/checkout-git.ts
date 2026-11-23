@@ -1938,6 +1938,32 @@ async function getAheadBehindForComparisonRef(
   return { ahead, behind };
 }
 
+// The name git stores a branch's settings and ref under. getCurrentBranch returns git's short
+// spelling of the branch, which gains a "heads/" prefix when another ref, such as a tag, shares
+// the name. That spelling is right for a revision or a refspec and wrong for these lookups.
+async function readStoredBranchName(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<string> {
+  const branchRefPrefix = "refs/heads/";
+  if (!currentBranch.startsWith("heads/") && !currentBranch.startsWith(branchRefPrefix)) {
+    return currentBranch;
+  }
+  try {
+    const { stdout } = await getRunGitCommand(context)(["symbolic-ref", "--quiet", "HEAD"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const headRef = stdout.trim();
+    return headRef.startsWith(branchRefPrefix)
+      ? headRef.slice(branchRefPrefix.length)
+      : currentBranch;
+  } catch {
+    return currentBranch;
+  }
+}
+
 // What git reports for a branch's upstream: its remote-tracking ref and how the branch tracks it.
 // Both are blank when git resolves no upstream.
 interface UpstreamTracking {
@@ -1947,10 +1973,10 @@ interface UpstreamTracking {
 
 async function readUpstreamTracking(
   cwd: string,
-  currentBranch: string | null,
+  storedBranchName: string | null,
   context?: CheckoutContext,
 ): Promise<UpstreamTracking | null> {
-  if (!currentBranch) {
+  if (!storedBranchName) {
     return { ref: "", track: "" };
   }
   try {
@@ -1958,7 +1984,7 @@ async function readUpstreamTracking(
       [
         "for-each-ref",
         "--format=%(upstream)%00%(upstream:track,nobracket)",
-        `refs/heads/${currentBranch}`,
+        `refs/heads/${storedBranchName}`,
       ],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
@@ -1991,13 +2017,13 @@ function resolveUpstreamStatus(
 // branch's own remote, then origin.
 async function readGitPushRemote(input: {
   cwd: string;
-  currentBranch: string;
+  storedBranchName: string;
   branchRemoteName: string | null;
   context?: CheckoutContext;
 }): Promise<string> {
-  const { cwd, currentBranch, context } = input;
+  const { cwd, storedBranchName, context } = input;
   const [branchPushRemote, pushDefault] = await Promise.all([
-    getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context),
+    getGitConfigValue(cwd, `branch.${storedBranchName}.pushRemote`, context),
     getGitConfigValue(cwd, "remote.pushDefault", context),
   ]);
   return branchPushRemote ?? pushDefault ?? input.branchRemoteName ?? "origin";
@@ -2011,16 +2037,21 @@ const FIRST_PUSH_REMOTE = "origin";
 // offer a first push that lands in a different repository than `git push` would use.
 async function readFirstPushRemote(input: {
   cwd: string;
-  currentBranch: string | null;
+  storedBranchName: string | null;
   branchRemoteName: string | null;
   hasOrigin: boolean;
   context?: CheckoutContext;
 }): Promise<string | null> {
-  const { cwd, currentBranch, branchRemoteName, context } = input;
-  if (!currentBranch || !input.hasOrigin) {
+  const { cwd, storedBranchName, branchRemoteName, context } = input;
+  if (!storedBranchName || !input.hasOrigin) {
     return null;
   }
-  const gitPushRemote = await readGitPushRemote({ cwd, currentBranch, branchRemoteName, context });
+  const gitPushRemote = await readGitPushRemote({
+    cwd,
+    storedBranchName,
+    branchRemoteName,
+    context,
+  });
   return gitPushRemote === FIRST_PUSH_REMOTE ? FIRST_PUSH_REMOTE : null;
 }
 
@@ -2314,16 +2345,15 @@ export async function getCheckoutSnapshotFacts(
   let branchRemoteName: string | null = null;
   let branchMergeRef: string | null = null;
   let branchRemoteUrl: string | null = null;
-  const upstreamTrackingPromise = readUpstreamTracking(cwd, inspected.currentBranch, context);
-  if (inspected.currentBranch) {
-    branchRemoteName = await getGitConfigValue(
-      cwd,
-      `branch.${inspected.currentBranch}.remote`,
-      context,
-    );
+  const storedBranchName = inspected.currentBranch
+    ? await readStoredBranchName(cwd, inspected.currentBranch, context)
+    : null;
+  const upstreamTrackingPromise = readUpstreamTracking(cwd, storedBranchName, context);
+  if (storedBranchName) {
+    branchRemoteName = await getGitConfigValue(cwd, `branch.${storedBranchName}.remote`, context);
     if (branchRemoteName) {
       [branchMergeRef, branchRemoteUrl] = await Promise.all([
-        getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
+        getGitConfigValue(cwd, `branch.${storedBranchName}.merge`, context),
         branchRemoteName === "origin"
           ? inspected.remoteUrl
           : resolveGitRemoteUrl({ cwd, remote: branchRemoteName, context }),
@@ -2332,7 +2362,7 @@ export async function getCheckoutSnapshotFacts(
   }
   const firstPushRemotePromise = readFirstPushRemote({
     cwd,
-    currentBranch: inspected.currentBranch,
+    storedBranchName,
     branchRemoteName,
     hasOrigin: inspected.remoteUrl !== null,
     context,
@@ -4312,18 +4342,19 @@ export async function pushCurrentBranch(
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
-  const configuredPushTarget = await getCurrentBranchConfiguredPushTarget(cwd, currentBranch);
+  const storedBranchName = await readStoredBranchName(cwd, currentBranch, context);
+  const configuredPushTarget = await getCurrentBranchConfiguredPushTarget(cwd, storedBranchName);
   if (configuredPushTarget) {
     await runGitCommand(
       ["push", configuredPushTarget.remoteName, `HEAD:refs/heads/${configuredPushTarget.headRef}`],
       { cwd, timeout: 120_000 },
     );
-    await refreshCurrentBranchTrackedRefAfterPush(cwd, currentBranch, configuredPushTarget);
+    await refreshCurrentBranchTrackedRefAfterPush(cwd, storedBranchName, configuredPushTarget);
     forgeService?.invalidate({ cwd });
     return;
   }
 
-  const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch);
+  const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, storedBranchName);
   if (upstreamTarget) {
     await runGitCommand(
       ["push", "-u", upstreamTarget.remoteName, `HEAD:refs/heads/${upstreamTarget.headRef}`],
@@ -4337,7 +4368,7 @@ export async function pushCurrentBranch(
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await requireFirstPushAgreesWithGit(cwd, currentBranch, context);
+  await requireFirstPushAgreesWithGit(cwd, storedBranchName, context);
   await runGitCommand(["push", "-u", FIRST_PUSH_REMOTE, currentBranch], { cwd, timeout: 120_000 });
   forgeService?.invalidate({ cwd });
 }
@@ -4346,12 +4377,12 @@ export async function pushCurrentBranch(
 // the destination again before it sends anything. Paseo worktrees always publish to origin.
 async function requireFirstPushAgreesWithGit(
   cwd: string,
-  currentBranch: string,
+  storedBranchName: string,
   context?: CheckoutContext,
 ): Promise<void> {
   const [branchRemoteName, branchMergeRef] = await Promise.all([
-    getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context),
-    getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context),
+    getGitConfigValue(cwd, `branch.${storedBranchName}.remote`, context),
+    getGitConfigValue(cwd, `branch.${storedBranchName}.merge`, context),
   ]);
   // A branch with a configured upstream gets here when that upstream is not a remote branch, as
   // when it tracks a local branch. That is not a first push, and it goes to origin as before.
@@ -4362,7 +4393,12 @@ async function requireFirstPushAgreesWithGit(
   if (paseoWorktree.isPaseoOwnedWorktree) {
     return;
   }
-  const gitPushRemote = await readGitPushRemote({ cwd, currentBranch, branchRemoteName, context });
+  const gitPushRemote = await readGitPushRemote({
+    cwd,
+    storedBranchName,
+    branchRemoteName,
+    context,
+  });
   if (gitPushRemote !== FIRST_PUSH_REMOTE) {
     throw new Error(
       `Git is set to push this branch to '${gitPushRemote}', so Push did not publish it to '${FIRST_PUSH_REMOTE}'. Push it from a terminal instead.`,
