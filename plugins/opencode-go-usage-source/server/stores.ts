@@ -35,13 +35,18 @@ const fileSchema = z.object({
   "opencode-go": z.object({ type: z.literal("api"), key: z.string().min(1) }).optional(),
 });
 const rowSchema = z.object({ value: z.string() });
-const keySchema = z.object({ type: z.literal("key"), key: z.string().min(1) });
-const oauthSchema = z.object({
-  type: z.literal("oauth"),
-  access: z.string().min(1),
-  expires: z.number(),
-  metadata: z.object({ server: z.string().optional(), orgID: z.string().optional() }).optional(),
-});
+const metadataSchema = z
+  .object({ server: z.string().optional(), orgID: z.string().optional() })
+  .optional();
+const credentialSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("key"), key: z.string().min(1), metadata: metadataSchema }),
+  z.object({
+    type: z.literal("oauth"),
+    access: z.string().min(1),
+    expires: z.number(),
+    metadata: metadataSchema,
+  }),
+]);
 
 export function defaultStorePaths(env: NodeJS.ProcessEnv = process.env): StorePaths {
   const dataHome = env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share");
@@ -97,14 +102,15 @@ function selected(db: Database, integrationID: string): GoCredential | null {
     if (error instanceof SyntaxError) return null;
     throw error;
   }
-  const key = keySchema.safeParse(credential);
-  if (key.success) return { type: "key", key: key.data.key };
-  const oauth = oauthSchema.safeParse(credential);
-  if (!oauth.success || integrationID !== "opencode") return null;
-  const orgID = oauth.data.metadata?.orgID;
-  if (consoleServer(oauth.data.metadata?.server) !== CONSOLE_SERVER) return null;
-  if (!orgID || !ORGANIZATION_ID.test(orgID)) return null;
-  return { type: "console", access: oauth.data.access, expires: oauth.data.expires, orgID };
+  const parsed = credentialSchema.safeParse(credential);
+  if (!parsed.success) return null;
+  const { data } = parsed;
+  // A credential for another Console never goes to opencode.ai.
+  if (consoleServer(data.metadata?.server) !== CONSOLE_SERVER) return null;
+  if (data.type === "key") return { type: "key", key: data.key };
+  const orgID = data.metadata?.orgID;
+  if (integrationID !== "opencode" || !orgID || !ORGANIZATION_ID.test(orgID)) return null;
+  return { type: "console", access: data.access, expires: data.expires, orgID };
 }
 
 // OpenCode defaults a missing server to the Console and maps the retired host onto it.

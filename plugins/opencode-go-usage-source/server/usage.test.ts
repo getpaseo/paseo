@@ -188,6 +188,16 @@ test.each([
       metadata: { server: "https://staging.example.com/console", orgID: "org_TEST" },
     }),
   ],
+  [
+    "Console key on another server",
+    "opencode",
+    1,
+    JSON.stringify({
+      type: "key",
+      key: "staging-key",
+      metadata: { server: "https://staging.example.com/console" },
+    }),
+  ],
   ["Console OAuth", "opencode-go", 1, JSON.stringify({ type: "oauth", access: "oauth-token" })],
   ["malformed credential", "opencode-go", 1, "invalid JSON"],
   ["empty key", "opencode-go", 1, JSON.stringify({ type: "key", key: "" })],
