@@ -61,6 +61,19 @@ If the command is not found:
 
 Codex becomes available once Paseo can find and start the `codex` command.
 
+## A Codex model is missing
+
+The built-in Codex provider gets its model list from the Codex CLI that the Paseo daemon starts. If you have multiple Codex installations, they can report different models for the same account.
+
+On the daemon host, check which executable Paseo uses and what models it offers:
+
+```bash
+paseo provider diagnostic codex
+paseo provider models codex
+```
+
+Compare the diagnostic’s `Resolved path` and `Version` with the installation where you can select the model. If they differ, set [`agents.providers.codex.command`](/docs/custom-providers#custom-binary) in `~/.paseo/config.json` to an array containing that executable’s absolute path. Run `paseo reload`, then `paseo provider models codex` to verify the model is available for new agents.
+
 ## Use Codex in the Paseo terminal
 
 Codex also works inside the Paseo terminal. Open a terminal in your workspace and run `codex` for the standard CLI experience.

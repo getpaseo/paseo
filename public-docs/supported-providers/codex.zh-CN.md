@@ -59,6 +59,19 @@ where.exe codex
 
 当 Paseo 能找到并启动 `codex` 命令后，Codex 就会变为可用。
 
+## 找不到某个 Codex 模型 {#a-codex-model-is-missing}
+
+内置 Codex Provider 从 Paseo daemon 启动的 Codex CLI 获取模型列表。同一账号在不同的 Codex 安装中可能看到不同的模型。
+
+在 daemon 主机上运行以下命令，查看 Paseo 实际使用的可执行文件和可选模型。
+
+```bash
+paseo provider diagnostic codex
+paseo provider models codex
+```
+
+将诊断输出中的 `Resolved path` 和 `Version` 与可以选到该模型的 Codex 安装进行对照。如果两者不同，在 `~/.paseo/config.json` 中将 [`agents.providers.codex.command`](/docs/custom-providers#custom-binary) 设为仅包含目标可执行文件绝对路径的数组。运行 `paseo reload`，再用 `paseo provider models codex` 确认新建 Agent 时可以使用该模型。
+
 ## 在 Paseo 终端中使用 Codex {#use-codex-in-the-paseo-terminal}
 
 Codex 也可以在 Paseo 终端中运行。在工作区中打开终端并运行 `codex`，即可获得标准的 CLI 体验。
