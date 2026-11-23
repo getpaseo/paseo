@@ -1,4 +1,5 @@
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type pino from "pino";
@@ -1195,6 +1196,77 @@ describe("WorkspaceGitService checkout observation", () => {
     first.unsubscribe();
     second.unsubscribe();
     service.dispose();
+  });
+
+  test("a shared config change limited to one branch refreshes only that branch's workspace", async () => {
+    const configPath = path.join(GIT_DIR, "config");
+    const baseConfig = '[core]\n\tbare = false\n[remote "origin"]\n\turl = x\n';
+    mkdirSync(GIT_DIR, { recursive: true });
+    writeFileSync(configPath, baseConfig);
+    try {
+      const watcher = createWatcherHarness();
+      const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+        ...createLinkedCheckoutFacts(cwd),
+        currentBranch: path.basename(cwd),
+      }));
+      const getCheckoutStatus = vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, { currentBranch: path.basename(cwd) }),
+      );
+      const runGitCommand = vi.fn(async (args: string[]) => ({
+        stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : "",
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      }));
+      const service = createService(watcher, {
+        getCheckoutSnapshotFacts,
+        getCheckoutStatus,
+        runGitCommand,
+      });
+      const first = service.registerWorkspace({ cwd: WORKTREE_A }, vi.fn());
+      const second = service.registerWorkspace({ cwd: WORKTREE_B }, vi.fn());
+      await vi.waitFor(() => {
+        expect(service.getMetrics()).toMatchObject({
+          repositoryTargetCount: 1,
+          repositoryWorkspaceLinkCount: 2,
+          workspaceObservationSetupInFlightCount: 0,
+          workspaceRefreshInFlightCount: 0,
+        });
+      });
+      const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+      const lsFilesCalls = () =>
+        runGitCommand.mock.calls.filter((call) => call[0][0] === "ls-files").length;
+      getCheckoutStatus.mockClear();
+      const lsFilesBefore = lsFilesCalls();
+
+      const branchA = path.basename(WORKTREE_A);
+      writeFileSync(
+        configPath,
+        `${baseConfig}[branch "${branchA}"]\n\tremote = origin\n\tmerge = refs/heads/${branchA}\n`,
+      );
+      repoWatcher?.callback(null, [{ path: configPath, type: "update" }]);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.waitFor(() => {
+        expect(getCalledCwds(getCheckoutStatus)).toEqual([WORKTREE_A]);
+      });
+      expect(lsFilesCalls()).toBe(lsFilesBefore);
+      getCheckoutStatus.mockClear();
+
+      writeFileSync(configPath, baseConfig.replace("bare = false", "bare = false\n\tautocrlf = input"));
+      repoWatcher?.callback(null, [{ path: configPath, type: "update" }]);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.waitFor(() => {
+        expect(getCalledCwds(getCheckoutStatus).sort()).toEqual([WORKTREE_A, WORKTREE_B].sort());
+      });
+      expect(lsFilesCalls()).toBeGreaterThan(lsFilesBefore);
+
+      first.unsubscribe();
+      second.unsubscribe();
+      service.dispose();
+    } finally {
+      rmSync(REPO_CWD, { recursive: true, force: true });
+    }
   });
 
   test("repository metadata observation ignores root and pruned-directory noise", async () => {

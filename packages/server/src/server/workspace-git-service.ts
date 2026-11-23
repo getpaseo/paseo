@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
@@ -54,6 +55,11 @@ import { branchNameFromRef } from "../utils/worktree-metadata.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import { classifyGitMetadataPath, getPrunedGitMetadataPaths } from "./git-metadata-event-rules.js";
+import {
+  changedBranchSections,
+  parseGitConfigSections,
+  type GitConfigSections,
+} from "./git-config-sections.js";
 import {
   fetchWorkspaceGitRemote,
   type WorkspaceGitFetchResult,
@@ -519,6 +525,7 @@ interface RepoGitTarget {
     { change: WorkspaceGitRemoteRefChange; expiresAtMs: number }
   >;
   knownRemoteRefs: Set<string> | null;
+  sharedConfig: GitConfigSections | null;
   closed: boolean;
 }
 
@@ -2486,6 +2493,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
       knownRemoteRefs: null,
+      sharedConfig: readSharedConfig(repoGitRoot),
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
@@ -2594,8 +2602,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
                 })
               : relevantEvents;
             if (immediateEvents.length > 0) {
-              this.refreshWorkingTreeIgnoresFromRepoMetadataEvents(target, immediateEvents);
-              const routedRefreshes = this.routeRepoMetadataEvents(target, immediateEvents);
+              const configBranches = this.readSharedConfigBranchChanges(target, immediateEvents);
+              this.refreshWorkingTreeIgnoresFromRepoMetadataEvents(
+                target,
+                immediateEvents,
+                configBranches,
+              );
+              const routedRefreshes = this.routeRepoMetadataEvents(
+                target,
+                immediateEvents,
+                configBranches,
+              );
               this.scheduleRepoMetadataRefresh(
                 target,
                 "git-metadata-watch",
@@ -2704,15 +2721,36 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.scheduleRepoMetadataRefresh(target, "git-metadata-watch-recovered", true);
   }
 
+  // Null when the batch has no shared-config event or that change reaches past
+  // `[branch "<name>"]` sections; otherwise the branch names it touched.
+  private readSharedConfigBranchChanges(
+    target: RepoGitTarget,
+    events: FileChange[],
+  ): Set<string> | null {
+    const touchesConfig = events.some(
+      (event) => target.paths.relative(event.path)?.replaceAll("\\", "/") === "config",
+    );
+    if (!touchesConfig) return null;
+    const previous = target.sharedConfig;
+    target.sharedConfig = readSharedConfig(target.repoGitRoot);
+    if (!previous || !target.sharedConfig) return null;
+    return changedBranchSections(previous, target.sharedConfig);
+  }
+
   private routeRepoMetadataEvents(
     target: RepoGitTarget,
     events: FileChange[],
+    configBranches: Set<string> | null = null,
   ): Map<string, RepoMetadataWorkspaceRefresh> | null {
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
     const matchesRepoGitRoot = target.paths.matches;
 
     for (const event of events) {
-      if (!this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes)) return null;
+      if (
+        !this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes, configBranches)
+      ) {
+        return null;
+      }
     }
 
     return refreshes;
@@ -2721,10 +2759,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private refreshWorkingTreeIgnoresFromRepoMetadataEvents(
     target: RepoGitTarget,
     events: FileChange[],
+    configBranches: Set<string> | null,
   ): void {
     const workspaceKeys = new Set<string>();
     for (const event of events) {
       const commonRelativePath = target.paths.relative(event.path)?.replaceAll("\\", "/");
+      if (commonRelativePath === "config" && configBranches) continue;
       if (commonRelativePath === "config" || commonRelativePath === "info/exclude") {
         for (const workspaceKey of target.workspaceKeys) workspaceKeys.add(workspaceKey);
         continue;
@@ -2777,6 +2817,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     event: FileChange,
     matchesRepoGitRoot: (candidate: string) => boolean,
     refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
+    configBranches: Set<string> | null,
   ): boolean {
     if (this.routePrivateGitDirEvent(target, event, matchesRepoGitRoot, refreshes)) return true;
 
@@ -2819,6 +2860,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
         return true;
       case "all":
+        if (commonRelativePath === "config" && configBranches) {
+          for (const branch of configBranches) this.routeLocalBranchRef(target, branch, refreshes);
+          return true;
+        }
         if (
           commonRelativePath === "packed-refs" ||
           commonRelativePath?.startsWith("reftable/") === true
@@ -4510,4 +4555,12 @@ function computeGenericForgeNextInterval(
     baseInterval * 2 ** (consecutiveErrors - 1),
     FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS,
   );
+}
+
+function readSharedConfig(repoGitRoot: string): GitConfigSections | null {
+  try {
+    return parseGitConfigSections(readFileSync(join(repoGitRoot, "config"), "utf8"));
+  } catch {
+    return null;
+  }
 }
