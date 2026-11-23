@@ -67,8 +67,11 @@ export interface NewWorkspaceFormProps {
   isPending: boolean;
   /** Plugin fields, drawn after the base ref. */
   pluginItems: ReactNode;
-  /** Where focus goes when a field's picker closes, so the user keeps typing the prompt. */
-  restoreFocusRef: RefObject<unknown>;
+  /**
+   * Where focus goes when a field's picker closes, so the user keeps typing the prompt. Without
+   * one, focus returns to the field that opened the picker.
+   */
+  restoreFocusRef?: RefObject<unknown>;
   project: PickerControl & {
     options: ComboboxOption[];
     projectByOptionId: Map<string, HostProjectListItem>;

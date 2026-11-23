@@ -1579,7 +1579,8 @@ export function NewWorkspaceScreen({
       : t("newWorkspace.refPicker.noMatchingRefs");
 
   // The prompt is where the user types; when a field's picker closes, focus returns there rather
-  // than to whatever had focus when the picker opened.
+  // than to whatever had focus when the picker opened. A terminal profile that takes no prompt
+  // shows a read-only command preview, so its pickers keep returning focus to their field.
   const composerFocusRef = useRef<{ focus: () => void } | null>(null);
   const handleComposerFocusInput = useCallback((focus: () => void) => {
     composerFocusRef.current = { focus };
@@ -1588,7 +1589,7 @@ export function NewWorkspaceScreen({
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
-    restoreFocusRef: composerFocusRef,
+    restoreFocusRef: terminalTakesPrompt ? composerFocusRef : undefined,
     pluginItems: (
       <PluginNewWorkspaceItems serverId={selectedServerId} screen={pluginScreen} setup={setup} />
     ),
