@@ -7527,9 +7527,10 @@ describe("local durable finish subscription MCP wiring", () => {
 });
 
 describe("modern MCP protocol (2026-07-28)", () => {
-  // 2026-07-28 客户端不再发 initialize：每个请求自带协议版本与 capabilities。
-  // 这里直接驱动 createMcpHandler，确认现代路径真的能列出工具；不覆盖这一层时，
-  // 「把接受的版本清单放宽」的实现也能让旧测试全绿。
+  // 2026-07-28 clients skip initialize and carry the protocol version and
+  // capabilities on every request. Drive createMcpHandler directly so this
+  // covers the modern path: widening the accepted version list alone would
+  // keep the legacy tests green without serving it.
   const modernRequest = (id: number, method: string): Request =>
     new Request("http://localhost/mcp/agents", {
       method: "POST",
