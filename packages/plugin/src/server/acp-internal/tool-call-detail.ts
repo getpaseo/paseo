@@ -76,7 +76,7 @@ export function standardToolCallDetail(call: AcpToolCallSnapshot): ProviderToolC
   return { type: "unknown", input: call.input, output: call.output };
 }
 
-function editDetail({ call, input }: ToolCallParts): ProviderToolCallDetail {
+function editDetail({ call, input, text }: ToolCallParts): ProviderToolCallDetail {
   const diff = contentDiff(call.content);
   const filePath =
     diff?.path ?? string(input, "filePath", "path", "file") ?? call.locations[0] ?? "";
@@ -86,6 +86,7 @@ function editDetail({ call, input }: ToolCallParts): ProviderToolCallDetail {
       filePath,
       oldString: diff?.oldText ?? string(input, "oldText"),
       newString: "",
+      unifiedDiff: text,
     };
   }
   return {
@@ -93,7 +94,7 @@ function editDetail({ call, input }: ToolCallParts): ProviderToolCallDetail {
     filePath,
     oldString: diff?.oldText ?? string(input, "oldString", "oldText"),
     newString: diff?.newText ?? string(input, "newString", "newText"),
-    unifiedDiff: string(input, "unifiedDiff"),
+    unifiedDiff: string(input, "unifiedDiff") ?? text,
   };
 }
 

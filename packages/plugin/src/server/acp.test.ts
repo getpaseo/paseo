@@ -6818,6 +6818,21 @@ describe("ACP tool call rows", () => {
       detail: { type: "fetch", url: "https://example.com", result: "Example Domain" },
     },
     {
+      kind: "edit",
+      start: {
+        title: "Edit a.ts",
+        content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }],
+      },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", oldString: "a", newString: "b" },
+    },
+    {
+      kind: "edit",
+      start: { title: "Edit a.ts", locations: [{ path: "/repo/a.ts" }] },
+      end: { content: text("Replaced 1 occurrence") },
+      detail: { type: "edit", filePath: "/repo/a.ts", unifiedDiff: "Replaced 1 occurrence" },
+    },
+    {
       kind: "delete",
       start: { title: "Delete a.ts", locations: [{ path: "/repo/a.ts" }] },
       end: {},
@@ -6923,5 +6938,140 @@ describe("ACP tool call rows", () => {
       input: { command: "npm test" },
       output: null,
     });
+  });
+
+  it("shows the call's row on its approval", async () => {
+    const harness = connectorHarness({
+      handleRequest(runtime, request) {
+        if (request.method !== "session/prompt") return false;
+        void runtime.request("session/request_permission", {
+          sessionId: "connector-session",
+          toolCall: {
+            toolCallId: "edit-1",
+            title: "Edit a.ts",
+            kind: "edit",
+            status: "pending",
+            content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }],
+          },
+          options: [
+            { optionId: "allow", name: "Allow edit", kind: "allow_once" },
+            { optionId: "deny", name: "Deny", kind: "reject_once" },
+          ],
+        });
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "approval-rows",
+      label: "Approval rows",
+      connector: harness.connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message", "permission"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "edit",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Edit a.ts" }] },
+        },
+      });
+      expect(
+        await waitForEvent(events, (event) => event.type === "session.permission"),
+      ).toMatchObject({
+        request: {
+          id: "permission:edit-1",
+          title: "Edit a.ts",
+          detail: { type: "edit", filePath: "/repo/a.ts", oldString: "a", newString: "b" },
+        },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("lists sessions across every page the agent returns", async () => {
+    const pages: Record<string, { sessions: unknown[]; nextCursor?: string }> = {
+      first: {
+        sessions: [{ sessionId: "s1", cwd: "/repo", title: "One" }],
+        nextCursor: "second",
+      },
+      second: { sessions: [{ sessionId: "s2", cwd: "/repo", title: "Two" }] },
+    };
+    const harness = connectorHarness({
+      capabilities: { sessionCapabilities: { list: {} } },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/list") return false;
+        const { cursor } = request.params as { cursor?: string };
+        runtime.respond(request, pages[cursor ?? "first"]);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "paged-sessions",
+      label: "Paged sessions",
+      connector: harness.connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "list" });
+      const listed = await waitForEvent(events, (event) => event.type === "sessions");
+      expect(listed.type === "sessions" && listed.sessions.map((session) => session.title)).toEqual(
+        ["One", "Two"],
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("resumes the generic ACP adapter's saved Auto Accept toggle in the unattended mode", async () => {
+    const harness = connectorHarness({
+      configOptions: [
+        {
+          id: "edit_approval_policy",
+          name: "Edits",
+          category: "mode",
+          type: "select",
+          currentValue: "ask",
+          options: [
+            { value: "ask", name: "Default" },
+            { value: "session", name: "Don't Ask" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({
+      id: "former-generic",
+      label: "Former generic",
+      connector: harness.connector,
+      acpOptions: {
+        autoAcceptMode: { mode: { id: "full-access", label: "Full access" }, nativeMode: "ask" },
+      },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.configure"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.settings = { auto_accept: true };
+      await connection.send(input);
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const configs = events.flatMap((event) =>
+        event.type === "session.config" ? [event.config.mode] : [],
+      );
+      expect(configs.at(-1)).toBe("full-access");
+      const sentOptions = harness.instances
+        .flatMap((instance) => instance.requests)
+        .filter((request) => request.method === "session/set_config_option")
+        .map((request) => (request.params as { configId: string }).configId);
+      expect(sentOptions).not.toContain("auto_accept");
+      expect(events.some((event) => event.type === "request.failed")).toBe(false);
+    } finally {
+      await connection.close();
+    }
   });
 });

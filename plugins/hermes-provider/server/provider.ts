@@ -12,6 +12,18 @@ export function createHermesProvider(): ProviderRegistration {
       description: "Nous Research self-improving AI agent",
       icon: "icon.svg",
       command: ["hermes", "acp"],
+      acpOptions: {
+        autoAcceptMode: {
+          mode: {
+            id: "full-access",
+            label: "Full access",
+            description: "Approve tool requests without asking.",
+            icon: "ShieldOff",
+            colorTier: "dangerous",
+          },
+          nativeMode: "ask",
+        },
+      },
       transformers: [terminalCommand, legacyModes],
     }),
   };
