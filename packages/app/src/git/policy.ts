@@ -2,7 +2,11 @@ import type { ReactElement } from "react";
 
 import type { ActionStatus } from "@/components/ui/dropdown-menu";
 import { i18n } from "@/i18n/i18next";
-import type { CheckoutPrMergeMethod, PullRequestMergeable } from "@getpaseo/protocol/messages";
+import type {
+  CheckoutPrMergeMethod,
+  CheckoutStatusResponse,
+  PullRequestMergeable,
+} from "@getpaseo/protocol/messages";
 
 import type { MergeCapability } from "./merge-capability";
 
@@ -73,6 +77,38 @@ export function canMergeIntoLocalBase(
   return currentBranch !== localTarget;
 }
 
+type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
+
+export type GitUpstreamState = NonNullable<CheckoutStatusPayload["upstreamState"]>;
+
+export interface PushTarget {
+  upstream: GitUpstreamState;
+  /** Push has a remote to send the branch to. Not limited to origin. */
+  hasPushRemote: boolean;
+}
+
+export function readPushTarget(
+  status: Pick<
+    CheckoutStatusPayload,
+    "upstreamState" | "pushRemote" | "aheadOfOrigin" | "hasRemote" | "isPaseoOwnedWorktree"
+  >,
+): PushTarget {
+  if (status.upstreamState !== undefined && status.pushRemote !== undefined) {
+    return { upstream: status.upstreamState, hasPushRemote: status.pushRemote !== null };
+  }
+  // COMPAT(checkoutPushTarget): added in v0.17.4, remove after 2027-05-23 once the daemon floor
+  // reports upstreamState and pushRemote. Older daemons send a null upstream for both a
+  // never-pushed and a deleted remote branch, and only know origin. Only a Paseo worktree's null
+  // was trusted as never pushed.
+  let upstream: GitUpstreamState = "unknown";
+  if (status.aheadOfOrigin !== null) {
+    upstream = "tracked";
+  } else if (status.isPaseoOwnedWorktree) {
+    upstream = "none";
+  }
+  return { upstream, hasPushRemote: status.hasRemote };
+}
+
 export interface BuildGitActionsInput {
   isGit: boolean;
   githubFeaturesEnabled: boolean;
@@ -88,7 +124,10 @@ export interface BuildGitActionsInput {
   pullRequestIsMerged: boolean;
   pullRequestMergeable: PullRequestMergeable;
   mergeCapability: MergeCapability | null;
+  /** origin is configured. Pull and Pull and push use it. */
   hasRemote: boolean;
+  hasPushRemote: boolean;
+  upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
   canMergeLocally: boolean;
@@ -550,16 +589,23 @@ function canPull(input: BuildGitActionsInput): boolean {
 }
 
 function canPush(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
+  return input.hasPushRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
 }
 
 function hasPushableCommits(input: BuildGitActionsInput): boolean {
-  if ((input.aheadOfOrigin ?? 0) > 0) {
-    return true;
+  switch (input.upstream) {
+    case "tracked":
+      return (input.aheadOfOrigin ?? 0) > 0;
+    case "none":
+      // A first push, which sets the upstream. The commits to send are the ones ahead of the base.
+      return input.aheadCount > 0;
+    case "gone":
+      // Paseo worktrees re-publish a branch whose remote copy was deleted, for example after a
+      // merged PR. Regular checkouts do not.
+      return input.isPaseoOwnedWorktree && input.aheadCount > 0;
+    case "unknown":
+      return false;
   }
-  // No-upstream Paseo worktrees are first-pushable: the daemon push sets upstream with `git push -u`.
-  // Do not fold this into aheadOfOrigin; null also covers deleted/pruned upstream branches.
-  return input.isPaseoOwnedWorktree && input.aheadOfOrigin === null && input.aheadCount > 0;
 }
 
 function canMergeFromBase(input: BuildGitActionsInput): boolean {
@@ -658,16 +704,19 @@ function getPullUnavailableMessage(input: BuildGitActionsInput): string | undefi
 }
 
 function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote) {
+  if (!input.hasPushRemote) {
     return i18n.t("workspace.git.actions.unavailable.pushNoRemote");
   }
   if ((input.behindOfOrigin ?? 0) > 0) {
     return i18n.t("workspace.git.actions.unavailable.pushBehind");
   }
-  if (!hasPushableCommits(input)) {
-    return i18n.t("workspace.git.actions.unavailable.pushNothing");
+  if (hasPushableCommits(input)) {
+    return undefined;
   }
-  return undefined;
+  if (input.upstream === "gone") {
+    return i18n.t("workspace.git.actions.unavailable.pushUpstreamGone");
+  }
+  return i18n.t("workspace.git.actions.unavailable.pushNothing");
 }
 
 function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {

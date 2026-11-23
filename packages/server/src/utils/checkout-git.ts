@@ -908,7 +908,10 @@ export interface CheckoutStatusGitNonPaseo {
   upstreamRef: string | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  upstreamState: UpstreamState;
   hasRemote: boolean;
+  // Remote Push sends to. Unlike hasRemote, this is not limited to origin.
+  pushRemote: string | null;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
 }
@@ -926,7 +929,9 @@ export interface CheckoutStatusGitPaseo {
   upstreamRef: string | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
+  upstreamState: UpstreamState;
   hasRemote: boolean;
+  pushRemote: string | null;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
 }
@@ -963,6 +968,9 @@ export interface CheckoutContext {
   logger?: Pick<Logger, "trace" | "warn">;
   facts?: CheckoutSnapshotFacts | null;
   runGitCommand?: RunGitCommand;
+  // `git config --get` results shared by the lookups of one snapshot, keyed by config key.
+  // Several lookups read the same keys; this keeps each to one process.
+  gitConfigReads?: Map<string, Promise<string | null>>;
 }
 
 export type CheckoutSnapshotFacts =
@@ -983,7 +991,10 @@ export type CheckoutSnapshotFacts =
       comparisonBaseRef: string | null;
       branchRemoteName: string | null;
       branchMergeRef: string | null;
-      upstreamStatus: UpstreamStatus | null;
+      upstreamStatus: UpstreamStatus;
+      // The remote Push sends the current branch to, resolved exactly as pushCurrentBranch does.
+      // Null when Push has nowhere to send it.
+      pushRemoteName: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
@@ -1458,6 +1469,23 @@ async function getGitConfigValue(
   key: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
+  const reads = context?.gitConfigReads;
+  if (!reads) {
+    return readGitConfigValue(cwd, key, context);
+  }
+  let read = reads.get(key);
+  if (!read) {
+    read = readGitConfigValue(cwd, key, context);
+    reads.set(key, read);
+  }
+  return read;
+}
+
+async function readGitConfigValue(
+  cwd: string,
+  key: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
   try {
     const { stdout } = await getRunGitCommand(context)(["config", "--get", key], {
       cwd,
@@ -1870,9 +1898,46 @@ async function getAheadBehind(
   return getAheadBehindForComparisonRef(cwd, comparisonBaseRef, currentBranch, context);
 }
 
-export interface UpstreamStatus {
-  ref: string;
-  aheadBehind: AheadBehind;
+// How the current branch relates to its upstream. "gone" is git's `[gone]`: an upstream is
+// configured but its remote-tracking ref no longer exists, as after the remote branch is deleted
+// and pruned. "unknown" means git could not read it.
+export type UpstreamStatus =
+  | { state: "tracked"; ref: string; aheadBehind: AheadBehind }
+  | { state: "gone"; ref: string }
+  | { state: "none" }
+  | { state: "unknown" };
+
+export type UpstreamState = UpstreamStatus["state"];
+
+export interface CheckoutUpstreamFields {
+  upstreamRef: string | null;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
+  upstreamState: UpstreamState;
+}
+
+// The status fields that describe the upstream. upstreamRef and the counts stay null unless the
+// upstream is tracked, as they were before upstreamState existed.
+export function projectUpstreamStatus(status: UpstreamStatus): CheckoutUpstreamFields {
+  if (status.state === "tracked") {
+    return {
+      upstreamRef: status.ref,
+      aheadOfOrigin: status.aheadBehind.ahead,
+      behindOfOrigin: status.aheadBehind.behind,
+      upstreamState: "tracked",
+    };
+  }
+  return {
+    upstreamRef: null,
+    aheadOfOrigin: null,
+    behindOfOrigin: null,
+    upstreamState: status.state,
+  };
+}
+
+// The configured upstream ref, whether or not its remote-tracking ref still exists.
+export function configuredUpstreamRef(status: UpstreamStatus): string | null {
+  return status.state === "tracked" || status.state === "gone" ? status.ref : null;
 }
 
 async function getAheadBehindForComparisonRef(
@@ -1896,9 +1961,12 @@ async function getAheadBehindForComparisonRef(
 
 async function getUpstreamStatus(
   cwd: string,
-  currentBranch: string,
+  currentBranch: string | null,
   context?: CheckoutContext,
-): Promise<UpstreamStatus | null> {
+): Promise<UpstreamStatus> {
+  if (!currentBranch) {
+    return { state: "none" };
+  }
   try {
     const { stdout } = await getRunGitCommand(context)(
       [
@@ -1909,14 +1977,17 @@ async function getUpstreamStatus(
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const [ref = "", track = ""] = stdout.trim().split("\0", 2);
-    if (!ref || track === "gone") {
-      return null;
+    if (!ref) {
+      return { state: "none" };
+    }
+    if (track === "gone") {
+      return { state: "gone", ref };
     }
     const ahead = Number.parseInt(track.match(/ahead (\d+)/)?.[1] ?? "0", 10);
     const behind = Number.parseInt(track.match(/behind (\d+)/)?.[1] ?? "0", 10);
-    return { ref, aheadBehind: { ahead, behind } };
+    return { state: "tracked", ref, aheadBehind: { ahead, behind } };
   } catch {
-    return null;
+    return { state: "unknown" };
   }
 }
 
@@ -2184,16 +2255,20 @@ export async function getCheckoutSnapshotFacts(
   if (!inspected) {
     return { isGit: false };
   }
+  const snapshotContext: CheckoutContext = {
+    ...context,
+    gitConfigReads: new Map([["remote.origin.url", Promise.resolve(inspected.remoteUrl)]]),
+  };
 
   const paseoWorktreeMetadata = inspected.paseoWorktree.isPaseoOwnedWorktree
     ? await readPaseoWorktreeMetadata(inspected.paseoWorktree.worktreeRoot)
     : null;
   const storedBaseRef = storedBaseRefFromMetadata(paseoWorktreeMetadata);
-  const resolvedBaseRef = storedBaseRef ?? (await resolveBaseRef(cwd, context));
+  const resolvedBaseRef = storedBaseRef ?? (await resolveBaseRef(cwd, snapshotContext));
   const mainRepoRoot = await getMainRepoRootFromCommonDir(
     cwd,
     inspected.gitCommonDir,
-    context,
+    snapshotContext,
   ).catch(() => null);
   let comparisonBaseRef: string | null = null;
   if (
@@ -2202,29 +2277,32 @@ export async function getCheckoutSnapshotFacts(
     (isQualifiedBranchRef(resolvedBaseRef) ||
       branchNameFromRef(resolvedBaseRef) !== inspected.currentBranch)
   ) {
-    comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef, context).catch(
-      () => null,
-    );
+    comparisonBaseRef = await resolveBestComparisonBaseRef(
+      cwd,
+      resolvedBaseRef,
+      snapshotContext,
+    ).catch(() => null);
   }
 
   let branchRemoteName: string | null = null;
   let branchMergeRef: string | null = null;
   let branchRemoteUrl: string | null = null;
-  const upstreamStatusPromise = inspected.currentBranch
-    ? getUpstreamStatus(cwd, inspected.currentBranch, context)
+  const upstreamStatusPromise = getUpstreamStatus(cwd, inspected.currentBranch, snapshotContext);
+  const pushTargetPromise = inspected.currentBranch
+    ? resolvePushTarget(cwd, inspected.currentBranch, snapshotContext)
     : Promise.resolve(null);
   if (inspected.currentBranch) {
     branchRemoteName = await getGitConfigValue(
       cwd,
       `branch.${inspected.currentBranch}.remote`,
-      context,
+      snapshotContext,
     );
     if (branchRemoteName) {
       [branchMergeRef, branchRemoteUrl] = await Promise.all([
-        getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
+        getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, snapshotContext),
         branchRemoteName === "origin"
           ? inspected.remoteUrl
-          : resolveGitRemoteUrl({ cwd, remote: branchRemoteName, context }),
+          : resolveGitRemoteUrl({ cwd, remote: branchRemoteName, context: snapshotContext }),
       ]);
     }
   }
@@ -2236,14 +2314,17 @@ export async function getCheckoutSnapshotFacts(
     branchMergeRef,
     branchRemoteUrl,
     resolvedBaseRef,
-    context,
+    context: snapshotContext,
   });
   pullRequestLookupTarget = await addHeadShaToPullRequestLookupTarget(
     cwd,
     pullRequestLookupTarget,
-    context,
+    snapshotContext,
   );
-  const upstreamStatus = await upstreamStatusPromise;
+  const [upstreamStatus, pushTarget] = await Promise.all([
+    upstreamStatusPromise,
+    pushTargetPromise,
+  ]);
 
   return {
     isGit: true,
@@ -2260,6 +2341,7 @@ export async function getCheckoutSnapshotFacts(
     branchRemoteName,
     branchMergeRef,
     upstreamStatus,
+    pushRemoteName: pushTarget?.remoteName ?? null,
     pullRequestLookupTarget,
   };
 }
@@ -2432,14 +2514,12 @@ export async function getCheckoutStatus(
     baseRef && currentBranch
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : null;
-  const upstreamStatus = facts.upstreamStatus;
   // The wire carries the display name: clients label the base with it and send it back to
   // request diffs and merges. The exact ref stays in worktree.json and in facts, where the
   // comparisons and actions read it.
   const displayBaseRef = baseRef ? branchNameFromRef(baseRef) : null;
-  const upstreamRef = upstreamStatus?.ref ?? null;
-  const aheadOfOrigin = upstreamStatus?.aheadBehind.ahead ?? null;
-  const behindOfOrigin = upstreamStatus?.aheadBehind.behind ?? null;
+  const upstream = projectUpstreamStatus(facts.upstreamStatus);
+  const pushRemote = facts.pushRemoteName;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
     return {
@@ -2452,10 +2532,9 @@ export async function getCheckoutStatus(
       baseRefExact: baseRef,
       comparisonBaseRef,
       aheadBehind,
-      upstreamRef,
-      aheadOfOrigin,
-      behindOfOrigin,
+      ...upstream,
       hasRemote,
+      pushRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
     };
@@ -2472,10 +2551,9 @@ export async function getCheckoutStatus(
     baseRefExact: baseRef,
     comparisonBaseRef,
     aheadBehind,
-    upstreamRef,
-    aheadOfOrigin,
-    behindOfOrigin,
+    ...upstream,
     hasRemote,
+    pushRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,
   };
@@ -3107,7 +3185,7 @@ export async function getCheckoutShortstat(
 export interface CheckoutRefDerivedState {
   aheadBehind: AheadBehind | null;
   diffStat: CheckoutShortstat | null;
-  upstreamStatus: UpstreamStatus | null;
+  upstreamStatus: UpstreamStatus;
 }
 
 function normalizeRemoteTrackingRef(ref: string): string {
@@ -3150,7 +3228,8 @@ function getCheckoutRefMovement(
     .filter((ref): ref is string => Boolean(ref))
     .map(normalizeRemoteTrackingRef)
     .some((ref) => normalizedMoves.has(ref));
-  const upstreamRef = facts.upstreamStatus?.ref ?? checkoutFactsConfiguredRemoteRef(facts);
+  const upstreamRef =
+    configuredUpstreamRef(facts.upstreamStatus) ?? checkoutFactsConfiguredRemoteRef(facts);
   const upstreamMoved = upstreamRef
     ? normalizedMoves.has(normalizeRemoteTrackingRef(upstreamRef))
     : false;
@@ -3206,10 +3285,11 @@ export async function getCheckoutRefDerivedState(
         : await getAheadBehindForComparisonRef(cwd, upstreamRef, currentBranch, context);
     upstreamStatus = upstreamAheadBehind
       ? {
-          ref: facts.upstreamStatus?.ref ?? `refs/remotes/${normalizedUpstream}`,
+          state: "tracked",
+          ref: configuredUpstreamRef(facts.upstreamStatus) ?? `refs/remotes/${normalizedUpstream}`,
           aheadBehind: upstreamAheadBehind,
         }
-      : null;
+      : { state: "unknown" };
   }
 
   return { aheadBehind, diffStat, upstreamStatus };
@@ -4198,46 +4278,73 @@ export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
-  const configuredPushTarget = await getCurrentBranchConfiguredPushTarget(cwd, currentBranch);
-  if (configuredPushTarget) {
-    await runGitCommand(
-      ["push", configuredPushTarget.remoteName, `HEAD:refs/heads/${configuredPushTarget.headRef}`],
-      { cwd, timeout: 120_000 },
-    );
-    await refreshCurrentBranchTrackedRefAfterPush(cwd, currentBranch, configuredPushTarget);
-    forgeService?.invalidate({ cwd });
-    return;
-  }
-
-  const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch);
-  if (upstreamTarget) {
-    await runGitCommand(
-      ["push", "-u", upstreamTarget.remoteName, `HEAD:refs/heads/${upstreamTarget.headRef}`],
-      { cwd, timeout: 120_000 },
-    );
-    forgeService?.invalidate({ cwd });
-    return;
-  }
-
-  const hasRemote = await hasOriginRemote(cwd);
-  if (!hasRemote) {
+  const target = await resolvePushTarget(cwd, currentBranch);
+  if (!target) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
+  switch (target.kind) {
+    case "configured":
+      await runGitCommand(["push", target.remoteName, `HEAD:refs/heads/${target.headRef}`], {
+        cwd,
+        timeout: 120_000,
+      });
+      await refreshCurrentBranchTrackedRefAfterPush(cwd, currentBranch, target);
+      break;
+    case "upstream":
+      await runGitCommand(["push", "-u", target.remoteName, `HEAD:refs/heads/${target.headRef}`], {
+        cwd,
+        timeout: 120_000,
+      });
+      break;
+    case "first-push":
+      await runGitCommand(["push", "-u", target.remoteName, currentBranch], {
+        cwd,
+        timeout: 120_000,
+      });
+      break;
+  }
   forgeService?.invalidate({ cwd });
+}
+
+// Where Push sends the current branch, in order: the branch's push remote with a HEAD push
+// refspec, then its upstream, then a first push to origin that sets the upstream. Checkout status
+// reports the same target, so the Push offer and the push itself cannot disagree.
+type PushTarget =
+  | { kind: "configured"; remoteName: string; headRef: string }
+  | { kind: "upstream"; remoteName: string; headRef: string }
+  | { kind: "first-push"; remoteName: "origin" };
+
+async function resolvePushTarget(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<PushTarget | null> {
+  const configured = await getCurrentBranchConfiguredPushTarget(cwd, currentBranch, context);
+  if (configured) {
+    return { kind: "configured", ...configured };
+  }
+  const upstream = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch, context);
+  if (upstream) {
+    return { kind: "upstream", ...upstream };
+  }
+  const originUrl = await getGitConfigValue(cwd, "remote.origin.url", context);
+  return originUrl ? { kind: "first-push", remoteName: "origin" } : null;
 }
 
 async function getCurrentBranchConfiguredPushTarget(
   cwd: string,
   currentBranch: string,
+  context?: CheckoutContext,
 ): Promise<{ remoteName: string; headRef: string } | null> {
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`);
-  const pushRefspec = remoteName ? await getGitConfigValue(cwd, `remote.${remoteName}.push`) : null;
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context);
+  const pushRefspec = remoteName
+    ? await getGitConfigValue(cwd, `remote.${remoteName}.push`, context)
+    : null;
   const headRef = parseHeadPushRefspec(pushRefspec);
   if (!remoteName || !headRef) {
     return null;
   }
-  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`, context);
   return remoteUrl ? { remoteName, headRef } : null;
 }
 
@@ -4304,16 +4411,17 @@ async function updateRemoteTrackingRef(
 async function getCurrentBranchUpstreamPushTarget(
   cwd: string,
   currentBranch: string,
+  context?: CheckoutContext,
 ): Promise<{ remoteName: string; headRef: string } | null> {
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
   const mergeRef = remoteName
-    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`)
+    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context)
     : null;
   const headRef = parseBranchMergeHeadRef(mergeRef);
   if (!remoteName || !headRef) {
     return null;
   }
-  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`, context);
   return remoteUrl ? { remoteName, headRef } : null;
 }
 

@@ -7,6 +7,7 @@ import {
   buildGitActions,
   isCurrentBranchBase,
   canMergeIntoLocalBase,
+  readPushTarget,
   type BuildGitActionsInput,
 } from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
@@ -76,6 +77,8 @@ function createInput(
     pullRequestMergeable: "UNKNOWN",
     mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
+    hasPushRemote: rest.hasRemote ?? false,
+    upstream: "tracked",
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
     canMergeLocally: true,
@@ -167,6 +170,10 @@ function createInput(
     },
     ...rest,
   };
+}
+
+function pushActionOf(actions: ReturnType<typeof buildGitActions>) {
+  return actions.secondary.find((action) => action.id === "push");
 }
 
 describe("git-actions-policy", () => {
@@ -346,6 +353,7 @@ describe("git-actions-policy", () => {
     const actions = buildGitActions(
       createInput({
         hasRemote: true,
+        upstream: "none",
         isPaseoOwnedWorktree: true,
         isOnBaseBranch: false,
         aheadCount: 1,
@@ -358,6 +366,199 @@ describe("git-actions-policy", () => {
     expect(pushAction).toMatchObject({
       disabled: false,
       unavailableMessage: undefined,
+    });
+  });
+
+  it("re-publishes a Paseo worktree branch whose remote copy was deleted", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        upstream: "gone",
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        shipDefault: "pr",
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+    expect(pushAction).toMatchObject({ disabled: false, unavailableMessage: undefined });
+  });
+
+  describe("a never-pushed branch in a regular checkout", () => {
+    const neverPushed = {
+      hasRemote: true,
+      upstream: "none",
+      isOnBaseBranch: false,
+      aheadCount: 1,
+      aheadOfOrigin: null,
+      behindOfOrigin: null,
+    } as const;
+
+    it("offers Push first, ahead of Create PR", () => {
+      const actions = buildGitActions(createInput({ ...neverPushed, shipDefault: "pr" }));
+
+      expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+    });
+
+    it("offers Push first, ahead of Merge locally", () => {
+      const actions = buildGitActions(
+        createInput({ ...neverPushed, githubFeaturesEnabled: false, shipDefault: "merge" }),
+      );
+
+      expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+    });
+
+    it("does not offer Push when it has no commits of its own", () => {
+      const actions = buildGitActions(createInput({ ...neverPushed, aheadCount: 0 }));
+      const pushAction = pushActionOf(actions);
+
+      expect(actions.primary?.id).not.toBe("push");
+      expect(pushAction?.unavailableMessage).toBe(
+        "Push isn't available because there is nothing new to send",
+      );
+    });
+
+    it("does not offer Push when Push has no remote to send to", () => {
+      const actions = buildGitActions(createInput({ ...neverPushed, hasPushRemote: false }));
+      const pushAction = pushActionOf(actions);
+
+      expect(actions.primary?.id).not.toBe("push");
+      expect(pushAction?.unavailableMessage).toBe(
+        "Push isn't available here because this branch is not connected to a remote yet",
+      );
+    });
+  });
+
+  it("does not offer a first push when the branch's remote copy was deleted", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        upstream: "gone",
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        shipDefault: "pr",
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(actions.primary).toMatchObject({ id: "pr", label: "Create PR" });
+    expect(pushAction?.unavailableMessage).toBe(
+      "Push isn't available because this branch was deleted on the remote",
+    );
+  });
+
+  it("offers Push on a branch that tracks a remote not named origin", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: false,
+        hasPushRemote: true,
+        upstream: "tracked",
+        aheadOfOrigin: 1,
+        behindOfOrigin: 0,
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+  });
+
+  describe("readPushTarget", () => {
+    it("uses the upstream state and push remote the daemon reports", () => {
+      expect(
+        readPushTarget({
+          upstreamState: "none",
+          pushRemote: "origin",
+          aheadOfOrigin: null,
+          hasRemote: true,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "none", hasPushRemote: true });
+      expect(
+        readPushTarget({
+          upstreamState: "tracked",
+          pushRemote: "upstream",
+          aheadOfOrigin: 1,
+          hasRemote: false,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "tracked", hasPushRemote: true });
+      expect(
+        readPushTarget({
+          upstreamState: "none",
+          pushRemote: null,
+          aheadOfOrigin: null,
+          hasRemote: false,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "none", hasPushRemote: false });
+    });
+
+    it("keeps the old guess for daemons that predate upstream states", () => {
+      const legacy = { upstreamState: undefined, pushRemote: undefined } as const;
+      expect(
+        readPushTarget({
+          ...legacy,
+          aheadOfOrigin: 1,
+          hasRemote: true,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "tracked", hasPushRemote: true });
+      expect(
+        readPushTarget({
+          ...legacy,
+          aheadOfOrigin: null,
+          hasRemote: true,
+          isPaseoOwnedWorktree: true,
+        }),
+      ).toEqual({ upstream: "none", hasPushRemote: true });
+      expect(
+        readPushTarget({
+          ...legacy,
+          aheadOfOrigin: null,
+          hasRemote: true,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "unknown", hasPushRemote: true });
+      expect(
+        readPushTarget({
+          ...legacy,
+          aheadOfOrigin: 1,
+          hasRemote: false,
+          isPaseoOwnedWorktree: false,
+        }),
+      ).toEqual({ upstream: "tracked", hasPushRemote: false });
+    });
+
+    it("keeps an old daemon's never-pushed regular branch off Push", () => {
+      const actions = buildGitActions(
+        createInput({
+          hasRemote: true,
+          ...readPushTarget({
+            upstreamState: undefined,
+            pushRemote: undefined,
+            aheadOfOrigin: null,
+            hasRemote: true,
+            isPaseoOwnedWorktree: false,
+          }),
+          isOnBaseBranch: false,
+          aheadCount: 1,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+          githubFeaturesEnabled: false,
+          shipDefault: "merge",
+        }),
+      );
+      const pushAction = pushActionOf(actions);
+
+      expect(actions.primary).toMatchObject({ id: "merge-branch" });
+      expect(pushAction?.unavailableMessage).toBe(
+        "Push isn't available because there is nothing new to send",
+      );
     });
   });
 

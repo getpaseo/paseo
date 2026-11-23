@@ -41,6 +41,8 @@ function createFacts(cwd: string): CheckoutSnapshotFacts {
     comparisonBaseRef: null,
     branchRemoteName: null,
     branchMergeRef: null,
+    upstreamStatus: { state: "none" },
+    pushRemoteName: null,
     pullRequestLookupTarget: { headRef: "main" },
   };
 }

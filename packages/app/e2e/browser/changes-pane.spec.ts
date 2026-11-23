@@ -471,6 +471,47 @@ test("All changes combines committed and pending edits and preserves an unfinish
   });
 });
 
+test("Changes offers Push for a branch that was never pushed and the push sets its upstream", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await test.step("committing the edit makes Push the primary action", async () => {
+    await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+    commitAllWithGit(workspace.repoPath, "Feature work");
+    await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+  await test.step("Push sends the branch and sets its upstream", async () => {
+    await primary.click();
+    await expect
+      .poll(() => remoteBranchHead(workspace, "feature"), { timeout: 30_000 })
+      .toBe(localHead(workspace));
+    expect(branchUpstream(workspace)).toBe("origin/feature");
+    await expect(primary).not.toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+});
+
+test("Changes offers Push to the tracked remote when it is not named origin", async ({ page }) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["remote", "rename", "origin", "upstream"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+  commitAllWithGit(workspace.repoPath, "Main work");
+  await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+  await primary.click();
+  await expect
+    .poll(() => remoteBranchHead(workspace, "main"), { timeout: 30_000 })
+    .toBe(localHead(workspace));
+  expect(branchUpstream(workspace)).toBe("upstream/main");
+});
+
 test("Changes selects exact local and remote bases and retains the selection after reload", async ({
   page,
 }, testInfo) => {
@@ -2120,6 +2161,66 @@ async function createWorkspaceWithMountedTabDiff(
     throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repo.path}`);
   }
   return { id: createdWorkspace.workspace.id, repoPath: repo.path };
+}
+
+interface RemoteWorkspace extends DirtyWorkspace {
+  remotePath: string;
+}
+
+// A regular checkout with a local bare remote and one uncommitted edit.
+async function createWorkspaceWithRemote(
+  prepare: (repoPath: string) => void,
+): Promise<RemoteWorkspace> {
+  const repo = await createTempGitRepo("changes-push-", {
+    withRemote: true,
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  // The helper keeps the bare remote inside the checkout; keep it out of the status.
+  await writeFile(path.join(repo.path, ".git/info/exclude"), "remote.git/\n");
+  prepare(repo.path);
+  await writeFile(path.join(repo.path, "tracked.ts"), "export const tracked = 2;\n");
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) {
+    throw new Error(created.error ?? `Failed to create workspace ${repo.path}`);
+  }
+  return {
+    id: created.workspace.id,
+    repoPath: repo.path,
+    remotePath: path.join(repo.path, "remote.git"),
+  };
+}
+
+// The app's Commit asks an agent provider for a message, and this harness has none.
+function commitAllWithGit(repoPath: string, message: string): void {
+  execFileSync("git", ["commit", "-am", message], { cwd: repoPath, stdio: "ignore" });
+}
+
+function localHead(workspace: RemoteWorkspace): string {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  }).trim();
+}
+
+function remoteBranchHead(workspace: RemoteWorkspace, branch: string): string | null {
+  const line = execFileSync("git", ["ls-remote", "--heads", workspace.remotePath, branch], {
+    encoding: "utf8",
+  }).trim();
+  return line ? (line.split("\t")[0] ?? null) : null;
+}
+
+function branchUpstream(workspace: RemoteWorkspace): string {
+  return execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  }).trim();
 }
 
 async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {
