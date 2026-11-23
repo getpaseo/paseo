@@ -40,6 +40,8 @@ test("discovery input rejects an explicit API key", () => {
   expect(() => inputSchema.parse({})).toThrow();
 });
 
+const CONSOLE_STATUS_URL = "https://opencode.ai/console/api/go/status";
+const USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const upstreamResponse = {
   usage: {
     rolling: { status: "ok", percent: 21, resetsAt: "2026-09-26T20:00:00.000Z" },
@@ -56,7 +58,6 @@ test("uses the active v2 Go key instead of a stale legacy key without writing ei
   );
   insert.run("inactive", "opencode-go", JSON.stringify({ type: "key", key: "inactive-key" }), 0, 3);
   insert.run("active", "opencode-go", JSON.stringify({ type: "key", key: "active-key" }), 1, 1);
-  insert.run("zen", "opencode", JSON.stringify({ type: "key", key: "zen-key" }), 1, 4);
   db.close();
   const beforeDatabase = await readFile(databasePath);
   const beforeFile = await readFile(fixturePath);
@@ -175,7 +176,28 @@ test("selects the newest created Go key when no explicit active key exists", asy
 });
 
 test.each([
-  ["other provider", "opencode", 1, JSON.stringify({ type: "key", key: "zen-key" })],
+  ["unrelated provider", "anthropic", 1, JSON.stringify({ type: "key", key: "other-key" })],
+  [
+    "Console sign-in on another server",
+    "opencode",
+    1,
+    JSON.stringify({
+      type: "oauth",
+      access: "staging-token",
+      expires: 0,
+      metadata: { server: "https://staging.example.com/console", orgID: "org_TEST" },
+    }),
+  ],
+  [
+    "Console key on another server",
+    "opencode",
+    1,
+    JSON.stringify({
+      type: "key",
+      key: "staging-key",
+      metadata: { server: "https://staging.example.com/console" },
+    }),
+  ],
   ["Console OAuth", "opencode-go", 1, JSON.stringify({ type: "oauth", access: "oauth-token" })],
   ["malformed credential", "opencode-go", 1, "invalid JSON"],
   ["empty key", "opencode-go", 1, JSON.stringify({ type: "key", key: "" })],
@@ -269,7 +291,8 @@ test("discovers and fetches the default key from read-only auth.json", async () 
     };
     const report = await fetchUsage({ store: "file", path }, fetchApi);
     expect(requests).toEqual([
-      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer fixture-key" },
+      { url: CONSOLE_STATUS_URL, authorization: "Bearer fixture-key" },
+      { url: USAGE_URL, authorization: "Bearer fixture-key" },
     ]);
     expect(report.status).toBe("available");
     expect(report.windows.map((window) => [window.id, window.usedPct, window.resetsAt])).toEqual([
@@ -333,3 +356,231 @@ test("keeps the account identity when OpenCode v2 imports the legacy Go login", 
   // Usage settings are saved per account, so the card keeps its visibility and position.
   expect(migrated!.key).toBe(legacy!.key);
 });
+
+const consoleSignIn = (overrides: { expires?: number; server?: string } = {}) =>
+  JSON.stringify({
+    type: "oauth",
+    methodID: "device",
+    access: "console-token",
+    refresh: "console-refresh",
+    expires: overrides.expires ?? Date.now() + 3_600_000,
+    metadata: {
+      ...(overrides.server ? { server: overrides.server } : {}),
+      orgID: "org_TESTORG123",
+      orgName: "Team",
+    },
+  });
+const goStatus = (
+  access: unknown = {
+    meters: {
+      fiveHour: {
+        resetsAt: "2026-08-12T12:00:00.000Z",
+        limitMicroCents: "1000000000",
+        usedMicroCents: "250000000",
+      },
+      week: {
+        resetsAt: "2026-08-19T12:00:00.000Z",
+        limitMicroCents: "2000000000",
+        usedMicroCents: "800000000",
+      },
+      month: {
+        resetsAt: "2026-09-01T00:00:00.000Z",
+        limitMicroCents: "6000000000",
+        usedMicroCents: "3000000000",
+      },
+    },
+  },
+) => ({ product: "go", access });
+
+interface Request {
+  url: string;
+  authorization: string | null;
+  orgID: string | null;
+  redirect?: RequestRedirect;
+}
+/** Answers each URL and bearer token pair, recording what was asked. */
+function upstream(answers: Record<string, () => Response>) {
+  const requests: Request[] = [];
+  const fetchApi = async (url: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    const authorization = headers.get("Authorization");
+    requests.push({
+      url: String(url),
+      authorization,
+      orgID: headers.get("x-org-id"),
+      ...(init?.redirect ? { redirect: init.redirect } : {}),
+    });
+    const answer = answers[`${String(url)} ${authorization}`];
+    return answer ? answer() : new Response(null, { status: 401 });
+  };
+  return { requests, fetchApi: fetchApi as typeof fetch };
+}
+async function storeWith(rows: Array<[string, string]>) {
+  const db = await database();
+  const insert = db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const [integration, value] of rows) insert.run(integration, integration, value, 1, 1);
+  db.close();
+  await rm(fixturePath);
+  const [account] = await discover(stores(fixturePath));
+  return inputSchema.parse(account!.input);
+}
+
+test("reads Go from the Console sign-in OpenCode serves it with, ahead of the opencode-go key", async () => {
+  const input = await storeWith([
+    ["opencode", consoleSignIn()],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const { requests, fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus()),
+  });
+  const report = await fetchUsage(input, fetchApi);
+  expect(requests).toEqual([
+    {
+      url: CONSOLE_STATUS_URL,
+      authorization: "Bearer console-token",
+      orgID: "org_TESTORG123",
+      redirect: "error",
+    },
+  ]);
+  expect(report.status === "available" && report.windows.map((w) => [w.id, w.usedPct])).toEqual([
+    ["rolling", 25],
+    ["weekly", 40],
+    ["monthly", 50],
+  ]);
+});
+
+test("discovers a Console sign-in on its own, including one saved for the retired host", async () => {
+  const input = await storeWith([
+    ["opencode", consoleSignIn({ server: "https://console.opencode.ai" })],
+  ]);
+  const { fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus()),
+  });
+  expect((await fetchUsage(input, fetchApi)).status).toBe("available");
+});
+
+test.each([
+  ["another product", { product: "zen", access: null }],
+  ["an ended subscription", goStatus(null)],
+])("falls back to the opencode-go key when the sign-in's workspace has %s", async (_, body) => {
+  const input = await storeWith([
+    ["opencode", consoleSignIn()],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const { fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(body),
+    [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
+  });
+  const report = await fetchUsage(input, fetchApi);
+  expect(report.status === "available" && report.windows.map((w) => w.usedPct)).toEqual([
+    21, 42, 100,
+  ]);
+});
+
+test("reports the absent subscription for a Console sign-in without Go", async () => {
+  const input = await storeWith([["opencode", consoleSignIn()]]);
+  const { fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus(null)),
+  });
+  expect(await fetchUsage(input, fetchApi)).toEqual({
+    status: "unavailable",
+    problem: { kind: "no_quota", detail: "No active OpenCode Go subscription" },
+  });
+});
+
+test("reports an expired sign-in without a request, and keeps it over a rejected fallback key", async () => {
+  const expires = Date.now() - 1000;
+  const alone = await storeWith([["opencode", consoleSignIn({ expires })]]);
+  const { requests, fetchApi } = upstream({});
+  const expired = {
+    status: "unavailable",
+    problem: {
+      kind: "expired",
+      expiresAt: new Date(expires).toISOString(),
+      refreshedBy: "opencode",
+    },
+  };
+  expect(await fetchUsage(alone, fetchApi)).toEqual(expired);
+  expect(requests).toEqual([]);
+  await rm(join(fixtureDirectory, "opencode.db"));
+  await writeFile(fixturePath, "{}");
+  const withKey = await storeWith([
+    ["opencode", consoleSignIn({ expires })],
+    ["opencode-go", JSON.stringify({ type: "key", key: "expired-go-key" })],
+  ]);
+  expect(await fetchUsage(withKey, fetchApi)).toEqual(expired);
+});
+
+test("reads Go with a key on the opencode integration and falls back when its workspace lacks Go", async () => {
+  const input = await storeWith([
+    ["opencode", JSON.stringify({ type: "key", key: "workspace-key" })],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const served = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer workspace-key`]: () => Response.json(goStatus()),
+  });
+  const report = await fetchUsage(input, served.fetchApi);
+  expect(report.status).toBe("available");
+  expect(served.requests.map((request) => [request.authorization, request.orgID])).toEqual([
+    ["Bearer workspace-key", null],
+  ]);
+  const refused = upstream({
+    [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 403 }),
+    [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
+  });
+  expect((await fetchUsage(input, refused.fetchApi)).status).toBe("available");
+  expect(refused.requests.at(-1)).toMatchObject({ url: USAGE_URL, authorization: "Bearer go-key" });
+});
+
+test("reports a key on the opencode integration without Go as the absent subscription", async () => {
+  const input = await storeWith([["opencode", JSON.stringify({ type: "key", key: "zen-key" })]]);
+  const { fetchApi } = upstream({
+    [`${USAGE_URL} Bearer zen-key`]: () => new Response(null, { status: 403 }),
+  });
+  expect(await fetchUsage(input, fetchApi)).toEqual({
+    status: "unavailable",
+    problem: { kind: "no_quota", detail: "No active OpenCode Go subscription" },
+  });
+});
+
+test("keeps the card on the opencode key through a temporary failure", async () => {
+  const input = await storeWith([
+    ["opencode", JSON.stringify({ type: "key", key: "workspace-key" })],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const { requests, fetchApi } = upstream({
+    [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 503 }),
+  });
+  await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
+  expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
+});
+
+test("keeps the card on the Console sign-in through a temporary failure", async () => {
+  const input = await storeWith([
+    ["opencode", consoleSignIn()],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const { requests, fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => new Response(null, { status: 503 }),
+    [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
+  });
+  await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
+  expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
+});
+
+test("reads a key's usage within the refresh deadline when the Console does not answer", async () => {
+  const fetchApi = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url) === USAGE_URL) return Response.json(upstreamResponse);
+    // The Console holds the request open until the caller gives up on it.
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+  }) as typeof fetch;
+  const started = Date.now();
+  const report = await fetchUsage({ store: "file", path: fixturePath }, fetchApi);
+  expect(report.status).toBe("available");
+  // The daemon gives a usage refresh 20 seconds, and the usage API keeps 15 of them.
+  expect(Date.now() - started).toBeLessThan(5_000);
+}, 20_000);
