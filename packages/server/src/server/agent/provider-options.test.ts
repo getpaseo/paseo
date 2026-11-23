@@ -42,6 +42,16 @@ describe("provider-owned option schemas", () => {
     });
   });
 
+  test("accepts Codex feature switches that remove the shell, app connectors and plugins", () => {
+    const options = { features: { shell_tool: false, apps: false, plugins: false } };
+    expect(validateProviderOptions("codex", CodexProviderOptionsSchema, options)).toEqual(options);
+    expect(() =>
+      validateProviderOptions("codex", CodexProviderOptionsSchema, {
+        features: { shell_tool: "off" },
+      }),
+    ).toThrow("providerOptions.features.shell_tool");
+  });
+
   test("reports the exact invalid Codex option path", () => {
     expect(() =>
       validateProviderOptions("codex", CodexProviderOptionsSchema, {

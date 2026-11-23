@@ -56,6 +56,10 @@ export const CodexProviderOptionsSchema = z
       .object({
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
         multi_agent_v2: z.boolean().optional(),
+        // Off removes the tool from the session: no shell, no app connectors, no plugins.
+        shell_tool: z.boolean().optional(),
+        apps: z.boolean().optional(),
+        plugins: z.boolean().optional(),
       })
       .strict()
       .optional(),
