@@ -83,9 +83,10 @@ function AdmonitionRenderer({
     fontSize: blockquote.fontSize,
     lineHeight: 1.2,
   };
+  // The data attributes let a copy serializer write `> [!TYPE]` instead of the title.
   return (
-    <div className={ENRM_ADMONITION_CLASS} style={boxStyle}>
-      <div style={headerStyle}>
+    <div className={ENRM_ADMONITION_CLASS} style={boxStyle} data-enrm-admonition-type={type}>
+      <div style={headerStyle} data-enrm-admonition-title="">
         <svg
           width={iconSize}
           height={iconSize}

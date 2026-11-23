@@ -1076,6 +1076,17 @@ describe("quote copy", () => {
     expect(within(rendered).queryByRole("button", { name: "Copy quote" })).toBeNull();
   });
 
+  it("copies a nested admonition as its callout source", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe("Before\n\n> [!WARNING]\n> Do not deploy.\n\nAfter");
+  });
+
   it("copies a rendered Mermaid diagram as its fence", () => {
     const quote = document.createElement("blockquote");
     quote.innerHTML = `<p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid"><svg aria-label="diagram"></svg></div><p>After</p>`;

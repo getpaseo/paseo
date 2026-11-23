@@ -90,11 +90,14 @@ function AdmonitionRenderer({
     fontSize: blockquote.fontSize,
     lineHeight: 1.2
   };
+  // The data attributes let a copy serializer write `> [!TYPE]` instead of the title.
   return /*#__PURE__*/_jsxs("div", {
     className: ENRM_ADMONITION_CLASS,
     style: boxStyle,
+    "data-enrm-admonition-type": type,
     children: [/*#__PURE__*/_jsxs("div", {
       style: headerStyle,
+      "data-enrm-admonition-title": "",
       children: [/*#__PURE__*/_jsx("svg", {
         width: iconSize,
         height: iconSize,

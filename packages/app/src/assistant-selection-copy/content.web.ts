@@ -6,6 +6,8 @@ import {
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
+  MARKDOWN_ADMONITION_TITLE_ATTRIBUTE,
+  MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,
   MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
@@ -92,6 +94,17 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
   } else {
     turndown.escape = (text) => text;
   }
+  // An admonition copies as its `> [!TYPE]` source.
+  turndown.addRule("admonition", {
+    filter: (node) => node.hasAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE),
+    replacement: (content, node) => {
+      const type = (node as Element)
+        .getAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE)!
+        .toUpperCase();
+      const body = content.replace(/^\n+|\n+$/g, "");
+      return `\n\n${`[!${type}]\n${body}`.replace(/^/gm, "> ")}\n\n`;
+    },
+  });
   turndown.addRule("gfmStrikethrough", {
     filter: ["del", "s"],
     replacement: (content) => `~~${content}~~`,
@@ -717,6 +730,8 @@ function restoreMarkdownElements(container: HTMLElement): void {
     element.replaceWith(...element.childNodes);
   }
 
+  restoreAdmonitions(container);
+
   const presentational = Array.from(container.querySelectorAll("div, span"));
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
@@ -737,6 +752,26 @@ function numberOrderedListItems(list: Element, start: number): void {
       child.setAttribute("value", String(start + index));
     }
   });
+}
+
+/**
+ * The library renders an admonition as a box with a generated title. Keep it a quote
+ * with its type, so it copies as its callout source rather than as the title's prose.
+ */
+function restoreAdmonitions(container: HTMLElement): void {
+  const admonitions = Array.from(
+    container.querySelectorAll(`[${MARKDOWN_ADMONITION_TYPE_ATTRIBUTE}]`),
+  );
+  for (const admonition of admonitions.toReversed()) {
+    admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`)?.remove();
+    const quote = document.createElement("blockquote");
+    quote.setAttribute(
+      MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,
+      admonition.getAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE) ?? "note",
+    );
+    quote.append(...admonition.childNodes);
+    admonition.replaceWith(quote);
+  }
 }
 
 function unwrapIncompleteTables(container: HTMLElement): void {
