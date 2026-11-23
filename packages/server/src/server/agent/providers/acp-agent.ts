@@ -560,6 +560,25 @@ export interface SpawnedACPProcess {
   stderrChunks?: string[];
 }
 
+async function runACPSessionRequest<T>(
+  { connection, initialize }: Pick<SpawnedACPProcess, "connection" | "initialize">,
+  request: (connection: ClientSideConnection) => Promise<T>,
+): Promise<T> {
+  try {
+    return await request(connection).catch(async (error: unknown) => {
+      const methods = initialize.authMethods;
+      if (!isACPError(error) || error.code !== -32000 || methods?.length !== 1) throw error;
+      const [method] = methods;
+      // Only agent-managed methods use the authenticate RPC. Other flows require client UI.
+      if ("type" in method) throw error;
+      await connection.authenticate({ methodId: method.id });
+      return request(connection);
+    });
+  } catch (error) {
+    throw toACPRequestError(error);
+  }
+}
+
 type UninitializedACPProcess = Omit<SpawnedACPProcess, "initialize"> & {
   initialize?: InitializeResponse;
 };
@@ -1267,8 +1286,8 @@ export class ACPAgentClient implements AgentClient {
         ),
       );
       probe = initializedProbe;
-      probeSessionPromise = this.runACPRequest(() =>
-        initializedProbe.connection.newSession({
+      probeSessionPromise = runACPSessionRequest(initializedProbe, (connection) =>
+        connection.newSession({
           cwd,
           mcpServers: [],
         }),
@@ -1328,8 +1347,8 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV);
     let probeSessionId: string | null = null;
     try {
-      const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
+      const response = await runACPSessionRequest(probe, (connection) =>
+        connection.newSession({
           cwd: config.cwd,
           mcpServers: [],
         }),
@@ -1373,8 +1392,8 @@ export class ACPAgentClient implements AgentClient {
       let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
-        const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+        const page: ListSessionsResponse = await runACPSessionRequest(probe, (connection) =>
+          connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
         );
         for (const session of page.sessions) {
           if (scanned >= scanLimit || sessions.length >= resultLimit) break;
@@ -1443,8 +1462,8 @@ export class ACPAgentClient implements AgentClient {
     history.begin(session.sessionId);
     try {
       await withTimeout(
-        this.runACPRequest(() =>
-          probe.connection.loadSession({
+        runACPSessionRequest(probe, (connection) =>
+          connection.loadSession({
             sessionId: session.sessionId,
             cwd: session.cwd,
             mcpServers: [],
@@ -1728,11 +1747,13 @@ export class ACPAgentClient implements AgentClient {
       const sessionStartedAt = Date.now();
       try {
         const response = await withTimeout(
-          this.runACPRequest(() =>
-            activeTransport.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
+          runACPSessionRequest(
+            { connection: activeTransport.connection, initialize },
+            (connection) =>
+              connection.newSession({
+                cwd,
+                mcpServers: [],
+              }),
           ),
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
@@ -1972,8 +1993,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-      const response = await this.runACPRequest(() =>
-        this.connection!.newSession({
+      const response = await runACPSessionRequest(spawned, (connection) =>
+        connection.newSession({
           cwd: this.config.cwd,
           mcpServers: this.acpMcpServers(),
         }),
@@ -2014,8 +2035,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
         this.replayingHistory = true;
-        const response = await this.runACPRequest(() =>
-          this.connection!.loadSession({
+        const response = await runACPSessionRequest(spawned, (connection) =>
+          connection.loadSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
             mcpServers: this.acpMcpServers(),
@@ -2026,8 +2047,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.historyPending = this.persistedHistory.length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
-        const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
+        const response = await runACPSessionRequest(spawned, (connection) =>
+          connection.unstable_resumeSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
             mcpServers: this.acpMcpServers(),

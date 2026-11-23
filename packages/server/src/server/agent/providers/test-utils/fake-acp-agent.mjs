@@ -7,10 +7,11 @@
 //            by a config_option_update after the write is answered
 //   adds:    { [configId]: option[] } writes that make more selects appear, announced the same way
 import { Readable, Writable } from "node:stream";
-import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import { AgentSideConnection, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
 
 const scenario = JSON.parse(process.argv[2] ?? "{}");
 let options = scenario.options ?? [];
+let authenticated = !scenario.authMethodId;
 
 function set(id, value) {
   options = options.map((option) =>
@@ -22,9 +23,14 @@ const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(proce
 export const connection = new AgentSideConnection(
   (agentConnection) => ({
     async initialize() {
-      return { protocolVersion: 1, agentCapabilities: {} };
+      return {
+        protocolVersion: 1,
+        agentCapabilities: {},
+        authMethods: scenario.authMethodId ? [{ id: scenario.authMethodId, name: "Sign in" }] : [],
+      };
     },
     async newSession() {
+      if (!authenticated) throw RequestError.authRequired();
       return { sessionId: "session-1", modes: null, models: null, configOptions: options };
     },
     async setSessionConfigOption({ sessionId, configId, value }) {
@@ -48,7 +54,9 @@ export const connection = new AgentSideConnection(
       }
       return { configOptions: options };
     },
-    async authenticate() {
+    async authenticate({ methodId }) {
+      if (methodId !== scenario.authMethodId) throw RequestError.invalidParams();
+      authenticated = true;
       return {};
     },
     async prompt() {

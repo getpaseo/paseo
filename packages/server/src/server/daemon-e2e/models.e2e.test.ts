@@ -520,6 +520,54 @@ test("a provider update outlives the client that started it and a new client rea
   }
 }, 60000);
 
+test("discovers models and opens a session when an ACP agent requires authentication", async () => {
+  const model = "fixture-model";
+  const daemon = await createTestPaseoDaemon({
+    agentClients: {},
+    mcpEnabled: false,
+    providerOverrides: {
+      grok: {
+        extends: "acp",
+        label: "Grok",
+        command: [
+          process.execPath,
+          path.resolve(import.meta.dirname, "../agent/providers/test-utils/fake-acp-agent.mjs"),
+          JSON.stringify({
+            authMethodId: "fixture-login",
+            options: [
+              {
+                id: "model",
+                name: "Model",
+                category: "model",
+                type: "select",
+                currentValue: model,
+                options: [{ value: model, name: "Fixture model" }],
+              },
+            ],
+          }),
+        ],
+      },
+    },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.16.2",
+  });
+  try {
+    await client.connect();
+    const catalog = await client.listProviderModels("grok", { cwd: daemon.paseoHome });
+    expect(catalog.error).toBeNull();
+    expect(catalog.models.map((entry) => entry.id)).toEqual([model]);
+
+    const agent = await client.createAgent({ provider: "grok", cwd: daemon.paseoHome, model });
+    await client.sendMessage(agent.id, "Hello");
+    expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
+
 test("bundled goose lists configured providers and switches models across providers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-goose-models-"));
   const daemon = await createTestPaseoDaemon({
