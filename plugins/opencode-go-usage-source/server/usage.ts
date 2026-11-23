@@ -19,20 +19,22 @@ const responseSchema = z.object({
 });
 
 export async function discover(paths = defaultStorePaths()): Promise<UsageAccount[]> {
+  // One OpenCode data directory holds one Go login, whichever store it lives in. Usage settings
+  // are saved per account, so a login OpenCode v2 imports keeps the identity it had in auth.json.
+  const key = hashAccountKey(paths.file);
   const login = readDatabaseLogin(paths.database);
   if (login) {
     return login.key
       ? [
           {
-            key: hashAccountKey(paths.database),
+            key,
             input: { store: "database", path: paths.database },
           },
         ]
       : [];
   }
-  const key = await readFileKey(paths.file);
-  return key
-    ? [{ key: hashAccountKey(paths.file), input: { store: "file", path: paths.file } }]
+  return (await readFileKey(paths.file))
+    ? [{ key, input: { store: "file", path: paths.file } }]
     : [];
 }
 

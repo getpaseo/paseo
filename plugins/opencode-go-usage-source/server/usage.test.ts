@@ -319,3 +319,17 @@ test.each(["missing file", "unrelated file"])("discovers no accounts for %s", as
   if (scenario === "unrelated file") await writeFile(path, "{}");
   expect(await discover(stores(path))).toEqual([]);
 });
+
+test("keeps the account identity when OpenCode v2 imports the legacy Go login", async () => {
+  const paths = stores(fixturePath);
+  const [legacy] = await discover(paths);
+  const db = await database();
+  db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  ).run("imported", "opencode-go", JSON.stringify({ type: "key", key: "fixture-secret" }), null, 1);
+  db.close();
+  const [migrated] = await discover(paths);
+  expect(migrated!.input).toEqual({ store: "database", path: paths.database });
+  // Usage settings are saved per account, so the card keeps its visibility and position.
+  expect(migrated!.key).toBe(legacy!.key);
+});
