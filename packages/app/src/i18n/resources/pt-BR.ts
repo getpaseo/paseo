@@ -2369,7 +2369,12 @@ export const ptBR: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "Possíveis vínculos de projetos",
+        matches: "{{count}} correspondências verificadas para revisar",
+        matches_one: "{{count}} correspondência verificada para revisar",
+        matches_other: "{{count}} correspondências verificadas para revisar",
+        savedLinks: "Vínculos salvos neste dispositivo",
+        linkAction: "Vincular projetos…",
+        manageAction: "Vínculos de projetos…",
         hint: "Revise as correspondências e gerencie os vínculos neste dispositivo.",
       },
       sheet: {

@@ -2384,7 +2384,12 @@ export const es: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "Posibles enlaces de proyectos",
+        matches: "{{count}} coincidencias verificadas para revisar",
+        matches_one: "{{count}} coincidencia verificada para revisar",
+        matches_other: "{{count}} coincidencias verificadas para revisar",
+        savedLinks: "Vínculos guardados en este dispositivo",
+        linkAction: "Vincular proyectos…",
+        manageAction: "Vínculos de proyectos…",
         hint: "Revisa coincidencias y gestiona los vínculos en este dispositivo.",
       },
       sheet: {

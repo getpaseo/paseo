@@ -2371,7 +2371,14 @@ export const ar: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "روابط محتملة للمشاريع",
+        matches: "{{count}} تطابق مؤكّد للمراجعة",
+        matches_one: "{{count}} تطابق مؤكّد للمراجعة",
+        matches_other: "{{count}} تطابق مؤكّد للمراجعة",
+        savedLinks: "روابط محفوظة على هذا الجهاز",
+        linkAction: "ربط المشاريع…",
+        manageAction: "روابط المشاريع…",
+        matches_two: "{{count}} من التطابقات المؤكّدة للمراجعة",
+        matches_few: "{{count}} تطابقات مؤكّدة للمراجعة",
         hint: "راجع المشاريع المطابقة وأدر روابطها على هذا الجهاز.",
       },
       sheet: {

@@ -53,6 +53,21 @@ export interface ProjectLinkSuggestion {
   placements: ProjectLinkPlacement[];
 }
 
+export function scopeProjectLinks(
+  input: {
+    suggestions?: readonly ProjectLinkSuggestion[];
+    links: readonly LocalProjectLink[];
+  },
+  includes: (placement: ProjectLinkPlacementRef) => boolean,
+) {
+  return {
+    suggestions: (input.suggestions ?? []).filter((suggestion) =>
+      suggestion.placements.some(includes),
+    ),
+    links: input.links.filter((link) => link.members.some(includes)),
+  };
+}
+
 export type ProjectLinkGroupingOverride = { kind: "linked"; linkId: string } | { kind: "blocked" };
 
 export function projectLinkPlacementKey(placement: ProjectLinkPlacementRef): string {

@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { SettingsDetailRow } from "@/components/settings/detail-row";
 import { ProjectLinksSheet } from "@/components/project-links-sheet";
 import {
+  scopeProjectLinks,
   type ProjectLinkPlacement,
   type ProjectLinkPlacementRef,
   type ProjectLinkSuggestion,
@@ -32,20 +33,24 @@ export function ProjectLinksEntry({
   const matchesScope = (placement: ProjectLinkPlacementRef) =>
     placement.serverId === serverId &&
     (projectId === undefined || placement.projectId === projectId);
-  const scopedSuggestions = suggestions.filter((suggestion) =>
-    suggestion.placements.some(matchesScope),
+  const { suggestions: scopedSuggestions, links: scopedLinks } = scopeProjectLinks(
+    { suggestions, links },
+    matchesScope,
   );
-  const scopedLinks = links.filter((link) => link.members.some(matchesScope));
+  const hint =
+    scopedSuggestions.length > 0
+      ? t("settings.projectLinks.entry.matches", { count: scopedSuggestions.length })
+      : t(
+          scopedLinks.length > 0
+            ? "settings.projectLinks.entry.savedLinks"
+            : "settings.projectLinks.entry.hint",
+        );
 
   return (
     <View style={settingsStyles.card}>
       <SettingsDetailRow
         label={t("settings.projectLinks.sheet.title")}
-        hint={t(
-          scopedSuggestions.length > 0
-            ? "settings.projectLinks.entry.matches"
-            : "settings.projectLinks.entry.hint",
-        )}
+        hint={hint}
         onPress={open}
         testID="project-links-entry"
       />

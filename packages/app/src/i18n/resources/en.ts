@@ -2363,7 +2363,12 @@ export const en = {
     },
     projectLinks: {
       entry: {
-        matches: "Possible project links",
+        matches: "{{count}} verified matches to review",
+        matches_one: "{{count}} verified match to review",
+        matches_other: "{{count}} verified matches to review",
+        savedLinks: "Links saved on this device",
+        linkAction: "Link projects…",
+        manageAction: "Project links…",
         hint: "Review matches and manage links on this device.",
       },
       sheet: {

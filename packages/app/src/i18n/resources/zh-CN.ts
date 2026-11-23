@@ -2312,7 +2312,12 @@ export const zhCN: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "可能的项目链接",
+        matches: "有 {{count}} 个已验证的匹配项待查看",
+        matches_one: "有 {{count}} 个已验证的匹配项待查看",
+        matches_other: "有 {{count}} 个已验证的匹配项待查看",
+        savedLinks: "关联已保存在此设备上",
+        linkAction: "关联项目…",
+        manageAction: "项目关联…",
         hint: "查看匹配的项目并管理此设备上的关联。",
       },
       sheet: {

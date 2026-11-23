@@ -2346,7 +2346,12 @@ export const ko: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "연결할 수 있는 프로젝트",
+        matches: "검토할 확인된 일치 항목 {{count}}개",
+        matches_one: "검토할 확인된 일치 항목 {{count}}개",
+        matches_other: "검토할 확인된 일치 항목 {{count}}개",
+        savedLinks: "이 기기에 저장된 링크",
+        linkAction: "프로젝트 연결…",
+        manageAction: "프로젝트 링크…",
         hint: "일치하는 프로젝트를 검토하고 이 기기에서 링크를 관리합니다.",
       },
       sheet: {

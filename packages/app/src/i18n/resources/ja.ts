@@ -2358,7 +2358,12 @@ export const ja: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "リンクできる可能性があるプロジェクト",
+        matches: "確認済みの候補 {{count}} 件",
+        matches_one: "確認済みの候補 {{count}} 件",
+        matches_other: "確認済みの候補 {{count}} 件",
+        savedLinks: "このデバイスに保存済みのリンク",
+        linkAction: "プロジェクトをリンク…",
+        manageAction: "プロジェクトのリンク…",
         hint: "一致するプロジェクトを確認し、このデバイス上のリンクを管理します。",
       },
       sheet: {

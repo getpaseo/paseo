@@ -25,6 +25,10 @@ import { waitForConnectedHost } from "../support/helpers/hosts";
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { selectSettingsHost } from "../support/helpers/settings";
+import {
+  expectMobileAgentSidebarVisible,
+  openMobileAgentSidebar,
+} from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
@@ -97,19 +101,21 @@ async function removePersistedProjectKeys(host: IsolatedHostDaemon): Promise<voi
 }
 
 const test = base.extend<{
+  crossHostSecondaryRemote: string;
   crossHostProject: CrossHostProjectScenario;
   reconciledCrossHostProject: ProjectDirectoryScenario;
   rootAndSubdirectoryProjects: ProjectDirectoryScenario;
   crossHostSubdirectoryProject: ProjectDirectoryScenario;
   sameHostClones: ProjectDirectoryScenario;
 }>({
-  crossHostProject: async ({ page: _page }, provide) => {
+  crossHostSecondaryRemote: [SHARED_REMOTE_URL, { option: true }],
+  crossHostProject: async ({ page: _page, crossHostSecondaryRemote }, provide) => {
     const secondaryHost = await startIsolatedHostDaemon("project-grouping-secondary");
     const primaryRepo = await createTempGitRepo("grouped-primary-", {
       originUrl: SHARED_REMOTE_URL,
     });
     const secondaryRepo = await createTempGitRepo("grouped-secondary-", {
-      originUrl: SHARED_REMOTE_URL,
+      originUrl: crossHostSecondaryRemote,
     });
     const primaryClient = await connectSeedClient();
     const secondaryClient = await connectSeedClient({ port: secondaryHost.port });
@@ -413,6 +419,50 @@ test.describe("Sidebar project grouping", () => {
     await expectProjectContainsWorkspaces(page, {
       projectName: GROUPED_PROJECT_NAME,
       workspaceNames: ["Primary workspace", "Secondary workspace"],
+    });
+  });
+
+  test.describe("Project links in the sidebar menu", () => {
+    test.use({
+      crossHostSecondaryRemote: "ssh://git@ssh.github.com:443/paseo-e2e/grouped-project.git",
+    });
+
+    test("links from the desktop context menu and manages the link from the compact menu", async ({
+      page,
+      crossHostProject,
+    }) => {
+      await openScenario(page, crossHostProject);
+      await openGroupedProjectWorkspace(page, GROUPED_PROJECT_NAME, "Primary workspace");
+      const workspaceUrl = page.url();
+      const primaryGroup = page
+        .getByRole("group", { name: GROUPED_PROJECT_NAME, exact: true })
+        .filter({ hasText: "Primary workspace" });
+      const projectRow = primaryGroup.locator('[data-testid^="sidebar-project-row-"]');
+      await projectRow.click({ button: "right" });
+      await page.getByText("Link projects…", { exact: true }).click();
+
+      const sheet = page.getByTestId("project-links-sheet");
+      await expect(sheet).toContainText("Verified matches");
+      await sheet.getByRole("button", { name: "Link 2 projects", exact: true }).click();
+      await expect(sheet).toContainText("Linked projects");
+      await expect(page).toHaveURL(workspaceUrl);
+      await sheet.getByTestId("project-links-close").click();
+      await expectProjectContainsWorkspaces(page, {
+        projectName: GROUPED_PROJECT_NAME,
+        workspaceNames: ["Primary workspace", "Secondary workspace"],
+      });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+      await primaryGroup.locator('[data-testid^="sidebar-project-kebab-"]').click();
+      await page.getByText("Project links…", { exact: true }).click();
+      await expect(page.getByText("Linked projects", { exact: true })).toBeVisible();
+      await page
+        .getByTestId(projectUnlinkTestId(getServerId(), crossHostProject.primaryProjectId))
+        .click();
+      await expect(page.getByText("Verified matches", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(workspaceUrl);
     });
   });
 

@@ -195,6 +195,7 @@ async function openProjectSettingsFromSidebar(page: Page, projectId: string): Pr
 
   const openSettingsItem = page.getByTestId(`sidebar-project-menu-open-settings-${projectId}`);
   await expect(openSettingsItem).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId(`sidebar-project-menu-project-links-${projectId}`)).toHaveCount(0);
   await openSettingsItem.click();
 }
 

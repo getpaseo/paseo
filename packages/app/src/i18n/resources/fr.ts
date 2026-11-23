@@ -2385,7 +2385,12 @@ export const fr: TranslationResources = {
     },
     projectLinks: {
       entry: {
-        matches: "Liens de projets possibles",
+        matches: "{{count}} correspondances vérifiées à examiner",
+        matches_one: "{{count}} correspondance vérifiée à examiner",
+        matches_other: "{{count}} correspondances vérifiées à examiner",
+        savedLinks: "Liens enregistrés sur cet appareil",
+        linkAction: "Associer des projets…",
+        manageAction: "Liens entre projets…",
         hint: "Passez en revue les correspondances et gérez les liens sur cet appareil.",
       },
       sheet: {
