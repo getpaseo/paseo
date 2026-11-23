@@ -235,14 +235,29 @@ async function resolveTypedParent(input: SearchInput): Promise<WalkStart | null>
   const info = await stat(resolvedPath).catch(() => null);
   if (!info?.isDirectory()) return null;
   return {
-    visiblePath: withResolvedSpelling(visiblePath, resolvedPath),
+    visiblePath: await withResolvedSpelling(visiblePath, resolvedPath),
     resolvedPath,
   };
 }
 
-function withResolvedSpelling(visiblePath: string, resolvedPath: string): string {
-  // Keep the visible name when realpath follows a differently named symlink.
-  return visiblePath.toLowerCase() === resolvedPath.toLowerCase() ? resolvedPath : visiblePath;
+async function withResolvedSpelling(visiblePath: string, resolvedPath: string): Promise<string> {
+  if (visiblePath.toLowerCase() !== resolvedPath.toLowerCase()) return visiblePath;
+
+  // On a case-sensitive volume, a symlink can differ from its target only by case.
+  let visible = visiblePath;
+  let resolved = resolvedPath;
+  while (visible !== resolved && visible !== path.parse(visible).root) {
+    if (path.basename(visible) !== path.basename(resolved)) {
+      const entryPath = visible;
+      const entry = await sharedFilesystemCall(`lstat:${entryPath}`, () =>
+        fs.lstat(entryPath),
+      ).catch(() => null);
+      if (!entry || entry.isSymbolicLink()) return visiblePath;
+    }
+    visible = path.dirname(visible);
+    resolved = path.dirname(resolved);
+  }
+  return resolvedPath;
 }
 
 async function resolveExistingPaths(paths: readonly string[]): Promise<Set<string>> {
@@ -305,7 +320,7 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
     (kind === "file" && !input.includeFiles)
   )
     return null;
-  const entryPath = withResolvedSpelling(visiblePath, resolvedPath);
+  const entryPath = await withResolvedSpelling(visiblePath, resolvedPath);
   return formatEntry({ path: entryPath, kind }, input.root, input.pathFormat);
 }
 
@@ -331,7 +346,7 @@ async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
   const parent = await realpath(typedParent).catch(() => null);
   if (!parent || !isPathInsideRoot(input.root, parent)) return [];
   if (isGitIgnoredPath(parent, input)) return [];
-  const visibleParent = withResolvedSpelling(typedParent, parent);
+  const visibleParent = await withResolvedSpelling(typedParent, parent);
   // Browsing inside an excluded path is explicit: the caller typed it, so list what is there.
   const discoveryInput = isInsideExcludedPath(parent, input)
     ? { ...input, excludedDiscoveryPaths: new Set<string>() }
