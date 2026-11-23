@@ -34,6 +34,9 @@ const workspaceIds = [
   "desktop-browser-evict-three",
 ];
 const timeoutMs = 90_000;
+// A cold Metro bundle must finish before the renderer can show its first workspace. With an
+// empty Metro cache on Linux/Xvfb, the workspace row took 141.8 s, 132.3 s of it in Metro.
+const desktopStartupTimeoutMs = 240_000;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -205,7 +208,7 @@ async function settleDesktopStartup(page) {
   // The plugin-links regression adds a second host with the same workspace IDs.
   await expect(
     page.getByTestId(/^sidebar-workspace-row-.*:desktop-browser-original$/).first(),
-  ).toBeVisible({ timeout: timeoutMs });
+  ).toBeVisible({ timeout: desktopStartupTimeoutMs });
   // The dev launcher supplies its package directory as an open-project request.
   // Before the local host connects, that request opens the connection prompt.
   // Finish startup before exercising the unrelated Settings/browser workflows.
@@ -1323,6 +1326,14 @@ async function runRegression({
     "Element annotation comment box did not paint or receive input above the browser surface",
   );
 
+  // Close the launcher's only tab to undo this regression's right split.
+  const paneRails = originalDeck.getByTestId("workspace-tabs-row").filter({ visible: true });
+  await paneRails
+    .last()
+    .getByTestId(/^workspace-tab-tab_/)
+    .click({ button: "middle", timeout: timeoutMs });
+  await expect(paneRails).toHaveCount(1);
+
   if (failures.length > 0) {
     throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);
   }
@@ -1492,7 +1503,14 @@ async function main() {
                 timeout: 30000,
               })
               .toBe(true);
-            return (await launchDesktop()).page;
+            const { page: reopened } = await launchDesktop();
+            // With the plugin fixture's second host, the launcher's open-project request
+            // can show a host chooser over the restored workspace.
+            const chooser = reopened.getByTestId("host-chooser");
+            await reopened.addLocatorHandler(chooser, () => reopened.keyboard.press("Escape"), {
+              times: 1,
+            });
+            return reopened;
           },
         });
       } finally {
