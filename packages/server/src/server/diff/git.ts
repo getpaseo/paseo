@@ -461,7 +461,7 @@ async function readSubmoduleIdentity(
     await lstat(join(submodulePath, ".git"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const recorded = await runGitCommand(["rev-parse", "--verify", "--quiet", `:${path}`], {
+    const recorded = await runGitCommand(["rev-parse", "--verify", "--quiet", `:0:${path}`], {
       ...options,
       acceptExitCodes: [0, 1],
     });
