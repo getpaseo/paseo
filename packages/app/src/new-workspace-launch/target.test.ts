@@ -4,6 +4,7 @@ import {
   BLANK_TERMINAL_PROFILE_ID,
   CHAT_LAUNCH_TARGET,
   isBlankTerminalTarget,
+  rememberedLaunchTarget,
   resolveLaunchProfile,
   resolveLaunchTarget,
   terminalLaunchTarget,
@@ -78,5 +79,21 @@ describe("isBlankTerminalTarget", () => {
     expect(isBlankTerminalTarget(terminalLaunchTarget(BLANK_TERMINAL_PROFILE_ID))).toBe(true);
     expect(isBlankTerminalTarget(terminalLaunchTarget("claude"))).toBe(false);
     expect(isBlankTerminalTarget(CHAT_LAUNCH_TARGET)).toBe(false);
+  });
+});
+
+describe("rememberedLaunchTarget", () => {
+  const persisted = terminalLaunchTarget(BLANK_TERMINAL_PROFILE_ID);
+
+  it("starts on chat when remembering is off, even after a terminal launch", () => {
+    expect(resolveLaunchTarget(rememberedLaunchTarget(false, persisted), profiles)).toEqual(
+      CHAT_LAUNCH_TARGET,
+    );
+  });
+
+  it("reopens on the persisted target when remembering is on", () => {
+    expect(resolveLaunchTarget(rememberedLaunchTarget(true, persisted), profiles)).toEqual(
+      persisted,
+    );
   });
 });

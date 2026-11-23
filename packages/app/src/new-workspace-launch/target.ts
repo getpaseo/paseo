@@ -31,6 +31,17 @@ export function resolveLaunchProfile(
 }
 
 /**
+ * The persisted target, ignored while `rememberLaunchTarget` is off so a new
+ * workspace starts on Chat.
+ */
+export function rememberedLaunchTarget(
+  rememberLaunchTarget: boolean,
+  persisted: LaunchTarget | undefined,
+): LaunchTarget | undefined {
+  return rememberLaunchTarget ? persisted : undefined;
+}
+
+/**
  * Resolves a target against the currently available profiles, falling back to
  * Chat when it names a profile that no longer exists (removed since it was
  * picked or persisted).

@@ -34,7 +34,11 @@ import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
+import {
+  rememberedLaunchTarget,
+  resolveLaunchTarget,
+  type LaunchTarget,
+} from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
@@ -995,14 +999,16 @@ export function NewWorkspaceScreen({
   // reads live from preferences so the async load can't race a frozen
   // initializer. Both go through `resolveLaunchTarget`, so a profile deleted
   // daemon-side falls back to chat rather than leaving a dead selection.
-  // With `rememberLaunchTarget` off, every new workspace starts on Chat, so
-  // Enter never lands in a terminal picked in an earlier window.
   const rememberLaunchTarget = useSettings((settings) => settings.rememberLaunchTarget);
-  const rememberedLaunchTarget = rememberLaunchTarget ? formPreferences.launchTarget : undefined;
   const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
   const launchTarget = useMemo(
-    () => resolveLaunchTarget(manualLaunchTarget ?? rememberedLaunchTarget, terminalProfiles),
-    [manualLaunchTarget, rememberedLaunchTarget, terminalProfiles],
+    () =>
+      resolveLaunchTarget(
+        manualLaunchTarget ??
+          rememberedLaunchTarget(rememberLaunchTarget, formPreferences.launchTarget),
+        terminalProfiles,
+      ),
+    [manualLaunchTarget, rememberLaunchTarget, formPreferences.launchTarget, terminalProfiles],
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
