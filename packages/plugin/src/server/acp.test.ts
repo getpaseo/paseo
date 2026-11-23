@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
@@ -6722,5 +6723,205 @@ describe("deferTurnOnRunningTools", () => {
       capabilities: ["prompt.message"],
     });
     await connection.close();
+  });
+});
+
+describe("ACP tool call rows", () => {
+  function jsonRecord(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> {
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+  }
+
+  function text(value: string) {
+    return [{ type: "content", content: { type: "text", text: value } }];
+  }
+
+  async function toolRows(
+    updates: unknown[],
+    transformers?: Parameters<typeof runAcpProvider>[0]["transformers"],
+  ) {
+    const harness = connectorHarness({ promptUpdates: () => updates });
+    const registration = runAcpProvider({
+      id: "tool-rows-acp",
+      label: "Tool rows ACP",
+      connector: harness.connector,
+      transformers,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Use a tool" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      const rows = events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      for (const row of rows) {
+        expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+      }
+      return rows;
+    } finally {
+      await connection.close();
+    }
+  }
+
+  it.each([
+    {
+      kind: "execute",
+      start: { title: "Run tests", rawInput: { command: "npm", args: ["test"], cwd: "/repo" } },
+      end: { content: text("passed"), rawOutput: { exitCode: 0 } },
+      detail: { type: "shell", command: "npm test", cwd: "/repo", output: "passed", exitCode: 0 },
+    },
+    {
+      kind: "execute",
+      start: { title: "Run tests" },
+      end: { content: text("passed") },
+      detail: { type: "shell", command: "Run tests", output: "passed" },
+    },
+    {
+      kind: "read",
+      start: { title: "Read a.ts", locations: [{ path: "/repo/a.ts" }], rawInput: { offset: 3 } },
+      end: { content: text("const a = 1;") },
+      detail: { type: "read", filePath: "/repo/a.ts", content: "const a = 1;", offset: 3 },
+    },
+    {
+      kind: "search",
+      start: { title: "Search TODO", rawInput: { pattern: "TODO" } },
+      end: { content: text("a.ts:1"), locations: [{ path: "/repo/a.ts" }] },
+      detail: {
+        type: "search",
+        query: "TODO",
+        toolName: "search",
+        content: "a.ts:1",
+        filePaths: ["/repo/a.ts"],
+      },
+    },
+    {
+      kind: "fetch",
+      start: { title: "Fetch example", rawInput: { url: "https://example.com" } },
+      end: { content: text("Example Domain") },
+      detail: { type: "fetch", url: "https://example.com", result: "Example Domain" },
+    },
+    {
+      kind: "delete",
+      start: { title: "Delete a.ts", locations: [{ path: "/repo/a.ts" }] },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", newString: "" },
+    },
+    {
+      kind: "think",
+      start: { title: "Plan" },
+      end: { content: text("First read the tests") },
+      detail: { type: "plain_text", label: "Plan", icon: "brain", text: "First read the tests" },
+    },
+    {
+      kind: "other",
+      start: { title: "Update todos" },
+      end: { content: text("2 open") },
+      detail: { type: "plain_text", label: "Update todos", icon: "wrench", text: "2 open" },
+    },
+    {
+      kind: "other",
+      start: { title: "Custom tool", rawInput: { value: 1 } },
+      end: { content: text("done"), rawOutput: { ok: true } },
+      detail: { type: "unknown", input: { value: 1 }, output: { ok: true } },
+    },
+  ])("presents a completed $kind call as its standard row ($start.title)", async (example) => {
+    const rows = await toolRows([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        kind: example.kind,
+        status: "in_progress",
+        ...example.start,
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "completed",
+        ...example.end,
+      },
+    ]);
+    expect(rows.at(-1)?.detail).toEqual(example.detail);
+  });
+
+  it("gives transformers the call's content and the call as it was last presented", async () => {
+    const commandFromStart: NonNullable<
+      NonNullable<Parameters<typeof runAcpProvider>[0]["transformers"]>[number]["toolCall"]
+    > = (call, { previous }) => {
+      const first = Array.isArray(call.content) ? call.content[0] : undefined;
+      const startText = jsonRecord(jsonRecord(first).content).text;
+      if (typeof startText === "string" && startText.startsWith("$ ")) {
+        return { ...call, input: { command: startText.slice(2) } };
+      }
+      const command = jsonRecord(previous?.input).command;
+      return typeof command === "string" ? { ...call, input: { command } } : call;
+    };
+    const rows = await toolRows(
+      [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "git status + 1 command",
+          kind: "execute",
+          status: "in_progress",
+          content: text("$ git status && git diff"),
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          content: text("clean"),
+        },
+      ],
+      [{ toolCall: commandFromStart }],
+    );
+    expect(rows.map((row) => row.detail)).toEqual([
+      { type: "shell", command: "git status && git diff", output: "$ git status && git diff" },
+      { type: "shell", command: "git status && git diff", output: "clean" },
+    ]);
+  });
+
+  it("keeps a transformer's own detail over the standard row", async () => {
+    const rows = await toolRows(
+      [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: "npm test" },
+        },
+      ],
+      [
+        {
+          toolCall: (call) => ({
+            ...call,
+            detail: { type: "unknown", input: call.input, output: null },
+          }),
+        },
+      ],
+    );
+    expect(rows.at(-1)?.detail).toEqual({
+      type: "unknown",
+      input: { command: "npm test" },
+      output: null,
+    });
   });
 });

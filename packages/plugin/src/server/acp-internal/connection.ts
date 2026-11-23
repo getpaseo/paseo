@@ -16,7 +16,6 @@ import {
   type SessionNotification,
   type SessionUpdate,
   type ToolCall,
-  type ToolCallContent,
   type ToolCallUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk";
@@ -31,6 +30,7 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
   ProviderEventSchema,
@@ -410,12 +410,8 @@ interface ActivePrompt {
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
 const DEFAULT_DEFERRED_QUIET_LIMIT_MS = 120_000;
 
-type AcpToolCallSource = AcpToolCallSnapshot & {
-  diff?: Extract<ToolCallContent, { type: "diff" }>;
-};
-
 interface AcpToolCallState {
-  source: AcpToolCallSource;
+  source: AcpToolCallSnapshot;
   presentation: AcpToolCallSnapshot;
 }
 
@@ -1586,20 +1582,10 @@ class AcpRuntime {
     const context = {
       sessionId: this.options.boundarySessionId,
       mcpServerNames: this.mcpServerNames,
+      previous: current,
     };
     for (const transformer of this.transformers)
       snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
-    if (!snapshot.detail && source.diff && snapshot.kind === "edit") {
-      snapshot = {
-        ...snapshot,
-        detail: {
-          type: "edit",
-          filePath: source.diff.path,
-          oldString: source.diff.oldText ?? undefined,
-          newString: source.diff.newText,
-        },
-      };
-    }
     this.toolCalls.set(snapshot.id, { source, presentation: snapshot });
     const isOpen = snapshot.status === "pending" || snapshot.status === "in_progress";
     if (this.replayWindow === null) {
@@ -2179,8 +2165,8 @@ function ownConnectorStream(source: Stream): {
 
 function mergeToolCallSnapshot(
   update: ToolCall | ToolCallUpdate,
-  current: AcpToolCallSource | undefined,
-): AcpToolCallSource {
+  current: AcpToolCallSnapshot | undefined,
+): AcpToolCallSnapshot {
   return {
     id: update.toolCallId,
     name: firstText(update.name, current?.name),
@@ -2190,10 +2176,7 @@ function mergeToolCallSnapshot(
     input: jsonValue(firstDefined(update.rawInput, current?.input, null)),
     output: jsonValue(firstDefined(update.rawOutput, current?.output, null)),
     locations: update.locations?.map((location) => location.path) ?? current?.locations ?? [],
-    diff:
-      update.content === undefined
-        ? current?.diff
-        : update.content?.find((item) => item.type === "diff"),
+    content: update.content === undefined ? current?.content : jsonValue(update.content),
   };
 }
 
@@ -2368,20 +2351,7 @@ function configValues(
 type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
 
 function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
-  const input = jsonRecord(snapshot.input);
-  const isEdit = snapshot.kind === "edit" || snapshot.name?.toLowerCase().includes("edit") === true;
-  const detail =
-    snapshot.detail ??
-    (isEdit
-      ? {
-          type: "edit" as const,
-          filePath:
-            typeof input.filePath === "string" ? input.filePath : (snapshot.locations[0] ?? ""),
-          oldString: typeof input.oldString === "string" ? input.oldString : undefined,
-          newString: typeof input.newString === "string" ? input.newString : undefined,
-          unifiedDiff: typeof input.unifiedDiff === "string" ? input.unifiedDiff : undefined,
-        }
-      : { type: "unknown" as const, input: snapshot.input, output: snapshot.output });
+  const detail = snapshot.detail ?? standardToolCallDetail(snapshot);
   const status =
     snapshot.status === "in_progress" || snapshot.status === "pending"
       ? "running"

@@ -687,9 +687,20 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
-Set `detail` on the returned tool call to supply a Paseo tool card when the ACP kind does not
-describe the operation. For example, an agent can report a new file as an ACP edit, while the
-plugin returns a `write` detail with the file path and contents.
+Paseo builds a standard tool card from each call's ACP `kind`: Shell for `execute`, Read for `read`,
+Edit for `edit` and `delete`, Search for `search`, and Fetch for `fetch`. The card reads the call's
+`input` (ACP `rawInput`), `output` (`rawOutput`), `content`, and `locations`. A call of another kind
+shows its raw input and output, or its text content when the agent sends neither.
+
+Set `detail` on the returned tool call to replace the standard card. For example, an agent can
+report a new file as an ACP edit, while the plugin returns a `write` detail with the file path and
+contents. Return `{ type: "unknown", input, output }` to show the raw values.
+
+`toolCall` runs on every update of a call, with the updates merged so far. An update that sends
+`content` replaces the earlier content, as ACP defines. When an agent sends a value only in an
+early update, read it from `context.previous`, the call as Paseo last presented it. The
+[Hermes terminal transformer](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)
+keeps the command from Hermes's first update this way.
 
 Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
 The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
