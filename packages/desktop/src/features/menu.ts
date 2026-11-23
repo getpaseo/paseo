@@ -64,12 +64,18 @@ export function reloadActiveBrowserOrWindow({
   win.webContents.reload();
 }
 
-function buildApplicationMenuTemplate(
+export function buildApplicationMenuTemplate(
   options: ApplicationMenuOptions,
   capturing: boolean,
 ): Electron.MenuItemConstructorOptions[] {
   const isMac = process.platform === "darwin";
   const zoomEnabled = !capturing;
+  const closeWindowItem: Electron.MenuItemConstructorOptions = { role: "close" };
+  if (!isMac) {
+    // Electron's Close role defaults to Ctrl+W, which Paseo uses to close tabs.
+    closeWindowItem.accelerator = "";
+    closeWindowItem.registerAccelerator = false;
+  }
 
   return [
     ...(isMac
@@ -175,7 +181,7 @@ function buildApplicationMenuTemplate(
         { role: "zoom" },
         ...(isMac
           ? [{ type: "separator" as const }, { role: "front" as const }]
-          : [{ role: "close" as const }]),
+          : [closeWindowItem]),
       ],
     },
   ];

@@ -515,6 +515,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" },
     },
     {
+      name: "leaves Ctrl+W to the command center search field on non-mac desktop",
+      event: { key: "w", code: "KeyW", ctrlKey: true },
+      context: {
+        isMac: false,
+        usesDesktopBindings: true,
+        focusScope: "command-center",
+        commandCenterOpen: true,
+      },
+    },
+    {
       name: "does not switch tabs with Alt+Shift+] on mac desktop (Cmd+Shift+] only)",
       event: { key: "’", code: "BracketRight", altKey: true, shiftKey: true },
       context: { isMac: true, usesDesktopBindings: true },
