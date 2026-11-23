@@ -6,6 +6,7 @@ import { filterSelectableAgentModels } from "./agent-sdk-types.js";
 
 export interface AgentConfigurationValidationInput {
   provider: string;
+  cwd?: string;
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
