@@ -2168,6 +2168,7 @@ it("previews related issues and creates only explicitly approved issue links", a
     git(repo, "remote", "set-url", "origin", remote);
     git(repo, "config", "remote.origin.pushurl", remote);
     git(repo, "config", `url.${root}/nested/.insteadOf`, `${root}/`);
+    git(repo, "config", `url.${root}/nested/.pushInsteadOf`, `${root}/`);
     const rewritten = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
     expect(rewritten.pushUrls).toEqual([expandedRemote]);
     await createPullRequest(

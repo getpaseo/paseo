@@ -4404,7 +4404,12 @@ export async function capturePrCheckoutState(
   requestedBaseRef?: string,
   context?: CheckoutContext,
 ) {
-  const head = await getCurrentBranch(cwd);
+  const attachedHead = await runGitCommand(["symbolic-ref", "--quiet", "--short", "HEAD"], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const head = attachedHead.stdout.trim();
+  if (!head) throw new Error("Finish the rebase or attach a branch before preparing a PR");
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
   if (!head || !base) throw new Error("Unable to determine PR head and base");
@@ -4459,6 +4464,9 @@ export async function createPullRequest(
   // hook can change origin. Legacy callers still let the adapter resolve it.
   // Push the approved commit rather than a branch tip that may have moved
   // since confirmation. This remains a non-force push.
+  const originSettings = new Map(
+    options.approvedOriginConfig?.map(([key, value]) => [key.toLowerCase(), value]),
+  );
   for (const destination of options.approvedPushUrls ?? ["origin"]) {
     const remote = `paseo-approved-${randomUUID()}`;
     const remoteConfig = options.approvedOriginConfig
@@ -4471,6 +4479,8 @@ export async function createPullRequest(
           // at the full destination takes precedence over shorter rewrites.
           "-c",
           `url.${destination}.insteadOf=${destination}`,
+          "-c",
+          `url.${destination}.pushInsteadOf=${destination}`,
           ...options.approvedOriginConfig.flatMap(([key, value]) => [
             "-c",
             `remote.${remote}.${key}=${value}`,
@@ -4487,9 +4497,19 @@ export async function createPullRequest(
     const pushArgs = options.approvedHeadSha
       ? [
           ...remoteConfig,
+          ...["proxy", "proxyauthmethod"].flatMap((key) =>
+            originSettings.has(key)
+              ? ["-c", `http.${destination}.${key}=${originSettings.get(key)}`]
+              : [],
+          ),
           "push",
+          ...(originSettings.has("receivepack")
+            ? [`--receive-pack=${originSettings.get("receivepack")}`]
+            : []),
           "--",
-          remoteConfig.length ? remote : destination,
+          // An unconfigured URL keeps the superproject's SHA refspec out of
+          // recursive pushes. Submodules use their own remotes/refspecs.
+          originSettings.has("vcs") ? `${originSettings.get("vcs")}::${destination}` : destination,
           `${options.approvedHeadSha}:refs/heads/${head}`,
         ]
       : ["push", "-u", "origin", head];
