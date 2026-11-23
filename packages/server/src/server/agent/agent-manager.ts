@@ -3232,10 +3232,12 @@ export class AgentManager {
         logger: this.logger,
       });
     }
-    // Archive and restore share this lane. Check again before upgrading a loaded session.
-    return this.runLifecycleMutation(agentId, () =>
-      this.findUnarchivedInteractiveSessionUnlocked(agentId),
-    );
+    return this.runLifecycleMutation(agentId, async () => {
+      const record = await this.registry?.get(agentId);
+      // Restore closes any history session. Normal dispatch can reopen the stored agent.
+      if (record && (record.archivedAt || !this.agents.get(agentId)?.session)) return null;
+      return this.upgradeHistorySessionUnlocked(this.requireSessionAgent(agentId));
+    });
   }
 
   async appendTimelineItem(
@@ -3361,23 +3363,22 @@ export class AgentManager {
   /** Inside the agent's lane: a history session is upgraded before anything is applied to it. */
   private async ensureInteractiveSessionUnlocked(agentId: string): Promise<ActiveManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
-    if (!this.historySessions.has(agent.session)) return agent;
-    const interactive = await this.findUnarchivedInteractiveSessionUnlocked(agentId);
-    if (!interactive) throw new Error(`Agent is archived: ${agentId}`);
-    return interactive;
+    if (
+      this.historySessions.has(agent.session) &&
+      (await this.registry?.get(agentId))?.archivedAt
+    ) {
+      throw new Error(`Agent is archived: ${agentId}`);
+    }
+    return this.upgradeHistorySessionUnlocked(agent);
   }
 
-  private async findUnarchivedInteractiveSessionUnlocked(
-    agentId: string,
-  ): Promise<ActiveManagedAgent | null> {
-    const record = await this.registry?.get(agentId);
-    if (record?.archivedAt) return null;
-    const agent = this.requireSessionAgent(agentId);
-    if (this.historySessions.has(agent.session)) {
-      // Reload validates the directory before releasing readable history.
-      await this.trackAgentRegistrationOperation(this.reloadAgentSessionInternal(agentId));
-    }
-    return this.requireSessionAgent(agentId);
+  private async upgradeHistorySessionUnlocked(
+    agent: ActiveManagedAgent,
+  ): Promise<ActiveManagedAgent> {
+    if (!this.historySessions.has(agent.session)) return agent;
+    // Reload validates the directory before releasing readable history.
+    await this.trackAgentRegistrationOperation(this.reloadAgentSessionInternal(agent.id));
+    return this.requireSessionAgent(agent.id);
   }
 
   /** Inside the agent's lane: transparently reopens a retired plugin session before applying config. */

@@ -3511,6 +3511,7 @@ class HeldTurnAgentSession implements AgentSession {
   private turnStartGate: Promise<void> | null = null;
   private cancelHeldStart: (() => void) | null = null;
   private interruptGate: Promise<void> | null = null;
+  private closeGate?: { signalStart: () => void; waitForRelease: Promise<void> };
   private nextStartError: Error | null = null;
 
   constructor(
@@ -3702,7 +3703,19 @@ class HeldTurnAgentSession implements AgentSession {
     });
   }
 
-  async close(): Promise<void> {}
+  holdClose(): { started: Promise<void>; release: () => void } {
+    const started = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    this.closeGate = { signalStart: started.resolve, waitForRelease: released.promise };
+    return { started: started.promise, release: released.resolve };
+  }
+
+  async close(): Promise<void> {
+    if (this.closeGate) {
+      this.closeGate.signalStart();
+      await this.closeGate.waitForRelease;
+    }
+  }
 }
 
 class HeldTurnAgentClient implements AgentClient {
@@ -3862,18 +3875,21 @@ describe("send_agent_prompt MCP tool", () => {
   );
 
   it.each([
-    { activeTurnBehavior: "interrupt", historyOpen: false },
-    { activeTurnBehavior: "steer", historyOpen: false },
-    { activeTurnBehavior: "queue", historyOpen: false },
-    { activeTurnBehavior: "interrupt", historyOpen: true },
+    { activeTurnBehavior: "interrupt", history: "closed" },
+    { activeTurnBehavior: "steer", history: "closed" },
+    { activeTurnBehavior: "queue", history: "closed" },
+    { activeTurnBehavior: "interrupt", history: "open" },
+    { activeTurnBehavior: "interrupt", history: "restoring" },
   ] as const)(
-    "an agent-scoped $activeTurnBehavior send starts a turn on an archived agent (history open: $historyOpen)",
-    async ({ activeTurnBehavior, historyOpen }) => {
+    "an agent-scoped $activeTurnBehavior send starts a turn on an archived agent (history: $history)",
+    async ({ activeTurnBehavior, history }) => {
       const workdir = await mkdtemp(join(tmpdir(), "mcp-send-archived-"));
       const storage = new AgentStorage(join(workdir, "agents"), logger);
       const client = new HeldTurnAgentClient("codex", true);
       const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
       let mcpClient: Client | undefined;
+      let restore: Promise<boolean> | undefined;
+      let releaseHistoryClose: (() => void) | undefined;
       try {
         const sender = await manager.createAgent(
           { provider: "codex", cwd: existingCwd },
@@ -3886,7 +3902,7 @@ describe("send_agent_prompt MCP tool", () => {
           { workspaceId: "wks_parent" },
         );
         await manager.archiveAgent(recipient.id);
-        if (historyOpen) {
+        if (history !== "closed") {
           await ensureAgentLoaded(recipient.id, {
             agentManager: manager,
             agentStorage: storage,
@@ -3903,6 +3919,12 @@ describe("send_agent_prompt MCP tool", () => {
           logger,
         });
         mcpClient = await connectInMemoryMcpClient(server);
+        if (history === "restoring") {
+          const closing = client.sessions.at(-1)!.holdClose();
+          releaseHistoryClose = closing.release;
+          restore = manager.unarchiveSnapshot(recipient.id);
+          await closing.started;
+        }
         const response = await mcpClient.callTool({
           name: "send_agent_prompt",
           arguments: {
@@ -3917,9 +3939,11 @@ describe("send_agent_prompt MCP tool", () => {
           deliveryStatus: "queued",
           activeTurnBehavior,
         });
-        await serverDeliveries
+        const dispatch = serverDeliveries
           .get(server)!
           .waitForDispatch(recipient.id, AbortSignal.timeout(5_000));
+        releaseHistoryClose?.();
+        await Promise.all([restore, dispatch]);
         expect((await storage.get(recipient.id))?.archivedAt).toBeNull();
         expect(manager.getAgent(recipient.id)?.lifecycle).toBe("running");
         expect(client.sessions).toHaveLength(openedSessions + 1);
@@ -3927,6 +3951,8 @@ describe("send_agent_prompt MCP tool", () => {
           expect.objectContaining({ text: "Start work" }),
         ]);
       } finally {
+        releaseHistoryClose?.();
+        await restore?.catch(() => undefined);
         await mcpClient?.close();
         await removeAgentStateDir(manager, storage, workdir);
       }
