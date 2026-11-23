@@ -721,7 +721,7 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
 }
 
 function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote) {
+  if (!input.hasRemote || !input.hasPushRemote) {
     return i18n.t("workspace.git.actions.unavailable.pullAndPushNoRemote");
   }
   if (input.hasUncommittedChanges) {

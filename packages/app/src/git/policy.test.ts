@@ -699,6 +699,22 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("keeps pull-and-push unavailable when Push has no remote to send to", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        hasPushRemote: false,
+        aheadOfOrigin: 2,
+        behindOfOrigin: 3,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available here because this branch is not connected to a remote yet",
+    );
+  });
+
   it("keeps pull-and-push unavailable when the branch only has outgoing commits", () => {
     const actions = buildGitActions(
       createInput({
