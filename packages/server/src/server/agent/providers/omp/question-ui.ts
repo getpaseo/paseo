@@ -237,7 +237,11 @@ export class OmpQuestionUi {
     if (event.method !== "select" || typeof event.title !== "string") return null;
     const title = event.title;
     const question = this.questions.find((item) => matchesQuestion(title, item));
-    if (!question || !Array.isArray(event.options) || !event.options.includes(OTHER)) return null;
+    // The html-form fallback only appends the OTHER row to fields that also
+    // accept typed input; a radio-only question's select event has no OTHER
+    // row, and bailing here would drop the question's option descriptions
+    // into the generic card instead.
+    if (!question || !Array.isArray(event.options)) return null;
 
     const descriptions = new Map(
       question.options.map((option) => [option.label, option.description]),
@@ -264,7 +268,7 @@ export class OmpQuestionUi {
             header: ANSWER_HEADER,
             options,
             multiSelect: question.multi,
-            allowOther: true,
+            allowOther: event.options.includes(OTHER),
           },
         ],
       },
