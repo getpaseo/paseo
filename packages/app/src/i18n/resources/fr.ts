@@ -691,6 +691,8 @@ export const fr: TranslationResources = {
       },
       menu: {
         openFor: "Ouvrir le menu de {{label}}",
+        unpinAcrossWorkspaces: "Détacher de tous les espaces de travail",
+        pinAcrossWorkspaces: "Épingler dans tous les espaces de travail",
         copyResumeCommand: "Copier la commande de reprise",
         copyAgentId: "Copier l’ID de l’agent",
         copyTerminalId: "Copier l’ID du terminal",

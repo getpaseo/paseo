@@ -691,6 +691,8 @@ export const ja: TranslationResources = {
       },
       menu: {
         openFor: "{{label}}のメニューを開く",
+        unpinAcrossWorkspaces: "すべてのワークスペースでの固定を解除",
+        pinAcrossWorkspaces: "すべてのワークスペースに固定",
         copyResumeCommand: "再開コマンドをコピー",
         copyAgentId: "エージェントIDをコピー",
         copyTerminalId: "ターミナルIDをコピー",

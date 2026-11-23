@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useLayoutEffect } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -9,7 +9,12 @@ import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { isWeb } from "@/constants/platform";
+import { observePinnedExplorer } from "@/workspace-tabs/pinned-explorer";
+import {
+  useWorkspaceLayoutStore,
+  useWorkspaceLayoutStoreHydrated,
+} from "@/stores/workspace-layout-store";
 import { useExplorerGeometry } from "./geometry";
 import type { ExplorerFrameProps } from "./frame-props";
 
@@ -20,7 +25,14 @@ function ExplorerFrameBase({
   isOpen,
   isWorkspaceActive,
   persistenceKey,
+  serverId,
 }: ExplorerFrameProps) {
+  const hydrated = useWorkspaceLayoutStoreHydrated();
+  useLayoutEffect(() => {
+    if (isWeb && hydrated && isWorkspaceActive) {
+      return observePinnedExplorer({ serverId, workspaceKey: persistenceKey });
+    }
+  }, [hydrated, isWorkspaceActive, persistenceKey, serverId]);
   const [containerWidth, setContainerWidth] = useState(0);
   const measureContainer = useCallback(({ nativeEvent }: LayoutChangeEvent) => {
     const { width, height } = nativeEvent.layout;

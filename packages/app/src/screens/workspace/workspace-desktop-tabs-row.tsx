@@ -1,3 +1,4 @@
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
@@ -724,6 +725,45 @@ function TabHandleContent({
   );
 }
 
+function PinnedExplorerMenuItem({
+  serverId,
+  workspaceId,
+  tab,
+  rail,
+}: {
+  serverId: string;
+  workspaceId: string;
+  tab: WorkspaceTabDescriptor;
+  rail: WorkspaceTabRailSurface;
+}) {
+  const { t } = useTranslation();
+  const pinned = useWorkspaceLayoutStore(
+    (state) =>
+      state.pinnedExplorerByHost[serverId]?.tabs.some((pin) => pin.tab.tabId === tab.tabId) ??
+      false,
+  );
+  const canPin =
+    isWeb &&
+    rail === "sidebar" &&
+    tab.target.kind === "plugin" &&
+    tab.target.context === "workspace";
+  const togglePin = useCallback(() => {
+    const store = useWorkspaceLayoutStore.getState();
+    if (pinned) store.unpinExplorerTab(serverId, tab.tabId);
+    else store.pinExplorerTab(serverId, `${serverId}:${workspaceId}`, tab.tabId);
+  }, [pinned, serverId, workspaceId, tab.tabId]);
+  if (!canPin) return null;
+  return (
+    <ContextMenuItem testID={`workspace-tab-pin-${tab.tabId}`} onSelect={togglePin}>
+      {t(
+        pinned
+          ? "workspace.tabs.menu.unpinAcrossWorkspaces"
+          : "workspace.tabs.menu.pinAcrossWorkspaces",
+      )}
+    </ContextMenuItem>
+  );
+}
+
 function TabChip({
   serverId,
   workspaceId,
@@ -957,6 +997,12 @@ function TabChip({
           pages={openWith.pages}
           testID={contextMenuTestId}
         >
+          <PinnedExplorerMenuItem
+            serverId={serverId}
+            workspaceId={workspaceId}
+            tab={tab}
+            rail={rail}
+          />
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
             if (entry.kind === "file-panel-open-with") {

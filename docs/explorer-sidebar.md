@@ -134,6 +134,20 @@ layouts discover while Explorer is active. The rail requests summary status; sel
 content also requests timeline data. Inactive consumers read cached data without request demand.
 Discovery uses ordinary PR tabs and their existing once-per-workspace close opt-out.
 
+## Pinned plugin panels
+
+On web and desktop, a workspace plugin tab in Explorer can be pinned across workspaces from its
+context menu. Pins belong to a host, not to a project. The active workspace alone records shared
+visibility, width, selection, and opaque tab state; retained inactive workspaces must never publish
+those values. Restore that intent when a workspace becomes active, after layout hydration.
+
+Selecting Files or another local tab releases shared selection without removing pins. Closing a
+pinned tab keeps it closed across workspaces until it is opened again; hiding Explorer also stays
+hidden. Unpinning leaves the current tab as an ordinary workspace tab. A disabled plugin uses the
+existing unavailable-panel presentation without dropping its pin. Agent-scoped panels are not
+eligible because their context does not follow the current workspace. Compact overlay visibility
+keeps its existing independent gesture state; the persisted width applies again when docked.
+
 ## Side pane
 
 `packages/app/src/workspace-tabs/open-beside.ts` owns content opened beside the user's work. The

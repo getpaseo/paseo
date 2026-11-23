@@ -15,6 +15,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
+import { observePinnedExplorer } from "@/workspace-tabs/pinned-explorer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
@@ -593,6 +594,7 @@ describe("workspace-layout-store version 2 migration", () => {
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
         "pinnedAgentIdsByWorkspace",
+        "pinnedExplorerByHost",
         "pullRequestTabAutoOpenedByWorkspace",
         "sidePaneIdByWorkspace",
         "splitSizesByWorkspace",
@@ -3267,6 +3269,7 @@ describe("workspace-layout-store actions", () => {
     const persisted = partialize(currentState);
 
     expect(persisted).toEqual({
+      pinnedExplorerByHost: {},
       layoutByWorkspace: { [workspaceKey]: layout },
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: currentState.splitSizesByWorkspace,
@@ -3570,6 +3573,7 @@ describe("workspace-layout-store actions", () => {
     const partialize = workspaceLayoutStore.persist.getOptions().partialize;
     expect(partialize).toBeTypeOf("function");
     expect(partialize?.(state)).toEqual({
+      pinnedExplorerByHost: {},
       pullRequestTabAutoOpenedByWorkspace: {},
       layoutByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
@@ -5495,4 +5499,176 @@ it("reentering a workspace restores its suspended pane without choosing another 
   store.getState().focusWorkspace(workspaceKey);
   expect(store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId).toBe(paneId);
   expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
+});
+
+describe("pinned Explorer plugin panels", () => {
+  it("restores selection, visibility and width in another workspace of the same host", () => {
+    const store = createWorkspaceLayoutStore(workspaceLayoutIds, {
+      getItem: async () => null,
+      setItem: async () => {},
+      removeItem: async () => {},
+    });
+    const source = "server-1:first";
+    const destination = "server-1:second";
+    const paneId = store.getState().showExplorerSidebar(source)!;
+    const tabId = store.getState().openTab({
+      workspaceKey: source,
+      target: { kind: "plugin", pluginId: "graph", panelId: "graph", context: "workspace" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    })!;
+    store.getState().resizeExplorerSidebar(source, 520);
+    store.getState().pinExplorerTab("server-1", source, tabId);
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey: destination, store });
+    const state = store.getState();
+    const pane = findPaneById(
+      state.layoutByWorkspace[destination].root,
+      state.explorerSidebarPaneIdByWorkspace[destination],
+    );
+    expect(pane?.focusedTabId).toBe(tabId);
+    expect(pane?.hidden).not.toBe(true);
+    expect(state.explorerSidebarWidthByWorkspace[destination]).toBe(520);
+    stop();
+  });
+});
+
+describe("pinned Explorer lifecycle", async () => {
+  async function setup() {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: async (key: string) => values.get(key) ?? null,
+      setItem: async (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: async (key: string) => {
+        values.delete(key);
+      },
+    };
+    const store = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+    await store.persist.rehydrate();
+    const workspaceKey = "server-1:first";
+    const paneId = store.getState().showExplorerSidebar(workspaceKey)!;
+    const tabId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "plugin", pluginId: "graph", panelId: "graph", context: "workspace" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    })!;
+    store.getState().pinExplorerTab("server-1", workspaceKey, tabId);
+    return { store, storage, workspaceKey, paneId, tabId };
+  }
+
+  it("keeps an explicitly hidden dock hidden on the next workspace", async () => {
+    const { store, workspaceKey } = await setup();
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey, store });
+    store.getState().hideExplorerSidebar(workspaceKey);
+    stop();
+    const destination = "server-1:second";
+    const end = observePinnedExplorer({ serverId: "server-1", workspaceKey: destination, store });
+    expect(
+      findPaneById(
+        store.getState().layoutByWorkspace[destination].root,
+        store.getState().explorerSidebarPaneIdByWorkspace[destination],
+      )?.hidden,
+    ).toBe(true);
+    end();
+  });
+
+  it("shares explicit tab closure and preserves unrelated local tabs", async () => {
+    const { store, workspaceKey, tabId } = await setup();
+    const other = "server-1:second";
+    observePinnedExplorer({ serverId: "server-1", workspaceKey: other, store })();
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey, store });
+    store.getState().closeTab(workspaceKey, tabId);
+    stop();
+    observePinnedExplorer({ serverId: "server-1", workspaceKey: other, store })();
+    const targets = store
+      .getState()
+      .getWorkspaceTabs(other)
+      .map((tab) => tab.target.kind);
+    expect(targets).not.toContain("plugin");
+    expect(targets).toContain("files");
+    expect(store.getState().pinnedExplorerByHost["server-1"].tabs[0].open).toBe(false);
+  });
+
+  it("keeps Files selection local without losing a pin or writing on unrelated updates", async () => {
+    const { store, workspaceKey, paneId, tabId } = await setup();
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey, store });
+    const files = store
+      .getState()
+      .getWorkspaceTabs(workspaceKey)
+      .find((tab) => tab.target.kind === "files")!;
+    store.getState().selectTabInPane(workspaceKey, paneId, files.tabId);
+    expect(store.getState().pinnedExplorerByHost["server-1"].selectedTabId).toBeNull();
+    const shared = store.getState().pinnedExplorerByHost;
+    store
+      .getState()
+      .openTab({ workspaceKey: "server-1:inactive", target: { kind: "files" }, intent: "reveal" });
+    expect(store.getState().pinnedExplorerByHost).toBe(shared);
+    store.getState().selectTabInPane(workspaceKey, paneId, tabId);
+    expect(store.getState().pinnedExplorerByHost["server-1"].selectedTabId).toBe(tabId);
+    stop();
+  });
+
+  it("restores shared tab state after a reload and isolates other hosts", async () => {
+    const { store, storage, workspaceKey, tabId } = await setup();
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey, store });
+    store.getState().resizeExplorerSidebar(workspaceKey, 640);
+    store.getState().setTabState(workspaceKey, tabId, { zoom: 1.2 });
+    stop();
+    const restored = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+    await restored.persist.rehydrate();
+    const destination = "server-1:reload";
+    observePinnedExplorer({ serverId: "server-1", workspaceKey: destination, store: restored })();
+    expect(
+      restored
+        .getState()
+        .getWorkspaceTabs(destination)
+        .find((tab) => tab.tabId === tabId)?.state,
+    ).toEqual({ zoom: 1.2 });
+    expect(restored.getState().explorerSidebarWidthByWorkspace[destination]).toBe(640);
+    observePinnedExplorer({
+      serverId: "other",
+      workspaceKey: "other:workspace",
+      store: restored,
+    })();
+    expect(restored.getState().layoutByWorkspace["other:workspace"]).toBeUndefined();
+  });
+
+  it("unpins without closing the current tab or creating it in new workspaces", async () => {
+    const { store, workspaceKey, tabId } = await setup();
+    store.getState().unpinExplorerTab("server-1", tabId);
+    expect(
+      store
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .map((tab) => tab.tabId),
+    ).toContain(tabId);
+    observePinnedExplorer({ serverId: "server-1", workspaceKey: "server-1:new", store })();
+    expect(store.getState().layoutByWorkspace["server-1:new"]).toBeUndefined();
+  });
+
+  it("rejects agent-scoped panels and invalid widths", async () => {
+    const { store, workspaceKey, paneId } = await setup();
+    const agentTab = store.getState().openTab({
+      workspaceKey,
+      target: {
+        kind: "plugin",
+        pluginId: "graph",
+        panelId: "agent",
+        context: "agent",
+        agentId: "agent",
+      },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    })!;
+    const shared = store.getState().pinnedExplorerByHost;
+    store.getState().pinExplorerTab("server-1", workspaceKey, agentTab);
+    expect(store.getState().pinnedExplorerByHost).toBe(shared);
+    const stop = observePinnedExplorer({ serverId: "server-1", workspaceKey, store });
+    for (const width of [0, NaN, Infinity, -20])
+      store.getState().resizeExplorerSidebar(workspaceKey, width);
+    expect(store.getState().pinnedExplorerByHost["server-1"].width).toBeNull();
+    stop();
+  });
 });

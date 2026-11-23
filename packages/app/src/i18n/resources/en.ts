@@ -684,6 +684,8 @@ export const en = {
       },
       menu: {
         openFor: "Open menu for {{label}}",
+        unpinAcrossWorkspaces: "Unpin across workspaces",
+        pinAcrossWorkspaces: "Pin across workspaces",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
         copyTerminalId: "Copy terminal id",

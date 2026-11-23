@@ -685,6 +685,8 @@ export const zhCN: TranslationResources = {
       },
       menu: {
         openFor: "打开 {{label}} 的菜单",
+        unpinAcrossWorkspaces: "取消跨工作区固定",
+        pinAcrossWorkspaces: "跨工作区固定",
         copyResumeCommand: "复制恢复命令",
         copyAgentId: "复制 Agent ID",
         copyTerminalId: "复制 Terminal ID",

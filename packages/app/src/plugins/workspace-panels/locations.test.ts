@@ -1,3 +1,5 @@
+import { createWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { observePinnedExplorer } from "@/workspace-tabs/pinned-explorer";
 import appPackage from "../../../package.json";
 import { describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -20,14 +22,17 @@ vi.mock("../client-runtime", () => ({
   }),
 }));
 
-function install(locations: readonly ("workspace" | "explorer")[]) {
+function install(
+  locations: readonly ("workspace" | "explorer")[],
+  context: "agent" | "workspace" = "agent",
+) {
   const bundle = `(function() {
     return { default: function(plugin) {
       plugin.addWorkspacePanel({
         id: "details",
         title: "Details",
         icon: "Scan",
-        context: "agent",
+        context: ${JSON.stringify(context)},
         locations: ${JSON.stringify(locations)},
         Component: function Details() { return null; },
       });
@@ -72,4 +77,41 @@ describe("plugin workspace panel locations", () => {
     );
     pluginRegistry.removeHost("host-1");
   });
+});
+
+it("preserves a workspace pin while its plugin is disabled and restores its contribution", async () => {
+  const store = createWorkspaceLayoutStore(undefined, {
+    getItem: async () => null,
+    setItem: async () => {},
+    removeItem: async () => {},
+  });
+  await store.persist.rehydrate();
+  install(["explorer"], "workspace");
+  const source = "host-1:first";
+  const paneId = store.getState().showExplorerSidebar(source)!;
+  const target = {
+    kind: "plugin",
+    context: "workspace",
+    pluginId: "review",
+    panelId: "details",
+  } as const;
+  const tabId = store.getState().openTab({
+    workspaceKey: source,
+    target,
+    intent: "reveal",
+    placement: { mode: "pane", paneId },
+  })!;
+  store.getState().pinExplorerTab("host-1", source, tabId);
+  pluginRegistry.removeHost("host-1");
+  observePinnedExplorer({ serverId: "host-1", workspaceKey: "host-1:second", store })();
+  expect(
+    store
+      .getState()
+      .getWorkspaceTabs("host-1:second")
+      .find((tab) => tab.tabId === tabId)?.target,
+  ).toEqual(target);
+  const installed = install(["explorer"], "workspace");
+  expect(installed.workspacePanels.map((panel) => panel.id)).toEqual(["details"]);
+  expect(store.getState().pinnedExplorerByHost["host-1"].selectedTabId).toBe(tabId);
+  pluginRegistry.removeHost("host-1");
 });

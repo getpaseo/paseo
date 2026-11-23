@@ -3686,6 +3686,7 @@ function WorkspaceScreenContent({
     );
     return (
       <ExplorerFrame
+        serverId={normalizedServerId}
         presentation={isMobile ? "overlay" : "dock"}
         isWorkspaceActive={isRouteFocused}
         persistenceKey={persistenceKey}

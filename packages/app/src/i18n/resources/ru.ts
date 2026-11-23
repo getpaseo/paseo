@@ -693,6 +693,8 @@ export const ru: TranslationResources = {
       },
       menu: {
         openFor: "Открыть меню для {{label}}",
+        unpinAcrossWorkspaces: "Открепить во всех рабочих пространствах",
+        pinAcrossWorkspaces: "Закрепить во всех рабочих пространствах",
         copyResumeCommand: "Копировать команду продолжения",
         copyAgentId: "Скопировать идентификатор агента",
         copyTerminalId: "Скопировать идентификатор терминала",

@@ -685,6 +685,8 @@ export const ar: TranslationResources = {
       },
       menu: {
         openFor: "فتح القائمة لـ{{label}}",
+        unpinAcrossWorkspaces: "إلغاء التثبيت عبر مساحات العمل",
+        pinAcrossWorkspaces: "تثبيت عبر مساحات العمل",
         copyResumeCommand: "نسخ أمر السيرة الذاتية",
         copyAgentId: "نسخ معرف الوكيل",
         copyTerminalId: "نسخ معرف المحطة",

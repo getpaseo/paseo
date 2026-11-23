@@ -691,6 +691,8 @@ export const es: TranslationResources = {
       },
       menu: {
         openFor: "Menú abierto para{{label}}",
+        unpinAcrossWorkspaces: "Desfijar en todos los espacios de trabajo",
+        pinAcrossWorkspaces: "Fijar en todos los espacios de trabajo",
         copyResumeCommand: "Copiar comando de reanudación",
         copyAgentId: "Copiar ID del agente",
         copyTerminalId: "Copiar ID del terminal",

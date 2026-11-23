@@ -3,7 +3,10 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
-import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import {
+  WorkspaceLayoutPersistedStateSchema,
+  type PinnedExplorerSchema,
+} from "./workspace-layout-storage";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -131,7 +134,12 @@ export type WorkspaceTabDestination =
   | { kind: "pane"; paneId: string; host: "main" | "explorer"; tabId: string }
   | { kind: "sheet"; tabId: string };
 
+export type PinnedExplorer = z.infer<typeof PinnedExplorerSchema>;
+
 interface WorkspaceLayoutStore {
+  pinnedExplorerByHost: Record<string, PinnedExplorer>;
+  pinExplorerTab: (serverId: string, workspaceKey: string, tabId: string) => void;
+  unpinExplorerTab: (serverId: string, tabId: string) => void;
   /** Deliberate focus, including reselecting the current tab. Never persisted. */
   focusRequest: { workspaceKey: string; tabId: string } | null;
   panelRevisionByWorkspace: Record<string, Record<string, number>>;
@@ -990,6 +998,7 @@ function createExplorerSidebarPane(
 }
 
 const PERSISTED_SLICES = [
+  "pinnedExplorerByHost",
   "layoutByWorkspace",
   "pinnedAgentIdsByWorkspace",
   "splitSizesByWorkspace",
@@ -1019,6 +1028,7 @@ function createPersistedStateProjection() {
       );
     }
     const state: WorkspaceLayoutPersistedState = {
+      pinnedExplorerByHost: source.pinnedExplorerByHost,
       layoutByWorkspace,
       pinnedAgentIdsByWorkspace: Object.fromEntries(
         Object.entries(source.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
@@ -1099,6 +1109,54 @@ export function createWorkspaceLayoutStore(
             return { pendingOpenByWorkspace };
           });
           return get().openTab(pending);
+        },
+        pinnedExplorerByHost: {},
+        pinExplorerTab: (serverId, workspaceKey, tabId) => {
+          const state = get();
+          const layout = state.layoutByWorkspace[workspaceKey];
+          if (!layout) return;
+          const pane = findPaneById(
+            layout.root,
+            state.explorerSidebarPaneIdByWorkspace[workspaceKey],
+          );
+          const tab = collectAllTabs(layout.root).find(
+            (candidate) => candidate.tabId === tabId && pane?.tabIds.includes(tabId),
+          );
+          if (!pane || !tab || tab.target.kind !== "plugin" || tab.target.context !== "workspace")
+            return;
+          const previous = state.pinnedExplorerByHost[serverId];
+          if (previous?.tabs.some((pin) => pin.tab.tabId === tabId)) return;
+          set({
+            pinnedExplorerByHost: {
+              ...state.pinnedExplorerByHost,
+              [serverId]: {
+                tabs: [
+                  ...(previous?.tabs ?? []),
+                  { tab: { ...tab, target: tab.target }, open: true },
+                ],
+                selectedTabId: tabId,
+                visible: !pane.hidden,
+                width: state.explorerSidebarWidthByWorkspace[workspaceKey] ?? null,
+              },
+            },
+          });
+          get().selectTabInPane(workspaceKey, pane.id, tabId);
+        },
+        unpinExplorerTab: (serverId, tabId) => {
+          set((state) => {
+            const pinned = state.pinnedExplorerByHost[serverId];
+            if (!pinned) return state;
+            return {
+              pinnedExplorerByHost: {
+                ...state.pinnedExplorerByHost,
+                [serverId]: {
+                  ...pinned,
+                  tabs: pinned.tabs.filter((pin) => pin.tab.tabId !== tabId),
+                  selectedTabId: pinned.selectedTabId === tabId ? null : pinned.selectedTabId,
+                },
+              },
+            };
+          });
         },
         layoutMode: "split-panes",
         sheetsByWorkspace: {},
@@ -2367,6 +2425,7 @@ export function createWorkspaceLayoutStore(
           }
           return {
             ...currentState,
+            pinnedExplorerByHost: result.data.pinnedExplorerByHost ?? {},
             layoutByWorkspace,
             pinnedAgentIdsByWorkspace: Object.fromEntries(
               Object.entries(result.data.pinnedAgentIdsByWorkspace ?? {}).map(([key, agentIds]) => [

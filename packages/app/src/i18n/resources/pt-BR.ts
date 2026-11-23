@@ -690,6 +690,8 @@ export const ptBR: TranslationResources = {
       },
       menu: {
         openFor: "Abrir menu de {{label}}",
+        unpinAcrossWorkspaces: "Desafixar de todos os espaços de trabalho",
+        pinAcrossWorkspaces: "Fixar em todos os espaços de trabalho",
         copyResumeCommand: "Copiar comando de retomada",
         copyAgentId: "Copiar ID do agente",
         copyTerminalId: "Copiar ID do terminal",

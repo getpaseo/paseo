@@ -105,7 +105,27 @@ const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject(
   focusedPaneId: z.string().nullable(),
   parentTabIdByTabId: z.record(z.string(), z.string()).optional(),
 });
+export const PinnedExplorerSchema = z.strictObject({
+  tabs: z.array(
+    z.strictObject({
+      tab: WorkspaceTabStorageSchema.extend({
+        target: z.strictObject({
+          kind: z.literal("plugin"),
+          pluginId: z.string(),
+          panelId: z.string(),
+          context: z.literal("workspace"),
+        }),
+      }),
+      open: z.boolean(),
+    }),
+  ),
+  selectedTabId: z.string().nullable(),
+  visible: z.boolean(),
+  width: z.number().positive().nullable(),
+});
+
 export const WorkspaceLayoutPersistedStateSchema = z.strictObject({
+  pinnedExplorerByHost: z.record(z.string(), PinnedExplorerSchema).optional(),
   pinnedAgentIdsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
   splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),

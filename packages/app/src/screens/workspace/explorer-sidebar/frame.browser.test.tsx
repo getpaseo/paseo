@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { View } from "react-native";
 import { expect, it } from "vitest";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { ExplorerFrame } from "./frame";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -22,7 +23,13 @@ it("measures dock allocation independently of the workspace owner", async () => 
     return (
       <View style={WORKSPACE_STYLE}>
         <View role="main" style={FILL} />
-        <ExplorerFrame presentation="dock" isWorkspaceActive isOpen persistenceKey="workspace">
+        <ExplorerFrame
+          serverId="server"
+          presentation="dock"
+          isWorkspaceActive
+          isOpen
+          persistenceKey="workspace"
+        >
           <View role="complementary" style={FILL} />
         </ExplorerFrame>
       </View>
@@ -48,6 +55,54 @@ it("measures dock allocation independently of the workspace owner", async () => 
     await expect.poll(dockWidth).toBe(260);
     expect(workspaceRenders).toBe(initialRenderCount);
     expect(host.querySelector('[role="complementary"]')).toBe(dock);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("restores a saved width after hiding and clamps it to the available window", async () => {
+  const host = document.createElement("div");
+  host.style.width = "1000px";
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await useWorkspaceLayoutStore.persist.rehydrate();
+  useWorkspaceLayoutStore.getState().resizeExplorerSidebar("server:pin-test", 520);
+  function render(open: boolean) {
+    root.render(
+      <MobilePanelsProvider>
+        <View style={WORKSPACE_STYLE}>
+          <View role="main" style={FILL} />
+          <ExplorerFrame
+            serverId="server"
+            presentation="dock"
+            isWorkspaceActive
+            isOpen={open}
+            persistenceKey="server:pin-test"
+          >
+            <View role="complementary" style={FILL} />
+          </ExplorerFrame>
+        </View>
+      </MobilePanelsProvider>,
+    );
+  }
+  function width() {
+    return host.querySelector('[role="complementary"]')!.getBoundingClientRect().width;
+  }
+  try {
+    await act(async () => render(true));
+    await expect.poll(width).toBe(520);
+    await act(async () => render(false));
+    host.style.width = "0px";
+    await act(async () => render(true));
+    host.style.width = "620px";
+    await expect.poll(width).toBe(260);
+    expect(host.innerHTML).not.toMatch(/NaN|Infinity/);
+    host.style.width = "1000px";
+    await expect.poll(width).toBe(520);
+    expect(
+      useWorkspaceLayoutStore.getState().explorerSidebarWidthByWorkspace["server:pin-test"],
+    ).toBe(520);
   } finally {
     await act(async () => root.unmount());
     host.remove();
