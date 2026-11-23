@@ -7,7 +7,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { AgentManager } from "../agent/agent-manager.js";
+import { AgentManagerShuttingDownError, type AgentManager } from "../agent/agent-manager.js";
 import {
   AgentTurnBusyError,
   sendPreparedPromptToAgent,
@@ -23,7 +23,7 @@ import {
 } from "../relay-runtime.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { admitSecuredRelaySocket } from "../websocket/secure-relay-ingress.js";
-import { HostInstructionInbox, HostInstructionSchema } from "./inbox.js";
+import { HostInstructionInbox, HostInstructionSchema, type InboxRequest } from "./inbox.js";
 import { HostInstructionOutbox, HostInstructionReceiptSchema } from "./outbox.js";
 import { InstructionFileWriter, readInstructionFile } from "./storage.js";
 
@@ -83,15 +83,23 @@ interface RuntimeOptions {
   relay: () => RelayRuntimeConfig;
 }
 
+interface ActiveInstruction {
+  sourceId: string;
+  id: string;
+  admitted: boolean;
+  claim?: Promise<InboxRequest | null>;
+}
+
 export class HostInstructionsRuntime {
   private relay: RelayRuntime | undefined;
   private relayOffer: Promise<string> | undefined;
   private credentialKey: Promise<string> | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
-  private readonly active = new Set<string>();
+  private readonly active = new Map<string, ActiveInstruction>();
   private readonly discoveredTargets = new Map<string, ConversationTarget[]>();
   private busy = false;
   private stopped = false;
+  private closing: Promise<void> | undefined;
 
   private constructor(
     private readonly options: RuntimeOptions,
@@ -135,6 +143,11 @@ export class HostInstructionsRuntime {
   }
 
   async manage(command: HostInstructionsCommand): Promise<ManagementResult> {
+    if (this.stopped) throw new Error("Host instructions stopped");
+    return this.dispatchManagement(command);
+  }
+
+  private async dispatchManagement(command: HostInstructionsCommand): Promise<ManagementResult> {
     switch (command.action) {
       case "list": {
         const grants = await this.inbox.listGrants();
@@ -320,10 +333,27 @@ export class HostInstructionsRuntime {
     return { id };
   }
 
-  async close() {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.stopped = true;
     clearInterval(this.timer);
-    await this.relay?.stop();
+    // Once admission is closed, these claims cannot run. Release them without
+    // waiting for a provider to finish loading a session during shutdown.
+    const unadmitted = [...this.active.values()].filter((dispatch) => !dispatch.admitted);
+    this.closing = this.closeRelayAndRelease(unadmitted);
+    return this.closing;
+  }
+
+  private async closeRelayAndRelease(unadmitted: ActiveInstruction[]) {
+    const results = await Promise.allSettled([
+      this.relay?.stop(),
+      ...unadmitted.map(async ({ claim, sourceId, id }) => {
+        if ((await claim)?.state === "dispatching") await this.inbox.markBusy(sourceId, id);
+        return undefined;
+      }),
+    ]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
   }
 
   private getCredentialKey(): Promise<string> {
@@ -480,20 +510,23 @@ export class HostInstructionsRuntime {
     if (this.stopped || this.busy) return;
     this.busy = true;
     void Promise.allSettled(
-      this.outbox.pendingRegistrations().map((key) => this.outbox.flush(key)),
+      this.outbox.pendingRegistrations().map((key) => this.outbox.flush(key, () => !this.stopped)),
     );
     try {
       const relayEnabled = this.options.relay().enabled;
       // Previously issued credentials must still receive a permanent rejection after revocation.
       if (relayEnabled && this.relayId) await this.getRelayOffer();
+      if (this.stopped) return;
       this.relay?.setEnabled(relayEnabled);
       const requests = await this.inbox.list();
+      if (this.stopped) return;
       for (const { state, sourceId, instruction } of requests) {
         if (state !== "queued" || instruction.target.kind !== "conversation") continue;
         const agentId = instruction.target.agentId;
         if (this.active.has(agentId)) continue;
-        this.active.add(agentId);
-        void this.dispatch(sourceId, instruction)
+        const dispatch = { sourceId, id: instruction.id, admitted: false };
+        this.active.set(agentId, dispatch);
+        void this.dispatch(dispatch, instruction)
           .catch(() =>
             this.options.logger.warn(
               { requestId: instruction.id },
@@ -515,16 +548,21 @@ export class HostInstructionsRuntime {
     return { kind: "conversation" as const, workspaceId: workspace.workspaceId, agentId };
   }
 
-  private async dispatch(sourceId: string, instruction: z.infer<typeof HostInstructionSchema>) {
+  private async dispatch(
+    active: ActiveInstruction,
+    instruction: z.infer<typeof HostInstructionSchema>,
+  ) {
+    const { sourceId } = active;
     const { target, id } = instruction;
     if (target.kind !== "conversation") return;
     const { agentStorage, agentManager, logger } = this.options;
     const live = agentManager.getAgent(target.agentId);
     if (live?.pendingPermissions.size || agentManager.hasInFlightRun(target.agentId)) return;
     const currentTarget = await this.resolveConversation(target.agentId);
-    const claim = await this.inbox.claim(sourceId, id, currentTarget);
-    if (claim?.state !== "dispatching") return;
-    let admitted = false;
+    if (this.stopped) return;
+    active.claim = this.inbox.claim(sourceId, id, currentTarget);
+    const claim = await active.claim;
+    if (this.stopped || claim?.state !== "dispatching") return;
     try {
       const result = await sendPreparedPromptToAgent({
         agentManager,
@@ -542,11 +580,12 @@ export class HostInstructionsRuntime {
         unarchive: false,
         allowOutOfBand: false,
         admit: () => {
-          admitted =
+          const admit =
             !this.stopped &&
             this.inbox.canDispatch(sourceId, id) &&
             !agentManager.getAgent(target.agentId)?.pendingPermissions.size;
-          return admitted;
+          if (admit) active.admitted = true;
+          return admit;
         },
         logger,
       });
@@ -559,9 +598,13 @@ export class HostInstructionsRuntime {
         "host_instruction_dispatched",
       );
     } catch (error) {
+      // close() owns releasing claims that never passed admission.
+      if (this.stopped && !active.admitted) return;
+      active.claim = undefined;
       if (
         error instanceof AgentTurnBusyError ||
-        (!admitted && !this.inbox.canDispatch(sourceId, id))
+        (!active.admitted &&
+          (error instanceof AgentManagerShuttingDownError || !this.inbox.canDispatch(sourceId, id)))
       ) {
         await this.inbox.markBusy(sourceId, id);
       } else {

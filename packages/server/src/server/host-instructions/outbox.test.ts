@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostInstructionInbox } from "./inbox.js";
 import { HostInstructionOutbox, type HostInstructionTransport } from "./outbox.js";
 
@@ -71,6 +71,23 @@ describe("host instruction outbox", () => {
     await inbox.decide("minibox", id, true);
     await outbox.flush(registration);
     expect((await outbox.status(id)).state).toBe("queued");
+  });
+
+  it("skips terminal history before looking up requests in a flush", async () => {
+    for (let index = 0; index < 3; index++) {
+      const old = await outbox.submit(registration, request);
+      await outbox.cancel(old.id);
+    }
+    const pending = await outbox.submit(registration, request);
+    const status = vi.spyOn(outbox, "status");
+    try {
+      online = true;
+      await outbox.flush(registration);
+      expect(status.mock.calls).toEqual([[pending.id]]);
+    } finally {
+      status.mockRestore();
+    }
+    expect((await outbox.status(pending.id)).state).toBe("awaiting_approval");
   });
 
   it("keeps delivering later requests after a rejected exchange", async () => {

@@ -2020,6 +2020,13 @@ export async function createPaseoDaemon(
 
   const stop = async (options?: { keepTerminals?: boolean }) => {
     const keepTerminals = options?.keepTerminals === true;
+    // Quiesce instruction ingress and scheduling before freezing or closing agent sessions.
+    wsServer?.prepareForShutdown();
+    const instructionShutdown = hostInstructions
+      .close()
+      .catch((error: unknown) =>
+        logger.warn({ err: error }, "Failed to shut down host instructions"),
+      );
     let terminalShutdownError: unknown = null;
     localCredential = null;
     await deleteLocalCredential(config.paseoHome);
@@ -2034,8 +2041,7 @@ export async function createPaseoDaemon(
     scriptHealthMonitor.stop();
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
+    await instructionShutdown;
     await changeRequestWatches.close();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
@@ -2067,7 +2073,6 @@ export async function createPaseoDaemon(
     }
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
-    await hostInstructions.close().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

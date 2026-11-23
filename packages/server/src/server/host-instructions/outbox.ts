@@ -120,26 +120,28 @@ export class HostInstructionOutbox {
     ];
   }
 
-  flush(registrationId: string): Promise<void> {
+  flush(registrationId: string, canContinue: () => boolean = () => true): Promise<void> {
     const pending = this.flushing.get(registrationId);
     if (pending) return pending;
-    const operation = this.deliver(registrationId).finally(() => {
+    const operation = this.deliver(registrationId, canContinue).finally(() => {
       this.flushing.delete(registrationId);
     });
     this.flushing.set(registrationId, operation);
     return operation;
   }
 
-  private async deliver(registrationId: string): Promise<void> {
+  private async deliver(registrationId: string, canContinue: () => boolean): Promise<void> {
     for (const request of this.requests.filter(
-      (entry) => entry.registrationId === registrationId,
+      (entry) => entry.registrationId === registrationId && !terminal(entry.receipt?.state),
     )) {
+      if (!canContinue()) return;
       const id = request.instruction.id;
       await this.status(id);
+      if (!canContinue()) return;
       const current = this.requireRequest(id);
       if (terminal(current.receipt?.state)) continue;
 
-      const receipt = await this.exchange(current);
+      const receipt = await this.exchange(current, canContinue);
       if (receipt) {
         const parsed = HostInstructionReceiptSchema.safeParse(receipt);
         if (!parsed.success || parsed.data.id !== id) continue;
@@ -153,12 +155,13 @@ export class HostInstructionOutbox {
     }
   }
 
-  private async exchange(request: OutgoingInstruction) {
+  private async exchange(request: OutgoingInstruction, canContinue: () => boolean) {
     const { registrationId, instruction } = request;
     if (!request.attempted && !request.receipt && !request.cancellationPending) {
       await this.update(instruction.id, { attempted: true });
     }
 
+    if (!canContinue()) return null;
     try {
       if (request.cancellationPending) {
         return await this.transport.cancel(registrationId, instruction);

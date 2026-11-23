@@ -15,7 +15,7 @@ import {
   DaemonClient as HostClient,
 } from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { WebSocket } from "ws";
@@ -29,6 +29,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
+import { HostInstructionInbox } from "../host-instructions/inbox.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
@@ -728,6 +729,44 @@ async function waitForCapturedLog(
             { timeout: 15000 },
           )
           .toBe("awaiting_approval");
+
+        // Pause the prompt's storage load after the runtime has claimed the request.
+        const pendingId = first.structuredContent?.id;
+        if (typeof pendingId !== "string") throw new Error("Expected instruction receipt");
+        const { agentStorage } = destination.daemon;
+        const readRecord = agentStorage.get.bind(agentStorage);
+        const loading = Promise.withResolvers<void>();
+        const resumeLoad = Promise.withResolvers<void>();
+        let targetReads = 0;
+        const held = vi.spyOn(agentStorage, "get").mockImplementation(async (recordId) => {
+          if (recordId === agent.id && ++targetReads === 2) {
+            loading.resolve();
+            await resumeLoad.promise;
+          }
+          return readRecord(recordId);
+        });
+        try {
+          await destinationClient.manageHostInstructions({
+            action: "decide",
+            id: pendingId,
+            sourceId,
+            approve: true,
+          });
+          await withTimeout(
+            loading.promise,
+            10000,
+            "Expected a claimed instruction to load its agent",
+          );
+          await destination.daemon.stop();
+          const persisted = await HostInstructionInbox.open(destination.paseoHome);
+          expect(
+            (await persisted.list()).find((entry) => entry.instruction.id === pendingId)?.state,
+          ).toBe("queued");
+          expect(sent).toHaveLength(1);
+        } finally {
+          resumeLoad.resolve();
+          held.mockRestore();
+        }
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();
