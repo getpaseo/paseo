@@ -21,10 +21,7 @@ import {
   resolvePaseoCliExecutablePath,
 } from "./paseo-cli-path.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
-import {
-  findExecutable,
-  findExecutableWithoutProbing,
-} from "../executable-resolution/executable-resolution.js";
+import { findExecutableWithoutProbing } from "../executable-resolution/executable-resolution.js";
 import { createHeadlessTerminal } from "./headless-terminal.js";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import {
@@ -379,7 +376,9 @@ export async function resolveTerminalSpawnCommand(
     return { command, args };
   }
 
-  const resolveExecutable = options.resolveExecutable ?? findExecutable;
+  const resolveExecutable =
+    options.resolveExecutable ??
+    ((name: string) => findExecutableWithoutProbing(name, { cwd: process.cwd() }));
   const resolved = await resolveExecutable(command);
   if (!resolved) {
     // Leave the command as-is so the terminal itself surfaces the "not found"

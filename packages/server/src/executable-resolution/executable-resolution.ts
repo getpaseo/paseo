@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { delimiter, resolve } from "node:path";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import { execCommand } from "../utils/spawn.js";
 import which from "which";
-import { windowsExecutableResolution } from "./windows.js";
+import { enumerateWingetPackageCandidates, windowsExecutableResolution } from "./windows.js";
 
 const PROBE_TIMEOUT_MS = 2000;
 
@@ -114,7 +115,7 @@ export function executableExists(
   return exists(executablePath) ? executablePath : null;
 }
 
-// PATH lookup that never runs the candidate, unlike findExecutable which probes
+// Executable lookup that never runs the candidate, unlike findExecutable which probes
 // each one with `--version`. A terminal spawn path cannot afford that probe: it
 // would execute the profile command once before the terminal even opens.
 // `path` overrides the PATH to search, so a caller can resolve against the
@@ -134,7 +135,13 @@ export async function findExecutableWithoutProbing(
           .map((entry) => resolve(options.cwd, entry))
           .join(delimiter);
   const candidates = await enumerateCandidatesViaLibrary(name, { PATH: path });
-  return candidates[0] ?? null;
+  if (candidates[0]) return candidates[0];
+  if (process.platform !== "win32" || hasPathSeparator(name)) return null;
+
+  for (const candidate of enumerateWingetPackageCandidates(name, process.env.LOCALAPPDATA)) {
+    if ((await stat(candidate).catch(() => null))?.isFile()) return candidate;
+  }
+  return null;
 }
 
 export interface ExecutableResolutionOptions {

@@ -18,16 +18,22 @@ import {
 } from "./terminal.js";
 import {
   chmodSync,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
+import {
+  subscribe as subscribeChannel,
+  unsubscribe as unsubscribeChannel,
+} from "node:diagnostics_channel";
 import * as pty from "node-pty";
 import xterm from "@xterm/headless";
 import { delimiter, join } from "node:path";
@@ -390,6 +396,116 @@ describe("createTerminal", () => {
 
     expect(resolved).toEqual({ command: "C:\\tools\\claude.exe", args: ["--foo"] });
   });
+
+  it.runIf(isPlatform("win32"))(
+    "starts a Windows profile command exactly once without a version probe",
+    async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "terminal-no-version-probe-"));
+      temporaryDirs.push(cwd);
+      const command = join(cwd, "profile.cmd");
+      const scriptPath = join(cwd, "profile.cjs");
+      const journalPath = join(cwd, "invocations.jsonl");
+      writeFileSync(
+        scriptPath,
+        [
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(journalPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+          'if (process.argv[2] === "--version") process.exit(0);',
+          'process.stdout.write("__PASEO_PROFILE_READY__\\r\\n");',
+          "process.stdin.resume();",
+        ].join("\n"),
+      );
+      writeFileSync(command, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`);
+
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd,
+          command,
+          args: ["requested-run"],
+        }),
+      );
+      try {
+        await waitForState(session, (state) =>
+          getLines(state).join("\n").includes("__PASEO_PROFILE_READY__"),
+        );
+        expect(readFileSync(journalPath, "utf8")).toBe('["requested-run"]\n');
+      } finally {
+        await session.killAndWait({ gracefulTimeoutMs: 1000, forceTimeoutMs: 500 });
+      }
+    },
+  );
+
+  it.runIf(isPlatform("win32"))(
+    "starts a Windows WinGet profile outside PATH without executing it during discovery",
+    async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "terminal-winget-profile-"));
+      temporaryDirs.push(cwd);
+      const command = "paseo-qa-winget-profile";
+      const localAppData = join(cwd, "LocalAppData");
+      const packageDir = join(localAppData, "Microsoft", "WinGet", "Packages", "Paseo.Profile");
+      const emptyPath = join(cwd, "empty-path");
+      mkdirSync(packageDir, { recursive: true });
+      mkdirSync(emptyPath);
+      const executable = join(packageDir, `${command}.exe`);
+      copyFileSync(process.execPath, executable);
+      const scriptPath = join(cwd, "profile.cjs");
+      const journalPath = join(cwd, "invocations.jsonl");
+      writeFileSync(
+        scriptPath,
+        [
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(journalPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+          'process.stdout.write("__PASEO_WINGET_READY__\\r\\n");',
+          'process.stdin.once("data", () => process.exit(0));',
+        ].join("\n"),
+      );
+      const originalEnv = { PATH: process.env.PATH, LOCALAPPDATA: process.env.LOCALAPPDATA };
+      const childProcesses: ChildProcess[] = [];
+      const onChildProcess = (message: unknown) => {
+        childProcesses.push((message as { process: ChildProcess }).process);
+      };
+      subscribeChannel("child_process", onChildProcess);
+      let session: TerminalSession | undefined;
+      const exitTimeout = new AbortController();
+      try {
+        process.env.PATH = emptyPath;
+        process.env.LOCALAPPDATA = localAppData;
+        const args = [scriptPath, "requested-run"];
+        // Fail before ConPTY receives an unresolved bare command on the regression path.
+        expect(await resolveTerminalSpawnCommand(command, args)).toEqual({
+          command: executable,
+          args,
+        });
+        expect(childProcesses).toEqual([]);
+
+        const runningSession = trackSession(
+          await createTerminal({ workspaceId: "ws-test", cwd, command, args }),
+        );
+        session = runningSession;
+        await waitForState(runningSession, (state) =>
+          getLines(state).join("\n").includes("__PASEO_WINGET_READY__"),
+        );
+        expect(readFileSync(journalPath, "utf8")).toBe('["requested-run"]\n');
+        expect(childProcesses.flatMap((child) => child.spawnargs)).not.toContain("--version");
+        const exited = new Promise<{ exitCode: number | null }>((resolve) =>
+          runningSession.onExit(resolve),
+        );
+        runningSession.send({ type: "input", data: "exit\r" });
+        await expect(
+          Promise.race([exited, delay(5_000, undefined, { signal: exitTimeout.signal })]),
+        ).resolves.toMatchObject({ exitCode: 0 });
+      } finally {
+        exitTimeout.abort();
+        unsubscribeChannel("child_process", onChildProcess);
+        for (const [key, value] of Object.entries(originalEnv)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        await session?.killAndWait({ gracefulTimeoutMs: 1000, forceTimeoutMs: 500 });
+      }
+    },
+  );
 
   it.runIf(isPlatform("linux", "darwin"))(
     "spawns without shell interpretation on POSIX, so argv reaches the child byte-for-byte",
