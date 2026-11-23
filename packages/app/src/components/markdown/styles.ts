@@ -65,6 +65,14 @@ export function createMarkdownStyles(
         },
       },
       link: { color: theme.colors.accentBright, underline: false },
+      math: {
+        ...block,
+        fontSize,
+        color: paragraph.color,
+        backgroundColor: "transparent",
+        padding: 0,
+      },
+      inlineMath: { color: paragraph.color },
       linkVariants: {
         "^(?!https?://).+": {
           color: theme.colors.accentBright,

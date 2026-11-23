@@ -194,6 +194,8 @@ export declare const DocumentFrame: ComponentType<{ url: string; testID?: string
 
 export interface MarkdownProps {
   children: string;
+  /** Parse dollar-delimited LaTeX expressions. */
+  math?: boolean;
 }
 
 /** Renders Markdown using Paseo’s theme, selection, and link behavior. */

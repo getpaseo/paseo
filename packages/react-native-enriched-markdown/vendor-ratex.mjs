@@ -38,11 +38,13 @@ const log = (m) => console.log(`${LOG_PREFIX} ${m}`);
 const fail = (m) => { console.error(`${LOG_PREFIX} ${m}`); process.exit(1); };
 
 function parseArgs(argv) {
-  const args = { force: false, manifest: null, output: null };
+  const args = { force: false, manifest: null, output: null, androidOutput: null, androidOnly: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--force') args.force = true;
     else if (argv[i] === '--manifest') args.manifest = argv[++i];
     else if (argv[i] === '--output') args.output = argv[++i];
+    else if (argv[i] === '--android-output') args.androidOutput = argv[++i];
+    else if (argv[i] === '--android-only') args.androidOnly = true;
   }
   return args;
 }
@@ -134,6 +136,7 @@ function present(m, dir) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.androidOnly && !args.androidOutput) fail('--android-only requires --android-output');
   if (args.manifest) manifestPath = path.resolve(args.manifest);
   if (args.output) outDir = path.resolve(args.output);
 
@@ -141,9 +144,13 @@ async function main() {
 
   const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const key = stampKey(m);
+  const androidKey = args.androidOutput ? `${key}:${crypto.createHash('sha256').update(fs.readFileSync(path.join(here, 'android/ratex.Cargo.lock'))).digest('hex')}` : null;
 
-  if (!args.force && present(m, outDir) &&
-      (fs.existsSync(stampFile) ? fs.readFileSync(stampFile, 'utf8').trim() : null) === key) {
+  const androidStamp = args.androidOutput ? path.join(args.androidOutput, '.stamp') : null;
+  const androidCurrent = !androidStamp || (fs.existsSync(androidStamp) && fs.readFileSync(androidStamp, 'utf8').trim() === androidKey);
+  const iosCurrent = present(m, outDir) && (fs.existsSync(stampFile) ? fs.readFileSync(stampFile, 'utf8').trim() : null) === key;
+  const needsIos = !args.androidOnly && (args.force || !iosCurrent);
+  if (!args.force && !needsIos && androidCurrent) {
     log('RaTeX vendor tree already up to date; skipping.');
     return;
   }
@@ -164,6 +171,9 @@ async function main() {
   // After a successful swap the dir no longer exists, so this becomes a no-op.
   process.on('exit', () => {
     try { fs.rmSync(staging, { recursive: true, force: true }); } catch { /* best effort */ }
+    if (args.androidOutput) {
+      try { fs.rmSync(path.resolve(args.androidOutput) + '.staging', { recursive: true, force: true }); } catch { /* best effort */ }
+    }
   });
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
@@ -172,8 +182,8 @@ async function main() {
   const fontsOut = path.join(staging, 'Fonts');
 
   // 1. Prebuilt static XCFramework (device + simulator[arm64,x86_64] + macOS slices).
-  const xcBuf = await fetchAndVerify(m.xcframework.url, m.xcframework.sha256, 'xcframework');
-  {
+  if (needsIos) {
+    const xcBuf = await fetchAndVerify(m.xcframework.url, m.xcframework.sha256, 'xcframework');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ratex-xcf-'));
     try {
       extractTo(xcBuf, '.zip', ['-d', staging], tmp);
@@ -188,31 +198,58 @@ async function main() {
   {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ratex-src-'));
     try {
-      extractTo(srcBuf, '.tgz', ['-C', tmp], tmp);
+      const paths = needsIos ? [...m.source.swiftSources, m.source.fontsDir, m.source.license] : [];
+      if (args.androidOutput) paths.push('Cargo.toml', 'crates', 'platforms/android/src/main/kotlin', 'platforms/android/src/main/assets', ...(!needsIos ? [m.source.license] : []));
+      extractTo(srcBuf, '.tgz', ['-C', tmp, ...paths.map((rel) => `${m.source.prefix}/${rel}`)], tmp);
       const root = path.join(tmp, m.source.prefix);
       if (!fs.existsSync(root)) fail(`source tarball has no ${m.source.prefix}/ directory`);
 
-      for (const rel of m.source.swiftSources) {
-        const from = path.join(root, rel);
-        if (!fs.existsSync(from)) fail(`source tarball missing ${rel}`);
-        copyFile(from, path.join(staging, path.basename(rel)));
+      if (args.androidOutput && (args.force || !androidCurrent)) {
+        const android = path.resolve(args.androidOutput);
+        const androidStaging = android + '.staging';
+        fs.rmSync(androidStaging, { recursive: true, force: true });
+        fs.mkdirSync(androidStaging, { recursive: true });
+        for (const rel of ['Cargo.toml', 'crates', 'platforms/android/src/main/kotlin', 'platforms/android/src/main/assets', 'LICENSE']) {
+          fs.cpSync(path.join(root, rel), path.join(androidStaging, rel), { recursive: true });
+        }
+        copyFile(path.join(here, 'android/ratex.Cargo.lock'), path.join(androidStaging, 'Cargo.lock'));
+        fs.writeFileSync(path.join(androidStaging, '.stamp'), androidKey + '\n');
+        const androidBackup = android + '.backup';
+        fs.rmSync(androidBackup, { recursive: true, force: true });
+        const hadAndroid = fs.existsSync(android);
+        if (hadAndroid) fs.renameSync(android, androidBackup);
+        try { fs.renameSync(androidStaging, android); }
+        catch (error) { if (hadAndroid) fs.renameSync(androidBackup, android); throw error; }
+        fs.rmSync(androidBackup, { recursive: true, force: true });
       }
 
-      const fontsSrc = path.join(root, m.source.fontsDir);
-      if (!fs.existsSync(fontsSrc)) fail(`source tarball missing ${m.source.fontsDir}`);
-      let n = 0;
-      for (const f of fs.readdirSync(fontsSrc)) {
-        if (f.endsWith('.ttf')) { copyFile(path.join(fontsSrc, f), path.join(fontsOut, f)); n++; }
-      }
-      if (n === 0) fail(`no .ttf fonts found under ${m.source.fontsDir}`);
+      if (needsIos) {
+        for (const rel of m.source.swiftSources) {
+          const from = path.join(root, rel);
+          if (!fs.existsSync(from)) fail(`source tarball missing ${rel}`);
+          copyFile(from, path.join(staging, path.basename(rel)));
+        }
 
-      const licenseFrom = path.join(root, m.source.license);
-      if (fs.existsSync(licenseFrom)) copyFile(licenseFrom, path.join(staging, 'LICENSE'));
+        const fontsSrc = path.join(root, m.source.fontsDir);
+        if (!fs.existsSync(fontsSrc)) fail(`source tarball missing ${m.source.fontsDir}`);
+        let n = 0;
+        for (const f of fs.readdirSync(fontsSrc)) {
+          if (f.endsWith('.ttf')) { copyFile(path.join(fontsSrc, f), path.join(fontsOut, f)); n++; }
+        }
+        if (n === 0) fail(`no .ttf fonts found under ${m.source.fontsDir}`);
+
+        const licenseFrom = path.join(root, m.source.license);
+        if (fs.existsSync(licenseFrom)) copyFile(licenseFrom, path.join(staging, 'LICENSE'));
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
 
+  if (!needsIos) {
+    log(`RaTeX ${m.tag} Android sources ready.`);
+    return;
+  }
   fs.writeFileSync(path.join(staging, '.stamp'), key + '\n');
 
   // Publish by swapping directories, never deleting the previous tree before the new
