@@ -55,6 +55,10 @@ import {
   type ProviderUsage,
 } from "../provider.js";
 
+const STDERR_BUFFER_LIMIT = 8192;
+
+class AcpProcessDiagnosticError extends Error {}
+
 const ADAPTER_CAPABILITIES = [
   "prompt.message",
   "prompt.command",
@@ -424,6 +428,8 @@ class AcpRuntime {
   agentCapabilities: AgentCapabilities = {};
   nativeSessionId = "";
   private readonly child: ChildProcessWithoutNullStreams | null;
+  private readonly processClosed: Promise<void>;
+  private stderrTail = "";
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallState>();
@@ -501,7 +507,6 @@ class AcpRuntime {
         stdio: "pipe",
       });
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
-      child.stderr.on("data", () => undefined);
       const output = Writable.toWeb(child.stdin) as unknown as Parameters<typeof ndJsonStream>[0];
       const rawInput = Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>;
       const input = observePartialWireReads(rawInput, () => onPartialWireRead?.()) as Parameters<
@@ -517,25 +522,22 @@ class AcpRuntime {
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
     onPartialWireRead = () => runtime.notePartialWireRead();
     try {
-      const initialize = withTimeout(
-        runtime.call(
-          runtime.connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
-            clientInfo: { name: "paseo", version: "1" },
-          }),
-        ),
+      const initialize = runtime.connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: { name: "paseo", version: "1" },
+      });
+      const initialized = await withTimeout(
+        runtime.call(spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize),
         options.options.acpOptions?.startupTimeoutMs ?? 10_000,
         `ACP provider ${options.options.id} did not initialize`,
       );
-      const initialized = spawnFailure
-        ? await Promise.race([initialize, spawnFailure])
-        : await initialize;
       runtime.agentCapabilities = initialized.agentCapabilities ?? {};
       return runtime;
     } catch (error) {
+      const failure = runtime.processError(error);
       await runtime.close();
-      throw error;
+      throw failure;
     }
   }
 
@@ -547,6 +549,13 @@ class AcpRuntime {
     private readonly options: StartRuntimeOptions,
   ) {
     this.child = child;
+    this.processClosed = child
+      ? new Promise<void>((resolve) => child.once("close", () => resolve()))
+      : Promise.resolve();
+    child?.stderr.setEncoding("utf8");
+    child?.stderr.on("data", (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_BUFFER_LIMIT);
+    });
     this.closeConnector = closeConnector;
     this.whenConnectorClosed = whenConnectorClosed;
     this.emit = options.emit;
@@ -568,7 +577,7 @@ class AcpRuntime {
     );
     if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
     child?.on("error", (error) => {
-      const message = describeError(error);
+      const message = this.processDiagnostic(describeError(error));
       this.processFailed = true;
       this.processFailureMessage = message;
       this.settlePendingWork(message);
@@ -579,9 +588,9 @@ class AcpRuntime {
         error: { message },
       });
     });
-    child?.once("close", (code, signal) => {
+    child?.once("close", () => {
       if (this.closing || this.processFailed || !this.nativeSessionId) return;
-      const message = `ACP process exited (${signal ?? code ?? "unknown"})`;
+      const message = this.processDiagnostic("ACP process exited");
       this.processFailed = true;
       this.processFailureMessage = message;
       this.settlePendingWork(message);
@@ -1656,16 +1665,58 @@ class AcpRuntime {
     }
   }
 
-  private call<Value>(operation: Promise<Value>): Promise<Value> {
-    if (this.connection.signal.aborted) {
-      return Promise.reject(new Error("ACP transport is closed"));
+  private async call<Value>(operation: Promise<Value>): Promise<Value> {
+    try {
+      if (this.connection.signal.aborted) {
+        // The SDK operation may already have rejected when it was created.
+        void operation.catch(() => undefined);
+        throw new Error("ACP transport is closed");
+      }
+      return await Promise.race([
+        operation,
+        this.connection.closed.then(() => {
+          throw new Error("ACP transport closed unexpectedly");
+        }),
+      ]);
+    } catch (error) {
+      // EOF can precede both exit and the final stderr reads. For subprocesses,
+      // close owns the diagnostic boundary; initialization still has its deadline.
+      if (this.child && this.connection.signal.aborted && !this.closing) {
+        await this.processClosed;
+      }
+      throw await this.withProcessDiagnostic(error);
     }
-    return Promise.race([
-      operation,
-      this.connection.closed.then(() => {
-        throw new Error("ACP transport closed unexpectedly");
-      }),
-    ]);
+  }
+
+  private async withProcessDiagnostic(error: unknown): Promise<unknown> {
+    if (!this.child || this.closing || error instanceof AcpProcessDiagnosticError) return error;
+    // Stdout EOF and SDK rejection can run before Node delivers exit or stderr.
+    // Give the pending I/O a turn, then drain stdio if the process has exited.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (this.child.exitCode !== null || this.child.signalCode !== null) {
+      await this.processClosed;
+    }
+    return this.processError(error);
+  }
+
+  private processError(error: unknown): unknown {
+    if (error instanceof AcpProcessDiagnosticError) return error;
+    const message = describeError(error);
+    const diagnostic = this.processDiagnostic(message);
+    return diagnostic === message
+      ? error
+      : new AcpProcessDiagnosticError(diagnostic, { cause: error });
+  }
+
+  private processDiagnostic(message: string): string {
+    const child = this.child;
+    if (child?.exitCode !== null && child?.exitCode !== undefined) {
+      message += ` (exit code ${child.exitCode})`;
+    }
+    if (child?.signalCode) message += ` (signal ${child.signalCode})`;
+    const stderr = redactStderrDiagnostic(this.stderrTail).trim();
+    if (stderr) message += `\nstderr:\n${stderr}`;
+    return message;
   }
 
   private enqueueNotification(operation: () => void): Promise<void> {
@@ -2452,4 +2503,19 @@ async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise
     promise.then(() => true),
     new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
   ]);
+}
+
+// Match daemon diagnostic redaction without importing the server into the plugin SDK.
+// Stderr is untrusted and can still contain secrets outside these recognized forms.
+function redactStderrDiagnostic(value: string): string {
+  return value
+    .replace(/paseo:\/\/\S+/gi, "paseo://[redacted]")
+    .replace(
+      /([?&](?:password|token|secret|key|publicKey|daemonPublicKeyB64)=)[^&\s"']+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /((?:password|token|secret|authorization|api[_-]?key|daemonPublicKeyB64|relayKey)\s*[:=]\s*)("[^"]+"|'[^']+'|[^\s,}]+)/gi,
+      "$1[redacted]",
+    );
 }

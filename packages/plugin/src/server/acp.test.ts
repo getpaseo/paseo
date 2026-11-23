@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   AgentSideConnection,
   PROTOCOL_VERSION,
+  RequestError,
   type Agent,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
@@ -2201,6 +2202,124 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
+  it.each([false, true])(
+    "reports plugin ACP startup stderr and exit status (large=%s)",
+    async (large) => {
+      const stderr = large
+        ? "discarded-prefix" + "x".repeat(2 * 1024 * 1024) + "startup failure"
+        : "startup failure";
+      const executable = await fakeAcp(`
+      process.stdin.once("data", () => {
+        process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(23));
+      });
+    `);
+      const registration = runAcpProvider({
+        id: "startup-failure",
+        label: "Startup failure",
+        command: [process.execPath, executable],
+      });
+      const error = await registration
+        .connect({ versions: [1], capabilities: [] })
+        .catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw new Error("Expected startup failure");
+      expect(error.message).toContain("exit code 23");
+      expect(error.message).toContain("startup failure");
+      expect(error.message).not.toContain("discarded-prefix");
+      const tail = error.message.split("stderr:\n")[1];
+      expect(tail).toBe(stderr.slice(-8192));
+    },
+  );
+
+  it("preserves an initialization error when the process has no richer diagnostics", async () => {
+    const executable = await fakeAcp(`
+      require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+        const request = JSON.parse(line);
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id,
+          error: { code: -32001, message: "fixture initialize rejected", data: { reason: "fixture" } }
+        }) + "\\n");
+      });
+    `);
+    const registration = runAcpProvider({
+      id: "rpc-failure",
+      label: "RPC failure",
+      command: [process.execPath, executable],
+    });
+    const error = await registration
+      .connect({ versions: [1], capabilities: [] })
+      .catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({ code: -32001, data: { reason: "fixture" } });
+  });
+
+  it("waits for stderr to drain after stdout closes and the launcher exits", async () => {
+    const executable = await fakeAcp(`
+      process.stdin.once("data", () => {
+        require("node:child_process").spawn(process.execPath, ["-e",
+          'setTimeout(() => process.stderr.write("late launcher diagnostic"), 100)'
+        ], { stdio: ["ignore", "ignore", process.stderr] });
+        process.exit(24);
+      });
+    `);
+    const registration = runAcpProvider({
+      id: "draining-failure",
+      label: "Draining failure",
+      command: [process.execPath, executable],
+    });
+    await expect(registration.connect({ versions: [1], capabilities: [] })).rejects.toThrow(
+      /exit code 24[\s\S]*late launcher diagnostic/,
+    );
+  });
+
+  it("preserves plugin ACP crash diagnostics during an active turn", async () => {
+    const executable = await fakeAcp(
+      basicAgent.replace(
+        'send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })',
+        `process.stderr.write("active turn crash token=fixture-secret\\n", () => process.exit(19))`,
+      ),
+    );
+    const { connection, events } = await connect(executable, ["prompt.message"]);
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "crash",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "crash" }] },
+        },
+      });
+      const failure = await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "failed",
+      );
+      expect(failure).toMatchObject({
+        error: { message: expect.stringContaining("active turn crash token=[redacted]") },
+      });
+      expect(failure).toMatchObject({
+        error: { message: expect.stringContaining("exit code 19") },
+      });
+      const runtimeFailure = await waitForEvent(
+        events,
+        (event) => event.type === "session.runtime_failed",
+      );
+      expect(runtimeFailure).toMatchObject({
+        error: { message: expect.stringContaining("active turn crash token=[redacted]") },
+      });
+      expect(JSON.stringify(events)).not.toContain("fixture-secret");
+      expect(
+        events.filter((event) => event.type === "session.turn" && event.state === "failed"),
+      ).toHaveLength(1);
+      expect(
+        JSON.stringify(events.filter((event) => event.type === "timeline.item")),
+      ).not.toContain("active turn crash");
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("drains heavy ACP stderr while initializing", async () => {
     const executable = await fakeAcp(
       `process.stderr.write("x".repeat(2 * 1024 * 1024));\n${basicAgent}`,
@@ -2208,7 +2327,26 @@ lines.on("line", (line) => {
     const { connection, events } = await connect(executable, ["prompt.message"]);
     await connection.send(openInput());
     await waitForEvent(events, (event) => event.type === "session.ready");
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "success",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    await waitForEvent(
+      events,
+      (event) => event.type === "session.turn" && event.state === "completed",
+    );
     await connection.close();
+    expect(
+      events.some(
+        (event) => event.type === "session.runtime_failed" || event.type === "request.failed",
+      ),
+    ).toBe(false);
+    expect(JSON.stringify(events)).not.toContain("x".repeat(100));
   });
 
   it("publishes runtime failure when the ACP process dies", async () => {
