@@ -4330,7 +4330,8 @@ export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService
 // Where Push sends the current branch, in order: the branch's push remote with a HEAD push
 // refspec, then its upstream, then a first push to origin that sets the upstream. There is no
 // target when git is set to push the branch to another remote than the one that order picks: Paseo
-// does not know which branch to use there, and the upstream is often a shared base branch.
+// does not know which branch to use there, and the upstream is often a shared base branch. The
+// same holds without origin when the upstream branch has another name than the local branch.
 // Checkout status reports the same target, so the Push offer and the push itself cannot disagree.
 type PushTarget =
   | { kind: "configured"; remoteName: string; headRef: string }
@@ -4360,10 +4361,15 @@ async function resolveUpstreamOrFirstPushTarget(
   context?: CheckoutContext,
 ): Promise<PushTarget | null> {
   const upstream = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch, context);
-  if (upstream) {
-    return { kind: "upstream", ...upstream };
-  }
   const originUrl = await getGitConfigValue(cwd, "remote.origin.url", context);
+  if (upstream) {
+    // Git's default refuses to push to an upstream branch named differently from the local
+    // branch, such as `feature` tracking `main`. Paseo has always made that push in checkouts
+    // that have origin, and still does. It is not extended to checkouts without origin, where
+    // Push was not offered before.
+    const sameBranchName = upstream.headRef === currentBranch;
+    return sameBranchName || originUrl ? { kind: "upstream", ...upstream } : null;
+  }
   return originUrl ? { kind: "first-push", remoteName: "origin" } : null;
 }
 

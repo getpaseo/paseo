@@ -1031,6 +1031,7 @@ const x = 1;
       return;
     }
     expect(status.upstreamRef).toBe("refs/remotes/origin/other-name");
+    expect(status.pushRemote).toBe("origin");
   });
 
   it("reports the upstream when the repo's only remote is not origin", async () => {
@@ -1100,6 +1101,40 @@ const x = 1;
       expect(sharedMainAfter).toBe(sharedMainBefore);
     },
   );
+
+  it("does not push a branch to a differently named upstream branch when there is no origin", async () => {
+    const sharedDir = join(tempDir, "shared.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", sharedDir]);
+    execFileSync("git", ["remote", "add", "upstream", sharedDir], { cwd: repoDir });
+    execFileSync("git", ["push", "upstream", "main"], { cwd: repoDir });
+    execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "-b", "feature", "--track", "upstream/main"], {
+      cwd: repoDir,
+    });
+    const sharedMainBefore = execFileSync("git", [
+      "--git-dir",
+      sharedDir,
+      "rev-parse",
+      "refs/heads/main",
+    ])
+      .toString()
+      .trim();
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+
+    const status = await getCheckoutStatus(repoDir);
+    await expect(pushCurrentBranch(repoDir)).rejects.toThrow("Remote 'origin' is not configured.");
+
+    expect(status).toMatchObject({ upstreamState: "tracked", aheadOfOrigin: 1, pushRemote: null });
+    const sharedMainAfter = execFileSync("git", [
+      "--git-dir",
+      sharedDir,
+      "rev-parse",
+      "refs/heads/main",
+    ])
+      .toString()
+      .trim();
+    expect(sharedMainAfter).toBe(sharedMainBefore);
+  });
 
   it("pushes to the tracked remote when the branch's pushRemote names the same remote", async () => {
     const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
