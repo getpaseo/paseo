@@ -17,6 +17,7 @@
 - 修复目录结构与裸仓库相同时 Git 命令选错仓库的问题 ([#10587](https://github.com/getpaseo/paseo/pull/10587))
 - 修复在 Bedrock 和 Vertex 上无法选择 Claude Auto 权限模式的问题 ([#6904](https://github.com/getpaseo/paseo/pull/6904))
 - 修复侧边栏的主机设置按钮需要点击两次才能打开设置的问题 ([#10562](https://github.com/getpaseo/paseo/pull/10562)，贡献者：[@ShalokShalom](https://github.com/ShalokShalom))
+- 修复普通检出中从未推送过的新分支在“变更”面板中不显示“推送”的问题 ([#10631](https://github.com/getpaseo/paseo/pull/10631))
 - 修复 Hub 在验证触发器时传入工作区目录后，daemon 使用错误模型目录的问题 ([#10582](https://github.com/getpaseo/paseo/pull/10582))
 
 ## 0.17.3 - 2026-11-22

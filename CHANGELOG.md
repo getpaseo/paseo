@@ -17,6 +17,7 @@
 - Fixed Git commands selecting the wrong repository when a directory has the layout of a bare repository ([#10587](https://github.com/getpaseo/paseo/pull/10587))
 - Fixed Claude Auto permission mode being unavailable on Bedrock and Vertex ([#6904](https://github.com/getpaseo/paseo/pull/6904))
 - Fixed the sidebar host settings button requiring two clicks to open settings ([#10562](https://github.com/getpaseo/paseo/pull/10562) by [@ShalokShalom](https://github.com/ShalokShalom))
+- Fixed the Changes pane not offering Push for a new branch that was never pushed in a regular checkout ([#10631](https://github.com/getpaseo/paseo/pull/10631))
 - Fixed the daemon using the wrong model catalog when Hub sends a workspace directory for trigger validation ([#10582](https://github.com/getpaseo/paseo/pull/10582))
 
 ## 0.17.3 - 2026-11-22
