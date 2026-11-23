@@ -845,15 +845,30 @@ export function BrowserPane({
         applyAnnotationMarkers(webview, markers);
       }
     };
-    const handleWebviewFocus = () => {
-      onFocusPane?.();
-      webview.focus?.();
+    const handleWebviewFocus = (event: Event) => {
       const focusBrowser = getDesktopHost()?.browser?.focus;
-      if (typeof focusBrowser === "function") {
-        void focusBrowser(browserIdRef.current).catch((error) => {
+      if (typeof focusBrowser !== "function") {
+        onFocusPane?.();
+        webview.focus?.();
+        return;
+      }
+      const previous = event instanceof FocusEvent ? event.relatedTarget : null;
+      // The main process refuses focus not preceded by a user press (#4679).
+      void focusBrowser(browserIdRef.current)
+        .then((focused) => {
+          if (focused) {
+            onFocusPane?.();
+            webview.focus?.();
+            return;
+          }
+          if (previous instanceof HTMLElement && document.activeElement === webview) {
+            previous.focus({ preventScroll: true });
+          }
+          return;
+        })
+        .catch((error) => {
           console.error("[browser-webview] focus failed", error);
         });
-      }
     };
 
     webview.addEventListener("did-start-loading", handleStartLoading);

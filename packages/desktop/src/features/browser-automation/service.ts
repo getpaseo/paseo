@@ -11,6 +11,7 @@ import type {
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
+import { recordBrowserAutomationInput } from "../browser-webviews/focus-intent.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
@@ -1003,7 +1004,13 @@ function actionabilityFailure(
 }
 
 function cdpSender(contents: TabContents): NonNullable<TabContents["sendDebugCommand"]> {
-  return contents.sendDebugCommand?.bind(contents) as NonNullable<TabContents["sendDebugCommand"]>;
+  const send = contents.sendDebugCommand?.bind(contents) as NonNullable<
+    TabContents["sendDebugCommand"]
+  >;
+  return ((method: string, params?: Record<string, unknown>) => {
+    if (method.startsWith("Input.")) recordBrowserAutomationInput(contents.id);
+    return send(method, params);
+  }) as NonNullable<TabContents["sendDebugCommand"]>;
 }
 
 async function executeWait(

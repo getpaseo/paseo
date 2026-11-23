@@ -78,6 +78,11 @@ import {
   unregisterPaseoBrowserHost,
 } from "./features/browser-webviews/index.js";
 import {
+  forgetBrowserFocusIntent,
+  isUserFocusOfBrowser,
+  recordBrowserMousePress,
+} from "./features/browser-webviews/focus-intent.js";
+import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
@@ -466,7 +471,7 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
     return false;
   }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-  if (!contents) {
+  if (!contents || !isUserFocusOfBrowser(contents.id)) {
     return false;
   }
   contents.focus();
@@ -780,8 +785,13 @@ async function createWindow(
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
     preparePaseoBrowserWebContents(contents);
+    const contentsId = contents.id;
+    contents.on("before-mouse-event", (_mouseEvent, mouse) => {
+      if (mouse.type === "mouseDown") recordBrowserMousePress(contentsId);
+    });
     contents.once("destroyed", () => {
-      pendingBrowserWindowOpenRequests.delete(contents.id);
+      pendingBrowserWindowOpenRequests.delete(contentsId);
+      forgetBrowserFocusIntent(contentsId);
     });
     installBrowserWindowOpenHandler({
       contents,
