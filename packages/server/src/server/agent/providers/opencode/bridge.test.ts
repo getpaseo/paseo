@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
-import Ajv from "ajv";
+import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -280,7 +280,7 @@ describe("OpenCodeBridge", () => {
           properties: { notifyOnFinish: { default: false } },
         });
       }
-      const ajv = new Ajv({ useDefaults: true, strict: false });
+      const ajv = new Ajv2020({ useDefaults: true, strict: false });
       const createInput = {
         title: "Bridge child",
         provider: "codex/gpt-5.4",
@@ -465,7 +465,7 @@ describe("OpenCodeBridge", () => {
               type: "object",
               properties: { value: { type: "string" } },
               required: ["value"],
-              $schema: "http://json-schema.org/draft-07/schema#",
+              $schema: "https://json-schema.org/draft/2020-12/schema",
             },
           },
         ],

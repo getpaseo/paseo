@@ -361,6 +361,10 @@ test.describe("Worktree restore", () => {
       cwd: backingWorktree.workspaceDirectory,
       stdio: "pipe",
     });
+    const originalHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: backingWorktree.workspaceDirectory,
+      encoding: "utf8",
+    }).trim();
     const created = await worktreeClient.createWorkspace({
       source: { kind: "directory", path: backingWorktree.workspaceDirectory },
       title: "Sample workspace",
@@ -389,10 +393,7 @@ test.describe("Worktree restore", () => {
     await page.getByTestId(`agent-row-${getServerId()}-${agent.id}`).click();
     await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible();
     await expect(
-      page.getByText(
-        "Restore Sample workspace to return to its agents. A new branch will start from the saved base or the repository default.",
-        { exact: true },
-      ),
+      page.getByText("Restore Sample workspace to return to its agents.", { exact: true }),
     ).toBeVisible();
     await captureBranchlessRestoreStep(page, "01-restore-workspace.png");
 
@@ -409,17 +410,13 @@ test.describe("Worktree restore", () => {
       cwd: backingWorktree.workspaceDirectory,
       encoding: "utf8",
     }).trim();
-    const defaultHead = execFileSync("git", ["rev-parse", "main"], {
-      cwd: tempRepo.path,
-      encoding: "utf8",
-    }).trim();
-    expect(restoredHead).toBe(defaultHead);
+    expect(restoredHead).toBe(originalHead);
     expect(
       execFileSync("git", ["branch", "--show-current"], {
         cwd: backingWorktree.workspaceDirectory,
         encoding: "utf8",
       }).trim(),
-    ).toMatch(/^restored\//);
+    ).toBe("");
   });
 
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {

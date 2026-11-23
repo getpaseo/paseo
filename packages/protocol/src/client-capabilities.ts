@@ -102,6 +102,10 @@ export const CLIENT_CAPS = {
   // 2027-04-28.
   goalUserWait: "goal_user_wait",
   browserHost: "browser_host",
+  // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after 2027-05-22 once client floor >= v0.17.2.
+  // An agent sender's steer means wait-for-turn-end from clients without it, because older
+  // CLIs and connected hosts send an explicit steer for every default agent send.
+  agentActiveTurnBehaviors: "agent_active_turn_behaviors",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

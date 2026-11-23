@@ -109,6 +109,63 @@ test("switches language on the same page, keeping the query and then every link"
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
 
+async function openHubDoc(page: Page, prefix: string, slug: string, heading: string) {
+  await page.goto(`${prefix}/docs/hub/${slug}`);
+  await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+}
+
+async function expectHubDocRedirect(
+  page: Page,
+  prefix: string,
+  legacySlug: string,
+  slug: string,
+  heading: string,
+) {
+  await page.goto(`${prefix}/docs/hub/${legacySlug}`);
+  await expect(page).toHaveURL(`${prefix}/docs/hub/${slug}`);
+  await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+}
+
+for (const { locale, prefix, linear, linearApp, webhooks, triggers, reference } of [
+  {
+    locale: "English",
+    prefix: "",
+    linear: "Linear triggers",
+    linearApp: "Linear for Hub",
+    webhooks: "Inbound webhooks",
+    triggers: "Triggers",
+    reference: "Trigger YAML reference",
+  },
+  {
+    locale: "Simplified Chinese",
+    prefix: "/zh-CN",
+    linear: "Linear 触发器",
+    linearApp: "为 Hub 配置 Linear",
+    webhooks: "入站 webhook",
+    triggers: "触发器",
+    reference: "触发器 YAML 参考",
+  },
+]) {
+  test(`opens ${locale} Hub guides and redirects legacy bookmarks`, async ({ page }) => {
+    await test.step("opens direct links to the new guides", async () => {
+      await openHubDoc(page, prefix, "triggers/linear", linear);
+      await openHubDoc(page, prefix, "self-hosting/linear-app", linearApp);
+      await openHubDoc(page, prefix, "triggers/webhooks", webhooks);
+    });
+
+    await test.step("redirects legacy guides within the same language", async () => {
+      await expectHubDocRedirect(page, prefix, "workflows", "triggers", triggers);
+      await expectHubDocRedirect(
+        page,
+        prefix,
+        "configuration/hub-yml",
+        "configuration/reference",
+        reference,
+      );
+    });
+  });
+}
+
 test("shows the language as an abbreviation and lists every language by name", async ({ page }) => {
   await page.goto("/docs/cli#running-agents");
   const button = languageButton(page);

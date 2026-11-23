@@ -21,6 +21,7 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { checkoutStatusQueryKey } from "@/git/query-keys";
 import {
   HostRuntimeController,
   HostRuntimeStore,
@@ -1748,7 +1749,7 @@ describe("HostRuntimeController", () => {
     });
 
     latencies["relay:relay.paseo.sh:443"] = 30;
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(240_000);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
@@ -1805,6 +1806,429 @@ describe("HostRuntimeController", () => {
     }
     expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
     await controller.stop();
+  });
+
+  it("ignores busy active heartbeat spikes when comparing against an idle alternate probe", async () => {
+    // Replays the recorded 10:04-10:08 relay sequence (#9149): the active relay has a ~250-300 ms
+    // baseline over its recent heartbeats, spikes to 383/503/491 ms right before each alternate
+    // probe, and the idle alternate measures 236/322/291 ms.
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    let alternateProbes = 0;
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 260,
+      [relayAlternate.id]: 280,
+    };
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        connectToDaemon: async (input) => {
+          if (input.connection.id === relayAlternate.id) {
+            alternateProbes += 1;
+          }
+          return baseDeps.connectToDaemon(input);
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+
+    const rounds = [
+      { intervalMs: 120_000, baseline: 295, spike: 383, alternate: 236 },
+      { intervalMs: 240_000, baseline: 251, spike: 503, alternate: 322 },
+      { intervalMs: 480_000, baseline: 341, spike: 491, alternate: 291 },
+    ];
+    for (const round of rounds) {
+      await vi.advanceTimersByTimeAsync(round.intervalMs - 10_000);
+      activeClient.heartbeatReportsRtt(round.baseline);
+      await controller.runProbeCycleNow();
+      await vi.advanceTimersByTimeAsync(10_000);
+      activeClient.heartbeatReportsRtt(round.spike);
+      latencies[relayAlternate.id] = round.alternate;
+      await controller.runProbeCycleNow();
+    }
+
+    expect(alternateProbes).toBe(4);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().client).toBe(activeClient);
+    expect(activeClient.isDisposed()).toBe(false);
+    await controller.stop();
+  });
+
+  it("requires a proportional RTT improvement before switching away from a high-latency link", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+
+    // 60 ms faster on a 300 ms link (20%) is noise, not enough to justify a switch.
+    activeClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 240;
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+
+    // 150 ms faster on a 300 ms link (50%) is a real win and switches after 3 consecutive probes.
+    latencies[relayAlternate.id] = 150;
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(index === 0 ? 30 * 60_000 : 120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+    await controller.stop();
+  });
+
+  it("exponentially backs off inactive connection probes while the active connection keeps winning", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    let alternateProbes = 0;
+    const baseDeps = makeDeps(
+      {
+        [relayPrimary.id]: 250,
+        [relayAlternate.id]: 260,
+      },
+      clients,
+    );
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        connectToDaemon: async (input) => {
+          if (input.connection.id === relayAlternate.id) {
+            alternateProbes += 1;
+          }
+          return baseDeps.connectToDaemon(input);
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(250);
+    expect(alternateProbes).toBe(1);
+
+    // First inactive online probe runs at 2m -> active wins, next interval backs off to 4m.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(2);
+
+    // At +2m (still < 4m), no inactive probe runs.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(2);
+
+    // At +4m total, second inactive probe runs -> backs off to 8m.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(3);
+
+    // At +6m (< 8m), still quiet; at +8m, third inactive probe runs -> backs off to 16m.
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(3);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(4);
+
+    // Foreground verification resets backoff back to 2m without forcing an immediate probe.
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    controller.ensureConnected({ verify: true });
+    await controller.runProbeCycleNow();
+    expect(alternateProbes).toBe(5);
+    await controller.stop();
+  });
+
+  it("keeps the active connection online while connecting the replacement during an adaptive switch", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    let replacementConnectGate: ReturnType<typeof createDeferred<void>> | null = null;
+    let shouldFailReplacement = false;
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        createClient: (input) => {
+          const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+          if (input.connection.id === relayAlternate.id) {
+            const origConnect = client.connect.bind(client);
+            client.connect = async () => {
+              if (replacementConnectGate) {
+                await replacementConnectGate.promise;
+              }
+              if (shouldFailReplacement) {
+                throw new Error("replacement handshake failed");
+              }
+              return origConnect();
+            };
+          }
+          return client as unknown as DaemonClient;
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    initialClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 100;
+
+    const observedSnapshots: Array<{
+      status: string;
+      connectionId: string | null;
+      hasClient: boolean;
+    }> = [];
+    const unsubscribe = controller.subscribe(() => {
+      const snap = controller.getSnapshot();
+      observedSnapshots.push({
+        status: snap.connectionStatus,
+        connectionId: snap.activeConnectionId,
+        hasClient: snap.client !== null,
+      });
+    });
+
+    // Two wins first.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+
+    // Third win triggers a switch, but replacement connect fails: active client must stay online.
+    shouldFailReplacement = true;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).toBe(initialClient);
+    expect(initialClient.isDisposed()).toBe(false);
+
+    // Now let replacement succeed after a delay: host must stay online on initialClient while
+    // replacement connects, and never emit connecting or client=null.
+    shouldFailReplacement = false;
+    observedSnapshots.length = 0;
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    replacementConnectGate = createDeferred<void>();
+    await vi.advanceTimersByTimeAsync(120_000);
+    const switchingCycle = controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).toBe(initialClient);
+    expect(initialClient.isDisposed()).toBe(false);
+
+    replacementConnectGate.resolve();
+    await switchingCycle;
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).not.toBeNull();
+    expect(controller.getSnapshot().client).not.toBe(initialClient);
+    expect(initialClient.isDisposed()).toBe(true);
+    expect(observedSnapshots.some((snap) => snap.status !== "online" || !snap.hasClient)).toBe(
+      false,
+    );
+
+    unsubscribe();
+    await controller.stop();
+  });
+
+  it("keeps active client status updates working after a failed make-before-break upgrade", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        createClient: (input) => {
+          const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+          if (input.connection.id === relayAlternate.id) {
+            client.connect = async () => {
+              throw new Error("replacement handshake failed");
+            };
+          }
+          return client as unknown as DaemonClient;
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    initialClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 100;
+
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+    initialClient.setConnectionState({ status: "disconnected", reason: "transport closed" });
+    expect(controller.getSnapshot().connectionStatus).toBe("error");
+    expect(controller.getSnapshot().lastError).toBe("transport closed");
+    await controller.stop();
+  });
+
+  it("aborts a pending make-before-break upgrade when the candidate connection is removed", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const replacementGate = createDeferred<void>();
+    const replacementClients: FakeDaemonClient[] = [];
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        createClient: (input) => {
+          const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+          if (input.connection.id === relayAlternate.id) {
+            replacementClients.push(client);
+            const origConnect = client.connect.bind(client);
+            client.connect = async () => {
+              await replacementGate.promise;
+              return origConnect();
+            };
+          }
+          return client as unknown as DaemonClient;
+        },
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const initialClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    initialClient.heartbeatReportsRtt(300);
+    latencies[relayAlternate.id] = 100;
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const switchingCycle = controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(replacementClients).toHaveLength(1);
+
+    const updatePromise = controller.updateHost({
+      ...host,
+      connections: [relayPrimary],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    replacementGate.resolve();
+    await Promise.all([switchingCycle, updatePromise]);
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).toBe(initialClient);
+    expect(initialClient.isDisposed()).toBe(false);
+    expect(replacementClients[0]?.isDisposed()).toBe(true);
+    await controller.stop();
+  });
+
+  it("runs store cache recovery when a make-before-break adaptive switch advances the online epoch", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({
+      serverId: "srv_upgrade_cache_recovery",
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 320,
+    };
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: makeDeps(latencies, clients),
+    });
+    const queryKey = checkoutStatusQueryKey(host.serverId, "/repo");
+
+    try {
+      store.syncHosts([host]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot(host.serverId)?.connectionStatus).toBe("online");
+      const initialEpoch = store.getSnapshot(host.serverId)?.connectionEpoch ?? 0;
+      const activeClient = store.getSnapshot(host.serverId)?.client as unknown as FakeDaemonClient;
+      const initialHistoryGen =
+        useSessionStore.getState().sessions[host.serverId]?.historySyncGeneration ?? 0;
+
+      queryClient.setQueryData(queryKey, { branch: "main" });
+      expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(false);
+
+      activeClient.heartbeatReportsRtt(300);
+      latencies[relayAlternate.id] = 100;
+      for (let index = 0; index < 3; index += 1) {
+        await vi.advanceTimersByTimeAsync(120_000);
+        await store.runProbeCycleNow(host.serverId);
+      }
+
+      expect(store.getSnapshot(host.serverId)?.activeConnectionId).toBe(relayAlternate.id);
+      expect(store.getSnapshot(host.serverId)?.connectionStatus).toBe("online");
+      expect(store.getSnapshot(host.serverId)?.connectionEpoch).toBeGreaterThan(initialEpoch);
+      expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.historySyncGeneration ?? 0,
+      ).toBeGreaterThan(initialHistoryGen);
+    } finally {
+      queryClient.removeQueries({ queryKey });
+      store.syncHosts([]);
+    }
   });
 
   it("exposes one snapshot with active connection and status from same source", async () => {
@@ -2739,6 +3163,52 @@ describe("HostRuntimeStore", () => {
     session.clearSession(host.serverId);
   });
 
+  it("loads the directory for a consumer that sees a restored host before the registry finishes loading", async () => {
+    const host = makeHost({
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        [REGISTRY_KEY]: JSON.stringify([host]),
+        "@paseo:e2e": "1",
+      }),
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    // A component renders on every tick while the registry loads, and acquires directory
+    // demand for each host it reads, as the sidebar does on its first render.
+    const registry = { loading: true };
+    const boot = store.boot().finally(() => {
+      registry.loading = false;
+    });
+    let releaseDemand: (() => void) | null = null;
+    while (registry.loading && !releaseDemand) {
+      if (store.getHosts().some((candidate) => candidate.serverId === host.serverId)) {
+        releaseDemand = store.acquireDirectoryDemand(host.serverId);
+      }
+      await Promise.resolve();
+    }
+    await boot;
+    expect(releaseDemand).not.toBeNull();
+
+    await waitForHostOnline(store, host.serverId);
+    await vi.waitFor(() => expect(fakeClient.fetchAgentsCalls).toHaveLength(1));
+
+    releaseDemand?.();
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("keeps readable hosts when the registry holds entries this build can't read", async () => {
     const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
 
@@ -2863,7 +3333,8 @@ describe("HostRuntimeStore", () => {
       await registryLoaded;
 
       expect(store.isHostRegistryLoaded()).toBe(true);
-      expect(hostListNotifications).toBe(2);
+      // Publishing the restored hosts, the registry turning ready, and the registry loading.
+      expect(hostListNotifications).toBe(3);
     } finally {
       if (previousOverride === undefined) {
         delete process.env.EXPO_PUBLIC_LOCAL_DAEMON;

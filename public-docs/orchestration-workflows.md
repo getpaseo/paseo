@@ -51,7 +51,7 @@ To pass work to an agent your agent did not launch, send it yourself:
 1. Right-click the receiving agent's tab and select **Copy agent id**.
 2. Run [`paseo send <id> "<prompt>"`](/docs/cli#sending-messages), or type into that agent's conversation in the app.
 
-The receiving agent gets the prompt in its existing conversation. Agent-originated sends default to steering a running turn, with interruption fallback when steering is unavailable. Set MCP `activeTurnBehavior` or CLI `--behavior` to `steer` or `interrupt` to override that default.
+The receiving agent gets the prompt in its existing conversation. If the receiving agent is working, the prompt waits until its current turn ends. For a message that cannot wait, the sending agent sets MCP `activeTurnBehavior` or CLI `--behavior` to `steer`, which adds it to the running turn, or `interrupt`, which stops the turn and starts a new one. The response tells the sending agent which happened.
 
 Underneath, the agent calls `send_agent_prompt` with the recipient's `agentId` and a `prompt`. For another host, use the [remote CLI workflow](#work-on-another-machine).
 

@@ -1,3 +1,4 @@
+import { diffArrays } from "diff";
 import { z } from "zod";
 import type { HighlightToken } from "@getpaseo/highlight";
 
@@ -52,156 +53,104 @@ function splitIntoWords(text: string): string[] {
   return result;
 }
 
-function computeWordLevelDiff(
-  oldLine: string,
-  newLine: string,
-): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
-  const oldWords = splitIntoWords(oldLine);
-  const newWords = splitIntoWords(newLine);
+const MAX_EDIT_DISTANCE = 256;
+const FULL_CONTEXT_LINE_LIMIT = 128;
+const CONTEXT_LINES = 3;
+const REPLACEMENT_PREVIEW_LINES = 32;
+const OMITTED_LINES: DiffLine = { type: "header", content: "…" };
 
-  const m = oldWords.length;
-  const n = newWords.length;
+function addWordHighlights(diff: DiffLine[]): void {
+  for (let index = 0; index + 1 < diff.length; index++) {
+    const before = diff[index];
+    const after = diff[index + 1];
+    if (before.type !== "remove" || after.type !== "add") continue;
+    if (before.content.length + after.content.length > 1024) continue;
 
-  // LCS to find common words
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    const words = diffArrays(
+      splitIntoWords(before.content.slice(1)),
+      splitIntoWords(after.content.slice(1)),
+      { maxEditLength: 64 },
+    );
+    if (!words) continue;
 
-  for (let i = m - 1; i >= 0; i -= 1) {
-    for (let j = n - 1; j >= 0; j -= 1) {
-      if (oldWords[i] === newWords[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
+    before.segments = words
+      .filter((part) => !part.added)
+      .map((part) => ({ text: part.value.join(""), changed: part.removed }));
+    after.segments = words
+      .filter((part) => !part.removed)
+      .map((part) => ({ text: part.value.join(""), changed: part.added }));
   }
+}
 
-  // Mark which words are in LCS (unchanged)
-  const oldInLCS = new Set<number>();
-  const newInLCS = new Set<number>();
+function contextPreview(
+  lines: string[],
+  hasEditBefore: boolean,
+  hasEditAfter: boolean,
+): DiffLine[] {
+  const leadingCount = hasEditBefore ? CONTEXT_LINES : 0;
+  const trailingCount = hasEditAfter ? CONTEXT_LINES : 0;
+  if (lines.length <= leadingCount + trailingCount) return contextLines(lines);
 
-  let i = 0;
-  let j = 0;
-  while (i < m && j < n) {
-    if (oldWords[i] === newWords[j]) {
-      oldInLCS.add(i);
-      newInLCS.add(j);
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      i += 1;
-    } else {
-      j += 1;
-    }
+  return [
+    ...contextLines(lines.slice(0, leadingCount)),
+    OMITTED_LINES,
+    ...contextLines(lines.slice(lines.length - trailingCount)),
+  ];
+}
+
+function contextLines(lines: string[]): DiffLine[] {
+  return lines.map((line) => ({ type: "context", content: ` ${line}` }));
+}
+
+function splitLineChange(before: string[], after: string[]) {
+  let start = 0;
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (start < beforeEnd && start < afterEnd && before[start] === after[start]) start++;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
   }
-
-  // Build segments: consecutive unchanged or changed words merged
-  const buildSegments = (words: string[], inLCS: Set<number>): DiffSegment[] => {
-    if (words.length === 0) return [];
-
-    const segments: DiffSegment[] = [];
-    let currentText = "";
-    let currentChanged: boolean | null = null;
-
-    for (let idx = 0; idx < words.length; idx++) {
-      const word = words[idx];
-      const changed = !inLCS.has(idx);
-
-      if (currentChanged === null) {
-        currentText = word;
-        currentChanged = changed;
-      } else if (changed === currentChanged) {
-        currentText += word;
-      } else {
-        segments.push({ text: currentText, changed: currentChanged });
-        currentText = word;
-        currentChanged = changed;
-      }
-    }
-
-    if (currentText) {
-      segments.push({ text: currentText, changed: currentChanged ?? false });
-    }
-
-    return segments;
-  };
-
-  const oldSegments = buildSegments(oldWords, oldInLCS);
-  const newSegments = buildSegments(newWords, newInLCS);
-
   return {
-    oldSegments,
-    newSegments,
+    leading: before.slice(0, start),
+    before: before.slice(start, beforeEnd),
+    after: after.slice(start, afterEnd),
+    trailing: before.slice(beforeEnd),
   };
+}
+
+function buildReplacementPreview(before: string[], after: string[]): DiffLine[] {
+  return [
+    ...before
+      .slice(0, REPLACEMENT_PREVIEW_LINES)
+      .map((line): DiffLine => ({ type: "remove", content: `-${line}` })),
+    ...after
+      .slice(0, REPLACEMENT_PREVIEW_LINES)
+      .map((line): DiffLine => ({ type: "add", content: `+${line}` })),
+    OMITTED_LINES,
+  ];
 }
 
 export function buildLineDiff(originalText: string, updatedText: string): DiffLine[] {
   const originalLines = splitIntoLines(originalText);
   const updatedLines = splitIntoLines(updatedText);
+  // Anchor equal file edges so an edit to a repeated line stays at its original location.
+  const { leading, before, after, trailing } = splitLineChange(originalLines, updatedLines);
+  const compact = Math.max(originalLines.length, updatedLines.length) > FULL_CONTEXT_LINE_LIMIT;
+  if (compact && before.length === 0 && after.length === 0) return [];
 
-  const hasAnyContent = originalLines.length > 0 || updatedLines.length > 0;
-  if (!hasAnyContent) {
-    return [];
-  }
+  const leadingRows = compact ? contextPreview(leading, false, true) : contextLines(leading);
+  const changes = diffArrays(before, after, { maxEditLength: MAX_EDIT_DISTANCE });
+  if (!changes) return [...leadingRows, ...buildReplacementPreview(before, after)];
 
-  const m = originalLines.length;
-  const n = updatedLines.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-
-  for (let i = m - 1; i >= 0; i -= 1) {
-    for (let j = n - 1; j >= 0; j -= 1) {
-      if (originalLines[i] === updatedLines[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
-
-  const diff: DiffLine[] = [];
-
-  let i = 0;
-  let j = 0;
-  while (i < m && j < n) {
-    if (originalLines[i] === updatedLines[j]) {
-      diff.push({ type: "context", content: ` ${originalLines[i]}` });
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      diff.push({ type: "remove", content: `-${originalLines[i]}` });
-      i += 1;
-    } else {
-      diff.push({ type: "add", content: `+${updatedLines[j]}` });
-      j += 1;
-    }
-  }
-
-  while (i < m) {
-    diff.push({ type: "remove", content: `-${originalLines[i]}` });
-    i += 1;
-  }
-
-  while (j < n) {
-    diff.push({ type: "add", content: `+${updatedLines[j]}` });
-    j += 1;
-  }
-
-  // Post-process to add word-level segments for adjacent remove/add pairs
-  for (let idx = 0; idx < diff.length - 1; idx++) {
-    const curr = diff[idx];
-    const next = diff[idx + 1];
-
-    if (curr.type === "remove" && next.type === "add") {
-      // Strip the leading -/+ from content for comparison
-      const oldLineText = curr.content.slice(1);
-      const newLineText = next.content.slice(1);
-
-      const { oldSegments, newSegments } = computeWordLevelDiff(oldLineText, newLineText);
-      curr.segments = oldSegments;
-      next.segments = newSegments;
-    }
-  }
-
-  return diff;
+  const changedRows = changes.flatMap((part): DiffLine[] => {
+    if (part.removed) return part.value.map((line) => ({ type: "remove", content: `-${line}` }));
+    if (part.added) return part.value.map((line) => ({ type: "add", content: `+${line}` }));
+    return compact ? contextPreview(part.value, true, true) : contextLines(part.value);
+  });
+  addWordHighlights(changedRows);
+  const trailingRows = compact ? contextPreview(trailing, true, false) : contextLines(trailing);
+  return [...leadingRows, ...changedRows, ...trailingRows];
 }
 
 export function parseUnifiedDiff(diffText?: string): DiffLine[] {

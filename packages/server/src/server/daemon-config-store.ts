@@ -7,6 +7,7 @@ import {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { parseAgentTeamsConfigPatch, type AgentTeamsConfig } from "./agent/agent-teams.js";
 import {
+  convertLegacyClaudeUltracode,
   convertLegacyOptions,
   foldProfileFeatureValues,
   resolveAdapter,
@@ -198,13 +199,21 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input:
       options,
     });
   const identity = (_provider: string, options: Record<string, unknown> | undefined) => options;
-  const foldWith = (profile: AgentProfile, convertWith: typeof convert) =>
-    foldProfileFeatureValues({
+  const foldWith = (profile: AgentProfile, convertWith: typeof convert) => {
+    const folded = foldProfileFeatureValues<
+      Pick<AgentProfile, "provider" | "options" | "featureValues">
+    >({
       profile,
       stored: held.find((candidate) => candidate.id === profile.id),
       source,
       convert: convertWith,
     });
+    const { providerOptions, ...converted } = convertLegacyClaudeUltracode(
+      { ...folded, thinkingOptionId: profile.thinkingOptionId, providerOptions: folded.options },
+      resolveAdapter({ provider: profile.provider, extendsOf: (id) => providers?.[id]?.extends }),
+    );
+    return { ...converted, options: providerOptions };
+  };
   return {
     ...config,
     agentProfiles: config.agentProfiles.map((profile) => {

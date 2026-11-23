@@ -47,20 +47,23 @@ export function useGoalFormProviderOptions(input: {
     }
     const entries = snapshot.entries;
     model.applyProviderOptions(
-      buildSelectableProviderSelectorProviders(entries).map(({ id, label }) => ({
-        id,
-        label,
-        models: (
-          filterSelectableModels(entries.find((entry) => entry.provider === id)?.models ?? null) ??
-          []
-        ).map((definition) => ({
-          id: definition.id,
-          label: definition.label,
-          description: definition.description,
-          isDefault: definition.isDefault,
-          thinkingOptions: definition.thinkingOptions,
-        })),
-      })),
+      buildSelectableProviderSelectorProviders(entries, { selectedProvider: null }).map(
+        ({ id, label }) => ({
+          id,
+          label,
+          models: (
+            filterSelectableModels(
+              entries.find((entry) => entry.provider === id)?.models ?? null,
+            ) ?? []
+          ).map((definition) => ({
+            id: definition.id,
+            label: definition.label,
+            description: definition.description,
+            isDefault: definition.isDefault,
+            thinkingOptions: definition.thinkingOptions,
+          })),
+        }),
+      ),
     );
   }, [enabled, model, snapshot.entries]);
 

@@ -29,8 +29,8 @@ on:
           - "true"
 
 concurrency:
-  group: docker-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: docker-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.publish == 'true' && format('publish-{0}', inputs.paseo_version || github.run_id) || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.publish == 'true') }}
 
 env:
   REGISTRY: ghcr.io

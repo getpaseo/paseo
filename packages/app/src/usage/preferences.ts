@@ -20,8 +20,8 @@ export interface UsagePreferences {
   serverId: string | null;
   /** Report IDs the user arranged, in their order. Shared by every host. */
   cardOrder: string[];
-  /** Report IDs the user turned off. Their cards collapse and leave the sidebar summary. */
-  cardsOff: string[];
+  /** Explicit per-report visibility overrides; absent IDs follow the host's `defaultEnabled` hint. */
+  cardVisibility: Record<string, boolean>;
 }
 
 export const DEFAULT_USAGE_PREFERENCES: UsagePreferences = {
@@ -29,11 +29,12 @@ export const DEFAULT_USAGE_PREFERENCES: UsagePreferences = {
   pins: null,
   serverId: null,
   cardOrder: [],
-  cardsOff: [],
+  cardVisibility: {},
 };
 
 const pinsSchema = z.array(z.object({ sourceId: z.string(), windowId: z.string() }));
 const reportIdsSchema = z.array(z.string()).optional().catch(undefined);
+const cardVisibilitySchema = z.record(z.string(), z.boolean()).optional().catch(undefined);
 
 export const UsagePreferencesSchema = z
   .object({
@@ -44,18 +45,34 @@ export const UsagePreferencesSchema = z
     pinned: pinsSchema.optional().catch([]),
     serverId: z.string().nullable().catch(null),
     cardOrder: reportIdsSchema,
+    cardVisibility: cardVisibilitySchema,
+    // COMPAT(usageCardsOff): replaced by cardVisibility in v0.18, remove after 2027-05-22.
     cardsOff: reportIdsSchema,
   })
-  .transform(({ displayAs, pins, pinned, serverId, cardOrder, cardsOff }): UsagePreferences => {
-    const legacyPins = pinned && pinned.length > 0 ? pinned : null;
-    return {
+  .transform(
+    ({
       displayAs,
-      pins: pins === undefined ? legacyPins : pins,
+      pins,
+      pinned,
       serverId,
-      cardOrder: cardOrder ?? [],
-      cardsOff: cardsOff ?? [],
-    };
-  })
+      cardOrder,
+      cardVisibility,
+      cardsOff,
+    }): UsagePreferences => {
+      const legacyPins = pinned && pinned.length > 0 ? pinned : null;
+      const legacyVisibility =
+        cardsOff && cardsOff.length > 0
+          ? Object.fromEntries(cardsOff.map((id) => [id, false] as const))
+          : {};
+      return {
+        displayAs,
+        pins: pins === undefined ? legacyPins : pins,
+        serverId,
+        cardOrder: cardOrder ?? [],
+        cardVisibility: cardVisibility ?? legacyVisibility,
+      };
+    },
+  )
   .catch(DEFAULT_USAGE_PREFERENCES);
 
 function samePin(a: UsagePin, b: UsagePin): boolean {
@@ -154,8 +171,8 @@ export function usageReportsOn(
   reports: readonly UsageReportEntry[],
   preferences: UsagePreferences,
 ): UsageReportEntry[] {
-  return arrangeUsageReports(reports, preferences).filter(
-    (entry) => !isUsageCardOff(preferences, entry.id),
+  return arrangeUsageReports(reports, preferences).filter((entry) =>
+    isUsageCardOn(preferences, entry),
   );
 }
 
@@ -188,8 +205,14 @@ export function arrangeUsageCards(
   return { ...preferences, cardOrder: rest };
 }
 
-export function isUsageCardOff(preferences: UsagePreferences, reportId: string): boolean {
-  return preferences.cardsOff.includes(reportId);
+/** Whether a report card is shown, honoring an explicit user override before the host's default hint. */
+export function isUsageCardOn(
+  preferences: UsagePreferences,
+  entry: Pick<UsageReportEntry, "id" | "defaultEnabled">,
+): boolean {
+  const explicit = preferences.cardVisibility[entry.id];
+  if (explicit !== undefined) return explicit;
+  return entry.defaultEnabled !== false;
 }
 
 export function setUsageCardOn(
@@ -197,6 +220,8 @@ export function setUsageCardOn(
   reportId: string,
   on: boolean,
 ): UsagePreferences {
-  const others = preferences.cardsOff.filter((id) => id !== reportId);
-  return { ...preferences, cardsOff: on ? others : [...others, reportId] };
+  return {
+    ...preferences,
+    cardVisibility: { ...preferences.cardVisibility, [reportId]: on },
+  };
 }

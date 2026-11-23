@@ -2531,6 +2531,24 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("passes a cwd override when loading a persisted Codex thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const cwd = "/workspace/new-directory";
+    const session = await provider.resumeSession(
+      { sessionId: "saved-thread", metadata: { cwd: "/workspace/old-directory" } },
+      { cwd },
+    );
+
+    try {
+      const resume = appServer.requests().find((request) => request.method === "thread/resume");
+      expect(resume?.params).toMatchObject({ threadId: "saved-thread", cwd });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reopening an agent whose timeline Paseo still holds does not read Codex history", async () => {
     const codex = createReopenableCodexAgent({
       "saved-thread": [
@@ -5437,7 +5455,7 @@ describe("Codex app-server provider", () => {
 
       threadStart.resolve({ thread: { id: "thread-1" } });
       await expect(interruptPromise).resolves.toBeUndefined();
-      await expect(resultPromise).rejects.toThrow("interrupted before reaching Codex");
+      await expect(resultPromise).resolves.toMatchObject({ canceled: true, timeline: [] });
       expect(appServer.requests()).not.toContainEqual(
         expect.objectContaining({ method: "turn/start" }),
       );
@@ -6845,7 +6863,11 @@ describe("Codex app-server provider", () => {
       { method: "thread/loaded/list", params: {} },
       {
         method: "thread/resume",
-        params: { threadId: "archived-thread-id", excludeTurns: true },
+        params: {
+          threadId: "archived-thread-id",
+          cwd: "/tmp/codex-question-test",
+          excludeTurns: true,
+        },
       },
     ]);
   });

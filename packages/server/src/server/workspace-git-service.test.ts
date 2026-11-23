@@ -587,6 +587,29 @@ describe("WorkspaceGitServiceImpl", () => {
     await service.dispose();
   });
 
+  test("a client reconnecting within the release grace reuses the warm target", async () => {
+    const getCheckoutStatus = vi.fn(buildDefaultTestServiceDeps().getCheckoutStatus);
+    const service = createService({ getCheckoutStatus });
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      const snapshot = await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+      expect(service.getMetrics().workspaceTargetCount).toBe(1);
+      const reads = getCheckoutStatus.mock.calls.length;
+
+      const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(snapshot);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(reads);
+      second.unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+    } finally {
+      await service.dispose();
+    }
+  });
+
   test("onSnapshotUpdated delivers without workspace subscribers and can unsubscribe", async () => {
     const service = createService();
     const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
@@ -623,6 +646,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = new WorkspaceGitServiceImpl({
       logger: createLogger() as unknown as pino.Logger,
       paseoHome: "/tmp/paseo-test",
+      releaseGraceMs: 0,
       deps: {
         ...buildDefaultTestServiceDeps(),
         getPullRequestStatus: async () => {
@@ -2352,6 +2376,69 @@ describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", 
     await waitForObservationToSettle(service, 1);
 
     expect(snapshot.git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a plain snapshot read resumes a suspended workspace whose folder is back, instead of returning the non-git snapshot cached while it was gone", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    const snapshot = await service.getSnapshot(workspace);
+
+    expect(snapshot.git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a snapshot read during restoration waits for fresh checkout facts", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let holdRestoredRead = false;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        if (holdRestoredRead) {
+          started.resolve();
+          await release.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    holdRestoredRead = true;
+    const restoringRead = service.getSnapshot(workspace);
+    await started.promise;
+    const concurrentRead = service.getSnapshot(workspace);
+    release.resolve();
+
+    expect((await restoringRead).git.isGit).toBe(true);
+    expect((await concurrentRead).git.isGit).toBe(true);
 
     subscription.unsubscribe();
     await service.dispose();

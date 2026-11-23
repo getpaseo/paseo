@@ -73,6 +73,12 @@ import type { HubRelationshipManagement } from "./hub/relationship-controller.js
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
+
+function resolveWorkspaceArchiveOperations(
+  operations: WorkspaceArchiveOperations | undefined,
+): WorkspaceArchiveOperations {
+  return operations ?? new WorkspaceArchiveOperations();
+}
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -101,6 +107,7 @@ import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
+  type NotificationPlan,
 } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
@@ -604,6 +611,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
+  // Per agent, the unread finish (by its attention timestamp) that a notification was delivered for.
+  private readonly notifiedUnreadFinishAt = new Map<string, number>();
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -620,9 +629,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly workspaceSetupObservation = new WorkspaceSetupObservation();
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
-  // One lane per workspace across every connection, so an undo from any client can cancel an
-  // archive another connection started.
-  private readonly workspaceArchiveOperations = new WorkspaceArchiveOperations();
+  // One lane per workspace and per checkout across the daemon, so archive, undo, and restore
+  // from any client or background caller coordinate through one boundary.
+  private readonly workspaceArchiveOperations: WorkspaceArchiveOperations;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
@@ -713,10 +722,12 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    workspaceArchiveOperations?: WorkspaceArchiveOperations,
     goalService?: GoalService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
+    this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
     this.advertiseRelayConfig = wsConfig.relayConfig !== false;
     this.connectionLifecycle = wsConfig.startPaused === true ? "starting" : "accepting";
@@ -742,6 +753,7 @@ export class VoiceAssistantWebSocketServer {
           onAccepted,
         ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
+      canSteer: (agentId) => agentManager.canSteer(agentId),
       hasPendingPermission: (agentId) => agentManager.hasPendingPermissions(agentId),
       subscribe: (notify) =>
         agentManager.subscribe(
@@ -750,24 +762,28 @@ export class VoiceAssistantWebSocketServer {
           },
           { replayState: false },
         ),
+      onStop: (notify) => agentManager.onStop(notify),
       dispatch: async (batch) => {
-        const { disposition } = await sendPreparedPromptToAgent({
+        const dispatch = await sendPreparedPromptToAgent({
           agentManager,
           agentStorage,
           agentId: batch.recipientId,
           prompt: batch.prompt,
           activeTurnBehavior: batch.activeTurnBehavior,
           idleOnly: batch.idleOnly,
+          admit: batch.admit,
           sessionMode: batch.sessionMode,
           clearPendingPermissions: batch.clearPendingPermissions,
           unarchive: batch.unarchive,
           runOptions: { clientMessageId: batch.messageIds[0] },
           logger: this.logger,
         });
-        if (disposition === "turn_started")
-          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-        return disposition;
+        if (dispatch.disposition === "turn_started")
+          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId, dispatch.started);
+        return dispatch.disposition;
       },
+      awaitStart: (agentId, started) =>
+        waitForAgentRunStartWithTimeout(agentManager, agentId, started),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
@@ -1006,9 +1022,7 @@ export class VoiceAssistantWebSocketServer {
       callback(false, 403, "Host not allowed");
       return;
     }
-    const sameOrigin = isWebSocketSameOrigin(origin, requestHost);
-
-    if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+    if (!origin || isDaemonOriginAllowed(origin, requestHost, allowedOrigins)) {
       callback(true);
     } else {
       this.incrementRuntimeCounter("originRejected");
@@ -1093,6 +1107,19 @@ export class VoiceAssistantWebSocketServer {
           (connection) => connection.session,
         ),
       ),
+    );
+  }
+
+  public async publishWorkspaceUpdates(workspaceIds: Iterable<string>): Promise<void> {
+    const ids = Array.from(workspaceIds);
+    await Promise.all(
+      this.listSessions().map(async (session) => {
+        try {
+          await session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to publish workspace updates");
+        }
+      }),
     );
   }
 
@@ -1700,6 +1727,7 @@ export class VoiceAssistantWebSocketServer {
       getTransportBufferedAmount: options.getTransportBufferedAmount,
       onLifecycleIntent: options.onLifecycleIntent,
       logger: options.connectionLogger.child({ module: "session" }),
+      publishWorkspaceArchiveUpdates: (workspaceIds) => this.publishWorkspaceUpdates(workspaceIds),
       onWorkspaceRecovered: async (workspace) => {
         await Promise.all(
           this.listSessions().map((activeSession) =>
@@ -2068,6 +2096,7 @@ export class VoiceAssistantWebSocketServer {
         relayProtectedSecurity: true,
         usageSetting: true,
         usageSources: true,
+        providerInstallation: true,
         ownedSubscriptions: true,
         providerOptionControls: true,
         entityMetadata: true,
@@ -2081,6 +2110,10 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: true,
         workspaceBaseBranch: true,
+        // COMPAT(checkoutWorktreeList): added after v0.16.2, remove gate after 2027-11-19.
+        checkoutWorktreeList: true,
+        // COMPAT(worktreeRefActions): added after v0.16.2, remove gate after 2027-11-19.
+        worktreeRefActions: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -2266,6 +2299,8 @@ export class VoiceAssistantWebSocketServer {
         hopliteProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hoplite"),
         // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
         fxProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("fx"),
+        // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
+        gooseProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("goose"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -2282,6 +2317,8 @@ export class VoiceAssistantWebSocketServer {
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
         agentMessageBatching: true,
+        // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
+        agentActiveTurnBehaviors: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
@@ -2982,6 +3019,7 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    attentionTimestamp: Date | null;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -3020,12 +3058,15 @@ export class VoiceAssistantWebSocketServer {
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
-      nowMs,
-    });
+    const plan = this.planOncePerUnreadFinish(
+      params,
+      computeNotificationPlan({
+        allStates,
+        focusTarget: { kind: "agent", id: params.agentId },
+        pushEligible: isPushEligibleAttentionReason(params.reason),
+        nowMs,
+      }),
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
@@ -3074,6 +3115,26 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.get(ws)!.session.publishToSource(ws, message.message);
       else this.sendToClient(ws, message);
     }
+  }
+
+  // An agent can finish many times while its first finish is unread, for example when it
+  // reacts to each event of a background task. The user hears about an unread finish once.
+  // A finish that was not delivered, because the user had the agent on screen, does not count.
+  private planOncePerUnreadFinish(
+    params: { agentId: string; reason: string; attentionTimestamp: Date | null },
+    plan: NotificationPlan,
+  ): NotificationPlan {
+    if (params.reason !== "finished" || params.attentionTimestamp === null) {
+      return plan;
+    }
+    const unreadFinishAt = params.attentionTimestamp.getTime();
+    if (this.notifiedUnreadFinishAt.get(params.agentId) === unreadFinishAt) {
+      return { inAppRecipientIndex: null, shouldPush: false };
+    }
+    if (plan.shouldPush || plan.inAppRecipientIndex !== null) {
+      this.notifiedUnreadFinishAt.set(params.agentId, unreadFinishAt);
+    }
+    return plan;
   }
 
   private async broadcastTerminalAttention(params: {
@@ -3328,6 +3389,22 @@ function isLoopbackAlias(hostname: string): boolean {
     return true;
   }
   return /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+/**
+ * Whether a page at `origin` may talk to the daemon reached at `requestHost`. The WebSocket
+ * upgrade and the HTTP CORS check both use it, so a page that can connect can also fetch.
+ */
+export function isDaemonOriginAllowed(
+  origin: string,
+  requestHost: string | null,
+  allowedOrigins: Set<string>,
+): boolean {
+  return (
+    allowedOrigins.has("*") ||
+    allowedOrigins.has(origin) ||
+    isWebSocketSameOrigin(origin, requestHost)
+  );
 }
 
 export function isWebSocketSameOrigin(
