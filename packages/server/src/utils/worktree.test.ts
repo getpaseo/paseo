@@ -5,6 +5,7 @@ import {
   deletePaseoWorktree,
   readWorktreeHead,
   isPaseoOwnedWorktreeCwd,
+  listPaseoWorktrees,
   mapWorkspaceCwdToWorktree,
   runWorktreeTeardownCommands,
   slugify,
@@ -323,6 +324,24 @@ describe("paseo worktree manager", () => {
         encoding: "utf8",
       }),
     ).not.toContain(created.worktreePath);
+  });
+
+  it("lists the worktrees of a bare repository that only Paseo checkouts use", async () => {
+    const bareRepo = join(tempDir, "bare.git");
+    execFileSync("git", ["clone", "--bare", "-q", repoDir, bareRepo]);
+    const created = await createLegacyWorktreeForTest({
+      branchName: "listed",
+      cwd: bareRepo,
+      baseBranch: "main",
+      worktreeSlug: "listed",
+      paseoHome,
+    });
+
+    const worktrees = await listPaseoWorktrees({ cwd: bareRepo, paseoHome });
+
+    expect(worktrees.map((entry) => [entry.path, entry.branchName])).toEqual([
+      [created.worktreePath, "listed"],
+    ]);
   });
 
   it("deletes a worktree whose .git admin dir has already been removed", async () => {

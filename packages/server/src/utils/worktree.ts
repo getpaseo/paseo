@@ -1218,15 +1218,23 @@ export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWor
   return worktrees;
 }
 
-export async function listPaseoWorktrees({
-  cwd,
-  paseoHome,
-  worktreesRoot,
-}: {
+export interface ListPaseoWorktreesOptions {
   cwd: string;
   paseoHome?: string;
   worktreesRoot?: string;
-}): Promise<PaseoWorktreeInfo[]> {
+}
+
+export function listPaseoWorktrees(
+  options: ListPaseoWorktreesOptions,
+): Promise<PaseoWorktreeInfo[]> {
+  return runWithRepositoryRoot(options.cwd, () => listPaseoWorktreesAtRepositoryRoot(options));
+}
+
+async function listPaseoWorktreesAtRepositoryRoot({
+  cwd,
+  paseoHome,
+  worktreesRoot,
+}: ListPaseoWorktreesOptions): Promise<PaseoWorktreeInfo[]> {
   const projectWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
   const { entries } = await readGitWorktreeEntries(cwd);
 
@@ -2341,7 +2349,17 @@ async function resolveRestoredWorktreeFromBasePlan(
   };
 }
 
-export async function prepareWorktreeBranchOff(
+export function prepareWorktreeBranchOff(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "branch-off" }>,
+  previous?: PreparedWorktreeBranchOff,
+): Promise<PreparedWorktreeBranchOff> {
+  return runWithRepositoryRoot(cwd, () =>
+    prepareWorktreeBranchOffAtRepositoryRoot(cwd, source, previous),
+  );
+}
+
+async function prepareWorktreeBranchOffAtRepositoryRoot(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "branch-off" }>,
   previous?: PreparedWorktreeBranchOff,
@@ -2571,11 +2589,19 @@ async function configureWorktreePushRemote(options: {
  * Fetches the first of `sources` a remote serves into the local ref `destination`, and returns
  * the name of that remote.
  */
-export async function fetchFirstAvailableRef(options: {
+export interface FetchFirstAvailableRefOptions {
   cwd: string;
   sources: WorktreeCheckoutRef[];
   destination: string;
-}): Promise<string> {
+}
+
+export function fetchFirstAvailableRef(options: FetchFirstAvailableRefOptions): Promise<string> {
+  return runWithRepositoryRoot(options.cwd, () => fetchFirstAvailableRefAtRepositoryRoot(options));
+}
+
+async function fetchFirstAvailableRefAtRepositoryRoot(
+  options: FetchFirstAvailableRefOptions,
+): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
