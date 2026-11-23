@@ -2275,7 +2275,7 @@ lines.on("line", (line) => {
     const executable = await fakeAcp(
       basicAgent.replace(
         'send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })',
-        `process.stderr.write("active turn crash token=fixture-secret\\n", () => process.exit(19))`,
+        `process.stderr.write("active turn crash token=fixture-secret\\nAuthorization: Bearer fixture-bearer\\n", () => process.exit(19))`,
       ),
     );
     const { connection, events } = await connect(executable, ["prompt.message"]);
@@ -2309,12 +2309,45 @@ lines.on("line", (line) => {
         error: { message: expect.stringContaining("active turn crash token=[redacted]") },
       });
       expect(JSON.stringify(events)).not.toContain("fixture-secret");
+      expect(JSON.stringify(events)).not.toContain("fixture-bearer");
       expect(
         events.filter((event) => event.type === "session.turn" && event.state === "failed"),
       ).toHaveLength(1);
       expect(
         JSON.stringify(events.filter((event) => event.type === "timeline.item")),
       ).not.toContain("active turn crash");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("fails an active turn when the child closes stdout and stays alive", async () => {
+    const executable = await fakeAcp(
+      basicAgent.replace(
+        'send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })',
+        'process.stderr.write("stdout ended", () => process.stdout.end())',
+      ),
+    );
+    const { connection, events } = await connect(executable, ["prompt.message"]);
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "eof",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "hello" }] },
+        },
+      });
+      const failure = await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "failed",
+      );
+      expect(failure).toMatchObject({
+        error: { message: expect.stringContaining("stdout ended") },
+      });
     } finally {
       await connection.close();
     }

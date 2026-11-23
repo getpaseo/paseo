@@ -528,7 +528,9 @@ class AcpRuntime {
         clientInfo: { name: "paseo", version: "1" },
       });
       const initialized = await withTimeout(
-        runtime.call(spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize),
+        runtime.call(spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize, {
+          initializing: true,
+        }),
         options.options.acpOptions?.startupTimeoutMs ?? 10_000,
         `ACP provider ${options.options.id} did not initialize`,
       );
@@ -1665,7 +1667,10 @@ class AcpRuntime {
     }
   }
 
-  private async call<Value>(operation: Promise<Value>): Promise<Value> {
+  private async call<Value>(
+    operation: Promise<Value>,
+    options?: { initializing: boolean },
+  ): Promise<Value> {
     try {
       if (this.connection.signal.aborted) {
         // The SDK operation may already have rejected when it was created.
@@ -1679,24 +1684,21 @@ class AcpRuntime {
         }),
       ]);
     } catch (error) {
-      // EOF can precede both exit and the final stderr reads. For subprocesses,
-      // close owns the diagnostic boundary; initialization still has its deadline.
-      if (this.child && this.connection.signal.aborted && !this.closing) {
-        await this.processClosed;
+      if (!this.child || this.closing) throw error;
+      // Stdout EOF can precede exit and the final stderr reads. Initialization
+      // has its own deadline. Later calls must also settle if a pipe stays open.
+      if (
+        this.connection.signal.aborted ||
+        this.child.exitCode !== null ||
+        this.child.signalCode !== null
+      ) {
+        if (options?.initializing) await this.processClosed;
+        else await settlesWithin(this.processClosed, 100);
+      } else {
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      throw await this.withProcessDiagnostic(error);
+      throw this.processError(error);
     }
-  }
-
-  private async withProcessDiagnostic(error: unknown): Promise<unknown> {
-    if (!this.child || this.closing || error instanceof AcpProcessDiagnosticError) return error;
-    // Stdout EOF and SDK rejection can run before Node delivers exit or stderr.
-    // Give the pending I/O a turn, then drain stdio if the process has exited.
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    if (this.child.exitCode !== null || this.child.signalCode !== null) {
-      await this.processClosed;
-    }
-    return this.processError(error);
   }
 
   private processError(error: unknown): unknown {
@@ -2509,6 +2511,7 @@ async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise
 // Stderr is untrusted and can still contain secrets outside these recognized forms.
 function redactStderrDiagnostic(value: string): string {
   return value
+    .replace(/(\bauthorization["']?[ \t]*[:=][ \t]*)[^\r\n]+/gi, "$1[redacted]")
     .replace(/paseo:\/\/\S+/gi, "paseo://[redacted]")
     .replace(
       /([?&](?:password|token|secret|key|publicKey|daemonPublicKeyB64)=)[^&\s"']+/gi,
