@@ -2783,6 +2783,7 @@ async function ensureLocalBranch({
     return;
   }
   if (remoteRef) {
+    await refreshRemoteTrackingBaseRef(cwd, remoteRef);
     await runGitCommand(["branch", "--track", branchName, remoteRef], { cwd });
     return;
   }

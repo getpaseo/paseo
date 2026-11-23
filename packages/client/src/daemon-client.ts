@@ -5490,10 +5490,35 @@ export class DaemonClient {
     });
   }
 
+  private checkoutRefForHost(
+    input: Pick<
+      CreatePaseoWorktreeInput,
+      "action" | "refName" | "checkoutSource" | "githubPrNumber"
+    >,
+  ): string | undefined {
+    if (
+      input.action !== "checkout" ||
+      input.checkoutSource ||
+      input.githubPrNumber !== undefined ||
+      this.lastServerInfoMessage?.features?.worktreeExactCheckoutRefs === true
+    )
+      return input.refName;
+    // COMPAT(worktreeExactCheckoutRefs): added after v0.17.3; remove after 2027-11-24.
+    // Existing local/origin checkouts keep their original wire format on older hosts.
+    for (const prefix of ["refs/heads/", "refs/remotes/origin/"]) {
+      if (input.refName?.startsWith(prefix)) return input.refName.slice(prefix.length);
+    }
+    if (input.refName?.startsWith("refs/remotes/")) {
+      throw new Error("Update the host to check out a selected non-origin remote branch.");
+    }
+    return input.refName;
+  }
+
   async createPaseoWorktree(
     input: CreatePaseoWorktreeInput,
     requestId?: string,
   ): Promise<CreatePaseoWorktreePayload> {
+    const refName = this.checkoutRefForHost(input);
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -5504,7 +5529,7 @@ export class DaemonClient {
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),
-        ...(input.refName !== undefined ? { refName: input.refName } : {}),
+        ...(refName !== undefined ? { refName } : {}),
         ...(input.action !== undefined ? { action: input.action } : {}),
         ...(input.checkoutSource !== undefined ? { checkoutSource: input.checkoutSource } : {}),
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
@@ -5531,8 +5556,13 @@ export class DaemonClient {
     if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
       agentConfig = await this.routeLegacyCreateConfig(agentConfig);
     }
+    const source =
+      input.source.kind === "worktree"
+        ? { ...input.source, refName: this.checkoutRefForHost(input.source) }
+        : input.source;
     const result = await this.creations.createWorkspace({
       ...input,
+      source,
       requestId: resolvedRequestId,
       ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
     });

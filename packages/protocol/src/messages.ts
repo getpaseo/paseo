@@ -4015,6 +4015,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(worktreeRefActions): added after v0.16.2, remove gate after 2027-11-19.
         // Hosts without it check out a change request even when asked to branch off it.
         worktreeRefActions: z.boolean().optional(),
+        // COMPAT(worktreeExactCheckoutRefs): added after v0.17.3; remove after 2027-11-24.
+        worktreeExactCheckoutRefs: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
