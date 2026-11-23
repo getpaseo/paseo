@@ -761,3 +761,131 @@ index 01026dc..3786ec4 100644
  #else
          const auto& shadowTreeRegistry = UIManagerBinding::getBinding(rt)->getUIManager().getShadowTreeRegistry();
  
+diff --git a/node_modules/react-native-unistyles/src/web/css/state.ts b/node_modules/react-native-unistyles/src/web/css/state.ts
+index a0eea5772..5b0ab9ca6 100644
+--- a/node_modules/react-native-unistyles/src/web/css/state.ts
++++ b/node_modules/react-native-unistyles/src/web/css/state.ts
+@@ -34,6 +34,7 @@ export class CSSState {
+     mqMap: MapType = new Map()
+     private styleTag: HTMLStyleElement | null = null
+     private themesCSS = new Map<string, string>()
++    private recreationQueued = false
+
+     constructor(private services: UnistylesServices) {
+         if (isServer()) {
+@@ -63,7 +64,19 @@ export class CSSState {
+
+     add = (hash: string, values: UnistylesValues) => {
+         convertToCSS(hash, convertUnistyles(values, this.services.runtime), this)
+-        this.recreate()
++        this.scheduleRecreation()
++    }
++
++    // A render can register many rules. Write the stylesheet once before paint.
++    private scheduleRecreation = () => {
++        if (!this.styleTag || this.recreationQueued) {
++            return
++        }
++        this.recreationQueued = true
++        queueMicrotask(() => {
++            this.recreationQueued = false
++            this.recreate()
++        })
+     }
+
+     recreate = () => {
+@@ -103,7 +116,7 @@ export class CSSState {
+         this.mqMap.forEach((styles) => {
+             styles.delete(hash)
+         })
+-        this.recreate()
++        this.scheduleRecreation()
+     }
+
+     getStyles = () => {
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/state.js b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+index 88e02b390..e9e8b2e5e 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+@@ -17,6 +17,7 @@ export class CSSState {
+   mqMap = new Map();
+   styleTag = null;
+   themesCSS = new Map();
++  recreationQueued = false;
+   constructor(services) {
+     this.services = services;
+     if (isServer()) {
+@@ -45,8 +46,20 @@ export class CSSState {
+   };
+   add = (hash, values) => {
+     convertToCSS(hash, convertUnistyles(values, this.services.runtime), this);
+-    this.recreate();
++    this.scheduleRecreation();
+   };
++  // A render can register many rules. Write the stylesheet once before paint.
++  scheduleRecreation = () => {
++    if (!this.styleTag || this.recreationQueued) {
++      return;
++    }
++    this.recreationQueued = true;
++    queueMicrotask(() => {
++      this.recreationQueued = false;
++      this.recreate();
++    });
++  };
++
+   recreate = () => {
+     if (this.styleTag) {
+       this.styleTag.innerText = this.getStyles();
+@@ -75,7 +88,7 @@ export class CSSState {
+     this.mqMap.forEach(styles => {
+       styles.delete(hash);
+     });
+-    this.recreate();
++    this.scheduleRecreation();
+   };
+   getStyles = () => {
+     let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+index 7c7214eda..7db87e3bf 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+@@ -21,6 +21,7 @@ class CSSState {
+   mqMap = new Map();
+   styleTag = null;
+   themesCSS = new Map();
++  recreationQueued = false;
+   constructor(services) {
+     this.services = services;
+     if ((0, _utils.isServer)()) {
+@@ -49,8 +50,20 @@ class CSSState {
+   };
+   add = (hash, values) => {
+     (0, _core.convertToCSS)(hash, (0, _convert.convertUnistyles)(values, this.services.runtime), this);
+-    this.recreate();
++    this.scheduleRecreation();
+   };
++  // A render can register many rules. Write the stylesheet once before paint.
++  scheduleRecreation = () => {
++    if (!this.styleTag || this.recreationQueued) {
++      return;
++    }
++    this.recreationQueued = true;
++    queueMicrotask(() => {
++      this.recreationQueued = false;
++      this.recreate();
++    });
++  };
++
+   recreate = () => {
+     if (this.styleTag) {
+       this.styleTag.innerText = this.getStyles();
+@@ -79,7 +92,7 @@ class CSSState {
+     this.mqMap.forEach(styles => {
+       styles.delete(hash);
+     });
+-    this.recreate();
++    this.scheduleRecreation();
+   };
+   getStyles = () => {
+     let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {
