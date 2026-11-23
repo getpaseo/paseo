@@ -13,6 +13,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { SettingsSection } from "@/components/settings";
 import { Button } from "@/components/ui/button";
+import { IndependentScrollBoundary } from "@/components/ui/independent-scroll-boundary";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { SearchField } from "@/components/ui/search-field";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -189,14 +190,16 @@ export function ProviderModels({
           </View>
           <View style={settingsStyles.card}>
             {/* A provider can report hundreds of models; the rest of the page stays in reach. */}
-            <ScrollView
-              style={styles.discoveredList}
-              // Android scrolls a ScrollView nested in the page or the sheet only with this flag.
-              nestedScrollEnabled
-              testID="provider-discovered-models"
-            >
-              {discoveredBody}
-            </ScrollView>
+            <IndependentScrollBoundary>
+              <ScrollView
+                style={styles.discoveredList}
+                // Lets the enclosing page scroll on once this list reaches its end.
+                nestedScrollEnabled
+                testID="provider-discovered-models"
+              >
+                {discoveredBody}
+              </ScrollView>
+            </IndependentScrollBoundary>
           </View>
         </SettingsSection>
       ) : null}

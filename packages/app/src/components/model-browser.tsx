@@ -12,7 +12,6 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -31,6 +30,10 @@ import {
   FlatList as SheetFlatList,
   ScrollView as SheetScrollView,
 } from "@/components/ui/scroll-view";
+import {
+  IndependentScrollBoundary,
+  useIndependentScrollGesture,
+} from "@/components/ui/independent-scroll-boundary";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -209,10 +212,6 @@ function AgentProfilesEditAction({ onPress }: { onPress: () => void }) {
   );
 }
 
-const IndependentScrollGestureContext = createContext<ReturnType<typeof Gesture.Native> | null>(
-  null,
-);
-
 interface ModelBrowserNavContextValue {
   activeKey: string | null;
   onActivateKey: (key: string) => void;
@@ -224,7 +223,6 @@ const ModelBrowserNavContext = createContext<ModelBrowserNavContextValue>({
   activeKey: null,
   onActivateKey: () => {},
 });
-
 const foregroundMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -606,7 +604,7 @@ function ModelBrowserPressable({
   onLayout,
   testID,
 }: ModelBrowserPressableProps) {
-  const independentScrollGesture = useContext(IndependentScrollGestureContext);
+  const independentScrollGesture = useIndependentScrollGesture();
   const [pressed, setPressed] = useState(false);
   // Android's scroll handler must keep the pointer stream until release so a
   // fling survives leaving the short viewport. A simultaneous Tap keeps rows
@@ -1355,29 +1353,6 @@ function GroupedProviderRows({
   );
 }
 
-function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
-  // Prevent the parent sheet from cancelling Android's native scroll when the
-  // finger crosses this viewport; receiving ACTION_UP is what preserves fling.
-  const nativeScrollGesture = useMemo(
-    () =>
-      Gesture.Native()
-        .shouldActivateOnStart(true)
-        .shouldCancelWhenOutside(false)
-        .disallowInterruption(true),
-    [],
-  );
-
-  if (Platform.OS !== "android") {
-    return children;
-  }
-
-  return (
-    <IndependentScrollGestureContext.Provider value={nativeScrollGesture}>
-      <GestureDetector gesture={nativeScrollGesture}>{children}</GestureDetector>
-    </IndependentScrollGestureContext.Provider>
-  );
-}
-
 function resolveModelListRevealTarget({
   shouldRevealActive,
   hasActiveHeaderItem,
@@ -1391,7 +1366,6 @@ function resolveModelListRevealTarget({
   if (hasActiveHeaderItem) return "top";
   return activeModelIndex >= 0 ? activeModelIndex : null;
 }
-
 function IndependentModelList({
   rows,
   renderItem,
