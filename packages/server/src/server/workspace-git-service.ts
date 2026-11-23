@@ -593,7 +593,6 @@ interface WatchRecoveryState {
 interface WatchSetupTimeout {
   delayMs: number;
   retryAtMs: number;
-  expiresAtMs: number;
 }
 
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -2011,7 +2010,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         2 ** Math.min(recovery.attemptCount - 1, WATCH_RECOVERY_MAX_BACKOFF_STEPS),
       WATCH_RECOVERY_MAX_DELAY_MS,
     );
-    return Math.max(ladderDelayMs, this.getWatchSetupTimeout(recovery)?.delayMs ?? 0);
+    const timeout = this.getWatchSetupTimeout(recovery);
+    if (!timeout) {
+      return ladderDelayMs;
+    }
+    const delayMs = Math.max(ladderDelayMs, timeout.delayMs);
+    // Resume the retry that is actually scheduled, even if the ordinary
+    // recovery ladder asks for a longer wait than the setup-timeout ladder.
+    timeout.retryAtMs = this.deps.now().getTime() + delayMs;
+    return delayMs;
   }
 
   private watchSetupRetryInMs(recovery: WatchRecoveryState): number {
@@ -2021,7 +2028,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private getWatchSetupTimeout(recovery: WatchRecoveryState): WatchSetupTimeout | undefined {
     const timeout = this.watchSetupTimeouts.get(recovery.setupKey);
-    if (timeout && timeout.expiresAtMs <= this.deps.now().getTime()) {
+    if (
+      timeout &&
+      timeout.retryAtMs + WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS <= this.deps.now().getTime()
+    ) {
       this.watchSetupTimeouts.delete(recovery.setupKey);
       return undefined;
     }
@@ -2043,7 +2053,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.watchSetupTimeouts.set(recovery.setupKey, {
       delayMs,
       retryAtMs,
-      expiresAtMs: retryAtMs + WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS,
     });
   }
 

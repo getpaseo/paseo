@@ -1794,6 +1794,36 @@ describe("WorkspaceGitServiceImpl", () => {
   );
 
   test.each(["repository metadata", "working tree"])(
+    "keeps the scheduled %s watcher retry after an error and a setup timeout",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      setup.acceptNextAttempt();
+      const service = createService({ subscribe: setup.subscribe, now: () => new Date() });
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      try {
+        await waitForObservationToSettle(service, 1);
+        expect(setup.signals).toHaveLength(1);
+        setup.failAcceptedWatcher();
+        await setup.expectNextAttemptAfter(30_000, service);
+        await setup.expectAttemptAbortedAtDeadline();
+        first.unsubscribe();
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+        try {
+          await waitForObservationToSettle(service, 1);
+          await setup.expectNextAttemptAfter(45_000, service);
+        } finally {
+          second.unsubscribe();
+        }
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
+  test.each(["repository metadata", "working tree"])(
     "an accepted %s watcher subscription resets the setup-timeout backoff",
     async (kind) => {
       const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
