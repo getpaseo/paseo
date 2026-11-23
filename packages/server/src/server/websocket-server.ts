@@ -752,6 +752,7 @@ export class VoiceAssistantWebSocketServer {
           onAccepted,
         ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
+      canSteer: (agentId) => agentManager.canSteer(agentId),
       hasPendingPermission: (agentId) => agentManager.hasPendingPermissions(agentId),
       subscribe: (notify) =>
         agentManager.subscribe(
@@ -2264,6 +2265,8 @@ export class VoiceAssistantWebSocketServer {
         fxProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("fx"),
         // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
         gooseProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("goose"),
+        // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once host floor includes the bundled adapter.
+        hermesProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hermes"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -2280,6 +2283,8 @@ export class VoiceAssistantWebSocketServer {
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
         agentMessageBatching: true,
+        // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
+        agentActiveTurnBehaviors: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.

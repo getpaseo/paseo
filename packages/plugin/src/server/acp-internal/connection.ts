@@ -13,14 +13,15 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionConfigOption,
+  type SessionInfo,
   type SessionNotification,
   type SessionUpdate,
   type ToolCall,
-  type ToolCallContent,
   type ToolCallUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   AcpConfigAccess,
   AcpConfigChange,
@@ -31,6 +32,7 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
   ProviderEventSchema,
@@ -46,7 +48,9 @@ import {
   type ProviderEvent,
   type ProviderInput,
   type ProviderLaunch,
+  type ProviderModel,
   type ProviderPermissionResponse,
+  type ProviderToolCallDetail,
   type ProviderPersistence,
   type ProviderSessionConfig,
   type ProviderSetting,
@@ -295,8 +299,7 @@ async function listSessions(
     emit: state.emit,
   });
   try {
-    const response = await runtime.listSessions(input.cwd);
-    const selected = input.limit ? response.sessions.slice(0, input.limit) : response.sessions;
+    const selected = await runtime.listSessions({ cwd: input.cwd, limit: input.limit });
     state.emit({
       type: "sessions",
       requestId: input.requestId,
@@ -334,7 +337,7 @@ async function openSession(
     onRetired: () => retireSession(state, input.sessionId),
   });
   try {
-    const capabilities = await runtime.open(input, state.capabilities);
+    const capabilities = await runtime.open(input, state.capabilities, state.isClosed);
     if (state.isClosed()) {
       await runtime.closeSession();
       return;
@@ -407,14 +410,14 @@ interface ActivePrompt {
 }
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
+const SESSION_SCAN_LIMIT = 500;
+// COMPAT(acpAutoAccept): added in v0.17.4, remove after 2027-05-23. The generic ACP adapter saves
+// its Auto Accept toggle as this setting on agents that later moved to a bundled ACP provider.
+const LEGACY_AUTO_ACCEPT_SETTING = "auto_accept";
 const DEFAULT_DEFERRED_QUIET_LIMIT_MS = 120_000;
 
-type AcpToolCallSource = AcpToolCallSnapshot & {
-  diff?: Extract<ToolCallContent, { type: "diff" }>;
-};
-
 interface AcpToolCallState {
-  source: AcpToolCallSource;
+  source: AcpToolCallSnapshot;
   presentation: AcpToolCallSnapshot;
 }
 
@@ -454,12 +457,14 @@ class AcpRuntime {
    * Once ready, suppress late replay rows until the first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
-  private lastLoadUpdateAt = 0;
+  private lastLoadHistoryAt = 0;
+  private lastPartialWireAt = 0;
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
   private deferredFinalized = false;
   private processFailed = false;
+  private processFailureMessage: string | null = null;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: (options?: {
@@ -483,6 +488,7 @@ class AcpRuntime {
       timeoutMs?: number;
     }) => Promise<void> = async () => {};
     let whenConnectorClosed: () => Promise<void> | null = () => null;
+    let onPartialWireRead: (() => void) | null = null;
     if (options.options.command) {
       // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
       // Standalone callers and older hosts do not send a daemon-resolved launch.
@@ -499,7 +505,10 @@ class AcpRuntime {
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);
       const output = Writable.toWeb(child.stdin) as unknown as Parameters<typeof ndJsonStream>[0];
-      const input = Readable.toWeb(child.stdout) as unknown as Parameters<typeof ndJsonStream>[1];
+      const rawInput = Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>;
+      const input = observePartialWireReads(rawInput, () => onPartialWireRead?.()) as Parameters<
+        typeof ndJsonStream
+      >[1];
       stream = ndJsonStream(output, input);
     } else {
       const owned = ownConnectorStream(await options.options.connector());
@@ -508,6 +517,7 @@ class AcpRuntime {
       whenConnectorClosed = owned.whenClosed;
     }
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
+    onPartialWireRead = () => runtime.notePartialWireRead();
     try {
       const initialize = withTimeout(
         runtime.call(
@@ -562,6 +572,7 @@ class AcpRuntime {
     child?.on("error", (error) => {
       const message = describeError(error);
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       if (this.closing || !this.nativeSessionId) return;
       this.emit({
@@ -574,6 +585,7 @@ class AcpRuntime {
       if (this.closing || this.processFailed || !this.nativeSessionId) return;
       const message = `ACP process exited (${signal ?? code ?? "unknown"})`;
       this.processFailed = true;
+      this.processFailureMessage = message;
       this.settlePendingWork(message);
       this.emit({
         type: "session.runtime_failed",
@@ -586,6 +598,7 @@ class AcpRuntime {
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
+    isConnectionClosed: () => boolean,
   ): Promise<readonly ProviderCapability[]> {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
@@ -656,15 +669,22 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    await this.finishSessionOpen(isConnectionClosed);
+    return sessionCapabilities;
+  }
+
+  private async finishSessionOpen(isConnectionClosed: () => boolean): Promise<void> {
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
     const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
     if (this.replayWindow && quietPeriod && quietPeriod > 0) {
-      await this.waitForLoadReplay(quietPeriod);
+      await this.waitForLoadReplay(quietPeriod, isConnectionClosed);
       this.replayWindow = "skip";
     }
-    return sessionCapabilities;
+    if (this.processFailed && !isConnectionClosed()) {
+      throw new Error(this.processFailureMessage ?? "ACP process exited during session open");
+    }
   }
 
   async discover(cwd?: string): Promise<ProviderCatalog> {
@@ -677,7 +697,10 @@ class AcpRuntime {
     this.nativeSessionId = response.sessionId;
     this.modes = response.modes ?? null;
     this.configOptions = response.configOptions ?? [];
-    const catalog = toProviderCatalog(this.modes, this.configOptions);
+    let catalog = toProviderCatalog(this.modes, this.configOptions);
+    if (this.options.options.acpOptions?.perModelThinkingOptions) {
+      catalog = { ...catalog, models: await this.modelsWithOwnThinkingOptions(catalog) };
+    }
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
     if (!autoAcceptMode) return catalog;
     return {
@@ -685,6 +708,33 @@ class AcpRuntime {
       modes: [...catalog.modes, { ...autoAcceptMode.mode, isUnattended: true }],
       defaultMode: autoAcceptMode.default ? autoAcceptMode.mode.id : catalog.defaultMode,
     };
+  }
+
+  /**
+   * Selects each model in the discovery session to read the thinking options the agent lists for
+   * it, then selects the opening model again for the transformers that run after discovery.
+   */
+  private async modelsWithOwnThinkingOptions(catalog: ProviderCatalog): Promise<ProviderModel[]> {
+    const models: ProviderModel[] = [];
+    for (const model of catalog.models) {
+      await this.selectModel(model.id);
+      const { thinkingOptions, thinkingOption } = toProviderConfigState(
+        this.modes,
+        this.configOptions,
+      );
+      models.push({
+        ...model,
+        thinkingOptions: [...thinkingOptions],
+        defaultThinkingOptionId: thinkingOption,
+      });
+    }
+    if (catalog.defaultModel) await this.selectModel(catalog.defaultModel);
+    return models;
+  }
+
+  private async selectModel(model: string): Promise<void> {
+    if (selectedValue(modelOption(this.configOptions)) === model) return;
+    await this.applyNativeConfigChange({ target: "model", value: model });
   }
 
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
@@ -868,8 +918,17 @@ class AcpRuntime {
     return true;
   }
 
-  listSessions(cwd?: string) {
-    return this.call(this.connection.listSessions({ cwd }));
+  /** Follows `nextCursor` until `limit` sessions, the last page, or the scan cap. */
+  async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
+    const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
+    const sessions: SessionInfo[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.call(this.connection.listSessions({ cwd, cursor }));
+      sessions.push(...page.sessions);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor && sessions.length < wanted);
+    return sessions.slice(0, wanted);
   }
 
   async drainNotifications(): Promise<void> {
@@ -1024,15 +1083,39 @@ class AcpRuntime {
     const requested: AcpConfigChange[] = [];
     if (config.model) requested.push({ target: "model", value: config.model });
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
-    const mode = config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined);
+    const { settings, legacyAutoAccept } = this.withoutLegacyAutoAccept(config.settings);
+    // The toggle stays saved after a mode is chosen here, so it counts only while the saved mode
+    // is one the generic adapter wrote.
+    const mode =
+      legacyAutoAccept && autoAcceptMode && !this.offersMode(config.mode)
+        ? autoAcceptMode.mode.id
+        : (config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined));
     if (mode) requested.push({ target: "mode", value: mode });
     if (config.thinkingOption) {
       requested.push({ target: "thinking", value: config.thinkingOption });
     }
-    for (const [id, value] of Object.entries(config.settings)) {
+    for (const [id, value] of Object.entries(settings)) {
       requested.push({ target: "setting", id, value });
     }
     for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  private offersMode(mode: string | undefined): boolean {
+    if (mode === undefined) return false;
+    if (mode === this.options.options.acpOptions?.autoAcceptMode?.mode.id) return true;
+    return toProviderCatalog(this.modes, this.configOptions).modes.some(({ id }) => id === mode);
+  }
+
+  /** Reads the generic ACP adapter's saved Auto Accept toggle unless the agent has such a setting. */
+  private withoutLegacyAutoAccept(settings: Readonly<Record<string, JsonValue>>): {
+    settings: Readonly<Record<string, JsonValue>>;
+    legacyAutoAccept: boolean;
+  } {
+    if (this.configOptions.some((option) => option.id === LEGACY_AUTO_ACCEPT_SETTING)) {
+      return { settings, legacyAutoAccept: false };
+    }
+    const { [LEGACY_AUTO_ACCEPT_SETTING]: saved, ...rest } = settings;
+    return { settings: rest, legacyAutoAccept: saved === true };
   }
 
   // One option can reset another: choosing an fx provider also selects that provider's saved
@@ -1234,6 +1317,7 @@ class AcpRuntime {
       }
     }
     const permissionId = `permission:${request.toolCall.toolCallId}`;
+    const { presentation } = this.presentToolCall(request.toolCall);
     return new Promise((resolve) => {
       this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
       if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
@@ -1246,6 +1330,7 @@ class AcpRuntime {
           kind: "tool",
           title: request.toolCall.title ?? undefined,
           input: jsonRecord(request.toolCall.rawInput),
+          detail: toolCallDetail(presentation),
           actions: request.options.map((option) => ({
             id: option.optionId,
             label: option.name,
@@ -1282,16 +1367,12 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
-    if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
+    if (this.replayWindow && isReplayHistoryUpdate(notification.update)) {
+      this.lastLoadHistoryAt = performance.now();
+    }
     if (this.replayWindow === "skip") {
-      const update = notification.update;
-      if (
-        update.sessionUpdate === "available_commands_update" ||
-        update.sessionUpdate === "config_option_update" ||
-        update.sessionUpdate === "current_mode_update" ||
-        update.sessionUpdate === "usage_update"
-      ) {
-        this.reduceStateUpdate(update, wireSeq);
+      if (isSessionStateUpdate(notification.update)) {
+        this.reduceStateUpdate(notification.update, wireSeq);
       }
       return;
     }
@@ -1518,6 +1599,21 @@ class AcpRuntime {
     this.pendingCompactions.clear();
   }
 
+  /** Merges an update into the call's earlier updates and runs it through the transformers. */
+  private presentToolCall(update: ToolCall | ToolCallUpdate): AcpToolCallState {
+    const tool = this.toolCalls.get(update.toolCallId);
+    const source = mergeToolCallSnapshot(update, tool?.source);
+    const context = {
+      sessionId: this.options.boundarySessionId,
+      mcpServerNames: this.mcpServerNames,
+      previous: tool?.presentation,
+    };
+    let presentation: AcpToolCallSnapshot = source;
+    for (const transformer of this.transformers)
+      presentation = transformer.toolCall?.(presentation, context) ?? presentation;
+    return { source, presentation };
+  }
+
   private reduceToolCall(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
     wireSeq: number,
@@ -1537,25 +1633,7 @@ class AcpRuntime {
       current !== undefined &&
       this.liveOpenToolIds.has(current.id) &&
       this.toolKeepsTurnOpen(current);
-    const source = mergeToolCallSnapshot(update, tool?.source);
-    let snapshot: AcpToolCallSnapshot = source;
-    const context = {
-      sessionId: this.options.boundarySessionId,
-      mcpServerNames: this.mcpServerNames,
-    };
-    for (const transformer of this.transformers)
-      snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
-    if (!snapshot.detail && source.diff && snapshot.kind === "edit") {
-      snapshot = {
-        ...snapshot,
-        detail: {
-          type: "edit",
-          filePath: source.diff.path,
-          oldString: source.diff.oldText ?? undefined,
-          newString: source.diff.newText,
-        },
-      };
-    }
+    const { source, presentation: snapshot } = this.presentToolCall(update);
     this.toolCalls.set(snapshot.id, { source, presentation: snapshot });
     const isOpen = snapshot.status === "pending" || snapshot.status === "in_progress";
     if (this.replayWindow === null) {
@@ -1634,6 +1712,7 @@ class AcpRuntime {
     if (this.closing || this.processFailed) return;
     const message = "ACP transport closed unexpectedly";
     this.processFailed = true;
+    this.processFailureMessage = message;
     this.settlePendingWork(message);
     if (!this.nativeSessionId) return;
     this.emit({
@@ -1945,17 +2024,84 @@ class AcpRuntime {
       });
   }
 
-  private async waitForLoadReplay(quietPeriod: number): Promise<void> {
+  private notePartialWireRead(): void {
+    if (this.replayWindow) this.lastPartialWireAt = performance.now();
+  }
+
+  // An agent that streams history after its session/load response sends no end marker,
+  // so the history ends once a quiet period passes without a history update.
+  private async waitForLoadReplay(
+    quietPeriod: number,
+    isConnectionClosed: () => boolean,
+  ): Promise<void> {
     const start = performance.now();
-    const deadline = start + 5 * quietPeriod;
-    while (!this.closing && !this.processFailed) {
-      const idleAt = Math.max(start, this.lastLoadUpdateAt) + quietPeriod;
-      const remaining = Math.min(deadline, idleAt) - performance.now();
-      if (remaining <= 0) return;
-      await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+    while (!this.closing && !this.processFailed && !isConnectionClosed()) {
+      const lastActivityAt = Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt);
+      const remaining = lastActivityAt + quietPeriod - performance.now();
+      // A stalled event loop reaches the quiet period with history still unread in the pipe.
+      // setImmediate lets the loop read pending input once before the silence is trusted.
+      await new Promise<void>((resolve) => {
+        if (remaining > 0) setTimeout(resolve, remaining);
+        else setImmediate(resolve);
+      });
       await this.notificationLane;
+      if (
+        remaining <= 0 &&
+        Math.max(start, this.lastLoadHistoryAt, this.lastPartialWireAt) === lastActivityAt
+      ) {
+        return;
+      }
     }
   }
+}
+
+function observePartialWireReads(
+  input: ReadableStream<Uint8Array>,
+  onPartialRead: () => void,
+): ReadableStream<Uint8Array> {
+  let incompleteLine = false;
+  return input.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        const wasIncomplete = incompleteLine;
+        incompleteLine = hasTrailingIncompleteLine(chunk, incompleteLine);
+        if (wasIncomplete || incompleteLine) onPartialRead();
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+function hasTrailingIncompleteLine(chunk: Uint8Array, incompleteLine: boolean): boolean {
+  const newline = chunk.lastIndexOf(0x0a);
+  const start = newline === -1 ? 0 : newline + 1;
+  if (newline !== -1) incompleteLine = false;
+  for (let index = start; index < chunk.length; index += 1) {
+    const byte = chunk[index];
+    if (byte !== 0x20 && byte !== 0x09 && byte !== 0x0d) return true;
+  }
+  return incompleteLine;
+}
+
+function isReplayHistoryUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk" ||
+    update.sessionUpdate === "tool_call" ||
+    update.sessionUpdate === "tool_call_update" ||
+    update.sessionUpdate === "plan" ||
+    update.sessionUpdate === "compaction_update"
+  );
+}
+
+function isSessionStateUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "config_option_update" ||
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "usage_update"
+  );
 }
 
 function routeIncomingMessages(
@@ -2067,8 +2213,8 @@ function ownConnectorStream(source: Stream): {
 
 function mergeToolCallSnapshot(
   update: ToolCall | ToolCallUpdate,
-  current: AcpToolCallSource | undefined,
-): AcpToolCallSource {
+  current: AcpToolCallSnapshot | undefined,
+): AcpToolCallSnapshot {
   return {
     id: update.toolCallId,
     name: firstText(update.name, current?.name),
@@ -2078,10 +2224,7 @@ function mergeToolCallSnapshot(
     input: jsonValue(firstDefined(update.rawInput, current?.input, null)),
     output: jsonValue(firstDefined(update.rawOutput, current?.output, null)),
     locations: update.locations?.map((location) => location.path) ?? current?.locations ?? [],
-    diff:
-      update.content === undefined
-        ? current?.diff
-        : update.content?.find((item) => item.type === "diff"),
+    content: update.content === undefined ? current?.content : jsonValue(update.content),
   };
 }
 
@@ -2255,21 +2398,12 @@ function configValues(
 
 type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
 
+function toolCallDetail(snapshot: AcpToolCallSnapshot): ProviderToolCallDetail {
+  return snapshot.detail ?? standardToolCallDetail(snapshot);
+}
+
 function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
-  const input = jsonRecord(snapshot.input);
-  const isEdit = snapshot.kind === "edit" || snapshot.name?.toLowerCase().includes("edit") === true;
-  const detail =
-    snapshot.detail ??
-    (isEdit
-      ? {
-          type: "edit" as const,
-          filePath:
-            typeof input.filePath === "string" ? input.filePath : (snapshot.locations[0] ?? ""),
-          oldString: typeof input.oldString === "string" ? input.oldString : undefined,
-          newString: typeof input.newString === "string" ? input.newString : undefined,
-          unifiedDiff: typeof input.unifiedDiff === "string" ? input.unifiedDiff : undefined,
-        }
-      : { type: "unknown" as const, input: snapshot.input, output: snapshot.output });
+  const detail = toolCallDetail(snapshot);
   const status =
     snapshot.status === "in_progress" || snapshot.status === "pending"
       ? "running"
@@ -2304,6 +2438,7 @@ function jsonValue(value: unknown) {
 }
 
 function jsonRecord(value: unknown): Record<string, ReturnType<typeof jsonValue>> {
+  if (value === undefined) return {};
   const parsed = jsonValue(value);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
   return parsed;

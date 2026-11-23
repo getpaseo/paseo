@@ -1,5 +1,5 @@
 import { GripVertical, RotateCw } from "lucide-react-native";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -9,14 +9,13 @@ import {
   smallIconButtonChromeFrameSize,
 } from "@/components/ui/icon-button-chrome";
 import { DraggableListHandle } from "@/components/draggable-list";
-import { ControlSizeProvider } from "@/components/ui/control-size";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import type { TFunction } from "i18next";
+import { useCallback } from "react";
 import { UsageBalanceBar } from "./balance-bar";
 import type { UsageDisplay } from "./display";
 import { formatAgo, formatProviderUsageLabel, formatUsageAccountName } from "./format";
@@ -37,10 +36,8 @@ function statusText(report: UsageReport, t: TFunction): string | null {
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedGripVertical = withUnistyles(GripVertical);
 
-/** A card in the user's arrangement: dragged by its handle, turned off from its switch. */
+/** A card in the user's arrangement: dragged by its handle. */
 export interface UsageCardArrangement {
-  on: boolean;
-  onSetOn: (on: boolean) => void;
   /** The handle is always there; it shows while the card is hovered or where there is no hover. */
   handleVisible: boolean;
 }
@@ -64,7 +61,7 @@ export function UsageCard({
   pinnable: boolean;
   /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
   refreshable: boolean;
-  /** Present where the user arranges cards. An off card collapses to its header. */
+  /** Present where the user arranges cards. */
   arrangement?: UsageCardArrangement;
   compact?: boolean;
 }) {
@@ -75,7 +72,6 @@ export function UsageCard({
   const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
   const status = statusText(usage, t);
-  const collapsed = arrangement?.on === false;
   const report = resolveUsageReport(entry, t);
   const { planLabel, successfulAt, retained } = report;
 
@@ -105,23 +101,15 @@ export function UsageCard({
         <Text style={styles.name} numberOfLines={1}>
           {entry.sourceLabel}
         </Text>
-        {collapsed && entry.account.label ? (
-          // The body that names the account is gone, and two off cards of one source must differ.
-          <Text style={styles.collapsedAccount} numberOfLines={1}>
-            {entry.account.label}
-          </Text>
-        ) : null}
-        {planLabel && !collapsed ? (
-          <StatusBadge label={planLabel} variant="muted" size="xs" />
-        ) : null}
+        {planLabel ? <StatusBadge label={planLabel} variant="muted" size="xs" /> : null}
         <View style={styles.headerSpacer} />
-        {status && !collapsed ? (
+        {status ? (
           <View style={styles.statusRow}>
             <View style={dotStyle} />
             <Text style={styles.statusLabel}>{status}</Text>
           </View>
         ) : null}
-        {refreshable && !collapsed ? (
+        {refreshable ? (
           <UsageRefreshButton
             sourceLabel={entry.sourceLabel}
             successfulAt={successfulAt}
@@ -131,31 +119,16 @@ export function UsageCard({
             compact={isCompact}
           />
         ) : null}
-        {arrangement ? (
-          <ControlSizeProvider size="sm">
-            <Switch
-              value={arrangement.on}
-              onValueChange={arrangement.onSetOn}
-              accessibilityLabel={t("providerUsage.showCard", {
-                source: formatUsageAccountName(entry),
-              })}
-              style={styles.cardSwitch}
-              testID={`usage-card-switch-${entry.id}`}
-            />
-          </ControlSizeProvider>
-        ) : null}
       </View>
 
-      {collapsed ? null : (
-        <UsageCardBody
-          entry={entry}
-          display={display}
-          pinnable={pinnable}
-          report={report}
-          showsFreshnessInline={showsFreshnessInline}
-          refreshState={refreshState}
-        />
-      )}
+      <UsageCardBody
+        entry={entry}
+        display={display}
+        pinnable={pinnable}
+        report={report}
+        showsFreshnessInline={showsFreshnessInline}
+        refreshState={refreshState}
+      />
     </View>
   );
 }
@@ -434,11 +407,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  collapsedAccount: {
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
   headerSpacer: {
     flex: 1,
   },
@@ -510,10 +478,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   dragHandle: dragHandleSlot(theme.spacing),
   dragHandleHidden: { ...dragHandleSlot(theme.spacing), opacity: 0 },
-  // The switch's reserved control height overhangs the header like the Refresh button's hitbox.
-  cardSwitch: {
-    marginVertical: -theme.spacing[2],
-  },
   refreshButton: iconHitboxOverhang(false),
   refreshButtonCompact: iconHitboxOverhang(true),
 }));

@@ -1,6 +1,6 @@
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
-import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
+import type { AgentMessageBehavior, AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
@@ -21,7 +21,11 @@ import type {
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
-import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
+import type {
+  AgentActiveTurnBehavior,
+  CreationSnapshot,
+  AgentCreateRequest,
+} from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import {
   isDaemonBackgroundWorkItem,
@@ -8854,6 +8858,7 @@ export class Session {
                 seqStart: entry.seqStart,
                 seqEnd: entry.seqEnd,
                 sourceSeqRanges: entry.sourceSeqRanges,
+                turnMetrics: entry.turnMetrics,
                 turnId: undefined as string | undefined,
                 collapsed: (
                   source
@@ -9299,6 +9304,18 @@ export class Session {
     }
   }
 
+  /** An agent sender's message waits for the running turn to end unless it asks otherwise. */
+  private agentSenderBehavior(
+    requested: AgentActiveTurnBehavior | undefined,
+  ): AgentMessageBehavior {
+    // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after 2027-05-22 once client
+    // floor >= v0.17.2. Older CLIs and connected hosts send steer for every default agent send,
+    // meaning wait for the turn to end, so only their interrupt stays an interrupt.
+    if (!this.supports(CLIENT_CAPS.agentActiveTurnBehaviors))
+      return requested === "interrupt" ? "interrupt" : "queue";
+    return requested ?? "queue";
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -9333,7 +9350,11 @@ export class Session {
       const admitted = new Promise<void>((acceptAdmission) => {
         queued = acceptAdmission;
       });
+      const requested = msg.activeTurnBehavior;
+      if (!msg.sourceAgentId && requested === "queue")
+        throw new Error('activeTurnBehavior "queue" needs an agent sender');
       let deliveryStatus: "queued" | undefined;
+      let queuedReceipt: { activeTurnBehavior: AgentMessageBehavior; guidance: string } | undefined;
       const send = async (beforeDispatch: () => Promise<void>) => {
         if (msg.sourceAgentId) {
           await beforeDispatch();
@@ -9349,11 +9370,12 @@ export class Session {
                 ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
                 : undefined,
             },
-            activeTurnBehavior: msg.activeTurnBehavior ?? "steer",
+            activeTurnBehavior: this.agentSenderBehavior(requested),
             sessionMode: msg.sessionMode,
             clearPendingPermissions: false,
           });
           deliveryStatus = "queued";
+          queuedReceipt = receipt;
           queued();
           await receipt.dispatched;
           return;
@@ -9365,7 +9387,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
-          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          activeTurnBehavior: requested === "steer" ? "steer" : "interrupt",
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
           beforeDispatch,
@@ -9412,6 +9434,12 @@ export class Session {
           agentId,
           accepted: true,
           ...(deliveryStatus ? { deliveryStatus } : {}),
+          ...(queuedReceipt
+            ? {
+                activeTurnBehavior: queuedReceipt.activeTurnBehavior,
+                guidance: queuedReceipt.guidance,
+              }
+            : {}),
           error: null,
         },
       });

@@ -427,6 +427,54 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report metrics
+
+Report what your provider measured as `label` and `value` pairs. Paseo shows each value as given,
+so format it for reading: `12.4s`, not `12431`. You choose which metrics make sense for your agent.
+
+Add `metrics` to the `completed` turn event. Paseo shows them from the footer of that turn:
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+Publish `session.metrics` for totals that cover the whole session. Paseo shows them in the context
+window details. Each event replaces the previous list, and an empty list clears it. Add
+`session.metrics` to your supported capabilities and publish the event only when it was negotiated:
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+A Paseo from before session metrics does not offer the capability and closes a connection that
+sends the event. It ignores `metrics` on a turn, so turn metrics need no check.
+
+Set `tone` to `"ok"`, `"warning"`, or `"danger"` to color a value. When a completed turn has no
+`Model` metric, Paseo adds the session's model.
+
+When `history` is `"replay"`, publish each old turn's `completed` event after that turn's items.
+Paseo puts the metrics back on the turn's footer.
+
 ## Report installation and updates
 
 Add `installation` to your registration and the provider's settings show an **Installation**
@@ -548,6 +596,37 @@ version, so a CLI updated outside Paseo is checked again once the inspection exp
 `update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
 See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
 
+## Help users fix problems
+
+A user who gets a wrong result opens the provider's settings before they ask for help. Give that
+page what they need: declare `docsUrl`, and return the facts that explain a wrong result from
+`status`.
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**Docs** opens `docsUrl`. **Diagnostic report** shows the command, the path of the executable and
+the version that Paseo found, then your `Profile` row. Report what the CLI reads from its
+environment, such as the account, the profile, or the configuration file in use. Those differ
+between the daemon and the user's terminal, and the user cannot see them from the app.
+See the [troubleshooting reference](/docs/plugins/reference#provider-troubleshooting) for the rows
+that Paseo writes and for the rules of `status`.
+
 ## Adapt an ACP agent
 
 Use the ACP shim when the agent already speaks ACP:
@@ -608,9 +687,20 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
-Set `detail` on the returned tool call to supply a Paseo tool card when the ACP kind does not
-describe the operation. For example, an agent can report a new file as an ACP edit, while the
-plugin returns a `write` detail with the file path and contents.
+Paseo builds a standard tool card from each call's ACP `kind`: Shell for `execute`, Read for `read`,
+Edit for `edit` and `delete`, Search for `search`, and Fetch for `fetch`. The card reads the call's
+`input` (ACP `rawInput`), `output` (`rawOutput`), `content`, and `locations`. A call of another kind
+shows its raw input and output, or its text content when the agent sends neither.
+
+Set `detail` on the returned tool call to replace the standard card. For example, an agent can
+report a new file as an ACP edit, while the plugin returns a `write` detail with the file path and
+contents. Return `{ type: "unknown", input, output }` to show the raw values.
+
+`toolCall` runs on every update of a call, with the updates merged so far. An update that sends
+`content` replaces the earlier content, as ACP defines. When an agent sends a value only in an
+early update, read it from `context.previous`, the call as Paseo last presented it. The
+[Hermes terminal transformer](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)
+keeps the command from Hermes's first update this way.
 
 Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
 The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
@@ -623,13 +713,18 @@ translated change to `apply(change)`. Applying a change this way uses the shared
 mapping and skips the transformers for that change.
 
 Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after its `session/load`
-response. Paseo waits for that interval without session updates before it publishes the session as
-ready. The wait is bounded at five times the interval.
+response. Paseo publishes the session as ready once that interval passes without a history update.
+Non-history state and metadata updates (such as commands, configuration, mode, usage, and session
+info) do not extend the wait.
 
 Set `acpOptions.autoAcceptMode` to offer an unattended mode backed by a specific native mode.
 The adapter selects an unambiguous ACP `allow_once` action without opening a Paseo approval.
 Set `default: true` to make this the default for new sessions. The adapter requires an idle
 session without pending approvals before it switches to or from this mode.
+
+Set `acpOptions.perModelThinkingOptions` for an agent that lists `thought_level` choices only for
+the selected model. Catalog discovery selects each model in turn and gives it the thinking options
+the agent lists for it. A model without a `thought_level` option gets no thinking picker.
 
 ## Test and publish
 
