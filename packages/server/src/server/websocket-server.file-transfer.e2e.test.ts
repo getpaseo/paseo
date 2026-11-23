@@ -94,8 +94,9 @@ async function connectSocket(
   port: number,
   clientId: string,
   capabilities?: Record<string, unknown>,
+  options?: { perMessageDeflate?: boolean },
 ): Promise<WebSocket> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, options);
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve);
     socket.once("error", reject);
@@ -211,9 +212,16 @@ test("an awaited timeline framing overflow closes the actual daemon socket", asy
           text,
         });
     }
-    const source = await connectSocket(daemon.port, "framing-overflow", {
-      binary_chunking_v1: true,
-    });
+    // Disable wire compression so repeated-"x" timeline chunks saturate the 64 MiB
+    // physical socket buffer rather than compressing to a few kilobytes.
+    const source = await connectSocket(
+      daemon.port,
+      "framing-overflow",
+      {
+        binary_chunking_v1: true,
+      },
+      { perMessageDeflate: false },
+    );
     sockets.push(source);
     const closed = new Promise<void>((resolve) => source.once("close", () => resolve()));
     const firstChunk = new Promise<void>((resolve) => {
