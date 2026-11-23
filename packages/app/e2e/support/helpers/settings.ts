@@ -20,6 +20,18 @@ export function sidebarHostSettingsButton(page: Page) {
   return page.getByRole("button", { name: `Open ${TEST_HOST_LABEL} settings`, exact: true });
 }
 
+export async function bindCommandCenterToEnter(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:keyboard-shortcut-overrides",
+      JSON.stringify({
+        "command-center-toggle-cmd-k-mac": "Enter",
+        "command-center-toggle-ctrl-k-non-mac": "Enter",
+      }),
+    );
+  });
+}
+
 export async function expectStandaloneSidebarHostSettingsButton(page: Page) {
   const gear = sidebarHostSettingsButton(page);
   await expect(gear).toBeVisible();

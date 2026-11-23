@@ -68,6 +68,7 @@ import {
   sidebarHostSettingsButton,
   expectStandaloneSidebarHostSettingsButton,
   activateSidebarHostSettingsWithKeyboard,
+  bindCommandCenterToEnter,
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -202,6 +203,7 @@ test.describe("Settings sidebar navigation", () => {
   });
 
   test("Enter opens the focused sidebar host gear", async ({ page, withWorkspace }) => {
+    await bindCommandCenterToEnter(page);
     const workspace = await withWorkspace({ prefix: "keyboard-host-settings-" });
     await openWorkspace(page, workspace);
     await openSidebarHostPicker(page);

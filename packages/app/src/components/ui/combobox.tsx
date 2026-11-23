@@ -237,8 +237,8 @@ export interface ComboboxItemProps {
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
   /**
-   * An interactive control shown at the end of the row, outside the row's own
-   * pressable. This keeps each control independently focusable on web.
+   * A button shown outside the row's own pressable. The button owns its spacing
+   * and hit area.
    */
   trailingAction?: ReactNode;
   selected?: boolean;
@@ -952,8 +952,10 @@ function dispatchDesktopKey(
     return true;
   }
   if (key === "Enter") {
-    // Let the focused trailing control handle Enter before selecting the highlighted option.
-    if (isWeb && document.activeElement?.closest("[data-combobox-trailing-action]")) return false;
+    // Consume the shortcut but keep the browser's default button activation.
+    if (isWeb && document.activeElement?.matches("[data-combobox-trailing-action] button")) {
+      return true;
+    }
     if (input.orderedVisibleOptions.length === 0) return false;
     event?.preventDefault();
     handleDesktopEnterKey(input);
@@ -1816,8 +1818,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   comboboxItemActionSlot: {
-    paddingLeft: theme.spacing[1],
-    paddingRight: theme.spacing[3],
+    alignSelf: "stretch",
   },
   comboboxItemHovered: {
     backgroundColor: theme.colors.surface1,

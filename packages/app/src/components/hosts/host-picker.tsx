@@ -87,7 +87,7 @@ export function HostPickerOption({
     return (
       <Pressable
         onPress={handleSettingsPress}
-        hitSlop={8}
+        style={styles.settingsAction}
         accessibilityRole="button"
         accessibilityLabel={`Open ${label} settings`}
       >
@@ -314,6 +314,12 @@ export function HostPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  settingsAction: {
+    flex: 1,
+    justifyContent: "center",
+    paddingLeft: theme.spacing[1],
+    paddingRight: theme.spacing[3],
+  },
   statusDotSlot: {
     width: theme.iconSize.sm,
     height: theme.iconSize.sm,
