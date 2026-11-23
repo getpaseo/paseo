@@ -4296,7 +4296,12 @@ export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService
   }
   const target = await resolvePushTarget(cwd, currentBranch);
   if (!target) {
-    throw new Error("Remote 'origin' is not configured.");
+    const gitPushRemote = await getGitPushRemoteName(cwd, currentBranch);
+    throw new Error(
+      gitPushRemote
+        ? `Git is set to push this branch to '${gitPushRemote}', which Paseo cannot do. Push it with git.`
+        : "Remote 'origin' is not configured.",
+    );
   }
   switch (target.kind) {
     case "configured":
@@ -4323,8 +4328,10 @@ export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService
 }
 
 // Where Push sends the current branch, in order: the branch's push remote with a HEAD push
-// refspec, then its upstream, then a first push to origin that sets the upstream. Checkout status
-// reports the same target, so the Push offer and the push itself cannot disagree.
+// refspec, then its upstream, then a first push to origin that sets the upstream. There is no
+// target when git is set to push the branch to another remote than the one that order picks: Paseo
+// does not know which branch to use there, and the upstream is often a shared base branch.
+// Checkout status reports the same target, so the Push offer and the push itself cannot disagree.
 type PushTarget =
   | { kind: "configured"; remoteName: string; headRef: string }
   | { kind: "upstream"; remoteName: string; headRef: string }
@@ -4339,12 +4346,37 @@ async function resolvePushTarget(
   if (configured) {
     return { kind: "configured", ...configured };
   }
+  const target = await resolveUpstreamOrFirstPushTarget(cwd, currentBranch, context);
+  if (!target) {
+    return null;
+  }
+  const gitPushRemote = await getGitPushRemoteName(cwd, currentBranch, context);
+  return gitPushRemote === null || gitPushRemote === target.remoteName ? target : null;
+}
+
+async function resolveUpstreamOrFirstPushTarget(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<PushTarget | null> {
   const upstream = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch, context);
   if (upstream) {
     return { kind: "upstream", ...upstream };
   }
   const originUrl = await getGitConfigValue(cwd, "remote.origin.url", context);
   return originUrl ? { kind: "first-push", remoteName: "origin" } : null;
+}
+
+// The remote git itself pushes this branch to when one is configured for pushes.
+async function getGitPushRemoteName(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  return (
+    (await getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context)) ??
+    (await getGitConfigValue(cwd, "remote.pushDefault", context))
+  );
 }
 
 async function getCurrentBranchConfiguredPushTarget(
