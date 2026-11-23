@@ -6796,12 +6796,9 @@ async function readClaudeReplayParentFacts(
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
+  const outcomesByTaskId: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
-    }
+    recordReplayTaskNotificationOutcome(entry, outcomes, outcomesByTaskId);
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -6829,7 +6826,20 @@ async function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+    outcomesByTaskId,
   };
+}
+
+function recordReplayTaskNotificationOutcome(
+  entry: ClaudeHistoryEntry,
+  outcomesByToolCallId: Map<string, { status: ProviderSubagentStatus }>,
+  outcomesByTaskId: Map<string, { status: ProviderSubagentStatus }>,
+): void {
+  const notification = readTaskNotificationFromHistoryRecord(entry);
+  const status = mapTaskStatus(notification?.status ?? undefined);
+  if (!notification || !status) return;
+  if (notification.toolUseId) outcomesByToolCallId.set(notification.toolUseId, { status });
+  if (notification.taskId) outcomesByTaskId.set(notification.taskId, { status });
 }
 
 function readClaudeReplayTaskDeclaration(
