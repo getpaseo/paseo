@@ -806,6 +806,25 @@ describe("rooted queries with a typed parent", () => {
     },
   );
 
+  it("keeps a symlink under a parent whose spelling differs from the target's parent", async ({
+    skip,
+  }) => {
+    const parent = path.join(homeDir, "developer");
+    if (existsSync(parent)) skip("Requires a case-sensitive filesystem");
+    const target = path.join(homeDir, "Developer", "pasta");
+    const link = path.join(parent, "pasta");
+    mkdirSync(parent);
+    mkdirSync(path.join(target, "children"));
+    symlinkSync(target, link, "junction");
+
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/developer/pasta", limit: 1 }),
+    ).resolves.toEqual([link]);
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/developer/pasta/ch" }),
+    ).resolves.toEqual([path.join(link, "children")]);
+  });
+
   it("matches the whole tree when the typed parent does not exist", async () => {
     await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "~/Devel/pas" })).resolves.toEqual([
       path.join(homeDir, "Developer", "pasta"),

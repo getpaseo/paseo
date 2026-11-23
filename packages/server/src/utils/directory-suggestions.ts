@@ -243,17 +243,16 @@ async function resolveTypedParent(input: SearchInput): Promise<WalkStart | null>
 async function withResolvedSpelling(visiblePath: string, resolvedPath: string): Promise<string> {
   if (visiblePath.toLowerCase() !== resolvedPath.toLowerCase()) return visiblePath;
 
-  // On a case-sensitive volume, a symlink can differ from its target only by case.
+  // Check the entire changed suffix. A symlink can keep its basename while redirecting
+  // into a parent directory that differs only in case.
   let visible = visiblePath;
   let resolved = resolvedPath;
   while (visible !== resolved && visible !== path.parse(visible).root) {
-    if (path.basename(visible) !== path.basename(resolved)) {
-      const entryPath = visible;
-      const entry = await sharedFilesystemCall(`lstat:${entryPath}`, () =>
-        fs.lstat(entryPath),
-      ).catch(() => null);
-      if (!entry || entry.isSymbolicLink()) return visiblePath;
-    }
+    const entryPath = visible;
+    const entry = await sharedFilesystemCall(`lstat:${entryPath}`, () => fs.lstat(entryPath)).catch(
+      () => null,
+    );
+    if (!entry || entry.isSymbolicLink()) return visiblePath;
     visible = path.dirname(visible);
     resolved = path.dirname(resolved);
   }
