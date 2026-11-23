@@ -2487,7 +2487,10 @@ export class AgentManager {
       updatedAt: archivedAt,
     });
 
-    if (this.agents.has(record.id)) {
+    const live = this.agents.get(record.id);
+    if (live) {
+      live.reviewResult = undefined;
+      live.attention = { requiresAttention: false };
       this.notifyAgentState(record.id);
     } else if (!archivedRecord.internal) {
       this.dispatchStoredAgentState(archivedRecord);

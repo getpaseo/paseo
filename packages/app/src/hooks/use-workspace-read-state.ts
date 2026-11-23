@@ -19,15 +19,14 @@ export function useWorkspaceReadState({
   serverId: string;
   workspaceId: string;
 }): WorkspaceReadStateController {
-  const status = useWorkspaceFields(serverId, workspaceId, (workspace) => workspace.status);
-  const reviewResults = useWorkspaceFields(
-    serverId,
-    workspaceId,
-    (workspace) => workspace.reviewResults,
-  );
+  const observed = useWorkspaceFields(serverId, workspaceId, (workspace) => ({
+    status: workspace.status,
+    attentionKeys: workspace.attentionKeys,
+    reviewResults: workspace.reviewResults,
+  }));
   const supportsMarkUnread = useHostFeature(serverId, "workspaceMarkUnread");
-  const hasClearableAttention = status === "attention" || status === "failed";
-  const canMarkUnread = supportsMarkUnread && status === "done";
+  const hasClearableAttention = observed?.status === "attention" || observed?.status === "failed";
+  const canMarkUnread = supportsMarkUnread && observed?.status === "done";
 
   const clearAttention = useCallback(async () => {
     if (!hasClearableAttention) {
@@ -37,11 +36,11 @@ export function useWorkspaceReadState({
     if (!client) {
       throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }
-    await client.clearWorkspaceAttention(
-      workspaceId,
-      reviewResults?.map((result) => result.id) ?? [],
-    );
-  }, [hasClearableAttention, serverId, workspaceId, reviewResults]);
+    await client.clearWorkspaceAttention(workspaceId, {
+      observedAttentionKeys: observed.attentionKeys ?? {},
+      observedResultIds: observed.reviewResults?.map((result) => result.id) ?? [],
+    });
+  }, [hasClearableAttention, serverId, workspaceId, observed]);
 
   const markUnread = useCallback(async () => {
     if (!canMarkUnread) {

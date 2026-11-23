@@ -925,6 +925,7 @@ export const AgentReviewResultSchema = z.object({
   followUpAt: z.string().optional(),
 });
 export type AgentReviewResult = z.infer<typeof AgentReviewResultSchema>;
+export const WorkspaceAttentionKeysSchema = z.record(z.string(), z.string().nullable());
 export const WorkspaceReviewResultSchema = AgentReviewResultSchema.extend({
   agentId: z.string(),
   title: z.string().nullable(),
@@ -3051,6 +3052,7 @@ export const WorkspaceCreateRequestSchema = z.object({
 
 export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
+  observedAttentionKeys: WorkspaceAttentionKeysSchema.optional(),
   observedResultIds: z.array(z.string()).optional(),
   workspaceId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string(),
@@ -4569,6 +4571,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    attentionKeys: WorkspaceAttentionKeysSchema.optional(),
     reviewResults: z.array(WorkspaceReviewResultSchema).optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform

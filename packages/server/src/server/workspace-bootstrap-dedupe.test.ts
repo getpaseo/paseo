@@ -11,6 +11,15 @@ const SNAPSHOT_DONE_10_30: BootstrapUpdateSnapshot = {
 };
 
 describe("shouldEmitPendingBootstrapUpdate", () => {
+  test("emits the unread keys when a second chat fails in an already failed workspace", () => {
+    const failed = { ...SNAPSHOT_DONE_10_30, status: "failed", attentionKeys: { a: "first" } };
+    expect(
+      shouldEmitPendingBootstrapUpdate({
+        snapshot: failed,
+        update: { ...failed, attentionKeys: { a: "first", b: "second" } },
+      }),
+    ).toBe(true);
+  });
   test("emits a changed chat result even while another chat keeps the same workspace status", () => {
     const result = { id: "a", agentId: "chat", title: null };
     expect(

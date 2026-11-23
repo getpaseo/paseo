@@ -13,6 +13,7 @@ import {
   AgentStatusSchema,
 } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import { ARCHIVED_AGENT_ATTENTION } from "./agent-archive.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
@@ -132,6 +133,7 @@ function foldLegacyRecordFields(record: RawStoredAgentRecord): StoredAgentRecord
     ...rest,
     reviewResult:
       reviewResult ?? (legacyFinish ? { id: `legacy-${record.id}-${legacyFinish}` } : undefined),
+    ...(record.archivedAt ? ARCHIVED_AGENT_ATTENTION : {}),
     ...(config ? { config: foldFeatureValues(config) } : { config }),
     ...((controls ?? features) ? { controls: controls ?? controlsFromFeatures(features) } : {}),
   };
@@ -427,6 +429,7 @@ export class AgentStorage {
       // stale pre-archive record after the archive mutation.
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
+        if (existing.archivedAt) Object.assign(record, ARCHIVED_AGENT_ATTENTION);
       }
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;

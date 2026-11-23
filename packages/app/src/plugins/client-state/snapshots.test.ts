@@ -91,6 +91,24 @@ describe("sidebar entity snapshots", () => {
     expect(createPluginAgentSnapshot(agent, workspace.id).workspace).toBe(first.ref);
   });
 
+  it("exposes an acknowledged result with the sidebar follow-up indicator and label", () => {
+    const snapshot = createPluginWorkspaceSnapshot(
+      {
+        ...workspace,
+        status: "done",
+        reviewResults: [
+          { agentId: agent.id, id: "result", title: null, followUpAt: "2026-11-22T12:00:00Z" },
+        ],
+      },
+      "host-1",
+    );
+    expect(snapshot).toMatchObject({
+      status: "done",
+      indicator: "needs_follow_up",
+      indicatorLabel: "Needs follow-up",
+    });
+  });
+
   it("invalidates a done workspace when its effective root-agent status changes", () => {
     const idle: WorkspaceDescriptor = { ...workspace, status: "done" };
     const before = createPluginWorkspaceSnapshot(idle, "host-1");

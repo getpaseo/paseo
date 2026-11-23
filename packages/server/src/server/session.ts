@@ -151,7 +151,11 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
+import {
+  buildStoredAgentPayload,
+  hasClearableAttention,
+  toAgentPayload,
+} from "./agent/agent-projections.js";
 import {
   assertPluginTimelineDataSize,
   assertPluginTimelineKind,
@@ -6530,6 +6534,7 @@ export class Session {
         const shouldEmit = shouldEmitPendingBootstrapUpdate({
           snapshot: snapshot ?? null,
           update: {
+            attentionKeys: payload.workspace.attentionKeys,
             reviewResults: payload.workspace.reviewResults,
             status: payload.workspace.status,
             statusEnteredAt: payload.workspace.statusEnteredAt ?? null,
@@ -7426,6 +7431,7 @@ export class Session {
     for (const entry of entries) {
       const parsedActivity = entry.activityAt ? Date.parse(entry.activityAt) : null;
       snapshotByWorkspaceId.set(entry.id, {
+        attentionKeys: entry.attentionKeys,
         reviewResults: entry.reviewResults,
         status: entry.status,
         statusEnteredAt: entry.statusEnteredAt ?? null,
@@ -8383,7 +8389,7 @@ export class Session {
   private async handleWorkspaceClearAttentionRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
   ): Promise<void> {
-    const { requestId, workspaceId } = request;
+    const { requestId, workspaceId, observedAttentionKeys } = request;
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
     let agents: AgentSnapshotPayload[];
     try {
@@ -8434,16 +8440,18 @@ export class Session {
           (agent) =>
             !agent.archivedAt &&
             agent.workspaceId === workspace.workspaceId &&
-            agent.requiresAttention &&
-            !agent.pendingPermissions?.length &&
-            agent.attentionReason !== "permission" &&
+            hasClearableAttention(agent) &&
             (!agent.reviewResult ||
               !request.observedResultIds ||
               request.observedResultIds.includes(agent.reviewResult.id)),
         );
 
         for (const agent of clearableAgents) {
-          if (await this.agentManager.clearAgentAttention(agent.id, getAttentionKey(agent))) {
+          if (observedAttentionKeys && !Object.hasOwn(observedAttentionKeys, agent.id)) continue;
+          const expectedKey = observedAttentionKeys
+            ? observedAttentionKeys[agent.id]
+            : getAttentionKey(agent);
+          if (await this.agentManager.clearAgentAttention(agent.id, expectedKey)) {
             clearedAgentIds.push(agent.id);
           }
         }

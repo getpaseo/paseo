@@ -1,6 +1,7 @@
 import type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "./refs.js";
 import type { PluginText } from "./text.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { WorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
 import type { PluginSerializableIcon } from "./icons.js";
 import type { PluginRpcContract } from "./rpc.js";
 
@@ -20,7 +21,7 @@ export interface PluginTheme {
   };
 }
 
-export type WorkspaceIndicator = "needs_input" | "failed" | "running" | "attention" | "done";
+export type WorkspaceIndicator = WorkspaceDisplayStatus;
 
 export interface PluginWorkspaceSnapshot {
   readonly ref: WorkspaceRef;

@@ -1811,6 +1811,50 @@ test("permission outcomes and domain observations keep independent source owners
   }
 });
 
+test("mark as read only acknowledges the chat notifications in the observed workspace", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const first = await client.createAgent({ provider: "codex", cwd: daemon.staticDir });
+    const workspaceId = (await client.fetchAgent(first.id))!.agent.workspaceId!;
+    const second = await client.createAgent({
+      provider: "codex",
+      workspaceId,
+      cwd: daemon.staticDir,
+    });
+    await client.sendMessage(first.id, "Reply with OK.");
+    await client.waitForFinish(first.id, 5000);
+    const observed = (await client.fetchWorkspaces()).entries.find((ws) => ws.id === workspaceId)!;
+    expect(observed.status).toBe("attention");
+
+    await client.sendMessage(second.id, "Emit a turn failure");
+    await client.waitForFinish(second.id, 5000);
+    await client.clearWorkspaceAttention(workspaceId, {
+      observedAttentionKeys: observed.attentionKeys,
+    });
+    expect((await client.fetchAgent(first.id))?.agent.requiresAttention).toBe(false);
+    expect((await client.fetchAgent(second.id))?.agent).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+
+    const failed = (await client.fetchWorkspaces()).entries.find((ws) => ws.id === workspaceId)!;
+    await client.sendMessage(second.id, "Reply with OK.");
+    await client.waitForFinish(second.id, 5000);
+    await client.clearWorkspaceAttention(workspaceId, {
+      observedAttentionKeys: failed.attentionKeys,
+    });
+    expect((await client.fetchAgent(second.id))?.agent).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("mark unread replies remain source-owned while directory observers receive attention", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });

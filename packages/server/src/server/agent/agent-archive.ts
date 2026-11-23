@@ -2,6 +2,13 @@ import type { StoredAgentRecord } from "./agent-storage.js";
 
 export type ArchivedStoredAgentRecord = StoredAgentRecord & { archivedAt: string };
 
+export const ARCHIVED_AGENT_ATTENTION = {
+  reviewResult: undefined,
+  requiresAttention: false,
+  attentionReason: null,
+  attentionTimestamp: null,
+} as const;
+
 interface BuildArchivedAgentRecordOptions {
   archivedAt: string;
   /** When this archive happened. Re-archiving keeps the original archivedAt but still records it. */
@@ -17,10 +24,7 @@ export function buildArchivedAgentRecord(
     archivedAt: options.archivedAt,
     updatedAt: latestTimestamp(record.updatedAt, options.updatedAt),
     lastStatus: normalizeArchivedStatus(record.lastStatus),
-    reviewResult: undefined,
-    requiresAttention: false,
-    attentionReason: null,
-    attentionTimestamp: null,
+    ...ARCHIVED_AGENT_ATTENTION,
   };
 }
 

@@ -8,6 +8,7 @@ import type {
 } from "./messages.js";
 import {
   deriveAgentStateBucket,
+  getAttentionKey,
   isAgentRunning,
   getWorkspaceStateBucketPriority,
   getWorkspaceDisplayStatus,
@@ -15,6 +16,7 @@ import {
 } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
+import { hasClearableAttention } from "./agent/agent-projections.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { resolveProjectDisplayName } from "./workspace-registry.js";
 import {
@@ -301,6 +303,10 @@ export class WorkspaceDirectory {
     const nowIso = new Date().toISOString();
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
+      const unread = contributingAgents.filter(hasClearableAttention);
+      descriptor.attentionKeys = Object.fromEntries(
+        unread.map((agent) => [agent.id, getAttentionKey(agent)]),
+      );
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
       for (const review of descriptor.reviewResults ?? []) {
         if (!review.nested && review.followUpAt) {

@@ -888,6 +888,10 @@ type FetchWorkspacesPayload = Extract<
   { type: "fetch_workspaces_response" }
 >["payload"];
 type FetchWorkspacesRequest = Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>;
+type WorkspaceAttentionObservation = Pick<
+  Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
+  "observedAttentionKeys" | "observedResultIds"
+>;
 export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, "type" | "requestId"> & {
   signal?: AbortSignal;
   requestId?: string;
@@ -2528,12 +2532,12 @@ export class DaemonClient {
 
   async clearWorkspaceAttention(
     workspaceId: string | string[],
-    observedResultIds?: string[],
+    observed?: WorkspaceAttentionObservation | string[],
   ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "workspace.clear_attention.request",
-      observedResultIds,
+      ...(Array.isArray(observed) ? { observedResultIds: observed } : observed),
       workspaceId,
       requestId,
     });

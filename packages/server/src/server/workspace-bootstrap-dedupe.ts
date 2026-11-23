@@ -13,6 +13,7 @@ import type { WorkspaceDescriptorPayload } from "./messages.js";
  * different chat is resolved. The buffered result list must reach the menu too.
  */
 export interface BootstrapUpdateSnapshot {
+  attentionKeys?: WorkspaceDescriptorPayload["attentionKeys"];
   reviewResults?: WorkspaceDescriptorPayload["reviewResults"];
   status: string;
   statusEnteredAt: string | null;
@@ -33,7 +34,11 @@ export function shouldEmitPendingBootstrapUpdate(input: BootstrapUpdateCheckInpu
     return true;
   }
 
-  if (snapshot.status !== update.status || !equal(snapshot.reviewResults, update.reviewResults)) {
+  if (
+    snapshot.status !== update.status ||
+    !equal(snapshot.reviewResults, update.reviewResults) ||
+    !equal(snapshot.attentionKeys, update.attentionKeys)
+  ) {
     return true;
   }
 

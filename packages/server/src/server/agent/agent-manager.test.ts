@@ -6744,6 +6744,28 @@ test("archiveSnapshot restoring an earlier archive time on a loaded agent keeps 
   expect(events.at(-1)?.updatedAt.getTime()).toBeGreaterThanOrEqual(unarchivedAt);
 });
 
+test("restoring a loaded chat after archive retires its follow-up reminder", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "agent-archive-review-"));
+  const directory = join(cwd, "agents");
+  const registry = new AgentStorage(directory, logger);
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, registry, logger });
+  const { id } = await manager.createAgent({ provider: "codex", cwd }, undefined, {
+    workspaceId: "ws",
+  });
+  onTestFinished(async () => {
+    await manager.flush();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await manager.runAgent(id, "first");
+  await manager.clearAgentAttention(id);
+  expect((await registry.get(id))?.reviewResult?.followUpAt).toEqual(expect.any(String));
+  await manager.archiveAgent(id);
+  await manager.unarchiveSnapshot(id);
+  const restored = await new AgentStorage(directory, logger).get(id);
+  expect(restored?.archivedAt).toBeNull();
+  expect(restored?.reviewResult).toBeUndefined();
+});
+
 test("successful results survive acknowledgement, manual unread and restart until resolved", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "agent-review-"));
   const directory = join(cwd, "agents");
@@ -6935,6 +6957,16 @@ test("legacy records only carry forward an outstanding unread finish", () => {
     parseStoredAgentRecord({ ...unread, attentionReason: "permission" }).reviewResult,
   ).toBeUndefined();
   expect(parseStoredAgentRecord({ ...unread, reviewResult: null }).reviewResult).toBeUndefined();
+  expect(
+    parseStoredAgentRecord({
+      ...unread,
+      archivedAt: base.updatedAt,
+      reviewResult: { id: "stale" },
+    }),
+  ).toMatchObject({
+    reviewResult: undefined,
+    requiresAttention: false,
+  });
   expect(parseStoredAgentRecord(unread).reviewResult).toEqual({ id: expect.any(String) });
 });
 

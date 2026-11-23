@@ -139,6 +139,7 @@ export interface WorkspaceDescriptor {
   pinnedAt?: string | null;
   labels?: string[];
   reviewResults?: WorkspaceDescriptorPayload["reviewResults"];
+  attentionKeys?: WorkspaceDescriptorPayload["attentionKeys"];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -186,6 +187,7 @@ export function normalizeWorkspaceDescriptor(
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     reviewResults: payload.reviewResults,
+    attentionKeys: payload.attentionKeys,
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,

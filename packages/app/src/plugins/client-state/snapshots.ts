@@ -9,7 +9,8 @@ import type { Agent, WorkspaceDescriptor, ProjectDescriptor } from "@/stores/ses
 import { cloneAndFreeze } from "../freeze";
 
 import { entityRefs } from "./refs";
-import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import { deriveWorkspaceDisplayStatus } from "@/workspace-status";
+import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 
 interface CachedWorkspace {
   language: string;
@@ -21,11 +22,11 @@ const agentSnapshots = new WeakMap<Agent, Map<string, PluginAgentSnapshot>>();
 export function createPluginWorkspaceSnapshot(
   workspace: WorkspaceDescriptor,
   hostId: string,
-  context: Omit<Parameters<typeof deriveEffectiveWorkspaceStatus>[0], "workspace" | "serverId"> & {
+  context: Omit<Parameters<typeof deriveWorkspaceDisplayStatus>[0], "workspace" | "serverId"> & {
     parentAgent?: PluginWorkspaceSnapshot["parentAgent"];
   } = {},
 ): PluginWorkspaceSnapshot {
-  const indicator = deriveEffectiveWorkspaceStatus({
+  const indicator = deriveWorkspaceDisplayStatus({
     ...context,
     workspace,
     serverId: hostId,
@@ -52,7 +53,7 @@ export function createPluginWorkspaceSnapshot(
     lastPromptAt: serializeTimestamp(workspace.lastUserMessageAt),
     parentAgent,
     indicator,
-    indicatorLabel: i18n.t(indicatorLabelKeys[indicator]),
+    indicatorLabel: getStatusBucketLabel(indicator, i18n.t),
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -108,13 +109,6 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
   return snapshot;
 }
 
-const indicatorLabelKeys = {
-  needs_input: "sidebar.statusBucket.needsInput",
-  failed: "sidebar.statusBucket.failed",
-  running: "sidebar.statusBucket.working",
-  attention: "sidebar.statusBucket.readyToReview",
-  done: "sidebar.statusBucket.done",
-} as const;
 const projectSnapshots = new WeakMap<ProjectDescriptor, Map<string, PluginProjectSnapshot>>();
 
 export function createPluginProjectSnapshot(

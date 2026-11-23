@@ -123,6 +123,14 @@ function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
   return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
 }
 
+export function hasClearableAttention(agent: AgentSnapshotPayload): boolean {
+  return (
+    agent.requiresAttention === true &&
+    agent.attentionReason !== "permission" &&
+    !agent.pendingPermissions?.length
+  );
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
