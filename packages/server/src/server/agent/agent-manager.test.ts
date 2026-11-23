@@ -6,7 +6,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -25,6 +25,7 @@ import { ForegroundPromptStart } from "./agent-run-state.js";
 import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import * as turnChanges from "./turn-changes.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
@@ -16260,40 +16261,39 @@ test("importProviderSession keeps the stats the provider reported with its histo
   ]);
 });
 
-test("turn capture does not start a prompt canceled during a slow Git filter", async () => {
+function pauseTurnTreeCapture() {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const captureTurnTree = turnChanges.captureTurnTree;
+
+  return {
+    entered: entered.promise,
+    release: () => release.resolve(),
+    async capture(cwd: string) {
+      entered.resolve();
+      await release.promise;
+      return captureTurnTree(cwd);
+    },
+  };
+}
+
+test("turn capture does not start a prompt canceled before baseline capture finishes", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-turn-capture-cancel-"));
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: workdir, encoding: "utf8" });
-  git("init", "-b", "main");
-  writeFileSync(join(workdir, ".gitattributes"), "file.txt filter=paseo-test\n");
-  writeFileSync(join(workdir, "file.txt"), "base\n");
-  git("add", ".");
-  git(
-    "-c",
-    "user.name=Test",
-    "-c",
-    "user.email=test@example.com",
-    "-c",
-    "commit.gpgsign=false",
-    "commit",
-    "-m",
-    "base",
-  );
-  const signal = join(workdir, "filter-started");
-  const release = join(workdir, "filter-release");
-  const filter = join(workdir, "filter.cjs");
-  writeFileSync(
-    filter,
-    `const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(signal)}, ''); const wait=()=>fs.existsSync(${JSON.stringify(release)})?process.stdin.pipe(process.stdout):setTimeout(wait,10);wait();`,
-  );
-  git("config", "filter.paseo-test.clean", `"${process.execPath}" "${filter}"`);
-  writeFileSync(join(workdir, "file.txt"), "changed\n");
-  const start = vi.fn();
+  execFileSync("git", ["init", "-b", "main"], { cwd: workdir });
+  writeFileSync(join(workdir, "file.txt"), "baseline\n");
+  const baseline = pauseTurnTreeCapture();
+  const capture = vi.spyOn(turnChanges, "captureTurnTree").mockImplementationOnce(baseline.capture);
+  const interrupted = deferred<void>();
+  const start = vi.fn(async () => {
+    throw new Error("Canceled prompt reached the provider");
+  });
   const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new (class extends TestAgentSession {
-        override async startTurn() {
-          start();
-          return super.startTurn();
+        override startTurn = start;
+
+        override async interrupt() {
+          interrupted.resolve();
         }
       })(config);
     }
@@ -16307,48 +16307,42 @@ test("turn capture does not start a prompt canceled during a slow Git filter", a
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
-  const run = drainAsyncGenerator(manager.streamAgent(agent.id, "must not start")).catch(
-    (error: unknown) => error,
-  );
+  const run = drainAsyncGenerator(manager.streamAgent(agent.id, "must not start"));
+  const runError = run.catch((error: unknown) => error);
+  let stop: ReturnType<AgentManager["cancelAgentRun"]> | undefined;
   try {
-    await expect.poll(() => existsSync(signal), { timeout: 10_000 }).toBe(true);
-    expect(await manager.cancelAgentRun(agent.id)).toEqual({ status: "settled" });
-    writeFileSync(release, "");
-    await run;
+    await baseline.entered;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    stop = manager.cancelAgentRun(agent.id);
+    await interrupted.promise;
+    baseline.release();
+    await runError;
     expect(start).not.toHaveBeenCalled();
+    await expect(run).resolves.toBeUndefined();
+    await expect(stop).resolves.toEqual({ status: "settled" });
   } finally {
-    writeFileSync(release, "");
-    await run;
+    baseline.release();
+    await runError;
+    await vi.runOnlyPendingTimersAsync();
+    vi.useRealTimers();
+    await stop;
+    capture.mockRestore();
     await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });
   }
-}, 20_000);
+});
 
 test("turn capture serializes Stop behind an in-flight terminal snapshot", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-turn-capture-terminal-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: workdir, encoding: "utf8" });
   git("init", "-b", "main");
-  writeFileSync(join(workdir, ".gitattributes"), "file.txt filter=paseo-test\n");
   writeFileSync(join(workdir, "file.txt"), "base\n");
-  git("add", ".");
-  git(
-    "-c",
-    "user.name=Test",
-    "-c",
-    "user.email=test@example.com",
-    "-c",
-    "commit.gpgsign=false",
-    "commit",
-    "-m",
-    "base",
-  );
-  const signal = join(workdir, "filter-started");
-  const release = join(workdir, "filter-release");
-  const filter = join(workdir, "filter.cjs");
-  writeFileSync(
-    filter,
-    `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(signal)},'');const wait=()=>fs.existsSync(${JSON.stringify(release)})?process.stdin.pipe(process.stdout):setTimeout(wait,10);wait();`,
-  );
+  const terminal = pauseTurnTreeCapture();
+  const captureTurnTree = turnChanges.captureTurnTree;
+  const capture = vi
+    .spyOn(turnChanges, "captureTurnTree")
+    .mockImplementationOnce(captureTurnTree)
+    .mockImplementationOnce(terminal.capture);
   let session: TestAgentSession;
   let starts = 0;
   const client = new (class extends TestAgentClient {
@@ -16357,13 +16351,9 @@ test("turn capture serializes Stop behind an in-flight terminal snapshot", async
         override async startTurn() {
           const turnId = `snapshot-turn-${++starts}`;
           if (starts === 1) {
-            git("config", "filter.paseo-test.clean", `"${process.execPath}" "${filter}"`);
             writeFileSync(join(workdir, "file.txt"), "changed\n");
+            this.pushEvent({ type: "turn_completed", provider: "codex", turnId });
           }
-          setTimeout(() => {
-            this.pushEvent({ type: "turn_started", provider: "codex", turnId });
-            if (starts === 1) this.pushEvent({ type: "turn_completed", provider: "codex", turnId });
-          }, 0);
           return { turnId };
         }
       })(config);
@@ -16380,23 +16370,26 @@ test("turn capture serializes Stop behind an in-flight terminal snapshot", async
     workspaceId: undefined,
   });
   const first = drainAsyncGenerator(manager.streamAgent(agent.id, "first"));
-  let stop: Promise<unknown> | undefined;
+  let stop: ReturnType<AgentManager["cancelAgentRun"]> | undefined;
   try {
-    await expect.poll(() => existsSync(signal), { timeout: 10_000 }).toBe(true);
+    await terminal.entered;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let stopped = false;
     stop = manager.cancelAgentRun(agent.id).then((result) => {
       stopped = true;
       return result;
     });
-    await new Promise((resolve) => setTimeout(resolve, 2300));
+    // Run the cancellation rescue timer while the terminal snapshot is still held.
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(stopped).toBe(false);
-    writeFileSync(release, "");
+    vi.useRealTimers();
+
+    terminal.release();
     await first;
     await expect(stop).resolves.toEqual({ status: "settled" });
     const replacement = drainAsyncGenerator(manager.streamAgent(agent.id, "replacement"));
-    await expect
-      .poll(() => manager.getAgent(agent.id)?.activeForegroundTurnId)
-      .toBe("snapshot-turn-2");
+    await manager.waitForAgentRunStart(agent.id);
+    expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBe("snapshot-turn-2");
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
     expect(git("for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/")).toContain(
       "/pending",
@@ -16404,13 +16397,15 @@ test("turn capture serializes Stop behind an in-flight terminal snapshot", async
     session!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "snapshot-turn-2" });
     await replacement;
   } finally {
-    writeFileSync(release, "");
+    vi.useRealTimers();
+    terminal.release();
     await first;
     await stop;
+    capture.mockRestore();
     await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });
   }
-}, 20_000);
+});
 
 test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
   "turn capture includes synchronous provider edits on %s and persists the settled turn",

@@ -3357,7 +3357,8 @@ export class AgentManager {
     const before = shouldCapture ? await this.tryCaptureTurnBaseline(agent, pendingRun) : null;
     let accepted = false;
     try {
-      if (shouldCapture && pendingRun.settled) return null;
+      if (pendingRun.settled) return null;
+      if (pendingRun.cancelRequested) throw new AgentTurnStartCanceledError();
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agent.id} run was canceled before its turn started`);
@@ -3375,7 +3376,7 @@ export class AgentManager {
   private async tryCaptureTurnBaseline(agent: ActiveManagedAgent, run: PendingForegroundRun) {
     try {
       const before = await captureTurnTree(agent.cwd);
-      if (!before || run.settled) return null;
+      if (!before || run.settled || run.cancelRequested) return null;
       await retainTurnBaseline(agent.cwd, agent.id, before);
       return before;
     } catch (error) {
@@ -4161,6 +4162,7 @@ export class AgentManager {
     if (!run) {
       return { status: "not_running" };
     }
+    if (run.kind === "foreground") run.cancelRequested = true;
     if (cause === "stop") {
       for (const listener of this.stopListeners) listener(agentId);
     }

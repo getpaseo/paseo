@@ -20,6 +20,7 @@ export interface PendingForegroundRun {
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
   start: ForegroundRunStart;
+  cancelRequested: boolean;
   turnStartedPromise: Promise<void>;
   resolveTurnStarted: () => void;
   settled: boolean;
@@ -311,6 +312,7 @@ function createPendingForegroundRun(): PendingForegroundRun {
     ...createTrackedRunState(),
     kind: "foreground",
     start: { status: "pending" },
+    cancelRequested: false,
     turnStartedPromise,
     resolveTurnStarted,
     stagedEvents: [],
