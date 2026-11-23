@@ -163,6 +163,7 @@ export function createElementClipboardContent(element: Element): MarkdownClipboa
   const copies = container.querySelectorAll("*");
   originals.forEach((original, index) => copySemanticAttributes(original, copies[index]!));
   restoreFenceSources(container);
+  restoreAdmonitions(container);
   restoreMarkdownElements(container);
   return clipboardContentFromMarkup(container);
 }
@@ -730,8 +731,6 @@ function restoreMarkdownElements(container: HTMLElement): void {
     element.replaceWith(...element.childNodes);
   }
 
-  restoreAdmonitions(container);
-
   const presentational = Array.from(container.querySelectorAll("div, span"));
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
@@ -757,16 +756,15 @@ function numberOrderedListItems(list: Element, start: number): void {
 /**
  * The library renders an admonition as a box with a generated title. Keep it a quote
  * with its type, so it copies as its callout source rather than as the title's prose.
- * A selection that starts inside the body has no title and copies as prose.
+ * Only a whole-element copy does this: a selection cannot tell from its cloned markup
+ * whether it holds the whole callout, so it copies the text it shows.
  */
-function restoreAdmonitions(container: HTMLElement): void {
+function restoreAdmonitions(container: Element): void {
   const admonitions = Array.from(
     container.querySelectorAll(`[${MARKDOWN_ADMONITION_TYPE_ATTRIBUTE}]`),
   );
   for (const admonition of admonitions.toReversed()) {
-    const title = admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`);
-    if (!title) continue;
-    title.remove();
+    admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`)?.remove();
     const quote = document.createElement("blockquote");
     quote.setAttribute(
       MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,

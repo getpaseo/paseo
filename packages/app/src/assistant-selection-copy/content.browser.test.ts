@@ -1087,19 +1087,24 @@ describe("quote copy", () => {
     expect(content?.plainText).toBe("Before\n\n> [!WARNING]\n> Do not deploy.\n\nAfter");
   });
 
-  it("copies a selection that starts inside an admonition without its callout marker", async () => {
+  it("copies a selection across an admonition as the text it shows, without a callout marker", async () => {
     const rendered = await renderMarkdown(
       "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
       "After",
     );
     rendered.setAttribute("data-testid", "assistant-message");
+    const body = tokenText(rendered, "Do not deploy.");
 
-    const content = copyBetween(
-      [tokenText(rendered, "Do not deploy."), "Do not ".length],
-      [tokenText(rendered, "After"), "After".length],
-    );
-
-    expect(content?.plainText).toBe("deploy.\n\nAfter");
+    expect(
+      copyBetween([body, "Do not ".length], [tokenText(rendered, "After"), 5])?.plainText,
+    ).toBe("deploy.\n\nAfter");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [tokenText(rendered, "Warning"), 4])
+        ?.plainText,
+    ).toBe("Before\n\nWarn");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [body, "Do not".length])?.plainText,
+    ).not.toContain("[!WARNING]");
   });
 
   it("copies a rendered Mermaid diagram as its fence", () => {
