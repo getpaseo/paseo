@@ -467,7 +467,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({ id: "pr", label: "Create PR" });
     expect(pushAction?.unavailableMessage).toBe(
-      "Push isn't available because this branch was deleted on the remote",
+      "Push isn't available because the branch this one tracks no longer exists",
     );
   });
 
