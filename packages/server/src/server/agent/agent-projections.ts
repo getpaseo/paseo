@@ -103,6 +103,7 @@ export function toStoredAgentRecord(
     runtimeInfo,
     controls: normalizeControls(agent.controls),
     persistence,
+    latestTurnChanges: agent.latestTurnChanges ?? undefined,
     ...projectSessionMetrics(agent.sessionMetrics),
     lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
@@ -146,6 +147,9 @@ export function toAgentPayload(
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle,
+    ...(agent.latestTurnChanges !== undefined
+      ? { latestTurnChanges: agent.latestTurnChanges }
+      : {}),
     activeTurn: agent.activeTurnId
       ? {
           turnId: agent.activeTurnId,

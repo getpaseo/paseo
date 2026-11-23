@@ -2389,6 +2389,11 @@ export class Session {
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    if (this.agentManager.latestTurnChangesEnabled) {
+      payload.latestTurnChanges ??= null;
+    } else {
+      delete payload.latestTurnChanges;
+    }
     if (!payload.internal && !storedRecord?.internal && !payload.archivedAt) {
       payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
     }
@@ -2403,12 +2408,16 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(
+    const payload = buildStoredAgentPayload(
       record,
       registeredProviderIds,
       (provider, own) => this.agentManager.effectiveOptionsFor(provider, own),
       this.agentManager.getAgentBackgroundWorkSummary(record.id),
     );
+    if (this.agentManager.latestTurnChangesEnabled) {
+      payload.latestTurnChanges = record.latestTurnChanges ?? null;
+    }
+    return payload;
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -3797,6 +3806,23 @@ export class Session {
     }
   }
 
+  private async turnSnapshotCleanupRoot(
+    agent: Pick<ManagedAgent, "cwd" | "workspaceId" | "latestTurnChanges"> | null,
+  ): Promise<string | undefined> {
+    if (!agent || !(agent.latestTurnChanges || this.agentManager.latestTurnChangesEnabled)) return;
+    if (
+      !agent.workspaceId ||
+      (await stat(agent.cwd).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return agent.cwd;
+    // An archived linked worktree is gone, but its private refs live in the common repo.
+    const workspace = await this.workspaceRegistry.get(agent.workspaceId);
+    return workspace?.mainRepoRoot ?? agent.cwd;
+  }
+
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
 
@@ -3821,7 +3847,10 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteAgentState(agentId);
+      await this.agentManager.deleteAgentState(
+        agentId,
+        await this.turnSnapshotCleanupRoot(knownAgent),
+      );
       // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
       if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {

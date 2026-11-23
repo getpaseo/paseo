@@ -5,8 +5,8 @@ import {
   formatSystemNotificationPrompt,
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -16259,3 +16259,238 @@ test("importProviderSession keeps the stats the provider reported with its histo
     ["assistant_message", null],
   ]);
 });
+
+test("turn capture does not start a prompt canceled during a slow Git filter", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-turn-capture-cancel-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: workdir, encoding: "utf8" });
+  git("init", "-b", "main");
+  writeFileSync(join(workdir, ".gitattributes"), "file.txt filter=paseo-test\n");
+  writeFileSync(join(workdir, "file.txt"), "base\n");
+  git("add", ".");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-m",
+    "base",
+  );
+  const signal = join(workdir, "filter-started");
+  const release = join(workdir, "filter-release");
+  const filter = join(workdir, "filter.cjs");
+  writeFileSync(
+    filter,
+    `const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(signal)}, ''); const wait=()=>fs.existsSync(${JSON.stringify(release)})?process.stdin.pipe(process.stdout):setTimeout(wait,10);wait();`,
+  );
+  git("config", "filter.paseo-test.clean", `"${process.execPath}" "${filter}"`);
+  writeFileSync(join(workdir, "file.txt"), "changed\n");
+  const start = vi.fn();
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async startTurn() {
+          start();
+          return super.startTurn();
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({
+    latestTurnChangesEnabled: true,
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = drainAsyncGenerator(manager.streamAgent(agent.id, "must not start")).catch(
+    (error: unknown) => error,
+  );
+  try {
+    await expect.poll(() => existsSync(signal), { timeout: 10_000 }).toBe(true);
+    expect(await manager.cancelAgentRun(agent.id)).toEqual({ status: "settled" });
+    writeFileSync(release, "");
+    await run;
+    expect(start).not.toHaveBeenCalled();
+  } finally {
+    writeFileSync(release, "");
+    await run;
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("turn capture serializes Stop behind an in-flight terminal snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-turn-capture-terminal-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: workdir, encoding: "utf8" });
+  git("init", "-b", "main");
+  writeFileSync(join(workdir, ".gitattributes"), "file.txt filter=paseo-test\n");
+  writeFileSync(join(workdir, "file.txt"), "base\n");
+  git("add", ".");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-m",
+    "base",
+  );
+  const signal = join(workdir, "filter-started");
+  const release = join(workdir, "filter-release");
+  const filter = join(workdir, "filter.cjs");
+  writeFileSync(
+    filter,
+    `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(signal)},'');const wait=()=>fs.existsSync(${JSON.stringify(release)})?process.stdin.pipe(process.stdout):setTimeout(wait,10);wait();`,
+  );
+  let session: TestAgentSession;
+  let starts = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new (class extends TestAgentSession {
+        override async startTurn() {
+          const turnId = `snapshot-turn-${++starts}`;
+          if (starts === 1) {
+            git("config", "filter.paseo-test.clean", `"${process.execPath}" "${filter}"`);
+            writeFileSync(join(workdir, "file.txt"), "changed\n");
+          }
+          setTimeout(() => {
+            this.pushEvent({ type: "turn_started", provider: "codex", turnId });
+            if (starts === 1) this.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+          }, 0);
+          return { turnId };
+        }
+      })(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    latestTurnChangesEnabled: true,
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const first = drainAsyncGenerator(manager.streamAgent(agent.id, "first"));
+  let stop: Promise<unknown> | undefined;
+  try {
+    await expect.poll(() => existsSync(signal), { timeout: 10_000 }).toBe(true);
+    let stopped = false;
+    stop = manager.cancelAgentRun(agent.id).then((result) => {
+      stopped = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2300));
+    expect(stopped).toBe(false);
+    writeFileSync(release, "");
+    await first;
+    await expect(stop).resolves.toEqual({ status: "settled" });
+    const replacement = drainAsyncGenerator(manager.streamAgent(agent.id, "replacement"));
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.activeForegroundTurnId)
+      .toBe("snapshot-turn-2");
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    expect(git("for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/")).toContain(
+      "/pending",
+    );
+    session!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "snapshot-turn-2" });
+    await replacement;
+  } finally {
+    writeFileSync(release, "");
+    await first;
+    await stop;
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
+  "turn capture includes synchronous provider edits on %s and persists the settled turn",
+  async (type) => {
+    const scratch = mkdtempSync(join(tmpdir(), "paseo-turn-test-"));
+    const cwd = join(scratch, "repo");
+    mkdirSync(cwd);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    git("init", "-b", "main");
+    writeFileSync(join(cwd, ".gitignore"), "ignored.txt\n");
+    writeFileSync(join(cwd, "dirty.txt"), "index\n");
+    writeFileSync(join(cwd, "deleted.txt"), "remove me\n");
+    git("add", ".");
+    const staged = git("ls-files", "--stage");
+    writeFileSync(join(cwd, "dirty.txt"), "pre-existing edit\n");
+    const storagePath = join(scratch, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new (class extends TestAgentSession {
+          private runs = 0;
+          override async startTurn() {
+            const turnId = `capture-${++this.runs}`;
+            if (this.runs === 1) {
+              writeFileSync(join(cwd, "new.txt"), "during the turn\n");
+              writeFileSync(join(cwd, "ignored.txt"), "not captured\n");
+              rmSync(join(cwd, "deleted.txt"));
+            }
+            const common = { provider: "codex", turnId } as const;
+            this.pushEvent({ ...common, type: "turn_started" });
+            if (type === "turn_failed") {
+              this.pushEvent({ ...common, type, error: "test failure" });
+            } else if (type === "turn_canceled") {
+              this.pushEvent({ ...common, type, reason: "interrupted" });
+            } else {
+              this.pushEvent({ ...common, type });
+            }
+            return { turnId };
+          }
+        })(config);
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      latestTurnChangesEnabled: true,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await drainAsyncGenerator(manager.streamAgent(agent.id, "first"));
+      const changes = manager.getAgent(agent.id)?.latestTurnChanges;
+      expect(changes?.turnId).toBe("capture-1");
+      expect(git("diff", "--name-status", changes!.before, changes!.after)).toBe(
+        "D\tdeleted.txt\nA\tnew.txt\n",
+      );
+      expect(git("ls-files", "--stage")).toBe(staged);
+
+      await drainAsyncGenerator(manager.streamAgent(agent.id, "second"));
+      const next = manager.getAgent(agent.id)?.latestTurnChanges;
+      expect(next?.turnId).toBe("capture-2");
+      expect(git("diff", next!.before, next!.after)).toBe("");
+      expect(
+        git("for-each-ref", "--format=%(objectname)", "refs/paseo/turn-changes/")
+          .trim()
+          .split("\n")
+          .sort(),
+      ).toEqual([next!.before, next!.after].sort());
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      const reopened = await new AgentStorage(storagePath, logger).get(agent.id);
+      expect(reopened?.latestTurnChanges).toEqual(next);
+      await manager.deleteAgentState(agent.id, cwd);
+      expect(git("for-each-ref", "refs/paseo/turn-changes/")).toBe("");
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      await manager.flush();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

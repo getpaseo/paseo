@@ -15,6 +15,7 @@ export interface WorkspaceWorkingDiffTabTarget {
   kind: "working_diff";
   focusPath?: string;
   focusRequestId?: number;
+  turnAgentId?: string;
 }
 
 export type PluginWorkspaceTabTarget =

@@ -478,6 +478,7 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   idleRuntimeCleanup?: boolean;
+  latestTurnChanges?: boolean;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
@@ -1040,6 +1041,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    latestTurnChangesEnabled: config.latestTurnChanges,
     pluginLifecycle: pluginRuntime,
     pluginAgentTools: pluginRuntime,
     clients: initialAgentManagerState.clients,
