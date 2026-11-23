@@ -13,6 +13,7 @@ const identityIo = pLimit(2);
 export class GitObservationPaths {
   private constructor(
     private readonly root: string,
+    readonly identity: string,
     private readonly aliases: string[],
     private readonly windows: boolean,
   ) {}
@@ -23,11 +24,15 @@ export class GitObservationPaths {
       windows
         ? normalizePathPreservingCase(value, true).replaceAll("\\", "/").toLowerCase()
         : normalizePathPreservingCase(value, false);
-    const aliases = new Set([normalizePath(root)]);
+    const lexicalRoot = normalizePath(root);
+    const aliases = new Set([lexicalRoot]);
+    let identity: string | undefined;
     // Sequential: foreign paths must not fan out into the shared libuv pool.
     for (const resolve of [nativeRealpath, jsRealpath]) {
       try {
-        aliases.add(normalizePath(await identityIo(() => resolve(root))));
+        const alias = normalizePath(await identityIo(() => resolve(root)));
+        identity ??= alias;
+        aliases.add(alias);
       } catch {
         /* Missing roots retain lexical identity. */
       }
@@ -48,7 +53,7 @@ export class GitObservationPaths {
         break;
       }
     }
-    return new GitObservationPaths(root, [...aliases], windows);
+    return new GitObservationPaths(root, identity ?? lexicalRoot, [...aliases], windows);
   }
 
   relative(candidate: string): string | null {

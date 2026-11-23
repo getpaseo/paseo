@@ -130,7 +130,7 @@ const WATCH_RECOVERY_MAX_BACKOFF_STEPS = 4;
 // next attempt, and every attempt repeats the full scan. Consecutive setup timeouts therefore
 // keep doubling the recovery delay past the ladder cap, up to an hour.
 const WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS = 3_600_000;
-const WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS = 7;
+const WATCH_SETUP_TIMEOUT_CACHE_MAX = 1_024;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
@@ -587,10 +587,13 @@ interface WatchRecoveryState {
   // use (SMB/NFS, Docker virtiofs, some FUSE) resets the ladder on every
   // attempt and the backoff never engages.
   establishedAt: number | null;
-  // Setup attempts that hit WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS since the last accepted
-  // subscription. Reset on acceptance: finishing the startup scan in time is the proof that
-  // the next attempt is affordable.
-  setupTimeoutCount: number;
+  setupKey: string;
+}
+
+interface WatchSetupTimeout {
+  delayMs: number;
+  retryAtMs: number;
+  expiresAtMs: number;
 }
 
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -689,6 +692,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly workingTreeWatchResolutions = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly workingTreeWatchAliases = new Map<string, string>();
+  // A timed-out scan stays expensive even when the last observer disconnects.
+  private readonly watchSetupTimeouts = new LRUCache<string, WatchSetupTimeout>({
+    max: WATCH_SETUP_TIMEOUT_CACHE_MAX,
+  });
   private readonly branchValidationCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitBranchValidationResult>
@@ -1181,6 +1188,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchSetups.clear();
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
+    this.watchSetupTimeouts.clear();
     this.snapshotUpdatedListeners.clear();
     // Unsubscribing can remove a target while its Git command still owns the cwd.
     // Stop admission first, then drain those refreshes and the parent lookups they start.
@@ -1546,14 +1554,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
+      recovery: {
+        attemptCount: 0,
+        timer: null,
+        establishedAt: null,
+        setupKey: `working-tree:${paths.identity}`,
+      },
       listeners: new Set(),
       closed: false,
     };
 
     this.workingTreeWatchTargets.set(cwd, target);
     this.workingTreeWatchAliases.set(cwd, cwd);
-    await this.startWorkingTreeSubscription(target);
+    const retryInMs = this.watchSetupRetryInMs(target.recovery);
+    if (retryInMs > 0) {
+      this.startWorkingTreeWatchFallback(target, "watcher_setup_failed");
+      this.scheduleWorkingTreeWatchRecovery(target, retryInMs);
+    } else {
+      await this.startWorkingTreeSubscription(target);
+    }
     this.assertNotDisposed();
 
     if (repoRoot === null) {
@@ -1743,7 +1762,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // `scheduleWorkingTreeWatchRecovery` only resets the ladder once this
       // one has survived long enough to prove itself durable.
       target.recovery.establishedAt = this.deps.now().getTime();
-      target.recovery.setupTimeoutCount = 0;
+      this.watchSetupTimeouts.delete(target.recovery.setupKey);
       if (options?.replaceFallback && target.repoRoot !== null) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -1992,28 +2011,50 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         2 ** Math.min(recovery.attemptCount - 1, WATCH_RECOVERY_MAX_BACKOFF_STEPS),
       WATCH_RECOVERY_MAX_DELAY_MS,
     );
-    if (recovery.setupTimeoutCount === 0) {
-      return ladderDelayMs;
+    return Math.max(ladderDelayMs, this.getWatchSetupTimeout(recovery)?.delayMs ?? 0);
+  }
+
+  private watchSetupRetryInMs(recovery: WatchRecoveryState): number {
+    const timeout = this.getWatchSetupTimeout(recovery);
+    return timeout ? timeout.retryAtMs - this.deps.now().getTime() : 0;
+  }
+
+  private getWatchSetupTimeout(recovery: WatchRecoveryState): WatchSetupTimeout | undefined {
+    const timeout = this.watchSetupTimeouts.get(recovery.setupKey);
+    if (timeout && timeout.expiresAtMs <= this.deps.now().getTime()) {
+      this.watchSetupTimeouts.delete(recovery.setupKey);
+      return undefined;
     }
-    const setupTimeoutDelayMs = Math.min(
-      WATCH_RECOVERY_BASE_DELAY_MS *
-        2 ** Math.min(recovery.setupTimeoutCount - 1, WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS),
-      WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS,
-    );
-    return Math.max(ladderDelayMs, setupTimeoutDelayMs);
+    return timeout;
   }
 
   private noteWatchSetupFailure(recovery: WatchRecoveryState, error: unknown): void {
-    if (error instanceof WorkspaceGitWatcherSubscriptionTimeoutError) {
-      recovery.setupTimeoutCount += 1;
+    if (!(error instanceof WorkspaceGitWatcherSubscriptionTimeoutError)) {
+      return;
     }
+
+    const previous = this.getWatchSetupTimeout(recovery);
+    const delayMs = previous
+      ? Math.min(previous.delayMs * 2, WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS)
+      : WATCH_RECOVERY_BASE_DELAY_MS;
+    const retryAtMs = this.deps.now().getTime() + delayMs;
+    // Age out history after one hour beyond the pending retry. No timers
+    // remain active once the last listener releases the watcher.
+    this.watchSetupTimeouts.set(recovery.setupKey, {
+      delayMs,
+      retryAtMs,
+      expiresAtMs: retryAtMs + WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS,
+    });
   }
 
-  private scheduleWorkingTreeWatchRecovery(target: WorkingTreeWatchTarget): void {
+  private scheduleWorkingTreeWatchRecovery(
+    target: WorkingTreeWatchTarget,
+    retryInMs?: number,
+  ): void {
     if (target.closed || target.subscription || target.recovery.timer) {
       return;
     }
-    const delayMs = this.advanceWatchRecoveryLadder(target.recovery);
+    const delayMs = retryInMs ?? this.advanceWatchRecoveryLadder(target.recovery);
     target.recovery.timer = setTimeout(() => {
       target.recovery.timer = null;
       void this.recoverWorkingTreeWatch(target).catch((error) => {
@@ -2480,7 +2521,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
+      recovery: {
+        attemptCount: 0,
+        timer: null,
+        establishedAt: null,
+        setupKey: `repository-metadata:${paths.identity}`,
+      },
       intervalId: null,
       fetchInFlight: false,
       bufferedFetchMetadataEvents: [],
@@ -2489,7 +2535,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
-    await this.startRepoMetadataObservation(repoTarget);
+    const retryInMs = this.watchSetupRetryInMs(repoTarget.recovery);
+    if (retryInMs > 0) {
+      this.startRepoMetadataFallback(repoTarget);
+      this.scheduleRepoMetadataWatchRecovery(repoTarget, retryInMs);
+    } else {
+      await this.startRepoMetadataObservation(repoTarget);
+    }
     if (repoTarget.closed || this.repoTargets.get(repoGitRoot) !== repoTarget) {
       return;
     }
@@ -2630,7 +2682,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // subscribe success alone, only record when this subscription was
       // established.
       target.recovery.establishedAt = this.deps.now().getTime();
-      target.recovery.setupTimeoutCount = 0;
+      this.watchSetupTimeouts.delete(target.recovery.setupKey);
       if (options?.replaceFallback) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -2673,11 +2725,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.startRepoMetadataFallback(target);
   }
 
-  private scheduleRepoMetadataWatchRecovery(target: RepoGitTarget): void {
+  private scheduleRepoMetadataWatchRecovery(target: RepoGitTarget, retryInMs?: number): void {
     if (target.closed || target.subscription || target.recovery.timer) {
       return;
     }
-    const delayMs = this.advanceWatchRecoveryLadder(target.recovery);
+    const delayMs = retryInMs ?? this.advanceWatchRecoveryLadder(target.recovery);
     target.recovery.timer = setTimeout(() => {
       target.recovery.timer = null;
       void this.recoverRepoMetadataWatch(target).catch((error) => {
