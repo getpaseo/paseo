@@ -314,7 +314,8 @@ async function createBaseRecoveryFixture(
   });
   writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
   execFileSync("git", ["add", "."], { cwd: created.worktreePath });
-  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
+  const commitArgs = ["-c", "user.name=Paseo Test", "-c", "user.email=test@example.com"];
+  execFileSync("git", [...commitArgs, "-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
     cwd: created.worktreePath,
     stdio: "pipe",
   });
