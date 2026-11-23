@@ -634,7 +634,10 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     if (delivery.outcome === "navigated") return delivery.outcome;
     throw error;
   }
-  if (delivery.outcome === "background") clearConsumedDraft();
+  if (delivery.outcome === "background") {
+    clearConsumedDraft();
+    await flushDraftPersistStorage();
+  }
   return delivery.outcome;
 }
 
@@ -1470,18 +1473,26 @@ export function NewWorkspaceScreen({
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
-        if (isEmptyWorkspaceSubmission(payload)) {
-          setPendingAction("empty");
+        const emptyWorkspace = isEmptyWorkspaceSubmission(payload);
+        setPendingAction(emptyWorkspace ? "empty" : "chat");
+        const creationDraftId = await prepareDraftCreation({
+          serverId: selectedServerId,
+          draftKey,
+          proposedId: draftId ?? generateDraftId(),
+        });
+        if (emptyWorkspace) {
           let outcome: SubmitOutcome = "background";
           const clearConsumedDraft = captureWorkspaceDraftCleanup({
-            draftId,
+            serverId: selectedServerId,
+            draftId: creationDraftId,
             draftKey,
             clearDraft: chatDraft.clear,
             draftContextScopeKey,
           });
           await runCreateEmptyWorkspace({
             payload,
-            ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
+            ensureWorkspace: async (request) =>
+              (await ensureWorkspace(request, creationDraftId)).workspace,
             serverId: selectedServerId,
             navigate: (targetServerId, workspaceId) => {
               if (!isStillOnCreateScreen()) {
@@ -1504,12 +1515,6 @@ export function NewWorkspaceScreen({
           return;
         }
 
-        setPendingAction("chat");
-        const creationDraftId = await prepareDraftCreation({
-          serverId: selectedServerId,
-          draftKey,
-          proposedId: draftId ?? generateDraftId(),
-        });
         const outcome = await runCreateChatAgent({
           payload,
           composerState: composerState

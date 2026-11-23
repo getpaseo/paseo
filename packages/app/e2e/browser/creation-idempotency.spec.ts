@@ -626,3 +626,55 @@ test("chat admission keeps its prepared ID when a late terminal retires it durin
     await client.close();
   }
 });
+
+test("a completed background creation releases its identity while preserving a newer prompt across reload", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const delay = await delayBrowserWorkspaceCreatedResponse(page);
+  const client = await connectNewWorkspaceDaemonClient();
+  try {
+    await creation.openWorkspaceForm("local");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await creation.submitPrompt("Original background idea", "Create");
+    await delay.waitForCreateRequest();
+    await creation.leaveWorkspaceForm();
+    delay.release();
+    await page.waitForFunction(() =>
+      Object.keys(localStorage).some((key) => {
+        if (!key.startsWith("draft-creation:")) return false;
+        const record = JSON.parse(localStorage.getItem(key)!);
+        return record.workspace && record.attempt?.outcome === "pending";
+      }),
+    );
+    await creation.returnToWorkspaceForm();
+    await fillComposerDraft(page, "A newer independent idea");
+    await startup.release();
+    await page.waitForFunction(
+      (key) =>
+        JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] === null,
+      JSON.stringify([getServerId(), "new-workspace"]),
+    );
+    await page.reload();
+    await expect(
+      page.getByRole("textbox", { name: "Message agent..." }).filter({ visible: true }).first(),
+    ).toHaveText("A newer independent idea");
+    await creation.submitPrompt("A newer independent idea", "Create");
+    await creation.expectPromptVisible("A newer independent idea");
+    const workspaces = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => !before.has(entry.id),
+    );
+    expect(workspaces).toHaveLength(2);
+    const agents = (await client.fetchAgents()).entries.filter((entry) =>
+      workspaces.some((workspace) => workspace.id === entry.agent.workspaceId),
+    );
+    expect(agents).toHaveLength(2);
+    expect(new Set(agents.map((entry) => entry.agent.workspaceId)).size).toBe(2);
+  } finally {
+    delay.release();
+    await startup.release();
+    await client.close();
+  }
+});

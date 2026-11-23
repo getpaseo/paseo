@@ -25,6 +25,7 @@ export function handOffDraftMetadata(input: {
 }
 
 interface WorkspaceDraftCleanupInput {
+  serverId: string;
   draftId?: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -40,6 +41,10 @@ export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput):
   const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
 
   return () => {
+    const store = useDraftStore.getState();
+    if (store.getDraftCreationId(input) !== draftId) return;
+    // Completion releases admission even when newer input must remain for the next creation.
+    store.clearDraftCreationId(input);
     // These stores update independently. A context-only edit does not bump the text version.
     // Any newer draft state owns the whole draft, including its unchanged context.
     if (
