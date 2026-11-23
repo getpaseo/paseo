@@ -30,6 +30,8 @@ buildNpmPackage {
       # Exclude mobile-only platform code (we only need the web/electron build)
       !(lib.hasPrefix "/packages/app/android" relPath)
       && !(lib.hasPrefix "/packages/app/ios" relPath)
+      && !(lib.hasPrefix "/packages/react-native-enriched-markdown/android" relPath)
+      && !(lib.hasPrefix "/packages/react-native-enriched-markdown/ios" relPath)
       # Website is unrelated to the desktop app
       && !(lib.hasPrefix "/packages/website" relPath)
       # Documentation, CI definitions and agent/editor configuration. None of

@@ -40,7 +40,7 @@
     "dev:ios": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=development expo run:ios",
     "build:apk": "npm --prefix ../.. run build:apk",
     "build:apk:arm64": "npm --prefix ../.. run build:apk:arm64",
-    "test:android": "expo prebuild --platform android --no-install && cd android && ./gradlew :paseo-native-trace:testReleaseUnitTest :paseo-hardware-keyboard:testReleaseUnitTest :react-native-enriched-markdown:testReleaseUnitTest --tests '*InlineCodeFormattingTest' --no-daemon --max-workers=2 -Dorg.gradle.parallel=false"
+    "test:android": "expo prebuild --platform android --no-install && cd android && ./gradlew :paseo-native-trace:testReleaseUnitTest :paseo-hardware-keyboard:testReleaseUnitTest :react-native-enriched-markdown:testReleaseUnitTest --tests '*InlineCodeFormattingTest' --tests '*ListRenderingTest' --tests '*TaskListInteractionTest' --tests '*ListBlockquoteMeasurementTest' --no-daemon --max-workers=2 -Dorg.gradle.parallel=false"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -125,7 +125,7 @@
     "react-native": "0.86.3",
     "react-native-draggable-flatlist": "^4.0.3",
     "react-native-edge-to-edge": "^1.7.0",
-    "react-native-enriched-markdown": "1.2.0-nightly-20261014-766fc0e67",
+    "react-native-enriched-markdown": "*",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-keyboard-controller": "1.21.12",
     "react-native-nitro-modules": "0.35.5",
