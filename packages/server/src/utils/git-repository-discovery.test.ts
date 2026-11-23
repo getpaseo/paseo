@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   parseSafeBareRepositorySupport,
+  readRepositoryRootGitDir,
   resolveGitDiscovery,
+  runWithRepositoryRoot,
   type GitDiscovery,
 } from "./git-repository-discovery.js";
 
@@ -68,7 +70,11 @@ function gitDirWithoutConfig(cwd: string, discovery: GitDiscovery): string {
 }
 
 describe("resolveGitDiscovery before Git 2.38", () => {
-  const legacy = { gitDirSet: false, safeBareRepositorySupported: false };
+  const legacy = {
+    gitDirSet: false,
+    repositoryRootGitDir: null,
+    safeBareRepositorySupported: false,
+  };
 
   it("stops git at a bare repository layout in the working directory", async () => {
     const layout = path.join(makeTempDir(), "layout");
@@ -116,12 +122,19 @@ describe("resolveGitDiscovery before Git 2.38", () => {
     expect(discovery).toEqual({ configArgs: EXPLICIT, envOverlay: {} });
   });
 
-  it("runs in a bare repository that a linked worktree points back to", async () => {
+  it("stops git at a bare repository with linked worktrees unless its root is named", async () => {
     const bareRepo = createBareRepositoryWithLinkedWorktree(makeTempDir());
 
-    const discovery = await resolveGitDiscovery({ cwd: bareRepo, ...legacy });
+    const unnamed = await resolveGitDiscovery({ cwd: bareRepo, ...legacy });
+    const named = await resolveGitDiscovery({
+      cwd: bareRepo,
+      ...legacy,
+      repositoryRootGitDir: bareRepo,
+    });
 
-    expect(discovery).toEqual({ configArgs: [], envOverlay: {} });
+    expect(unnamed.envOverlay).toEqual({ GIT_DIR: path.join(bareRepo, ".git") });
+    expect(named).toEqual({ configArgs: EXPLICIT, envOverlay: { GIT_DIR: bareRepo } });
+    expect(gitDirWithoutConfig(bareRepo, named)).toBe(bareRepo);
   });
 
   it("stops git below a bare repository with linked worktrees", async () => {
@@ -140,6 +153,7 @@ describe("resolveGitDiscovery before Git 2.38", () => {
     const discovery = await resolveGitDiscovery({
       cwd: layout,
       gitDirSet: true,
+      repositoryRootGitDir: layout,
       safeBareRepositorySupported: false,
     });
 
@@ -155,10 +169,51 @@ describe("resolveGitDiscovery on Git 2.38 and later", () => {
     const discovery = await resolveGitDiscovery({
       cwd: layout,
       gitDirSet: false,
+      repositoryRootGitDir: null,
       safeBareRepositorySupported: true,
     });
 
     expect(discovery).toEqual({ configArgs: EXPLICIT, envOverlay: {} });
+  });
+
+  it("names a bare repository root that the caller scoped", async () => {
+    const layout = path.join(makeTempDir(), "layout");
+    git(["init", "--bare", "-q", layout]);
+
+    const discovery = await resolveGitDiscovery({
+      cwd: layout,
+      gitDirSet: false,
+      repositoryRootGitDir: layout,
+      safeBareRepositorySupported: true,
+    });
+
+    expect(discovery).toEqual({ configArgs: EXPLICIT, envOverlay: { GIT_DIR: layout } });
+  });
+});
+
+describe("runWithRepositoryRoot", () => {
+  it("names a bare repository root only for commands at that root", async () => {
+    const bareRepo = path.join(makeTempDir(), "repo.git");
+    git(["init", "--bare", "-q", bareRepo]);
+
+    const inside = await runWithRepositoryRoot(bareRepo, async () => ({
+      root: readRepositoryRootGitDir(bareRepo),
+      below: readRepositoryRootGitDir(path.join(bareRepo, "refs")),
+    }));
+
+    expect(inside).toEqual({ root: bareRepo, below: null });
+    expect(readRepositoryRootGitDir(bareRepo)).toBeNull();
+  });
+
+  it("leaves a checkout root to normal discovery", async () => {
+    const checkout = path.join(makeTempDir(), "checkout");
+    git(["init", "-q", checkout]);
+
+    const named = await runWithRepositoryRoot(checkout, async () =>
+      readRepositoryRootGitDir(checkout),
+    );
+
+    expect(named).toBeNull();
   });
 });
 

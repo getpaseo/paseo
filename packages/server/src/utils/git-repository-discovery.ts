@@ -1,10 +1,9 @@
-import type { Dirent } from "node:fs";
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import { execCommand } from "./spawn.js";
 
-const GITFILE_PREFIX = "gitdir:";
 const EXPLICIT_BARE_REPOSITORY = ["-c", "safe.bareRepository=explicit"];
 
 /** How a git command finds its repository. */
@@ -17,21 +16,78 @@ export interface GitDiscoveryInput {
   cwd: string;
   /** The command already names its repository through `GIT_DIR`. */
   gitDirSet: boolean;
+  /** From `readRepositoryRootGitDir`, read when the command was submitted. */
+  repositoryRootGitDir: string | null;
   safeBareRepositorySupported: boolean;
+}
+
+interface RepositoryRoot {
+  paths: readonly string[];
+  gitDir: string;
+}
+
+const repositoryRoots = new AsyncLocalStorage<readonly RepositoryRoot[]>();
+
+/**
+ * Runs `operation` with `root` named as the repository of every git command
+ * whose cwd is exactly `root`.
+ *
+ * Paseo records a bare repository as a repository root when only its linked
+ * checkouts use it. Git has no `.git` to find there, so those commands receive
+ * the bare repository through `GIT_DIR`. A root with a `.git` keeps normal
+ * discovery, and directories below `root` are not affected.
+ */
+export async function runWithRepositoryRoot<T>(
+  root: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const current = repositoryRoots.getStore() ?? [];
+  if (findRepositoryRoot(current, root)) return operation();
+  const named = await readBareRepositoryRoot(root);
+  if (!named) return operation();
+  return repositoryRoots.run([...current, named], operation);
+}
+
+/** The bare repository `runWithRepositoryRoot` named for `cwd` in this async context. */
+export function readRepositoryRootGitDir(cwd: string): string | null {
+  return findRepositoryRoot(repositoryRoots.getStore() ?? [], cwd)?.gitDir ?? null;
+}
+
+function findRepositoryRoot(
+  roots: readonly RepositoryRoot[],
+  cwd: string,
+): RepositoryRoot | undefined {
+  const path = resolve(cwd);
+  return roots.find((root) => root.paths.includes(path));
+}
+
+async function readBareRepositoryRoot(root: string): Promise<RepositoryRoot | null> {
+  const dotGit = await lstat(join(root, ".git")).catch(() => null);
+  if (dotGit || !(await looksLikeBareRepository(root))) return null;
+  const gitDir = await realpath(root).catch(() => null);
+  if (!gitDir) return null;
+  return { paths: [...new Set([resolve(root), gitDir])], gitDir };
 }
 
 /**
  * Keeps git from adopting a directory that only looks like a bare repository
  * (`HEAD`, `objects/`, `refs/`), at `cwd` or above it.
  *
- * - `cwd` is a bare repository that a linked worktree points back to: no change.
+ * A caller that works on a bare repository names it with `GIT_DIR`, directly or
+ * through `runWithRepositoryRoot`.
+ *
  * - Git 2.38 and later: `safe.bareRepository=explicit`.
  * - Earlier releases ignore that setting. When discovery from `cwd` would reach
  *   such a directory before any `.git`, `GIT_DIR` is pinned to the missing
  *   `<cwd>/.git`, so git reports that no repository was found.
  */
 export async function resolveGitDiscovery(input: GitDiscoveryInput): Promise<GitDiscovery> {
-  if (await isLinkedBareRepository(input.cwd)) return { configArgs: [], envOverlay: {} };
+  if (!input.gitDirSet && input.repositoryRootGitDir) {
+    return {
+      configArgs: EXPLICIT_BARE_REPOSITORY,
+      envOverlay: { GIT_DIR: input.repositoryRootGitDir },
+    };
+  }
   if (input.gitDirSet || input.safeBareRepositorySupported) {
     return { configArgs: EXPLICIT_BARE_REPOSITORY, envOverlay: {} };
   }
@@ -110,47 +166,6 @@ async function isFile(path: string): Promise<boolean> {
 async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * True when `cwd` is a bare repository that a linked worktree checkout points
- * back to: some `<cwd>/worktrees/<name>/gitdir` names a real `.git` file whose
- * `gitdir:` line resolves to that same `worktrees/<name>` directory. A clone
- * cannot contain `.git` files, so a directory layout that only looks like a bare
- * repository never passes. Symlinked entries and unreadable files count as not
- * linked.
- */
-async function isLinkedBareRepository(cwd: string): Promise<boolean> {
-  try {
-    if (!(await lstat(join(cwd, "HEAD"))).isFile()) return false;
-    const worktreesDir = join(await realpath(cwd), "worktrees");
-    if (!(await lstat(worktreesDir)).isDirectory()) return false;
-    const entries = await readdir(worktreesDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (await isLinkedWorktreeAdminDir(worktreesDir, entry)) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-async function isLinkedWorktreeAdminDir(worktreesDir: string, entry: Dirent): Promise<boolean> {
-  if (!entry.isDirectory()) return false;
-  const adminDir = join(worktreesDir, entry.name);
-  try {
-    const gitdirFile = join(adminDir, "gitdir");
-    if (!(await lstat(gitdirFile)).isFile()) return false;
-    const dotGitPath = resolve(adminDir, (await readFile(gitdirFile, "utf8")).trim());
-    if (basename(dotGitPath) !== ".git") return false;
-    if (!(await lstat(dotGitPath)).isFile()) return false;
-    const firstLine = (await readFile(dotGitPath, "utf8")).split(/\r?\n/, 1)[0] ?? "";
-    if (!firstLine.startsWith(GITFILE_PREFIX)) return false;
-    const target = resolve(dirname(dotGitPath), firstLine.slice(GITFILE_PREFIX.length).trim());
-    return (await realpath(target)) === adminDir;
   } catch {
     return false;
   }

@@ -303,6 +303,28 @@ describe("paseo worktree manager", () => {
     });
   });
 
+  it("creates and removes a worktree from a bare repository with no linked checkouts", async () => {
+    const bareRepo = join(tempDir, "bare.git");
+    execFileSync("git", ["clone", "--bare", "-q", repoDir, bareRepo]);
+
+    const created = await createLegacyWorktreeForTest({
+      branchName: "from-bare",
+      cwd: bareRepo,
+      baseBranch: "main",
+      worktreeSlug: "from-bare",
+      paseoHome,
+    });
+    expect(readFileSync(join(created.worktreePath, "file.txt"), "utf8")).toBe("hello\n");
+
+    await deletePaseoWorktree({ cwd: bareRepo, worktreePath: created.worktreePath, paseoHome });
+    expect(existsSync(created.worktreePath)).toBe(false);
+    expect(
+      execFileSync("git", ["--git-dir", bareRepo, "worktree", "list", "--porcelain"], {
+        encoding: "utf8",
+      }),
+    ).not.toContain(created.worktreePath);
+  });
+
   it("deletes a worktree whose .git admin dir has already been removed", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-delete-branch",

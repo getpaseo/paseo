@@ -6,13 +6,13 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { runWithRepositoryRoot } from "./git-repository-discovery.js";
 import { runGitCommand } from "./run-git-command.js";
 
 const tempDirs: string[] = [];
@@ -137,38 +137,27 @@ describe("runGitCommand repository discovery", () => {
     ).rejects.toThrow(/cannot use bare repository/);
   });
 
-  it("does not adopt a bare repository layout whose worktrees directory is a symlink", async () => {
-    const root = makeTempDir();
-    const { bareRepo } = createBareRepositoryWithLinkedWorktree(root);
-    const layout = createBareRepositoryLayout(root, "layout");
-    symlinkSync(path.join(bareRepo, "worktrees"), path.join(layout.dir, "worktrees"));
+  it("does not adopt a bare repository at the working directory even with linked worktrees", async () => {
+    const { bareRepo, worktree } = createBareRepositoryWithLinkedWorktree(makeTempDir());
 
     await expect(
-      runGitCommand(["rev-parse", "--absolute-git-dir"], { cwd: layout.dir }),
+      runGitCommand(["worktree", "list", "--porcelain"], { cwd: bareRepo }),
     ).rejects.toThrow(/cannot use bare repository/);
-  });
-
-  it("does not adopt a bare repository layout whose worktree entry belongs to another repository", async () => {
-    const root = makeTempDir();
-    const { worktree } = createBareRepositoryWithLinkedWorktree(root);
-    const layout = createBareRepositoryLayout(root, "layout");
-    const adminDir = path.join(layout.dir, "worktrees", "main");
-    mkdirSync(adminDir, { recursive: true });
-    writeFileSync(path.join(adminDir, "gitdir"), `${path.join(worktree, ".git")}\n`);
-
-    await expect(
-      runGitCommand(["rev-parse", "--absolute-git-dir"], { cwd: layout.dir }),
-    ).rejects.toThrow(/cannot use bare repository/);
-  });
-
-  it("runs in a bare repository that a linked worktree points back to", async () => {
-    const root = makeTempDir();
-    const { bareRepo, worktree } = createBareRepositoryWithLinkedWorktree(root);
-
-    const fromBare = await runGitCommand(["worktree", "list", "--porcelain"], { cwd: bareRepo });
     const fromWorktree = await runGitCommand(["rev-parse", "--git-common-dir"], { cwd: worktree });
-
-    expect(fromBare.stdout).toContain(`worktree ${worktree}\n`);
     expect(path.resolve(worktree, fromWorktree.stdout.trim())).toBe(bareRepo);
+  });
+
+  it("runs at a bare repository root named with runWithRepositoryRoot", async () => {
+    const { bareRepo, worktree } = createBareRepositoryWithLinkedWorktree(makeTempDir());
+
+    const fromRoot = await runWithRepositoryRoot(bareRepo, () =>
+      runGitCommand(["worktree", "list", "--porcelain"], { cwd: bareRepo }),
+    );
+    const belowRoot = runWithRepositoryRoot(bareRepo, () =>
+      runGitCommand(["rev-parse", "--absolute-git-dir"], { cwd: path.join(bareRepo, "refs") }),
+    );
+
+    expect(fromRoot.stdout).toContain(`worktree ${worktree}\n`);
+    await expect(belowRoot).rejects.toThrow(/cannot use bare repository/);
   });
 });

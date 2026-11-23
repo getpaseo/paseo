@@ -11,7 +11,11 @@ import {
   startGitCommandTrace,
   submitGitCommandTrace,
 } from "./git-command-trace.js";
-import { readSafeBareRepositorySupport, resolveGitDiscovery } from "./git-repository-discovery.js";
+import {
+  readRepositoryRootGitDir,
+  readSafeBareRepositorySupport,
+  resolveGitDiscovery,
+} from "./git-repository-discovery.js";
 import { spawnProcess } from "./spawn.js";
 import {
   GitProcessScheduler,
@@ -297,6 +301,8 @@ function executeGitCommand<Output>(
   submission: GitCommandSubmission,
 ): Promise<GitCommandResult<Output>> {
   const priority = submission.priority ?? gitCommandPriority.getStore() ?? "normal";
+  // Read at submission: the scheduler may start the process from another async context.
+  const repositoryRootGitDir = readRepositoryRootGitDir(options.cwd);
   const metricsState = submitGitCommandMetric(args, options.cwd, priority);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
@@ -574,7 +580,7 @@ function executeGitCommand<Output>(
   // The process slot stays held through the launch lookup because `exited`
   // settles only after the spawned process exits. `resolveGitLaunch` never rejects.
   const startCommand = () => {
-    const spawned = resolveGitLaunch(options).then(spawnCommand);
+    const spawned = resolveGitLaunch(options, repositoryRootGitDir).then(spawnCommand);
     return {
       result: spawned.then((scheduled) => scheduled.result),
       exited: spawned.then((scheduled) => scheduled.exited),
@@ -596,9 +602,13 @@ interface GitLaunch {
 // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
 // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
 // `core.fsmonitor=false` prevents repository config from launching a command.
-async function resolveGitLaunch(options: GitCommandOptions): Promise<GitLaunch> {
+async function resolveGitLaunch(
+  options: GitCommandOptions,
+  repositoryRootGitDir: string | null,
+): Promise<GitLaunch> {
   const discovery = await resolveGitDiscovery({
     cwd: options.cwd,
+    repositoryRootGitDir,
     gitDirSet: Boolean(options.envOverlay?.GIT_DIR ?? options.env?.GIT_DIR ?? process.env.GIT_DIR),
     safeBareRepositorySupported: await readSafeBareRepositorySupport(),
   });

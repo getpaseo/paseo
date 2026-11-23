@@ -34,6 +34,7 @@ import {
   writePaseoWorktreeMetadata,
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
+import { runWithRepositoryRoot } from "./git-repository-discovery.js";
 import { runGitCommand } from "./run-git-command.js";
 import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
@@ -1325,7 +1326,12 @@ export async function readWorktreeHeadReference(worktreePath: string): Promise<s
   }
 }
 
-export async function deletePaseoWorktree({
+export function deletePaseoWorktree(options: DeletePaseoWorktreeOptions): Promise<void> {
+  const operation = () => deletePaseoWorktreeAtRepositoryRoot(options);
+  return options.cwd ? runWithRepositoryRoot(options.cwd, operation) : operation();
+}
+
+async function deletePaseoWorktreeAtRepositoryRoot({
   cwd,
   worktreePath,
   teardownCwds,
@@ -1660,7 +1666,13 @@ export function createWorktree(
 export function createWorktree(
   options: CreateWorktreeOptions,
 ): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }>;
-export async function createWorktree({
+export function createWorktree(
+  options: CreateWorktreeOptions,
+): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }> {
+  return runWithRepositoryRoot(options.cwd, () => createWorktreeAtRepositoryRoot(options));
+}
+
+async function createWorktreeAtRepositoryRoot({
   cwd,
   source,
   preparedBranchOff,
@@ -1775,7 +1787,15 @@ export function runPluginWorktreeManagerCheckout(
 export function runPluginWorktreeManagerCheckout(
   options: RunPluginWorktreeManagerCheckoutOptions,
 ): Promise<(Omit<CreatedWorktree, "branchName"> & { branchName: string | null }) | null>;
-export async function runPluginWorktreeManagerCheckout(
+export function runPluginWorktreeManagerCheckout(
+  options: RunPluginWorktreeManagerCheckoutOptions,
+): Promise<(Omit<CreatedWorktree, "branchName"> & { branchName: string | null }) | null> {
+  return runWithRepositoryRoot(options.cwd, () =>
+    runPluginWorktreeManagerCheckoutAtRepositoryRoot(options),
+  );
+}
+
+async function runPluginWorktreeManagerCheckoutAtRepositoryRoot(
   options: RunPluginWorktreeManagerCheckoutOptions,
 ): Promise<(Omit<CreatedWorktree, "branchName"> & { branchName: string | null }) | null> {
   const {
