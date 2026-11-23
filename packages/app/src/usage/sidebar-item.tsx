@@ -9,14 +9,9 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { TriangleAlert } from "lucide-react-native";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import type { Theme } from "@/styles/theme";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
@@ -34,6 +29,7 @@ import {
   resolvePinnedUsage,
   type PinnedUsageLayout,
   type PinnedUsageSource,
+  type PinnedUsageWindow,
 } from "./pinned";
 import { UsageModal } from "./usage-modal";
 
@@ -119,7 +115,7 @@ function pinnedUsageLabel(
 }
 
 function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
-  return hovered ? [styles.trigger, styles.triggerHovered] : styles.trigger;
+  return [styles.trigger, hovered && styles.triggerHovered];
 }
 
 function layoutWidth(event: LayoutChangeEvent): number {
@@ -128,8 +124,8 @@ function layoutWidth(event: LayoutChangeEvent): number {
 
 /**
  * One line: each account's icon, then per window a meter and "31% 5h". Off-screen copies measure
- * the line with labels and with percents alone; the richest layout that fits is shown, and what
- * it leaves out takes no space at all.
+ * the line with full labels, bare period shorthands, and percents alone; the richest layout that
+ * fits is shown, and what it leaves out takes no space at all.
  */
 function PinnedUsageTrigger({
   label,
@@ -144,6 +140,7 @@ function PinnedUsageTrigger({
 }) {
   const [available, setAvailable] = useState<number | null>(null);
   const [labelsWidth, setLabelsWidth] = useState<number | null>(null);
+  const [compactWidth, setCompactWidth] = useState<number | null>(null);
   const [percentsWidth, setPercentsWidth] = useState<number | null>(null);
   const handleAvailableLayout = useCallback((event: LayoutChangeEvent) => {
     setAvailable(layoutWidth(event));
@@ -151,21 +148,26 @@ function PinnedUsageTrigger({
   const handleLabelsLayout = useCallback((event: LayoutChangeEvent) => {
     setLabelsWidth(layoutWidth(event));
   }, []);
+  const handleCompactLayout = useCallback((event: LayoutChangeEvent) => {
+    setCompactWidth(layoutWidth(event));
+  }, []);
   const handlePercentsLayout = useCallback((event: LayoutChangeEvent) => {
     setPercentsWidth(layoutWidth(event));
   }, []);
   const layout = choosePinnedUsageLayout({
     available,
     labelsWidth,
+    compactWidth,
     percentsWidth,
     windowCount: sources.reduce((count, source) => count + source.windows.length, 0),
   });
   return (
-    <Pressable
+    <PressHighlight
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={pinnedUsageLabel(label, sources, errorLabel)}
       style={triggerStyle}
+      highlightStyle={styles.triggerPressed}
       testID="sidebar-usage"
     >
       <View style={styles.line} onLayout={handleAvailableLayout}>
@@ -181,12 +183,21 @@ function PinnedUsageTrigger({
         <View style={styles.measured} onLayout={handleLabelsLayout}>
           <PinnedUsageLine sources={sources} layout="labels" measuring />
         </View>
+        <View style={styles.measured} onLayout={handleCompactLayout}>
+          <PinnedUsageLine sources={sources} layout="compact" measuring />
+        </View>
         <View style={styles.measured} onLayout={handlePercentsLayout}>
           <PinnedUsageLine sources={sources} layout="percents" measuring />
         </View>
       </View>
-    </Pressable>
+    </PressHighlight>
   );
+}
+
+function windowSuffix(window: PinnedUsageWindow, layout: PinnedUsageLayout): string {
+  if (layout === "percents") return "";
+  if (layout === "compact") return window.compactLabel;
+  return window.shortLabel;
 }
 
 /**
@@ -219,6 +230,7 @@ function PinnedUsageLine({
       </View>
       {source.windows.map((window, windowIndex) => {
         const leadStyle = windowIndex === 0 ? styles.iconGap : styles.windowGap;
+        const suffix = windowSuffix(window, layout);
         return (
           <Fragment key={window.key}>
             {layout === "meters" ? (
@@ -232,9 +244,7 @@ function PinnedUsageLine({
               testID={measuring ? undefined : "sidebar-usage-pinned-window"}
             >
               {window.percentText}
-              {layout === "percents" || window.shortLabel === "" ? null : (
-                <Text style={styles.windowLabel}>{` ${window.shortLabel}`}</Text>
-              )}
+              {suffix === "" ? null : <Text style={styles.windowLabel}>{` ${suffix}`}</Text>}
             </Text>
           </Fragment>
         );
@@ -257,6 +267,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  triggerPressed: {
+    backgroundColor: theme.colors.surface2,
   },
   line: {
     flex: 1,

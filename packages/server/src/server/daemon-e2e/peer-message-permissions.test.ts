@@ -95,7 +95,7 @@ test("an agent-sourced steer leaves the question pending and answerable", async 
     await client.sendAgentMessage(recipient.id, "Peer status check", {
       sourceAgentId: sender.id,
     });
-    // The public wait includes admitted message delivery before reporting permission status.
+    // Permission checkpoints are reported while the peer message waits for turn end.
     const waiting = await client.waitForFinish(recipient.id);
     expect(waiting.status).toBe("permission");
     expect(waiting.final?.pendingPermissions).toMatchObject([

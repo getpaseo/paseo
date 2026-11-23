@@ -153,21 +153,29 @@ async function holdStreamAfterFirstCompletedToolCall(page: Page, agentId: string
 type OverviewChatDisplay = "collapseToolCalls" | "collapseTurns";
 
 // Expand thinking keeps reasoning out of tool call runs, so the first tool call starts alone.
-async function configureOverviewToolCalls(page: Page, chatDisplay: OverviewChatDisplay) {
-  await page.addInitScript((display) => {
-    localStorage.setItem(
-      "@paseo:app-settings",
-      JSON.stringify({ chatDisplay: display, autoExpandReasoning: true }),
-    );
-  }, chatDisplay);
+async function configureOverviewToolCalls(
+  page: Page,
+  chatDisplay: OverviewChatDisplay,
+  autoExpandReasoning: boolean,
+) {
+  await page.addInitScript(
+    ({ display, expandReasoning }) => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ chatDisplay: display, autoExpandReasoning: expandReasoning }),
+      );
+    },
+    { display: chatDisplay, expandReasoning: autoExpandReasoning },
+  );
 }
 
 async function createOverviewAgent(
   page: Page,
   title: string,
   chatDisplay: OverviewChatDisplay = "collapseToolCalls",
+  autoExpandReasoning = true,
 ) {
-  await configureOverviewToolCalls(page, chatDisplay);
+  await configureOverviewToolCalls(page, chatDisplay, autoExpandReasoning);
   return seedMockAgentWorkspace({
     repoPrefix: "tool-call-overview-sheet-",
     title,
@@ -397,6 +405,214 @@ test("forms a closed group when the lone tool call was left closed", async ({ pa
     await expect(group).toBeVisible();
     await expect(group.getByTestId("tool-call-badge")).toHaveCount(0);
     expect(Math.abs((await topOf(group)) - loneTop)).toBeLessThanOrEqual(2);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+const longGroupedDetail = {
+  type: "unknown",
+  input: Array.from({ length: 80 }, (_, i) => `Long input ${i}`),
+  output: Array.from({ length: 80 }, (_, i) => `Long output ${i}`),
+};
+
+function provideLongReadDetail(item: Record<string, unknown> | undefined) {
+  if (item?.type === "tool_call" && item.name === "read") item.detail = longGroupedDetail;
+}
+
+function provideLongReasoningDetail(item: Record<string, unknown> | undefined) {
+  if (item?.type === "reasoning") {
+    item.text = Array.from({ length: 80 }, (_, i) => `Long reasoning ${i}`).join("\n");
+  }
+}
+
+async function provideLongToolDetails(page: Page, transformItem = provideLongReadDetail) {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const raw = typeof message === "string" ? message : message.toString("utf8");
+      const envelope = JSON.parse(raw);
+      const item = envelope.message?.payload?.event?.item;
+      transformItem(item);
+      if (envelope.message?.type === "fetch_agent_timeline_response") {
+        for (const entry of envelope.message.payload.entries) transformItem(entry.item);
+      }
+      ws.send(JSON.stringify(envelope));
+    });
+  });
+}
+
+async function toggleAndMeasureTool(badge: Locator) {
+  await badge.scrollIntoViewIfNeeded();
+  await badge.evaluate((node) => {
+    // Inline groups own a bounded viewport; opened turns use the chat viewport.
+    const container =
+      node.closest('[data-testid="tool-call-group"]') ??
+      node.closest('[data-testid="agent-chat-scroll"]');
+    if (!container) throw new Error("Expected a tool inside a group or chat viewport");
+    const frames: { top: number; height: number; containerHeight: number }[] = [];
+    (node as HTMLElement & { disclosureFrames: typeof frames }).disclosureFrames = frames;
+    node.querySelector("button")!.addEventListener(
+      "click",
+      () => {
+        const measure = () => {
+          const bounds = node.getBoundingClientRect();
+          frames.push({
+            top: bounds.top,
+            height: bounds.height,
+            containerHeight: container.getBoundingClientRect().height,
+          });
+          if (frames.length < 20) requestAnimationFrame(measure);
+        };
+        requestAnimationFrame(measure);
+      },
+      { once: true },
+    );
+  });
+  await openToolDetails(badge);
+  await expect
+    .poll(() =>
+      badge.evaluate(
+        (node) => (node as HTMLElement & { disclosureFrames: unknown[] }).disclosureFrames.length,
+      ),
+    )
+    .toBe(20);
+  return badge.evaluate(
+    (node) =>
+      (
+        node as HTMLElement & {
+          disclosureFrames: { top: number; height: number; containerHeight: number }[];
+        }
+      ).disclosureFrames,
+  );
+}
+
+for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
+  test(`keeps multi-section tool details within the group (${display})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await createOverviewAgent(page, "Bounded grouped tool details", display);
+    try {
+      await provideLongToolDetails(page);
+      await openOverviewAgent(page, agent);
+      await agent.client.sendAgentMessage(agent.agentId, "Exercise bounded grouped details.");
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "idle",
+        30_000,
+      );
+      // A fresh mount of a finished conversation starts with its disclosures closed.
+      await page.reload();
+      await expectComposerVisible(page);
+      if (display === "collapseToolCalls") {
+        await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+      }
+      const group = page.getByTestId("tool-call-group").first();
+      if (display === "collapseTurns") {
+        await expect(page.getByTestId("tool-call-badge")).toHaveCount(0);
+        await openToolDetails(page.getByTestId("turn-summary").first());
+      } else {
+        await expect(group).toBeVisible();
+        await expect(group.getByTestId("tool-call-badge")).toHaveCount(0);
+        await openToolDetails(group);
+      }
+      const scope = display === "collapseTurns" ? page : group;
+      const badge = scope.getByTestId("tool-call-badge").filter({ hasText: "Read" }).first();
+      await expect(badge).toBeVisible();
+      const expandedFrames = await toggleAndMeasureTool(badge);
+      for (const frame of expandedFrames)
+        expect(frame.height).toBeLessThanOrEqual(frame.containerHeight);
+      expect(
+        Math.max(...expandedFrames.map((frame) => frame.top)) -
+          Math.min(...expandedFrames.map((frame) => frame.top)),
+      ).toBeLessThanOrEqual(1);
+      await expect(badge).toContainText("Long output");
+      const collapsedFrames = await toggleAndMeasureTool(badge);
+      expect(
+        Math.max(...collapsedFrames.map((frame) => frame.top)) -
+          Math.min(...collapsedFrames.map((frame) => frame.top)),
+      ).toBeLessThanOrEqual(1);
+      await expect(badge).not.toContainText("Long output");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}
+
+test("keeps tool headers reachable in an overflowing group", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(page, "Overflowing overview tool group");
+  try {
+    const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId);
+    await openOverviewAgent(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Inspect a large tool group.");
+    await gate.waitForFirstCompleted();
+    gate.appendCompletedCalls(15);
+    const group = page.getByTestId("tool-call-group").first();
+    await openToolDetails(group);
+    const badges = group.getByTestId("tool-call-badge");
+    await expect(badges).toHaveCount(16);
+    await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    const first = badges.first();
+    for (const action of ["expand", "collapse"]) {
+      await test.step(`${action} the first tool without moving its header`, async () => {
+        await first.scrollIntoViewIfNeeded();
+        const headerTop = await topOf(first);
+        const frames = await toggleAndMeasureTool(first);
+        for (const frame of frames) expect(Math.abs(frame.top - headerTop)).toBeLessThanOrEqual(1);
+      });
+    }
+    await test.step("follow the next appended tool", async () => {
+      gate.appendCompletedCalls(1);
+      await expect(badges).toHaveCount(17);
+      await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    });
+    await test.step("reopen the group at its latest tool", async () => {
+      await openToolDetails(group);
+      await expect(badges).toHaveCount(0);
+      await openToolDetails(group);
+      await expect(badges).toHaveCount(17);
+      await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("keeps expanded reasoning within the group viewport", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(
+    page,
+    "Bounded grouped reasoning",
+    "collapseToolCalls",
+    false,
+  );
+  try {
+    // Seed before opening so the fixture transforms complete snapshots, not token deltas.
+    await agent.client.sendAgentMessage(agent.agentId, "Inspect grouped reasoning.");
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await provideLongToolDetails(page, provideLongReasoningDetail);
+    await openOverviewAgent(page, agent);
+    await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+    const group = page.getByTestId("tool-call-group").first();
+    await openToolDetails(group);
+    const thought = group.getByTestId("tool-call-badge").filter({ hasText: "Thinking" }).first();
+    const frames = await toggleAndMeasureTool(thought);
+    const viewportHeight = await group.evaluate((node) => {
+      const scroll = Array.from(node.querySelectorAll<HTMLElement>("*")).find((child) =>
+        ["auto", "scroll"].includes(getComputedStyle(child).overflowY),
+      );
+      if (!scroll) throw new Error("Expected the group's scroll viewport");
+      return scroll.getBoundingClientRect().height;
+    });
+    for (const frame of frames) expect(frame.height).toBeLessThanOrEqual(viewportHeight);
+    await expect(thought).toContainText("Long reasoning 79");
+    await openToolDetails(thought);
+    await expect(thought).not.toContainText("Long reasoning 79");
   } finally {
     await agent.cleanup();
   }

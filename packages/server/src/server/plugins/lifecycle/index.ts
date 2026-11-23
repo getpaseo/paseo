@@ -57,7 +57,12 @@ const changeRequestFields = {
 };
 const worktreeRequestSchema = z.discriminatedUnion("kind", [
   z
-    .object({ ...worktreeRequestFields, kind: z.literal("branch-off"), baseRef: z.string().min(1) })
+    .object({
+      ...worktreeRequestFields,
+      kind: z.literal("branch-off"),
+      baseRef: z.string().min(1),
+      startPoint: z.string().min(1).optional(),
+    })
     .strict(),
   z
     .object({
@@ -108,6 +113,7 @@ const beforeSchemas = {
       labels: z.record(z.string(), z.string()),
       // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
       metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
+      appendSystemPrompt: z.array(z.string()).optional(),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
@@ -238,6 +244,28 @@ function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpe
   );
 }
 
+type WorktreeBeforeRequest = z.infer<(typeof beforeSchemas)["worktree.create.before"]>;
+
+function validateWorktreeBeforeResult(
+  previous: WorktreeBeforeRequest,
+  next: WorktreeBeforeRequest,
+): WorktreeBeforeRequest {
+  if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
+    throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+  }
+  if (previous.kind === "branch-off" && next.kind === "branch-off") {
+    if (next.startPoint !== undefined && next.startPoint !== previous.startPoint) {
+      throw new Error("worktree.create.before hooks cannot change startPoint");
+    }
+    if (next.startPoint === undefined && previous.startPoint !== undefined) {
+      return { ...next, startPoint: previous.startPoint };
+    }
+  } else if (next.kind === "branch-off" && next.startPoint !== undefined) {
+    throw new Error("worktree.create.before hooks cannot change startPoint");
+  }
+  return next;
+}
+
 export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
@@ -248,9 +276,18 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     const previous = beforeSchemas["agent.open.before"].parse(input);
     const next = beforeSchemas["agent.open.before"].parse(result);
     if (changesSessionOpenTarget(previous, next)) {
-      throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
+      throw new Error(
+        "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
+      );
     }
-    return { ...result, background: previous.background, metadata: previous.metadata };
+    return {
+      ...result,
+      background: previous.background,
+      metadata: previous.metadata,
+      ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined
+        ? { appendSystemPrompt: previous.appendSystemPrompt }
+        : {}),
+    };
   }
   if (name === "agent.create.before") {
     const previous = beforeSchemas["agent.create.before"].parse(input);
@@ -270,9 +307,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);
-    if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
-      throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
-    }
+    return validateWorktreeBeforeResult(previous, next) as PluginWireBeforeRequests[Name];
   }
   return result;
 }
@@ -376,6 +411,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     if (request.purpose === "history") {
       request.tools = [];
       request.mcpServers = {};
+      delete request.appendSystemPrompt;
     } else this.agentTools?.attach(request.agentId, tools);
     return request;
   }
