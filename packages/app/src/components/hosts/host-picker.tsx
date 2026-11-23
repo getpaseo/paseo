@@ -1,6 +1,5 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import type { GestureResponderEvent } from "react-native";
 import { Plus, Server, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDot } from "@/components/host-status-dot";
@@ -80,13 +79,9 @@ export function HostPickerOption({
       ? formatActiveConnectionLabel(activeConnection)
       : undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
-  const handleSettingsPress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onOpenHostSettings?.(serverId);
-    },
-    [onOpenHostSettings, serverId],
-  );
+  const handleSettingsPress = useCallback(() => {
+    onOpenHostSettings?.(serverId);
+  }, [onOpenHostSettings, serverId]);
   const trailingAction = useMemo(() => {
     if (!onOpenHostSettings) return undefined;
     return (

@@ -64,6 +64,10 @@ import {
   expectSettingsHostPickerLabel,
   openSettingsHostSection,
   removeCurrentHostFromSettings,
+  openSidebarHostPicker,
+  sidebarHostSettingsButton,
+  expectStandaloneSidebarHostSettingsButton,
+  activateSidebarHostSettingsWithKeyboard,
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -187,6 +191,25 @@ test.describe("Settings sidebar scroll position", () => {
 });
 
 test.describe("Settings sidebar navigation", () => {
+  test("the sidebar host gear opens Overview in one click", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "sidebar-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await expectStandaloneSidebarHostSettingsButton(page);
+    await sidebarHostSettingsButton(page).click();
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+  });
+
+  test("Enter opens the focused sidebar host gear", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "keyboard-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await activateSidebarHostSettingsWithKeyboard(page);
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+  });
+
   test("opening Settings closes the composer model selector until it is opened again", async ({
     page,
     withWorkspace,

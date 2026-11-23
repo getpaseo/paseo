@@ -72,6 +72,7 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+const TRAILING_ACTION_DATASET = { comboboxTrailingAction: true };
 
 export type ComboboxOption = ComboboxOptionModel;
 export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
@@ -237,8 +238,7 @@ export interface ComboboxItemProps {
   trailingSlot?: ReactNode;
   /**
    * An interactive control shown at the end of the row, outside the row's own
-   * pressable. A pressable nested inside another renders a `<button>` inside a
-   * `<button>` on web, which is invalid and aborts the row's press handling.
+   * pressable. This keeps each control independently focusable on web.
    */
   trailingAction?: ReactNode;
   selected?: boolean;
@@ -384,7 +384,9 @@ export function ComboboxItem({
       >
         {content}
       </Pressable>
-      <View style={styles.comboboxItemActionSlot}>{trailingAction}</View>
+      <View style={styles.comboboxItemActionSlot} dataSet={TRAILING_ACTION_DATASET}>
+        {trailingAction}
+      </View>
     </View>
   );
 }
@@ -950,6 +952,8 @@ function dispatchDesktopKey(
     return true;
   }
   if (key === "Enter") {
+    // Let the focused trailing control handle Enter before selecting the highlighted option.
+    if (isWeb && document.activeElement?.closest("[data-combobox-trailing-action]")) return false;
     if (input.orderedVisibleOptions.length === 0) return false;
     event?.preventDefault();
     handleDesktopEnterKey(input);
@@ -1794,14 +1798,15 @@ const styles = StyleSheet.create((theme) => ({
           marginBottom: theme.spacing[1],
         }),
   },
-  // With a split row the outer view carries the row padding and highlight, so
-  // its pressable can stop before the trailing action.
+  // Share the highlight while each control owns its padding and hit area.
   comboboxItemSplitRow: {
+    gap: 0,
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
   comboboxItemSplitPressable: {
     flex: 1,
+    alignSelf: "stretch",
     minWidth: 0,
     flexDirection: "row",
     alignItems: "center",

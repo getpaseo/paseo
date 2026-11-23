@@ -12,6 +12,31 @@ const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 
+export async function openSidebarHostPicker(page: Page) {
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+}
+
+export function sidebarHostSettingsButton(page: Page) {
+  return page.getByRole("button", { name: `Open ${TEST_HOST_LABEL} settings`, exact: true });
+}
+
+export async function expectStandaloneSidebarHostSettingsButton(page: Page) {
+  const gear = sidebarHostSettingsButton(page);
+  await expect(gear).toBeVisible();
+  expect(await gear.evaluate((button) => button.parentElement?.closest("button") === null)).toBe(
+    true,
+  );
+}
+
+export async function activateSidebarHostSettingsWithKeyboard(page: Page) {
+  const host = page.getByRole("button", { name: TEST_HOST_LABEL, exact: true });
+  await expect(host).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Tab");
+  await expect(sidebarHostSettingsButton(page)).toBeFocused();
+  await page.keyboard.press("Enter");
+}
+
 interface SavedSettingsHostInput {
   serverId: string;
   label: string;
