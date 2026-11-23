@@ -25,6 +25,7 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -3855,6 +3856,78 @@ describe("send_agent_prompt MCP tool", () => {
           outcome === "steered",
         );
       } finally {
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    { activeTurnBehavior: "interrupt", historyOpen: false },
+    { activeTurnBehavior: "steer", historyOpen: false },
+    { activeTurnBehavior: "queue", historyOpen: false },
+    { activeTurnBehavior: "interrupt", historyOpen: true },
+  ] as const)(
+    "an agent-scoped $activeTurnBehavior send starts a turn on an archived agent (history open: $historyOpen)",
+    async ({ activeTurnBehavior, historyOpen }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-send-archived-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const client = new HeldTurnAgentClient("codex", true);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      let mcpClient: Client | undefined;
+      try {
+        const sender = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const recipient = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        await manager.archiveAgent(recipient.id);
+        if (historyOpen) {
+          await ensureAgentLoaded(recipient.id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+        }
+        const openedSessions = client.sessions.length;
+
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: sender.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        mcpClient = await connectInMemoryMcpClient(server);
+        const response = await mcpClient.callTool({
+          name: "send_agent_prompt",
+          arguments: {
+            agentId: recipient.id,
+            prompt: "Start work",
+            notifyOnFinish: false,
+            activeTurnBehavior,
+          },
+        });
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior,
+        });
+        await serverDeliveries
+          .get(server)!
+          .waitForDispatch(recipient.id, AbortSignal.timeout(5_000));
+        expect((await storage.get(recipient.id))?.archivedAt).toBeNull();
+        expect(manager.getAgent(recipient.id)?.lifecycle).toBe("running");
+        expect(client.sessions).toHaveLength(openedSessions + 1);
+        expect(client.sessions.at(-1)?.prompts.map(parseAgentMessage)).toEqual([
+          expect.objectContaining({ text: "Start work" }),
+        ]);
+      } finally {
+        await mcpClient?.close();
         await removeAgentStateDir(manager, storage, workdir);
       }
     },
