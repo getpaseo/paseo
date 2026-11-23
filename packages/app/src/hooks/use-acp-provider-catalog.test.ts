@@ -142,6 +142,17 @@ describe("ACP provider catalog", () => {
     expect(patch.providers?.gjc?.env).toEqual({ GJC_ACP_PERMISSION_MODE: "prompt" });
   });
 
+  it("launches Factory Droid from the installed CLI instead of a pinned package", () => {
+    expect(findProvider("factory-droid")).toMatchObject({
+      version: "manual",
+      command: ["droid", "exec", "--output-format", "acp-daemon"],
+    });
+    expect(
+      buildAcpProviderConfigPatch(findProvider("factory-droid")).providers?.["factory-droid"]
+        ?.command,
+    ).toEqual(["droid", "exec", "--output-format", "acp-daemon"]);
+  });
+
   it("preserves provider params in the daemon config patch", () => {
     const droidPatch = buildAcpProviderConfigPatch(findProvider("factory-droid"));
 
