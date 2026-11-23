@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.17.4 - 2026-11-23
+
+### 修复
+
+- 修复 Android 上嵌套编号列表的编号与正文重叠，以及列表中的引用与后续消息重叠的问题 ([#10499](https://github.com/getpaseo/paseo/pull/10499))
+- 修复 Android 终端输入，要求键盘不将输入内容用于个性化学习 ([#10586](https://github.com/getpaseo/paseo/pull/10586))
+- 修复在不区分大小写的文件系统上，目录路径大小写不一致导致对话消失的问题 ([#10555](https://github.com/getpaseo/paseo/pull/10555)，贡献者：[@yzim](https://github.com/yzim))
+- 修复发给已归档 Agent 的中断和引导消息进入队列后未启动新轮次的问题 ([#10611](https://github.com/getpaseo/paseo/pull/10611)，贡献者：[@thomasvan](https://github.com/thomasvan))
+- 修复 Hermes 的 Shell 工具行只显示命令摘要的问题，现在会显示完整命令 ([#10614](https://github.com/getpaseo/paseo/pull/10614))
+- 修复使用 OpenCode 2 数据库中保存的登录凭据时的 Go 用量显示，涵盖 Console 登录和 API 密钥 ([#8729](https://github.com/getpaseo/paseo/pull/8729), [#10612](https://github.com/getpaseo/paseo/pull/10612))
+- 修复 Paseo 工具定义变更后无法重新打开已有 OpenCode 会话的问题 ([#10533](https://github.com/getpaseo/paseo/pull/10533)，贡献者：[@Peanut-HZM](https://github.com/Peanut-HZM))
+- 修复使用 MCP 协议版本 `2026-07-28` 的 Agent 缺少 Paseo 工具的问题 ([#10558](https://github.com/getpaseo/paseo/pull/10558)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
+- 修复 Codex MCP 启动失败时 daemon 未记录警告的问题 ([#10566](https://github.com/getpaseo/paseo/pull/10566))
+- 修复插件进程停止后 daemon 在关闭会话时退出的问题 ([#10585](https://github.com/getpaseo/paseo/pull/10585))
+- 修复目录结构与裸仓库相同时 Git 命令选错仓库的问题 ([#10587](https://github.com/getpaseo/paseo/pull/10587))
+- 修复在 Bedrock 和 Vertex 上无法选择 Claude Auto 权限模式的问题 ([#6904](https://github.com/getpaseo/paseo/pull/6904))
+- 修复侧边栏的主机设置按钮需要点击两次才能打开设置的问题 ([#10562](https://github.com/getpaseo/paseo/pull/10562)，贡献者：[@ShalokShalom](https://github.com/ShalokShalom))
+- 修复普通检出中从未推送过的新分支在“变更”面板中不显示“推送”的问题 ([#10631](https://github.com/getpaseo/paseo/pull/10631))
+- 修复 Hub 在验证触发器时传入工作区目录后，daemon 使用错误模型目录的问题 ([#10582](https://github.com/getpaseo/paseo/pull/10582))
+
 ## 0.17.3 - 2026-11-22
 
 ### 修复
