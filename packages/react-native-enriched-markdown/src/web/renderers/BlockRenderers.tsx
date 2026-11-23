@@ -37,7 +37,20 @@ function HeadingRenderer({ node, styles, renderChildren }: RendererProps) {
   return <Tag style={styles[Tag]}>{renderChildren(node)}</Tag>;
 }
 
-function BlockquoteRenderer({ node, styles, renderChildren }: RendererProps) {
+function BlockquoteRenderer({
+  node,
+  styles,
+  renderChildren,
+  capabilities,
+}: RendererProps) {
+  const CustomBlockquote = capabilities.renderers?.blockquote;
+  if (CustomBlockquote) {
+    return (
+      <CustomBlockquote blockquoteProps={{ style: styles.blockquote }}>
+        {renderChildren(node)}
+      </CustomBlockquote>
+    );
+  }
   return (
     <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
   );

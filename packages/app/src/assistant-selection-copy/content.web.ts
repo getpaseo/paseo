@@ -9,6 +9,7 @@ import {
   MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
+  MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
@@ -120,6 +121,52 @@ function isWebUrl(href: string): boolean {
 const markdownTurndown = createTurndown("markdown");
 const plainTurndown = createTurndown("plain");
 
+/**
+ * A fence rendered as something other than its code, such as a Mermaid diagram, carries
+ * its source in an attribute. Put the code block back so the fence is what gets copied.
+ */
+function restoreFenceSources(container: Element): void {
+  for (const region of container.querySelectorAll(`[${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}]`)) {
+    const source = region.getAttribute(MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE);
+    if (source === null) continue;
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    const language = region.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
+    if (language) code.className = `language-${language}`;
+    code.textContent = source;
+    pre.append(code);
+    region.replaceWith(pre);
+  }
+}
+
+/**
+ * Clipboard payload for everything inside `element`, without the element's own syntax:
+ * a quote's body carries no `>` prefix. Null when there is nothing to copy.
+ */
+export function createElementClipboardContent(element: Element): MarkdownClipboardContent | null {
+  const container = document.createElement("div");
+  container.append(...Array.from(element.childNodes, (child) => child.cloneNode(true)));
+  const originals = element.querySelectorAll("*");
+  const copies = container.querySelectorAll("*");
+  originals.forEach((original, index) => copySemanticAttributes(original, copies[index]!));
+  restoreFenceSources(container);
+  restoreMarkdownElements(container);
+  return clipboardContentFromMarkup(container);
+}
+
+function clipboardContentFromMarkup(container: HTMLElement): MarkdownClipboardContent | null {
+  const markdown = markdownTurndown.turndown(container).trim();
+  if (!markdown) {
+    return null;
+  }
+  // text/plain carries unescaped Markdown: a plain target shows backslashes literally.
+  // text/html is rendered from escaped Markdown, so literal Markdown characters stay
+  // literal in a rich target.
+  const plainText = plainTurndown.turndown(container).trim();
+  const content = createSelectionClipboardContent(markdown, plainText);
+  return { ...content, html: flattenClipboardListMarkup(content.html) };
+}
+
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,
 ): MarkdownClipboardContent | null {
@@ -145,17 +192,7 @@ export function createAssistantSelectionClipboardContent(
     container.append(cloneMarkdownSelection(part.range, part.message));
   }
   restoreMarkdownElements(container);
-
-  const markdown = markdownTurndown.turndown(container).trim();
-  if (!markdown) {
-    return null;
-  }
-  // text/plain carries unescaped Markdown: a plain target shows backslashes literally.
-  // text/html is rendered from escaped Markdown, so literal Markdown characters stay
-  // literal in a rich target.
-  const plainText = plainTurndown.turndown(container).trim();
-  const content = createSelectionClipboardContent(markdown, plainText);
-  return { ...content, html: flattenClipboardListMarkup(content.html) };
+  return clipboardContentFromMarkup(container);
 }
 
 /**

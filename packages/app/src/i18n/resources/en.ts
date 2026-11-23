@@ -344,6 +344,7 @@ export const en = {
       viewDiagram: "View diagram",
     },
     actions: {
+      copyQuote: "Copy quote",
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",

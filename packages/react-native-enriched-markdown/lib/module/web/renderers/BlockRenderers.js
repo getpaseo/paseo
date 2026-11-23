@@ -46,8 +46,18 @@ function HeadingRenderer({
 function BlockquoteRenderer({
   node,
   styles,
-  renderChildren
+  renderChildren,
+  capabilities
 }) {
+  const CustomBlockquote = capabilities.renderers?.blockquote;
+  if (CustomBlockquote) {
+    return /*#__PURE__*/_jsx(CustomBlockquote, {
+      blockquoteProps: {
+        style: styles.blockquote
+      },
+      children: renderChildren(node)
+    });
+  }
   return /*#__PURE__*/_jsx("blockquote", {
     style: styles.blockquote,
     children: renderChildren(node)

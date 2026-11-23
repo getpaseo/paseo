@@ -345,6 +345,7 @@ export const ar: TranslationResources = {
       viewDiagram: "عرض المخطط",
     },
     actions: {
+      copyQuote: "نسخ الاقتباس",
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
