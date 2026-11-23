@@ -84,7 +84,7 @@ function editDetail({ call, input, text }: ToolCallParts): ProviderToolCallDetai
     return {
       type: "edit",
       filePath,
-      oldString: diff?.oldText ?? string(input, "oldText"),
+      oldString: diff?.oldText ?? fileText(input, "oldText"),
       newString: "",
       unifiedDiff: text,
     };
@@ -92,8 +92,8 @@ function editDetail({ call, input, text }: ToolCallParts): ProviderToolCallDetai
   return {
     type: "edit",
     filePath,
-    oldString: diff?.oldText ?? string(input, "oldString", "oldText"),
-    newString: diff?.newText ?? string(input, "newString", "newText"),
+    oldString: diff?.oldText ?? fileText(input, "oldString", "oldText"),
+    newString: diff?.newText ?? fileText(input, "newString", "newText"),
     unifiedDiff: string(input, "unifiedDiff") ?? text,
   };
 }
@@ -142,6 +142,15 @@ function string(value: JsonRecord, ...keys: string[]): string | undefined {
   for (const key of keys) {
     const entry = value[key];
     if (typeof entry === "string" && entry.trim().length > 0) return entry;
+  }
+  return undefined;
+}
+
+/** File text is kept as written: whitespace or an empty string is the edit itself. */
+function fileText(value: JsonRecord, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const entry = value[key];
+    if (typeof entry === "string") return entry;
   }
   return undefined;
 }

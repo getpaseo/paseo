@@ -6833,6 +6833,15 @@ describe("ACP tool call rows", () => {
       detail: { type: "edit", filePath: "/repo/a.ts", unifiedDiff: "Replaced 1 occurrence" },
     },
     {
+      kind: "edit",
+      start: {
+        title: "Edit a.ts",
+        rawInput: { filePath: "/repo/a.ts", oldString: "remove me", newString: "  " },
+      },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", oldString: "remove me", newString: "  " },
+    },
+    {
       kind: "delete",
       start: { title: "Delete a.ts", locations: [{ path: "/repo/a.ts" }] },
       end: {},
