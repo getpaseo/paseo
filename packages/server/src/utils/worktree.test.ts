@@ -98,6 +98,14 @@ describe("paseo worktree manager", () => {
     await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
+  function cloneBareRepository(): string {
+    const bareRepo = join(tempDir, "bare.git");
+    execFileSync("git", ["clone", "--bare", "-q", repoDir, bareRepo]);
+    // A bare clone does not copy the checkout's local config; its linked worktrees share this one.
+    execFileSync("git", ["--git-dir", bareRepo, "config", "core.autocrlf", "false"]);
+    return bareRepo;
+  }
+
   it.each([
     { existing: [], preferred: "main/patch-1", expected: "main-1/patch-1" },
     { existing: ["main-1"], preferred: "main/patch-1", expected: "main-2/patch-1" },
@@ -305,8 +313,7 @@ describe("paseo worktree manager", () => {
   });
 
   it("creates and removes a worktree from a bare repository with no linked checkouts", async () => {
-    const bareRepo = join(tempDir, "bare.git");
-    execFileSync("git", ["clone", "--bare", "-q", repoDir, bareRepo]);
+    const bareRepo = cloneBareRepository();
 
     const created = await createLegacyWorktreeForTest({
       branchName: "from-bare",
@@ -327,8 +334,7 @@ describe("paseo worktree manager", () => {
   });
 
   it("lists the worktrees of a bare repository that only Paseo checkouts use", async () => {
-    const bareRepo = join(tempDir, "bare.git");
-    execFileSync("git", ["clone", "--bare", "-q", repoDir, bareRepo]);
+    const bareRepo = cloneBareRepository();
     const created = await createLegacyWorktreeForTest({
       branchName: "listed",
       cwd: bareRepo,
@@ -340,7 +346,7 @@ describe("paseo worktree manager", () => {
     const worktrees = await listPaseoWorktrees({ cwd: bareRepo, paseoHome });
 
     expect(worktrees.map((entry) => [entry.path, entry.branchName])).toEqual([
-      [created.worktreePath, "listed"],
+      [realpathSync.native(created.worktreePath), "listed"],
     ]);
   });
 

@@ -26,7 +26,7 @@ function git(args: string[], cwd?: string): string {
 }
 
 function makeTempDir(): string {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-discovery-")));
+  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "paseo-git-discovery-")));
   tempDirs.push(dir);
   return dir;
 }
@@ -58,12 +58,13 @@ function createBareRepositoryWithLinkedWorktree(root: string): string {
 // `safe.bareRepository` would see it.
 function gitDirWithoutConfig(cwd: string, discovery: GitDiscovery): string {
   try {
-    return execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
+    const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
       cwd,
       encoding: "utf8",
       stdio: "pipe",
       env: { ...process.env, ...discovery.envOverlay },
     }).trim();
+    return path.resolve(gitDir);
   } catch (error) {
     return String((error as { stderr?: string }).stderr).trim();
   }

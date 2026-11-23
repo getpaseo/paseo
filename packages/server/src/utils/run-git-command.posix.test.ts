@@ -65,7 +65,7 @@ function git(args: string[], cwd?: string): string {
 }
 
 function makeTempDir(): string {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-discovery-")));
+  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "paseo-git-discovery-")));
   tempDirs.push(dir);
   return dir;
 }
@@ -106,6 +106,13 @@ function createBareRepositoryWithLinkedWorktree(root: string): {
   const worktree = path.join(root, "main");
   git(["worktree", "add", "-q", worktree, "main"], bareRepo);
   return { bareRepo, worktree };
+}
+
+function listedWorktreePaths(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => path.resolve(line.slice("worktree ".length)));
 }
 
 describe("runGitCommand repository discovery", () => {
@@ -153,11 +160,11 @@ describe("runGitCommand repository discovery", () => {
     const fromRoot = await runWithRepositoryRoot(bareRepo, () =>
       runGitCommand(["worktree", "list", "--porcelain"], { cwd: bareRepo }),
     );
-    const belowRoot = runWithRepositoryRoot(bareRepo, () =>
+    const belowRoot = await runWithRepositoryRoot(bareRepo, () =>
       runGitCommand(["rev-parse", "--absolute-git-dir"], { cwd: path.join(bareRepo, "refs") }),
-    );
+    ).catch((error: unknown) => error);
 
-    expect(fromRoot.stdout).toContain(`worktree ${worktree}\n`);
-    await expect(belowRoot).rejects.toThrow(/cannot use bare repository/);
+    expect(listedWorktreePaths(fromRoot.stdout)).toContain(worktree);
+    expect(String(belowRoot)).toMatch(/cannot use bare repository/);
   });
 });

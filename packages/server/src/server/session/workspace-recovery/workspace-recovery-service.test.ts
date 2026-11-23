@@ -304,6 +304,14 @@ async function createBaseRecoveryFixture(
   const repoDir = options.bareSource ? join(realpathSync(tempDir), "repo.git") : checkoutDir;
   if (options.bareSource) {
     execFileSync("git", ["clone", "--bare", "-q", checkoutDir, repoDir], { stdio: "pipe" });
+    // A bare clone does not copy the checkout's local config; its linked worktrees share this one.
+    for (const [key, value] of [
+      ["user.name", "Paseo Test"],
+      ["user.email", "test@example.com"],
+      ["core.autocrlf", "false"],
+    ]) {
+      execFileSync("git", ["--git-dir", repoDir, "config", key, value], { stdio: "pipe" });
+    }
   }
   const paseoHome = join(tempDir, "paseo-home");
   const created = await createWorktree({
@@ -314,8 +322,7 @@ async function createBaseRecoveryFixture(
   });
   writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
   execFileSync("git", ["add", "."], { cwd: created.worktreePath });
-  const commitArgs = ["-c", "user.name=Paseo Test", "-c", "user.email=test@example.com"];
-  execFileSync("git", [...commitArgs, "-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
     cwd: created.worktreePath,
     stdio: "pipe",
   });
