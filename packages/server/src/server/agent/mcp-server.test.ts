@@ -34,6 +34,8 @@ import {
   type AgentClient,
   type AgentMode,
   type AgentPermissionRequest,
+  type AgentPermissionResponse,
+  type AgentPermissionResponseOptions,
   type AgentPromptInput,
   type AgentProvider,
   type AgentRunResult,
@@ -3671,7 +3673,22 @@ class HeldTurnAgentSession implements AgentSession {
     return [...this.permissions.values()];
   }
 
-  async respondToPermission(requestId: string): Promise<void> {
+  readonly permissionResponses: Array<{
+    requestId: string;
+    response: AgentPermissionResponse;
+    options?: AgentPermissionResponseOptions;
+  }> = [];
+
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+    options?: AgentPermissionResponseOptions,
+  ): Promise<void> {
+    this.permissionResponses.push({
+      requestId,
+      response,
+      ...(options ? { options } : {}),
+    });
     this.permissions.delete(requestId);
     this.pushEvent({ type: "permission_resolved", provider: this.provider, requestId });
   }
@@ -7517,6 +7534,86 @@ describe("local durable finish subscription MCP wiring", () => {
       expect(client.sessions[1]!.prompts).toEqual([]);
       expect(await subscriptions.list()).toEqual([]);
     } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+
+  it("forwards callerAgentId and callerAgentTitle on respond_to_permission and tolerates missing callers", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-permission-caller-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", true);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    let mcp: Client | undefined;
+    let missingCallerMcp: Client | undefined;
+    try {
+      const parent = await manager.createAgent(
+        { provider: "claude", cwd: existingCwd, title: "Coordinator" },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+
+      childClient.sessions[0]!.requestPermission("perm-attributed");
+      const firstResult = await mcp.callTool({
+        name: "respond_to_permission",
+        arguments: {
+          agentId: child.id,
+          requestId: "perm-attributed",
+          response: { behavior: "deny", message: "use read-only check" },
+        },
+      });
+      expect(firstResult.isError).not.toBe(true);
+
+      const missingCallerServer = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: "missing-caller-id",
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      missingCallerMcp = await connectInMemoryMcpClient(missingCallerServer);
+
+      childClient.sessions[0]!.requestPermission("perm-missing-caller");
+      const secondResult = await missingCallerMcp.callTool({
+        name: "respond_to_permission",
+        arguments: {
+          agentId: child.id,
+          requestId: "perm-missing-caller",
+          response: { behavior: "deny", message: "skip write" },
+        },
+      });
+      expect(secondResult.isError).not.toBe(true);
+
+      expect(childClient.sessions[0]!.permissionResponses).toEqual([
+        {
+          requestId: "perm-attributed",
+          response: { behavior: "deny", message: "use read-only check" },
+          options: { callerAgentId: parent.id, callerAgentTitle: "Coordinator" },
+        },
+        {
+          requestId: "perm-missing-caller",
+          response: { behavior: "deny", message: "skip write" },
+          options: { callerAgentId: "missing-caller-id" },
+        },
+      ]);
+    } finally {
+      await missingCallerMcp?.close();
       await mcp?.close();
       await removeAgentStateDir(manager, storage, workdir);
     }

@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import type {
   AgentCapabilityFlags,
+  AgentPermissionResponse,
+  AgentPermissionResponseOptions,
   AgentPromptInput,
   AgentSession,
   AgentStreamEvent,
@@ -122,8 +124,19 @@ class FakeSession implements AgentSession {
     return [];
   }
 
-  async respondToPermission() {
+  readonly permissionResponses: Array<{
+    requestId: string;
+    response: AgentPermissionResponse;
+    options?: AgentPermissionResponseOptions;
+  }> = [];
+
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+    options?: AgentPermissionResponseOptions,
+  ) {
     this.recordedCalls.push("respondToPermission");
+    this.permissionResponses.push({ requestId, response, ...(options ? { options } : {}) });
   }
 
   describePersistence() {
@@ -247,5 +260,22 @@ describe("wrapSessionProvider", () => {
     const session: AgentSession = new FakeSession();
     session.steerActiveTurn = undefined;
     expect(wrapSessionProvider("custom-claude", session).steerActiveTurn).toBeUndefined();
+  });
+
+  test("forwards permission response options through wrapped sessions", async () => {
+    const session = new FakeSession();
+    const wrapped = wrapSessionProvider("custom-claude", session);
+    await wrapped.respondToPermission(
+      "perm-1",
+      { behavior: "deny", message: "use another path" },
+      { callerAgentId: "lead-1", callerAgentTitle: "Coordinator" },
+    );
+    expect(session.permissionResponses).toEqual([
+      {
+        requestId: "perm-1",
+        response: { behavior: "deny", message: "use another path" },
+        options: { callerAgentId: "lead-1", callerAgentTitle: "Coordinator" },
+      },
+    ]);
   });
 });

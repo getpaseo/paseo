@@ -6,6 +6,7 @@ import { createPiExtensionHost } from "./index.js";
 import { PiHistoryMapper } from "../history-mapper.js";
 import { parseToolArgs, parseToolResult } from "../tool-call-mapper.js";
 import type { PiExtension } from "./contract.js";
+import { PiPermissionResponseError } from "../extension-ui-answer.js";
 import { PiExtensionHost } from "./host.js";
 
 const throwingAdapter: PiExtension = {
@@ -132,6 +133,25 @@ describe("Pi extension host", () => {
     expect(
       host.mapCustomMessage({ role: "custom", customType: "other", content: "hello" }),
     ).toBeUndefined();
+  });
+
+  test("rethrows PiPermissionResponseError from respondToPermission without swallowing it", () => {
+    const host = createPiExtensionHost(undefined, [
+      {
+        id: "rejecting-permission-adapter",
+        createSession: () => ({
+          respondToPermission: () => {
+            throw new PiPermissionResponseError("must pick an offered option");
+          },
+        }),
+      },
+    ]);
+    expect(() =>
+      host.respondToPermission(
+        { id: "ui-1", provider: "pi", kind: "question", title: "Pick", input: { questions: [] } },
+        { behavior: "allow" },
+      ),
+    ).toThrow(PiPermissionResponseError);
   });
 
   test("rejected child hydration emits no events", async () => {

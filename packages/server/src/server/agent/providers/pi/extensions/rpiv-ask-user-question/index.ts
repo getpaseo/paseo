@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AgentPermissionRequest } from "../../../../agent-sdk-types.js";
 import type { PiExtension, PiExtensionDialog, PiExtensionUiResponse } from "../contract.js";
+import { resolveAllowedExtensionUiAnswer } from "../../extension-ui-answer.js";
 
 const Params = z
   .object({
@@ -169,12 +170,44 @@ export const rpivAskUserQuestion: PiExtension = {
       },
       respondToPermission(request, response) {
         if (!active || request.id !== `${PERMISSION_PREFIX}${active.callId}`) return undefined;
-        const answers = response.behavior === "allow" ? response.updatedInput?.answers : undefined;
-        active.answers =
-          answers && typeof answers === "object" && !Array.isArray(answers)
-            ? (answers as Record<string, unknown>)
+        if (response.behavior === "deny") {
+          active.answers = null;
+          active.cancelled = true;
+          const deferred = active.deferred;
+          active.deferred = null;
+          return {
+            responses: deferred ? [{ id: deferred.id, response: answerDialog(deferred) }] : [],
+          };
+        }
+        const rawAnswers = response.updatedInput?.answers;
+        const providedAnswers =
+          rawAnswers && typeof rawAnswers === "object" && !Array.isArray(rawAnswers)
+            ? (rawAnswers as Record<string, unknown>)
             : null;
-        active.cancelled = response.behavior === "deny" || !active.answers;
+        let resolvedAnswers: Record<string, unknown>;
+        if (active.questions.length === 1) {
+          const [question] = active.questions;
+          const chosen = resolveAllowedExtensionUiAnswer(request, response, {
+            answer: providedAnswers ? answerFor(providedAnswers, question) : null,
+            labels: question.options.map((option) => option.label),
+            answerHeader: question.header,
+          });
+          resolvedAnswers = { [question.header]: chosen };
+        } else {
+          const missing = active.questions.find(
+            (question) => !providedAnswers || answerFor(providedAnswers, question) === null,
+          );
+          if (missing) {
+            resolveAllowedExtensionUiAnswer(request, response, {
+              answer: null,
+              labels: [],
+              answerHeader: missing.header,
+            });
+          }
+          resolvedAnswers = providedAnswers as Record<string, unknown>;
+        }
+        active.answers = resolvedAnswers;
+        active.cancelled = false;
         const deferred = active.deferred;
         active.deferred = null;
         return {
