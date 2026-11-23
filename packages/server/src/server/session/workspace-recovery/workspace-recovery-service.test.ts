@@ -296,8 +296,23 @@ function createGitRepository(): { tempDir: string; repoDir: string } {
   return { tempDir, repoDir };
 }
 
-async function createBaseRecoveryFixture(baseBranch: string | null) {
-  const { tempDir, repoDir } = createGitRepository();
+async function createBaseRecoveryFixture(
+  baseBranch: string | null,
+  options: { bareSource?: boolean } = {},
+) {
+  const { tempDir, repoDir: checkoutDir } = createGitRepository();
+  const repoDir = options.bareSource ? join(realpathSync(tempDir), "repo.git") : checkoutDir;
+  if (options.bareSource) {
+    execFileSync("git", ["clone", "--bare", "-q", checkoutDir, repoDir], { stdio: "pipe" });
+    // A bare clone does not copy the checkout's local config; its linked worktrees share this one.
+    for (const [key, value] of [
+      ["user.name", "Paseo Test"],
+      ["user.email", "test@example.com"],
+      ["core.autocrlf", "false"],
+    ]) {
+      execFileSync("git", ["--git-dir", repoDir, "config", key, value], { stdio: "pipe" });
+    }
+  }
   const paseoHome = join(tempDir, "paseo-home");
   const created = await createWorktree({
     cwd: repoDir,
@@ -646,6 +661,23 @@ test("restore rejects a branch checked out elsewhere without inventing another b
       encoding: "utf8",
     }).trim(),
   ).toBe("* feature");
+});
+
+test("restores a workspace after the last checkout of a bare repository is archived", async () => {
+  const fixture = await createBaseRecoveryFixture("main", { bareSource: true });
+  await fixture.archiveAndRemove();
+
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+  expect(readFileSync(join(fixture.workspace.cwd, "feature.txt"), "utf8")).toBe("feature\n");
+  expect(
+    execFileSync("git", ["symbolic-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("refs/heads/feature");
 });
 
 test("restores a user-created worktree at its recorded path outside Paseo's root", async () => {
