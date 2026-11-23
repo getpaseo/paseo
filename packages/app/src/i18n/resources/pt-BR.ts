@@ -921,6 +921,8 @@ export const ptBR: TranslationResources = {
           pushBehind:
             "Push ainda não está disponível porque há alterações mais recentes para trazer primeiro",
           pushNothing: "Push não está disponível porque não há nada novo para enviar",
+          pushUpstreamGone:
+            "Push não está disponível porque a branch que esta branch acompanha não existe mais",
           pullAndPushNoRemote:
             "Pull e push não estão disponíveis aqui porque esta branch ainda não está conectada a um remoto",
           pullAndPushDirty:

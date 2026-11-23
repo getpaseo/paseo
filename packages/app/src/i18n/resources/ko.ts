@@ -913,6 +913,7 @@ export const ko: TranslationResources = {
             "이 브랜치가 아직 원격에 연결되어 있지 않아 여기서 푸시를 사용할 수 없습니다",
           pushBehind: "먼저 가져와야 할 최신 변경 사항이 있어 아직 푸시를 사용할 수 없습니다",
           pushNothing: "새로 보낼 항목이 없어 푸시를 사용할 수 없습니다",
+          pushUpstreamGone: "이 브랜치가 추적하는 브랜치가 더 이상 없어 푸시를 사용할 수 없습니다",
           pullAndPushNoRemote:
             "이 브랜치가 아직 원격에 연결되어 있지 않아 여기서 풀 후 푸시를 사용할 수 없습니다",
           pullAndPushDirty:

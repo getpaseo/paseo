@@ -926,6 +926,7 @@ export const fr: TranslationResources = {
           pushBehind:
             "Push indisponible pour l’instant : des modifications plus récentes doivent d’abord être récupérées",
           pushNothing: "Push indisponible : il n’y a rien de nouveau à pousser",
+          pushUpstreamGone: "Push indisponible : la branche suivie par cette branche n’existe plus",
           pullAndPushNoRemote:
             "Pull et push indisponibles : cette branche n’est pas encore liée à un dépôt distant",
           pullAndPushDirty:

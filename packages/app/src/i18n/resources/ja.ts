@@ -919,6 +919,8 @@ export const ja: TranslationResources = {
             "このブランチはまだリモートに接続されていないため、プッシュはここでは利用できません",
           pushBehind: "取り込む必要がある新しい変更があるため、まだプッシュは利用できません",
           pushNothing: "プッシュする変更がないため、プッシュは利用できません",
+          pushUpstreamGone:
+            "このブランチが追跡しているブランチが存在しないため、プッシュは利用できません",
           pullAndPushNoRemote:
             "このブランチはまだリモートに接続されていないため、プル＆プッシュはここでは利用できません",
           pullAndPushDirty:
