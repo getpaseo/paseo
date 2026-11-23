@@ -215,6 +215,32 @@ describe("Mermaid sandbox runtime", () => {
     expect(widths).toEqual([240, 350, 900]);
   });
 
+  /**
+   * Agents often write a label that starts with a mention or holds an email address. Mermaid 11
+   * read the text up to the "@" as an edge id, so these diagrams failed to parse.
+   */
+  it.each([
+    "flowchart LR\n  F[@mention in any workspace] --> G[Look up token]",
+    "flowchart LR\n  A[ops@example.com] --> B",
+    "flowchart LR\n  A -->|@user approves| B",
+    "graph TD\n  A(@x) --> B{@x?}",
+  ])("renders a flowchart whose label contains an @: %s", async (source) => {
+    const frame = await mountRuntime();
+
+    const result = await render(frame, { revision: 1, source });
+
+    expect(result).toMatchObject({ type: "rendered", revision: 1, source });
+  });
+
+  it("still renders a flowchart edge id", async () => {
+    const frame = await mountRuntime();
+    const source = "flowchart LR\n  A[Start] e1@--> B[End]";
+
+    const result = await render(frame, { revision: 1, source });
+
+    expect(result).toMatchObject({ type: "rendered", revision: 1, source });
+  });
+
   it("coalesces queued input and never reports an obsolete result", async () => {
     const frame = await mountRuntime();
     const obsoleteSource = `flowchart TD\n${Array.from({ length: 250 }, (_, index) => `A${index} --> A${index + 1}`).join("\n")}`;

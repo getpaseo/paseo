@@ -4,6 +4,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
+  ProviderOptions,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
@@ -67,7 +68,7 @@ export interface UseAgentFormStateResult {
   selectedModel: string;
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
-  setThinkingOptionFromUser: (thinkingOptionId: string) => void;
+  setThinkingOptionFromUser: (thinkingOptionId: string, retainedOptions?: ProviderOptions) => void;
   /** Tracks which fields the user (or an applied profile) explicitly set. */
   userModified: UserModifiedFields;
   /**
@@ -292,8 +293,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [snapshotEntries],
   );
   const snapshotModelSelectorProviders = useMemo(
-    () => buildSelectableProviderSelectorProviders(snapshotEntries, isConnected),
-    [snapshotEntries, isConnected],
+    () =>
+      buildSelectableProviderSelectorProviders(snapshotEntries, {
+        isConnected,
+        selectedProvider: formState.provider || null,
+      }),
+    [snapshotEntries, isConnected, formState.provider],
   );
   const snapshotSelectedEntry = useMemo(
     () =>
@@ -476,7 +481,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   );
 
   const setThinkingOptionFromUser = useCallback(
-    (thinkingOptionId: string) => {
+    (thinkingOptionId: string, retainedOptions?: ProviderOptions) => {
       dispatch({ type: "SET_THINKING_OPTION_FROM_USER", thinkingOptionId });
       const { provider, model: modelId } = formStore.getState().form;
       if (provider && modelId) {
@@ -488,6 +493,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
               thinkingByModel: {
                 [modelId]: thinkingOptionId,
               },
+              options: retainedOptions,
             },
           }),
         );
@@ -554,13 +560,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       // server resolves the pinned default.
       providerDefaultModel: providerPrefs?.pinnedModel ?? null,
     });
-  }, [
-    formState.provider,
-    formState.model,
-    preferencesWithDaemonPin,
-    userModified,
-    initialValues,
-  ]);
+  }, [formState.provider, formState.model, preferencesWithDaemonPin, userModified, initialValues]);
 
   return useMemo(
     () => ({

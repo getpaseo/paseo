@@ -677,24 +677,6 @@ function MessageInputOverlay({
   return null;
 }
 
-function FocusHint({
-  visible,
-  focusInputKeys,
-  label,
-}: {
-  visible: boolean;
-  focusInputKeys: ShortcutChord | null | undefined;
-  label: string;
-}) {
-  const { isActiveComposer } = useComposerKeyboardScope();
-  if (!isActiveComposer || !visible || !focusInputKeys || !label.trim()) return null;
-  return (
-    <Text style={styles.focusHintText} pointerEvents="none">
-      {label}
-    </Text>
-  );
-}
-
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -745,6 +727,32 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       onRenderedLinesChange(event.nativeEvent.lines.length),
     [onRenderedLinesChange],
   );
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const { focusHintLabel, focusHintVisible, focusInputKeys } = props;
+  const [focusHintLayout, setFocusHintLayout] = useState<{ label: string; width: number }>();
+  const handleFocusHintLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setFocusHintLayout({ label: focusHintLabel, width: event.nativeEvent.layout.width });
+    },
+    [focusHintLabel],
+  );
+  const shouldShowFocusHint =
+    isActiveComposer &&
+    focusHintVisible &&
+    Boolean(focusInputKeys) &&
+    focusHintLabel.trim().length > 0;
+  const focusHintWidth =
+    shouldShowFocusHint && focusHintLayout?.label === focusHintLabel
+      ? focusHintLayout.width
+      : undefined;
+  // Make room for the hint in the same render that reveals it.
+  const textInputStyle = useMemo(
+    () =>
+      focusHintWidth === undefined
+        ? props.textInputStyle
+        : [props.textInputStyle, { paddingRight: focusHintWidth }],
+    [focusHintWidth, props.textInputStyle],
+  );
   if (props.readOnly) {
     return (
       <View style={styles.textInputScrollWrapper}>
@@ -775,7 +783,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         accessibilityLabel={props.accessibilityLabel}
         onFocus={props.onFocus}
         onBlur={props.onBlur}
-        style={props.textInputStyle}
+        style={textInputStyle}
         multiline
         scrollEnabled={props.scrollEnabled}
         editable={props.editable}
@@ -785,11 +793,16 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      <FocusHint
-        visible={props.focusHintVisible}
-        focusInputKeys={props.focusInputKeys}
-        label={props.focusHintLabel}
-      />
+      {shouldShowFocusHint ? (
+        <Text
+          key={focusHintLabel}
+          style={[styles.focusHintText, focusHintWidth === undefined && styles.unmeasuredFocusHint]}
+          pointerEvents="none"
+          onLayout={handleFocusHintLayout}
+        >
+          {focusHintLabel}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1624,6 +1637,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       volume: dictationVolume,
       duration: dictationDuration,
       error: dictationError,
+      startError: dictationStartError,
+      clearStartError: clearDictationStartError,
       status: dictationStatus,
       startDictation,
       cancelDictation,
@@ -1660,17 +1675,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       sendAfterTranscriptRef.current = false;
     }, [dictationStatus, isDictating, isDictationProcessing]);
 
-    const startDictationIfAvailable = useCallback(
-      () =>
-        startDictationIfAvailableImpl({
-          dictationUnavailableMessage,
-          canStartDictation,
-          toast,
-          startDictation,
-          exitFullscreen,
-        }),
-      [canStartDictation, dictationUnavailableMessage, startDictation, toast, exitFullscreen],
-    );
+    useEffect(() => {
+      if (showRealtimeOverlay) {
+        clearDictationStartError();
+      }
+    }, [showRealtimeOverlay, clearDictationStartError]);
+
+    const startDictationIfAvailable = useCallback(() => {
+      clearDictationStartError();
+      return startDictationIfAvailableImpl({
+        dictationUnavailableMessage,
+        canStartDictation,
+        toast,
+        startDictation,
+        exitFullscreen,
+      });
+    }, [
+      canStartDictation,
+      clearDictationStartError,
+      dictationUnavailableMessage,
+      startDictation,
+      toast,
+      exitFullscreen,
+    ]);
 
     const handleVoicePress = useCallback(
       () =>
@@ -2224,42 +2251,54 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
     const toolbar = useMemo(
       () => (
-        <View style={buttonRowStyle}>
-          {/* Toolbar left: attachment button + agent controls */}
-          <View style={styles.leftButtonGroup}>
-            <AttachmentDropdown
-              visible={mode.showAttachments}
-              isConnected={isConnected}
-              disabled={disabled}
-              attachButtonStyle={attachButtonStyle}
-              renderAttachButtonIcon={renderAttachButtonIcon}
-              attachmentMenuItems={attachmentMenuItems}
-              addAttachmentLabel={t("composer.input.addAttachment")}
-            />
-            {leftContent}
-          </View>
+        <>
+          {!isFullscreen && !showOverlay && dictationStartError ? (
+            <Text accessibilityRole="alert" style={styles.dictationStartError}>
+              {t(`message.dictation.${dictationStartError}`)}
+            </Text>
+          ) : null}
+          <View style={isFullscreen ? styles.hiddenToolbar : buttonRowStyle}>
+            {/* Toolbar left: attachment button + agent controls */}
+            <View style={styles.leftButtonGroup}>
+              {!isFullscreen && (
+                <AttachmentDropdown
+                  visible={mode.showAttachments}
+                  isConnected={isConnected}
+                  disabled={disabled}
+                  attachButtonStyle={attachButtonStyle}
+                  renderAttachButtonIcon={renderAttachButtonIcon}
+                  attachmentMenuItems={attachmentMenuItems}
+                  addAttachmentLabel={t("composer.input.addAttachment")}
+                />
+              )}
+              {leftContent}
+            </View>
 
-          {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
-          <View style={styles.rightButtonGroup}>
-            {beforeVoiceContent}
-            <VoiceButtonTooltip
-              visible={mode.showVoice}
-              onVoicePress={handleVoicePress}
-              isDictationStartEnabled={isDictationStartEnabled}
-              voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-              voiceButtonStyle={voiceButtonStyle}
-              renderVoiceButtonIcon={renderVoiceButtonIcon}
-              voiceTooltipText={voiceTooltipText}
-              isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-              voiceMuteToggleKeys={voiceMuteToggleKeys}
-              dictationToggleKeys={dictationToggleKeys}
-            />
-            <View style={styles.trailingDisc}>{sendButton}</View>
+            {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
+            {!isFullscreen && (
+              <View style={styles.rightButtonGroup}>
+                {beforeVoiceContent}
+                <VoiceButtonTooltip
+                  visible={mode.showVoice}
+                  onVoicePress={handleVoicePress}
+                  isDictationStartEnabled={isDictationStartEnabled}
+                  voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+                  voiceButtonStyle={voiceButtonStyle}
+                  renderVoiceButtonIcon={renderVoiceButtonIcon}
+                  voiceTooltipText={voiceTooltipText}
+                  isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+                  voiceMuteToggleKeys={voiceMuteToggleKeys}
+                  dictationToggleKeys={dictationToggleKeys}
+                />
+                <View style={styles.trailingDisc}>{sendButton}</View>
+              </View>
+            )}
           </View>
-        </View>
+        </>
       ),
       [
         buttonRowStyle,
+        isFullscreen,
         mode.showAttachments,
         isConnected,
         disabled,
@@ -2270,6 +2309,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         leftContent,
         beforeVoiceContent,
         mode.showVoice,
+        showOverlay,
+        dictationStartError,
         handleVoicePress,
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
@@ -2432,10 +2473,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "absolute",
     top: 0,
     right: 0,
+    paddingLeft: theme.spacing[2],
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
   },
+  unmeasuredFocusHint: { opacity: 0 },
   textInput: {
     // Preserve the controls when an ancestor constrains an overlong draft.
     flexShrink: 1,
@@ -2463,6 +2506,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  hiddenToolbar: { display: "none" },
   // The row keeps a full touch target's height; its disc-sized controls centre in it.
   buttonRow: {
     minHeight: TOOLBAR_CONTROL_HEIGHT,
@@ -2470,6 +2514,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  dictationStartError: {
+    alignSelf: "flex-end",
+    textAlign: "right",
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   leftButtonGroup: {
     minWidth: 0,

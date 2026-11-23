@@ -51,6 +51,31 @@ export function parseReleaseVersion(version) {
   };
 }
 
+export function compareReleaseVersions(leftVersion, rightVersion) {
+  const left = parseReleaseVersion(leftVersion);
+  const right = parseReleaseVersion(rightVersion);
+
+  for (const field of ["major", "minor", "patch"]) {
+    if (left[field] !== right[field]) {
+      return left[field] > right[field] ? 1 : -1;
+    }
+  }
+
+  if (!left.isPrerelease && !right.isPrerelease) {
+    return 0;
+  }
+  if (!left.isPrerelease) {
+    return 1;
+  }
+  if (!right.isPrerelease) {
+    return -1;
+  }
+  if (left.betaNumber === right.betaNumber) {
+    return 0;
+  }
+  return left.betaNumber > right.betaNumber ? 1 : -1;
+}
+
 export function formatReleaseVersion({ major, minor, patch, prerelease = null }) {
   assertInteger(major, "major version");
   assertInteger(minor, "minor version");

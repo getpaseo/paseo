@@ -481,6 +481,42 @@ describe("wire compatibility", () => {
     );
   });
 
+  test("returns turn metrics on the turn's footer row while legacy schemas ignore them", async () => {
+    const turnMetrics = [
+      { label: "Model", value: "GPT-5.4" },
+      { label: "Cache", value: "82%", tone: "ok" as const },
+    ];
+    const response = await emitTimelineResponse({
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          item: { type: "user_message", text: "prompt" },
+        },
+        {
+          seq: 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          item: { type: "assistant_message", text: "done" },
+          turnMetrics,
+        },
+      ],
+    });
+
+    expect(
+      FetchAgentTimelineResponseMessageSchema.parse(response).payload.entries.map(
+        (entry) => entry.turnMetrics ?? null,
+      ),
+    ).toEqual([null, turnMetrics]);
+    // A row without metrics sends no field at all.
+    expect(JSON.parse(JSON.stringify(response)).payload.entries[0]).not.toHaveProperty(
+      "turnMetrics",
+    );
+    expect(LegacyFetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual([
+      expect.not.objectContaining({ turnMetrics: expect.anything() }),
+      expect.not.objectContaining({ turnMetrics: expect.anything() }),
+    ]);
+  });
+
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {
     const workflow = new InMemoryWorktreeWorkflow();
 

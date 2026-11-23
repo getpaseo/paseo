@@ -397,11 +397,15 @@ export async function compilePlugin(entryPaths: {
   clientBundle: string | null;
   serverBundle: string | null;
 }> {
-  const [clientBundle, serverBundle] = await Promise.all([
-    entryPaths.client ? compileTarget(entryPaths.client, "client") : null,
-    entryPaths.server ? compileTarget(entryPaths.server, "server") : null,
+  // Settle both targets before rethrowing so the compiler worker has no build
+  // left in flight when it replies with an error and can stay warm for reuse.
+  const [clientResult, serverResult] = await Promise.allSettled([
+    entryPaths.client ? compileTarget(entryPaths.client, "client") : Promise.resolve(null),
+    entryPaths.server ? compileTarget(entryPaths.server, "server") : Promise.resolve(null),
   ]);
-  return { clientBundle, serverBundle };
+  if (clientResult.status === "rejected") throw clientResult.reason;
+  if (serverResult.status === "rejected") throw serverResult.reason;
+  return { clientBundle: clientResult.value, serverBundle: serverResult.value };
 }
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;

@@ -23,6 +23,7 @@ import {
   resolveEffectiveComposerThinkingOptionId,
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
+import { findThinkingOptionReplacement } from "@/provider-selection/resolve-agent-form";
 import { useDraftStore, type DraftInput } from "@/stores/draft-store";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
@@ -295,6 +296,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     options: draftOptions,
     shownOptions: draftShownOptions,
     setOption: setDraftOption,
+    retainLegacyUltracode,
     applyProfile: applyProfileOptions,
   } = useDraftProviderOptions({
     serverId: formState.selectedServerId,
@@ -314,6 +316,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     },
     [applyProfileOptions, formState],
   );
+  const setDraftThinking = useCallback(
+    (thinkingOptionId: string) =>
+      formState.setThinkingOptionFromUser(thinkingOptionId, retainLegacyUltracode()),
+    [formState, retainLegacyUltracode],
+  );
 
   const commandDraft = useMemo(
     () =>
@@ -332,8 +339,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       return null;
     }
 
-    return {
+    // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+    const draftForm = {
       ...formState,
+      selectedThinkingOptionId:
+        findThinkingOptionReplacement(
+          formState.availableThinkingOptions,
+          formState.selectedThinkingOptionId,
+        ) ?? formState.selectedThinkingOptionId,
+      setThinkingOptionFromUser: setDraftThinking,
+    };
+    return {
+      ...draftForm,
       workingDir,
       effectiveModeId,
       effectiveModelId,
@@ -342,7 +359,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       metadata,
       selectionSource: formState.selectionSource,
       agentControls: buildDraftAgentControls({
-        formState,
+        formState: draftForm,
+        effectiveModelId,
         optionControls: draftOptionControls,
         options: draftShownOptions,
         onSetOption: setDraftOption,
@@ -363,6 +381,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     draftOptions,
     draftShownOptions,
     setDraftOption,
+    setDraftThinking,
     applyDraftAgentProfile,
     formState,
     metadata,

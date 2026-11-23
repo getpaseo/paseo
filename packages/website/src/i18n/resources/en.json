@@ -124,6 +124,18 @@
       "metaTitle": "Antigravity Mobile and Desktop App, Open Source",
       "metaDescription": "Run your installed Antigravity CLI through Paseo. Watch agents work and review changes from your phone or desktop. Self-hosted, your code stays on your machine."
     },
+    "fx": {
+      "title": "Open source app for fx",
+      "subtitle": "Run Vercel Labs' fx on your machine and drive it from your phone or desktop.",
+      "metaTitle": "fx Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for fx, the coding agent from Vercel Labs. Run your installed fx CLI, watch agents work, and review changes from anywhere. Self-hosted."
+    },
+    "hoplite": {
+      "title": "Open source app for Hoplite",
+      "subtitle": "Drive Hoplite's cloud coding agent from your phone or desktop, next to your other agents.",
+      "metaTitle": "Hoplite Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Hoplite. Start Hoplite's cloud coding agent through your installed Hoplite CLI, watch it work, and review changes from anywhere."
+    },
     "copilot": {
       "title": "Open source app for GitHub Copilot",
       "subtitle": "Drive GitHub Copilot from your phone or desktop. Same account, same machine, ship without sitting down at your desk.",
@@ -333,9 +345,23 @@
     "metaTitle": "Supported agents – Every coding agent Paseo runs",
     "metaDescription": "Run Claude Code, Codex, OpenCode, Pi, OMP, Cursor, Muse Code, Antigravity, and dozens more coding agents from your phone. Self-hosted, your code stays on your machine.",
     "title": "Supported agents",
-    "intro": "Paseo supports many agents natively, it can run any <acp>ACP agent</acp> and you can implement new providers via <plugins>plugins</plugins>."
+    "intro": "Paseo supports many agents natively. It also runs any <acp>ACP agent</acp>, and you can add new providers with <plugins>plugins</plugins>."
   },
   "landing": {
+    "hubEyebrow": {
+      "product": "Paseo Hub",
+      "label": "Automations on your machines"
+    },
+    "eyebrows": {
+      "providers": "Providers",
+      "plugins": "Plugins",
+      "openSource": "Open source"
+    },
+    "closingCta": {
+      "eyebrow": "Get started",
+      "title": "Your agents, on every screen.",
+      "description": "Download the desktop app or run the daemon on any machine. Open source under Apache 2.0."
+    },
     "socialProof": {
       "title": "Loved by developers",
       "description": "See what developers are saying about Paseo",
@@ -357,8 +383,16 @@
       "remoteDescription": "Run Paseo on a home lab, or a cloud machine",
       "remoteCta": "Docs",
       "teamsTitle": "Teams and triggers",
-      "teamsDescription": "Share access or start work from GitHub, Slack, and Discord",
+      "teamsDescription": "Share daemons with your team and automate runs with Paseo Hub",
       "teamsCta": "Paseo Hub"
+    },
+    "hubSection": {
+      "description": "Run agents on your machines from GitHub, Linear, Slack, Discord, schedules, or webhooks.",
+      "flowTriggers": "Trigger sources",
+      "flowDaemons": "Your connected daemons",
+      "flowOpenSession": "Open live session in Paseo",
+      "exploreCta": "Explore Paseo Hub",
+      "docsCta": "Self-host docs"
     },
     "automation": {
       "title": "Built for automation",
@@ -381,7 +415,9 @@
       "plan": "I'll build it as a local plugin and install it.",
       "done": "Review queue is in your sidebar.",
       "panelTitle": "Review queue",
-      "libraryTitle": "400+ community plugins",
+      "libraryTitle": "Community plugins",
+      "libraryTitleCount_one": "{{count}} community plugin",
+      "libraryTitleCount_other": "{{count}} community plugins",
       "libraryDescription": "Built by developers on the same plugin API your agents use",
       "browse": "Browse plugins",
       "docs": "Plugin docs",
@@ -525,9 +561,9 @@
       "title": "Sponsor as a company",
       "description": "Support Paseo financially and get visibility for your company",
       "perMonth": "a month",
-      "homepage": "Your logo on the paseo.sh homepage and docs, around 70,000 visitors a month",
+      "homepage": "Your logo on the paseo.sh homepage and docs, around 100,000 visitors a month",
       "readme": "Your logo in the GitHub README, around 30,000 visitors a month",
-      "discord": "An announcement in the Discord, around 2,000 members",
+      "discord": "An announcement in the Discord, around 2,700 members",
       "x": "An announcement from me on X",
       "emailFirst": "Or email me first",
       "emailWhenOpen": "Email me to hear when a spot opens"
@@ -568,25 +604,213 @@
     "reddit": "Workflows and questions."
   },
   "hub": {
-    "metaTitle": "Paseo Hub - GitHub, Slack, and Discord triggers",
-    "metaDescription": "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
+    "metaTitle": "Paseo Hub - Agent automations on your machines",
+    "metaDescription": "Automate the agents on your Paseo daemons from GitHub, Linear, Slack, Discord, schedules, and webhooks. Self-host Hub or use the hosted service.",
     "title": "Paseo Hub",
-    "intro": "An optional service that sits above your daemons and gives them extra capabilities.",
-    "runIt": "Run it yourself or use the hosted service.",
+    "intro": "Automate coding agents and share daemons across your team. Every run executes on your own machines.",
+    "runIt": "Run it yourself under Apache 2.0 or use the hosted service.",
+    "hero": {
+      "getStarted": "Get started",
+      "selfHost": "Self-host"
+    },
+    "eyebrows": {
+      "architecture": "Architecture",
+      "pricing": "Pricing"
+    },
+    "automations": {
+      "title": "Automations from every source",
+      "description": "Triggers watch for events across your tools and start agents on your connected daemons."
+    },
+    "sources": {
+      "github": {
+        "name": "GitHub",
+        "description": "Issues, pull requests, and comments."
+      },
+      "linear": {
+        "name": "Linear",
+        "description": "Issues, assignments, and comments."
+      },
+      "slack": {
+        "name": "Slack",
+        "description": "Mentions in channels and threads."
+      },
+      "discord": {
+        "name": "Discord",
+        "description": "Mentions in channels and threads."
+      },
+      "schedules": {
+        "name": "Schedules",
+        "description": "Recurring runs in your timezone."
+      },
+      "webhooks": {
+        "name": "Webhooks",
+        "description": "Events from any service or script."
+      }
+    },
+    "demo": {
+      "shared": {
+        "tablistLabel": "Automation source previews",
+        "openInPaseo": "Open in Paseo",
+        "testsPassed": "tests passed",
+        "appBadge": "APP",
+        "docsLink": "Read {{source}} docs"
+      },
+      "slack": {
+        "alt": "Slack thread in #engineering showing mo mentioning @paseo-bot to list P0 issues and open a pull request",
+        "searchPlaceholder": "Search Paseo",
+        "channels": "Channels",
+        "apps": "Apps",
+        "channelTopic": "Core daemon, mobile & Hub",
+        "threadReplies": "3 replies",
+        "typing": "paseo-bot is typing...",
+        "composerPlaceholder": "Reply...",
+        "showIssues": "<mention/> show me the latest P0 issues",
+        "issuesOpen": "Three P0 issues are open:",
+        "createPr": "<mention/> create a pull request for the first one",
+        "ranOn": "Continued on <host>macbook-pro</host>. Opened <pr>getpaseo/paseo#1234</pr> with a fix for the terminal writes.",
+        "filesChanged": "3 files changed",
+        "caption": "Reply in the same thread to steer the running agent, or open the session in Paseo."
+      },
+      "github": {
+        "alt": "GitHub issue #2811 showing mo labeling an issue and paseo-bot opening pull request #2819 with passing checks",
+        "issueTitle": "Terminal output drops under sustained load",
+        "issueMeta": "opened this issue 14 minutes ago · 2 comments",
+        "authorBadge": "Owner",
+        "botBadge": "bot",
+        "openedAgo": "14 minutes ago",
+        "repliedAgo": "9 minutes ago",
+        "issueBody": "Fast output bursts drop frames when the PTY buffer fills up. <mention/> reproduce this and open a fix.",
+        "addedLabel": "added the",
+        "startedOn": "paseo-bot started on macbook-pro",
+        "botReply": "Reproduced with a 64 KB burst test on <host>macbook-pro</host> and opened <pr>#2819</pr> to bound and drain the write queue.",
+        "checksPassed": "All 4 checks passed",
+        "assignees": "Assignees",
+        "labels": "Labels",
+        "development": "Development",
+        "daemon": "Daemon",
+        "caption": "Label an issue or comment to start an agent on your daemon and open a pull request."
+      },
+      "linear": {
+        "alt": "Linear issue PAS-418 assigned to paseo-bot, running on devbox and linking pull request #2822",
+        "issueTitle": "Relay reconnect loop on Android after sleep",
+        "issueDescription": "After the phone wakes from Doze mode, the relay socket retries every 200ms without backoff.",
+        "activity": "Activity",
+        "assignedEvent": "assigned this issue to",
+        "runningOn": "Ran on <host>devbox</host> · Codex",
+        "traceLine": "Read relay/reconnect.ts, added jittered backoff and wake reset",
+        "botSummary": "Added exponential backoff with a wake-state reset in <code>relay/reconnect.ts</code> and regression tests. Pull request is ready for review.",
+        "properties": "Properties",
+        "status": "Status",
+        "priority": "Priority",
+        "assignee": "Assignee",
+        "creator": "Creator",
+        "labels": "Labels",
+        "daemon": "Daemon",
+        "caption": "Assign an issue to start an agent on your daemon and link the pull request back."
+      },
+      "discord": {
+        "alt": "Discord channel #engineering showing mo mentioning @paseo-bot and receiving a thread reply with pull request #2825",
+        "textChannels": "Text channels",
+        "channelTopic": "Daemon & CLI engineering",
+        "threadTitle": "Fix stale worktrees",
+        "time1": "Today at 10:12 AM",
+        "time2": "Today at 10:16 AM",
+        "userPrompt": "<mention/> fix the stale worktree branch cleanup bug from <issue/>",
+        "startedThread": "started a thread:",
+        "botStarted": "Running on <host>devbox</host> with OpenCode. Checking worktree close hooks.",
+        "botFinished": "Pruned orphaned branches when an agent workspace closes and added a test.",
+        "fieldHost": "Host",
+        "fieldDiff": "Changes",
+        "fieldChecks": "Checks",
+        "composerPlaceholder": "Message #engineering",
+        "caption": "Mention @paseo-bot in a channel to run an agent in a thread and report back."
+      },
+      "schedules": {
+        "alt": "Daily CI optimizer schedule running at 7:00 AM on devbox, opening pull request #2831 and posting a summary to Slack",
+        "active": "Active",
+        "jobTitle": "Daily CI optimizer",
+        "cadence": "Weekdays at 7:00 AM America/New_York",
+        "step1Title": "Scheduled run #42 analyzed the last 24h of CI",
+        "step1Detail": "Found <code>website-e2e</code> flaking in 18% of runs and cold Rust builds adding 2m 40s.",
+        "step2Title": "Opened pull request on devbox",
+        "metricRuntime": "Avg workflow",
+        "metricFlake": "e2e flake rate",
+        "metricCache": "Cargo cache",
+        "slackPosted": "Posted to Slack",
+        "slackSummary": "Morning CI report: cut average workflow time from <strong>7m 12s</strong> to <strong>4m 28s</strong> and fixed the e2e flake in <pr>#2831</pr>.",
+        "notifiedMo": "cc @mo",
+        "caption": "Run agents on a schedule in your timezone, open pull requests, and post to Slack."
+      },
+      "webhooks": {
+        "alt": "A terminal shows a webhook POST. Hub returns 202 Accepted and starts a Codex run on devbox.",
+        "runMeta": "devbox · Codex · getpaseo/paseo",
+        "statusDone": "PR opened",
+        "trace1": "Checked out <code>v0.19.4</code> in an isolated worktree",
+        "trace2": "Traced <code>ECONNRESET</code> to idle keepalive timeout in <code>relay/server.ts</code>",
+        "trace3": "Opened <pr/> with fix and regression test, all checks passed",
+        "triggeredBy": "webhook · sentry-alert",
+        "routedLine": "Hub routed to devbox · 118ms",
+        "caption": "Send a POST request from any script or service to start an agent on your daemon."
+      }
+    },
+    "authoring": {
+      "title": "Configure in the dashboard or ship as code",
+      "description": "Set up triggers in the browser or commit YAML files to your repository and deploy from the CLI.",
+      "dashboardTitle": "Dashboard and run activity",
+      "dashboardDescription": "Pick a daemon and working directory in the browser. Hub checks which providers, models, and modes the daemon offers as you configure a trigger.",
+      "triggersLabel": "Triggers:",
+      "triggersText": "Create, edit, or pause automations in form or YAML view.",
+      "validationLabel": "Live checks:",
+      "validationText": "See which providers, models, and modes the connected daemon offers.",
+      "activityLabel": "Run activity:",
+      "activityText": "Inspect deliveries, routing outcomes, outputs, and errors.",
+      "docsLink": "Read configuration docs"
+    },
+    "shape": {
+      "title": "Shared with your team, locked to your machines",
+      "description": "Hub connects to the daemons you already run. Your team shares triggers and history while your code stays on your machines.",
+      "triggersRow": "Automation sources",
+      "webhooks": "webhooks, mentions, and schedules",
+      "hub": "Hub",
+      "hubHosting": "Self-hosted or hosted",
+      "sameRpcs": "the same RPCs the app and CLI use",
+      "daemonsRow": "Your connected daemons",
+      "directOrRelay": "direct connection or encrypted relay",
+      "appsRow": "Paseo clients",
+      "desktop": "Desktop",
+      "web": "Web",
+      "mobile": "Mobile",
+      "cli": "CLI"
+    },
+    "guardrails": {
+      "optInTitle": "Opt-in execution",
+      "optInDescription": "The <code>hub.execute</code> permission is off by default on every daemon and granted per machine.",
+      "scopedTitle": "Scoped triggers",
+      "scopedDescription": "Event triggers support sender allowlists and resource filters. You can set GitHub permissions for each step and scope the Slack and Discord tools.",
+      "visibilityTitle": "Team visibility",
+      "visibilityDescription": "Owners, admins, and members share daemons, triggers, run history, and routing outcomes."
+    },
+    "agents": {
+      "title": "Runs the agents you already have",
+      "description": "Hub discovers the providers on each connected Paseo daemon. You can run Claude Code, Codex, OpenCode, Pi, and custom providers, including those from plugins."
+    },
     "pricing": {
-      "title": "Choose how to run Hub",
-      "unavailable": "The plan comparison is temporarily unavailable.",
-      "selfHost": "Self-host Hub",
+      "title": "Self-host or hosted",
+      "seatNote": "Run the open-source Hub yourself under Apache 2.0 or use the hosted service. Hub dashboard members and pending invitations count as seats.",
+      "unavailable": "The hosted plan comparison is temporarily unavailable.",
+      "selfHost": "Self-host docs",
       "selfHosted": "Self-hosted",
       "free": "Free",
-      "openSource": "/ open source",
+      "openSource": "/ Apache 2.0",
       "getStarted": "Get started",
-      "operateHub": "You operate Hub",
+      "operateHub": "Run with <code>npx @getpaseo/hub</code> or Docker Compose",
+      "allSources": "GitHub, Linear, Slack, Discord, schedules, and webhooks",
+      "managedSources": "GitHub, Linear, Slack, Discord, schedules, and webhooks",
       "ownApps": "Provider apps you create and control",
-      "openSourceFeature": "Open source",
+      "openSourceFeature": "Apache 2.0 open source",
       "unlimitedRuns": "Unlimited agent runs",
       "runsPerMonth": "{{value}} agent runs a month",
-      "unlimitedUnits": "Unlimited {{unit}}s",
+      "noSeatCap": "No seat cap",
       "units_one": "{{value}} {{unit}}",
       "units_other": "{{value}} {{unit}}s",
       "perMonth": "/ month",
@@ -595,71 +819,32 @@
       "perUnitMonths": "per {{unit}} / {{count}} months",
       "seat": "seat"
     },
-    "triggers": {
-      "title": "Triggers, running on your machines",
-      "description": "Mention the bot in GitHub, Slack, or Discord and an agent starts on your daemon.",
-      "github": "Issues, PRs, and reviews.",
-      "slack": "Channels and threads.",
-      "discord": "Channels and threads."
-    },
-    "demo": {
-      "showIssues": "<mention/> show me the latest P0 issues",
-      "issuesOpen": "Three P0 issues are open:",
-      "createPr": "<mention/> create a pull request for the first one",
-      "ranOn": "Ran on <host>macbook-pro</host>. Opened <pr>getpaseo/paseo#1234</pr> with a fix for the terminal writes.",
-      "filesChanged": "3 files changed",
-      "testsPassed": "tests passed",
-      "bot": "Bot",
-      "caption": "The agent ran on your daemon, with your keys."
-    },
-    "agents": {
-      "title": "Runs the agents you already have",
-      "description": "The Hub ships no agent of its own, so your team works with the providers, subscriptions, and skills already configured on your daemons."
-    },
-    "shape": {
-      "title": "Works with your existing infrastructure",
-      "description": "The Hub connects to the daemons you already run, and your apps keep connecting to those same daemons.",
-      "triggersRow": "Triggers and teammates",
-      "yourTeam": "Your team",
-      "futureIntegrations": "Future integrations",
-      "webhooks": "webhooks and mentions",
-      "hub": "Hub",
-      "hubHosting": "Self-hosted or managed",
-      "sameRpcs": "the same RPCs the app and CLI use",
-      "daemonsRow": "Your daemons",
-      "directOrRelay": "direct connection or relay",
-      "appsRow": "Paseo apps",
-      "desktop": "Desktop",
-      "web": "Web",
-      "mobile": "Mobile",
-      "cli": "CLI"
-    },
     "faq": {
       "title": "FAQ",
-      "whatQuestion": "What is the Hub?",
-      "whatAnswer": "A separate service that sits above your Paseo daemons. You connect one or more daemons to it and it gives them GitHub, Slack, and Discord triggers, with collaboration features planned. Paseo works fully without it.",
-      "separateQuestion": "Why is it a separate service instead of part of the daemon?",
-      "separateAnswer1": "The daemon stays one lean executable on one machine. The Hub talks to daemons over the same RPCs the app and the CLI use, so anyone can build their own hub on top of Paseo.",
-      "separateAnswer2": "It also has a different job. The Hub is meant to be exposed to the internet, shared with a team, and run multi-tenant. None of that belongs in a single machine daemon.",
+      "whatQuestion": "What is Paseo Hub?",
+      "whatAnswer": "Paseo Hub is a separate service that sits above your Paseo daemons. Connect one or more daemons to automate agent runs from GitHub, Linear, Slack, Discord, schedules, and webhooks, and share them with your team. Paseo works on its own without Hub.",
+      "separateQuestion": "Why is Hub a separate service instead of part of the daemon?",
+      "separateAnswer1": "The daemon stays a single process on one machine. Hub talks to daemons over the same RPCs that the app and CLI use, so anyone can build another service on top of Paseo.",
+      "separateAnswer2": "Hub also has a different job. It receives public webhooks, handles team access, and runs multi-tenant. None of that belongs inside a single-machine daemon.",
       "selfHostQuestion": "Can I run it myself?",
-      "selfHostAnswer": "Yes. Run <code>npx @getpaseo/hub</code> and complete setup in the browser. The source is available on <github>GitHub</github>, and the <guide>self-hosting guide</guide> covers more involved deployments.",
+      "selfHostAnswer": "Yes. Run <code>npx @getpaseo/hub</code> or start it with Docker Compose and finish setup in your browser. The Apache 2.0 source is on <github>GitHub</github>, and the <guide>self-hosting guide</guide> covers production deployments.",
       "needQuestion": "What do I need to run it?",
-      "needAnswer": "Node.js and a running Paseo daemon. Hub guides you through connecting the provider apps you want.",
+      "needAnswer": "You need Node.js or Docker and a running Paseo daemon. Hub walks you through connecting your daemons and provider apps.",
       "hostedQuestion": "Is there a hosted version?",
-      "hostedAnswer": "Yes. The hosted service runs the same Hub software you can self-host.",
-      "plannedQuestion": "What else is planned?",
-      "plannedIntro": "Not built yet, listed so you know where this is going.",
-      "plannedProvisioning": "Provisioning daemons for your team",
-      "plannedSharing": "Sharing settings and skills across a team",
-      "plannedIntegrations": "More integrations",
+      "hostedAnswer": "Yes. The <hosted>hosted service</hosted> runs the same open-source Hub software that you can self-host. Hub dashboard members and pending invitations count as seats.",
+      "codeQuestion": "Can Hub run code on my machines?",
+      "codeAnswer": "Only on daemons where you grant the <code>hub.execute</code> permission. Enrolling a daemon does not enable execution by default, and you can revoke the permission from the machine at any time.",
       "moveQuestion": "Do I have to move my team to a new tool?",
-      "moveAnswer": "No. The Hub works in the Slack or Discord your team already uses, and on the daemons you already run. When the work gets serious you switch to the Paseo app on those same daemons.",
+      "moveAnswer": "No. Hub runs from GitHub, Linear, Slack, Discord, schedules, and webhooks on the daemons you already use. When you want to inspect or steer a run directly, open the live session in Paseo on desktop or mobile.",
       "agentsQuestion": "Which agents does it run?",
-      "agentsAnswer": "Whichever ones your daemons have configured, with your own subscriptions and skills. The Hub ships no agent of its own.",
-      "codeQuestion": "Can the Hub run code on my machines?",
-      "codeAnswer": "Yes, on the daemons you connect to it and nowhere else. That is the whole point of triggers, and it's why access to the beta stays small and trusted.",
-      "accessQuestion": "How do I get access?",
-      "accessAnswer": "You can self-host today or <hosted>sign in to Hosted Hub</hosted> for a free account. When you want more agent runs or more seats, upgrade from Billing inside Hub."
+      "agentsAnswer": "Hub runs the providers configured on your connected Paseo daemons, including custom providers from plugins. Agents use the subscriptions, models, and skills on those machines.",
+      "plannedQuestion": "What else is planned?",
+      "plannedIntro": "These capabilities are not built yet, and are listed so you know where Hub is heading.",
+      "plannedProvisioning": "Provisioning remote daemons for your team",
+      "plannedSharing": "Sharing settings and skills across a team",
+      "plannedIntegrations": "Additional provider integrations",
+      "accessQuestion": "How do I get started?",
+      "accessAnswer": "Self-host Hub with <code>npx @getpaseo/hub</code> or <hosted>sign in to hosted Hub</hosted> with a free account. Upgrade from Billing inside Hub when you need more runs or seats."
     }
   },
   "changelog": {

@@ -7,6 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "codex",
     label: "Codex",
     icon: "icon.svg",
+    providers: ["codex", "opencode", "pi", "omp"],
     input: inputSchema,
     discover: (scope) => discover(scope),
     fetch: fetchUsage,
