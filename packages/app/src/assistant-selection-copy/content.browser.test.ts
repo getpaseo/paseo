@@ -1087,6 +1087,21 @@ describe("quote copy", () => {
     expect(content?.plainText).toBe("Before\n\n> [!WARNING]\n> Do not deploy.\n\nAfter");
   });
 
+  it("copies a selection that starts inside an admonition without its callout marker", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+    rendered.setAttribute("data-testid", "assistant-message");
+
+    const content = copyBetween(
+      [tokenText(rendered, "Do not deploy."), "Do not ".length],
+      [tokenText(rendered, "After"), "After".length],
+    );
+
+    expect(content?.plainText).toBe("deploy.\n\nAfter");
+  });
+
   it("copies a rendered Mermaid diagram as its fence", () => {
     const quote = document.createElement("blockquote");
     quote.innerHTML = `<p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid"><svg aria-label="diagram"></svg></div><p>After</p>`;

@@ -757,13 +757,16 @@ function numberOrderedListItems(list: Element, start: number): void {
 /**
  * The library renders an admonition as a box with a generated title. Keep it a quote
  * with its type, so it copies as its callout source rather than as the title's prose.
+ * A selection that starts inside the body has no title and copies as prose.
  */
 function restoreAdmonitions(container: HTMLElement): void {
   const admonitions = Array.from(
     container.querySelectorAll(`[${MARKDOWN_ADMONITION_TYPE_ATTRIBUTE}]`),
   );
   for (const admonition of admonitions.toReversed()) {
-    admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`)?.remove();
+    const title = admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`);
+    if (!title) continue;
+    title.remove();
     const quote = document.createElement("blockquote");
     quote.setAttribute(
       MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,
