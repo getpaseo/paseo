@@ -221,6 +221,7 @@ class ObservedPlacements {
       this.started = true;
     }
     await this.service.start();
+    await this.service.rootWatchesReady();
   }
 
   async add(spec: ProjectSpec): Promise<void> {

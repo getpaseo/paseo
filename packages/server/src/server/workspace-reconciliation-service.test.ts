@@ -175,6 +175,57 @@ describe("WorkspaceReconciliationService", () => {
     tempDirs.length = 0;
   });
 
+  test("starts without waiting on a project root whose access check never returns", async () => {
+    const readableRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-root-ok-")));
+    const blockedRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-root-blocked-")));
+    tempDirs.push(readableRoot, blockedRoot);
+    const { projects, projectRegistry, workspaceRegistry } = createTestRegistries();
+    for (const [projectId, rootPath] of [
+      ["p-ok", readableRoot],
+      ["p-blocked", blockedRoot],
+    ] as const) {
+      projects.set(
+        projectId,
+        createPersistedProjectRecord({
+          projectId,
+          rootPath,
+          projectKey: canonicalLocalProjectKey(rootPath),
+          kind: "non_git",
+          displayName: projectId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+    let answerBlockedRoot: () => void = () => {};
+    const watched: string[] = [];
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      // A macOS privacy prompt nobody answers: the open never returns until it does.
+      probeProjectRoot: (rootPath) =>
+        rootPath === blockedRoot
+          ? new Promise<void>((resolve) => (answerBlockedRoot = resolve))
+          : Promise.resolve(),
+      watchProjectRoot: (rootPath) => {
+        watched.push(rootPath);
+        return { close: () => {} };
+      },
+    });
+    try {
+      await service.start();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watched).toEqual([readableRoot]);
+
+      answerBlockedRoot();
+      await service.rootWatchesReady();
+      expect(watched.sort()).toEqual([readableRoot, blockedRoot].sort());
+    } finally {
+      service.dispose();
+    }
+  });
+
   test("does not emit a duplicate archive when user archival commits before reconciliation's archive", async () => {
     const rootPath = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-archive-commit-")));
     tempDirs.push(rootPath);
