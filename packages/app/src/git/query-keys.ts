@@ -27,8 +27,18 @@ export function checkoutDiffQueryKey(
   mode: "uncommitted" | "base" | "all",
   baseRef?: string,
   ignoreWhitespace?: boolean,
+  paths?: readonly string[],
 ) {
-  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
+  const normalizedPaths = paths ? [...new Set(paths)].sort() : undefined;
+  return [
+    "checkoutDiff",
+    serverId,
+    cwd,
+    mode,
+    baseRef ?? "",
+    ignoreWhitespace === true,
+    ...(normalizedPaths ? ["paths", JSON.stringify(normalizedPaths)] : []),
+  ] as const;
 }
 
 export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {

@@ -93,3 +93,19 @@ it("settles a comparison without a base and leaves Uncommitted available", async
   expect(checkoutDiffComparisonError({ mode: "base" })).toMatchObject({ code: "INVALID_COMPARE" });
   expect(checkoutDiffComparisonError({ mode: "uncommitted" })).toBeNull();
 });
+
+it("isolates checkoutDiffQueryKey by normalized sorted paths", async () => {
+  const { checkoutDiffQueryKey } = await import("./query-keys");
+  const unscoped = checkoutDiffQueryKey("s1", "/repo", "uncommitted", undefined, false);
+  const scopedA = checkoutDiffQueryKey("s1", "/repo", "uncommitted", undefined, false, [
+    "b.ts",
+    "a.ts",
+    "a.ts",
+  ]);
+  const scopedB = checkoutDiffQueryKey("s1", "/repo", "uncommitted", undefined, false, [
+    "a.ts",
+    "b.ts",
+  ]);
+  expect(scopedA).toEqual(scopedB);
+  expect(scopedA).not.toEqual(unscoped);
+});
