@@ -11,7 +11,7 @@ import {
   startGitCommandTrace,
   submitGitCommandTrace,
 } from "./git-command-trace.js";
-import { isLinkedBareRepository } from "./linked-bare-repository.js";
+import { readSafeBareRepositorySupport, resolveGitDiscovery } from "./git-repository-discovery.js";
 import { spawnProcess } from "./spawn.js";
 import {
   GitProcessScheduler,
@@ -303,7 +303,7 @@ function executeGitCommand<Output>(
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
-  const spawnCommand = (configArgs: string[]) => {
+  const spawnCommand = (launch: GitLaunch) => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -318,7 +318,10 @@ function executeGitCommand<Output>(
       const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const acceptExitCodes = options.acceptExitCodes ?? [0];
       const command = formatGitCommand(args);
-      const envOverlay = mergeEnvOverlays(options.env, options.envOverlay);
+      const envOverlay = mergeEnvOverlays(
+        mergeEnvOverlays(options.env, options.envOverlay),
+        launch.envOverlay,
+      );
       const startedAt = Date.now();
       beginGitCommandMetric(metricsState);
       const logger = typeof options.logger?.trace === "function" ? options.logger : undefined;
@@ -408,7 +411,7 @@ function executeGitCommand<Output>(
 
       let child: ReturnType<typeof spawnProcess>;
       try {
-        child = spawnProcess("git", [...configArgs, ...args], {
+        child = spawnProcess("git", [...launch.configArgs, ...args], {
           cwd: options.cwd,
           envOverlay,
           shell: false,
@@ -568,10 +571,10 @@ function executeGitCommand<Output>(
     });
     return { result: resultPromise, exited };
   };
-  // The process slot stays held through the config lookup because `exited`
-  // settles only after the spawned process exits. `resolveGitConfigArgs` never rejects.
+  // The process slot stays held through the launch lookup because `exited`
+  // settles only after the spawned process exits. `resolveGitLaunch` never rejects.
   const startCommand = () => {
-    const spawned = resolveGitConfigArgs(options.cwd).then(spawnCommand);
+    const spawned = resolveGitLaunch(options).then(spawnCommand);
     return {
       result: spawned.then((scheduled) => scheduled.result),
       exited: spawned.then((scheduled) => scheduled.exited),
@@ -585,16 +588,30 @@ function executeGitCommand<Output>(
   return promise;
 }
 
+interface GitLaunch {
+  configArgs: string[];
+  envOverlay: ProcessEnvRecord;
+}
+
 // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
 // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
 // `core.fsmonitor=false` prevents repository config from launching a command.
-// `safe.bareRepository=explicit` stops git from adopting a directory that only
-// looks like a bare repository, at `cwd` or above it. A bare repository with
-// linked worktrees still works when `cwd` is that repository.
-async function resolveGitConfigArgs(cwd: string): Promise<string[]> {
-  const args = ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false"];
-  if (await isLinkedBareRepository(cwd)) return args;
-  return [...args, "-c", "safe.bareRepository=explicit"];
+async function resolveGitLaunch(options: GitCommandOptions): Promise<GitLaunch> {
+  const discovery = await resolveGitDiscovery({
+    cwd: options.cwd,
+    gitDirSet: Boolean(options.envOverlay?.GIT_DIR ?? options.env?.GIT_DIR ?? process.env.GIT_DIR),
+    safeBareRepositorySupported: await readSafeBareRepositorySupport(),
+  });
+  return {
+    configArgs: [
+      "-c",
+      "core.quotepath=false",
+      "-c",
+      "core.fsmonitor=false",
+      ...discovery.configArgs,
+    ],
+    envOverlay: discovery.envOverlay,
+  };
 }
 
 export const runGitCommand: RunGitCommand = (args, options) =>
