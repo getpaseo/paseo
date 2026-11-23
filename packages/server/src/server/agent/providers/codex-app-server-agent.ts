@@ -5312,6 +5312,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
+    if (this.interruptRecovery) {
+      throw new Error(
+        "Codex cannot receive this response while its runtime is stopping. Try Stop again.",
+      );
+    }
     if (this.asyncQuestions.hasPending(requestId)) {
       return this.respondToAsyncQuestion(requestId, response);
     }
@@ -5319,7 +5324,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!pending) {
       throw new Error(`No pending Codex app-server permission request with id '${requestId}'`);
     }
-    const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
+    const pendingRequest = this.pendingPermissions.get(requestId);
 
     if (pending.kind === "plan") {
       return this.handlePlanPermissionResponse({ requestId, response, pending, pendingRequest });
@@ -5439,7 +5444,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     requestId: string;
     response: AgentPermissionResponse;
     pending: CodexPendingPermissionHandler;
-    pendingRequest: AgentPermissionRequest | null;
+    pendingRequest: AgentPermissionRequest | undefined;
   }): AgentPermissionResult | void {
     const { requestId, response, pending, pendingRequest } = params;
     let followUpPrompt: string | undefined;

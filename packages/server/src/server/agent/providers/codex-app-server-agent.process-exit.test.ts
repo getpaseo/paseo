@@ -760,16 +760,45 @@ test("failed Codex process retirement retains ownership and Stop can retry it", 
     void run.catch(() => undefined);
     const start = await stalled.waitForTurnStart();
     stalled.startsTurn({ threadId: String(start.threadId), turnId: "unresponsive-turn" });
+    stalled.requestUserInput({
+      threadId: String(start.threadId),
+      turnId: "unresponsive-turn",
+      itemId: "pending-question",
+      questions: [
+        { id: "choice", header: "Choice", question: "Which?", options: [{ label: "One" }] },
+      ],
+    });
+    const requestId = "permission-pending-question";
+    const pendingRequests = () => session.getPendingPermissions?.().map((request) => request.id);
+    const questionStatuses = () =>
+      events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "pending-question"
+          ? [event.item.status]
+          : [],
+      );
+    await expect.poll(pendingRequests).toEqual([requestId]);
+
     await expect(session.interrupt()).rejects.toThrow("did not report exit after SIGKILL");
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     await expect(session.startTurn("must not run concurrently")).rejects.toMatchObject({
       deliveryOutcome: "not_submitted",
     });
+    await expect(session.respondToPermission(requestId, { behavior: "allow" })).rejects.toThrow(
+      "Try Stop again",
+    );
+    expect(pendingRequests()).toEqual([requestId]);
+    expect(questionStatuses()).toEqual(["running"]);
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([]);
+
     stalled.child.exitCode = 0;
     stalled.child.emit("exit", 0, null);
     await session.interrupt();
     await expect(run).resolves.toMatchObject({ sessionId: start.threadId, finalText: "" });
     expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    expect(pendingRequests()).toEqual([]);
+    expect(questionStatuses()).toEqual(["running", "canceled"]);
   } finally {
     stalled.child.exitCode = 0;
     await session.close();
