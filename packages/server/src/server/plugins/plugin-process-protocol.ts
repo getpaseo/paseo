@@ -28,6 +28,7 @@ export interface PluginProviderMetadata {
   label: string;
   description?: string;
   iconPath?: string;
+  docsUrl?: string;
 }
 
 export interface PluginProviderInstallationMetadata {
@@ -42,6 +43,7 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   provider?: string;
+  providers?: string[];
   icon?: string;
 }
 
@@ -176,6 +178,7 @@ const providerMetadataSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    docsUrl: z.string().optional(),
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
@@ -197,6 +200,7 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     provider: z.string().min(1).optional(),
+    providers: z.array(z.string().min(1)).optional(),
     icon: z.string().optional(),
   })
   .strict();

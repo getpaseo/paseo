@@ -606,12 +606,16 @@ export default function contribute(server) {
     const pending = client.createWorkspace({
       source: { kind: "worktree", cwd: repository, branchName: "concurrent" },
     });
+    // Cleanup closes the client if the marker never arrives.
+    void pending.catch(() => undefined);
     await expect
-      .poll(() =>
-        stat(path.join(root, "manager-started")).then(
-          () => true,
-          () => false,
-        ),
+      .poll(
+        () =>
+          stat(path.join(root, "manager-started")).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
       )
       .toBe(true);
     const concurrent = path.join(root, "concurrent-manual");

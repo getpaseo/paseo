@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ExternalLink, type ExternalLinkProps } from "@/components/ui/external-link";
+import { HeadingTrailing } from "./heading-trailing";
 import { SettingsInfoTip } from "./settings-info-tip";
 import { settingsStyles } from "@/styles/settings";
 
@@ -67,7 +68,7 @@ export function SettingsSection({
             <ExternalLink {...link} />
           </View>
         ) : null}
-        {trailing}
+        <HeadingTrailing>{trailing}</HeadingTrailing>
       </View>
       <View style={styles.content}>{children}</View>
     </View>

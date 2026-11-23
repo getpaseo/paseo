@@ -6,6 +6,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -229,7 +230,11 @@ export async function startIsolatedHostDaemon(
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     };
-    const spawned = publishedPackageRoot
+    const builtSupervisor = path.join(serverDir, "dist/scripts/supervisor-entrypoint.js");
+    const useBuiltSupervisor = Boolean(
+      publishedPackageRoot || (process.env.CI && existsSync(builtSupervisor)),
+    );
+    const spawned = useBuiltSupervisor
       ? spawn(process.execPath, ["dist/scripts/supervisor-entrypoint.js"], spawnOptions)
       : spawnTsx("scripts/supervisor-entrypoint.ts", ["--dev"], spawnOptions);
 

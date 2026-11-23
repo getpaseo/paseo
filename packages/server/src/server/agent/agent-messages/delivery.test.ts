@@ -1,4 +1,4 @@
-import { AgentTurnBusyError } from "../agent-prompt.js";
+import { AgentTurnBusyError, AgentTurnChangedError } from "../agent-prompt.js";
 import { expect, test } from "vitest";
 import { createAgentMessageDelivery, parseAgentMessages } from "./index.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
@@ -24,7 +24,7 @@ function createClock() {
   };
 }
 
-test("a queued child report and completion reach the recipient in one steer after two quiet seconds", async () => {
+test("a queued child report and completion reach the recipient in one prompt after two quiet seconds", async () => {
   const clock = createClock();
   const sent: Array<{ recipientId: string; prompt: AgentPromptInput }> = [];
   const delivery = createAgentMessageDelivery({
@@ -345,7 +345,7 @@ test("messages wait across quiet windows and batch after the recipient turn ends
     messageId: "finish",
     source: { kind: "agent-notification", agentId: "child", event: "finished" },
     prompt: "finished",
-    activeTurnBehavior: "steer",
+    activeTurnBehavior: "queue",
   });
   clock.advance(2000);
   await Promise.resolve();
@@ -996,7 +996,11 @@ interface Dispatched {
 
 /** One recipient with a running turn, observed the way the daemon wires the queue. */
 function createRecipient(
-  options: { running?: boolean; outOfBand?: (prompt: AgentPromptInput) => boolean } = {},
+  options: {
+    running?: boolean;
+    canSteer?: boolean;
+    outOfBand?: (prompt: AgentPromptInput) => boolean;
+  } = {},
 ) {
   const clock = createClock();
   const sent: Dispatched[] = [];
@@ -1012,6 +1016,7 @@ function createRecipient(
   const delivery = createAgentMessageDelivery({
     schedule: clock.schedule,
     isRunning: () => running,
+    canSteer: () => options.canSteer ?? true,
     subscribe: (listener) => {
       settleListeners.add(listener);
       return () => settleListeners.delete(listener);
@@ -1057,7 +1062,11 @@ function createRecipient(
     delivery,
     settle,
     ids: () => sent.flatMap((dispatch) => dispatch.ids),
-    send(activeTurnBehavior: "steer" | "interrupt", messageId = `m${next++}`, agentId = "sender") {
+    send(
+      activeTurnBehavior: "queue" | "steer" | "interrupt",
+      messageId = `m${next++}`,
+      agentId = "sender",
+    ) {
       return delivery.enqueue({
         recipientId: "recipient",
         source: { kind: "agent-message", agentId },
@@ -1157,10 +1166,10 @@ function createRecipient(
 }
 
 test.each(["sender", "another-sender"])(
-  "a steer that waited ten minutes is delivered ahead of a later interrupt from %s, never after it",
+  "a queued message that waited ten minutes is delivered ahead of a later interrupt from %s, never after it",
   async (interrupter) => {
     const recipient = createRecipient();
-    recipient.send("steer", "go-ahead", "sender");
+    recipient.send("queue", "go-ahead", "sender");
     for (let elapsed = 0; elapsed < 600_000; elapsed += 2000) await recipient.tick();
     expect(recipient.sent).toEqual([]);
 
@@ -1178,11 +1187,11 @@ test.each(["sender", "another-sender"])(
   },
 );
 
-test("a steer admitted after an interrupt waits for the replacement turn to end", async () => {
+test("a queued message admitted after an interrupt waits for the replacement turn to end", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "A");
+  recipient.send("queue", "A");
   recipient.send("interrupt", "B");
-  recipient.send("steer", "C");
+  recipient.send("queue", "C");
   await recipient.tick();
   expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["A", "B"]]);
 
@@ -1192,6 +1201,158 @@ test("a steer admitted after an interrupt waits for the replacement turn to end"
   await recipient.delivery.close();
 });
 
+test("a steer enters the running turn at admission and carries the messages queued before it", async () => {
+  const recipient = createRecipient();
+  recipient.send("queue", "report");
+  recipient.send("steer", "course-correction");
+  await recipient.settle();
+  expect(recipient.sent).toEqual([
+    {
+      ids: ["report", "course-correction"],
+      behavior: "steer",
+      idleOnly: false,
+      mode: undefined,
+    },
+  ]);
+
+  await recipient.endTurn();
+  await recipient.tick();
+  expect(recipient.sent).toHaveLength(1);
+  await recipient.delivery.close();
+});
+
+test("a steer that misses the turn's end goes again with the messages it carries", async () => {
+  const clock = createClock();
+  let running = true;
+  const sent: Array<{ ids: readonly string[]; behavior: string }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    dispatch: async (request) => {
+      if (running) {
+        // The turn ended before the provider took the steer.
+        running = false;
+        throw new AgentTurnChangedError("Active turn changed before steering could be delivered");
+      }
+      sent.push({ ids: request.messageIds, behavior: request.activeTurnBehavior });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "recipient",
+    source: { kind: "agent-message" as const, agentId: "sender" },
+    prompt: "message",
+  };
+  const report = delivery.enqueue({ ...message, messageId: "report", activeTurnBehavior: "queue" });
+  const steer = delivery.enqueue({ ...message, messageId: "steer", activeTurnBehavior: "steer" });
+  await expect(Promise.all([report.dispatched, steer.dispatched])).resolves.toEqual([
+    "turn_started",
+    "turn_started",
+  ]);
+  expect(sent).toEqual([{ ids: ["report", "steer"], behavior: "steer" }]);
+  await delivery.close();
+});
+
+test("a queued message sent after a steer waits for the turn to end", async () => {
+  const recipient = createRecipient();
+  recipient.send("steer", "now");
+  recipient.send("queue", "later");
+  await recipient.tick();
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["now"]]);
+
+  await recipient.endTurn();
+  expect(recipient.sent.map((dispatch) => dispatch.ids)).toEqual([["now"], ["later"]]);
+  expect(recipient.sent[1]).toMatchObject({ idleOnly: true });
+  await recipient.delivery.close();
+});
+
+test("a message without a behavior is queued", async () => {
+  const recipient = createRecipient();
+  const receipt = recipient.delivery.enqueue({
+    recipientId: "recipient",
+    source: { kind: "agent-message", agentId: "sender" },
+    prompt: "report",
+  });
+  expect(receipt.activeTurnBehavior).toBe("queue");
+  await recipient.tick();
+  expect(recipient.sent).toEqual([]);
+  await recipient.delivery.close();
+});
+
+test.each([
+  {
+    behavior: "queue",
+    running: false,
+    canSteer: true,
+    guidance: "Queued. The agent is idle, so your message starts a turn in about 2 seconds.",
+  },
+  {
+    behavior: "queue",
+    running: true,
+    canSteer: true,
+    guidance:
+      'Queued, not delivered yet. The agent is working and reads your message when its current turn ends. If the message cannot wait, send a short follow-up with activeTurnBehavior "steer" (it joins the running turn) or "interrupt" (it stops the turn and starts a new one). The follow-up carries this message ahead of it, so do not send this message again.',
+  },
+  {
+    behavior: "queue",
+    running: true,
+    canSteer: false,
+    guidance:
+      'Queued, not delivered yet. The agent is working and reads your message when its current turn ends. If the message cannot wait, send a short follow-up with activeTurnBehavior "interrupt" (it stops the turn and starts a new one). This agent\'s provider cannot steer, so "steer" also stops the turn. The follow-up carries this message ahead of it, so do not send this message again.',
+  },
+  {
+    behavior: "steer",
+    running: true,
+    canSteer: true,
+    guidance:
+      "Steering the running turn. The agent reads your message at its next step and keeps working.",
+  },
+  {
+    behavior: "steer",
+    running: true,
+    canSteer: false,
+    guidance:
+      "This agent's provider cannot steer, so your message interrupts the running turn. A new turn starts with your message.",
+  },
+  {
+    behavior: "interrupt",
+    running: true,
+    canSteer: true,
+    guidance: "Interrupting the running turn. A new turn starts with your message.",
+  },
+  {
+    behavior: "steer",
+    running: false,
+    canSteer: true,
+    guidance: "The agent is idle, so your message starts a turn now.",
+  },
+  {
+    behavior: "interrupt",
+    running: false,
+    canSteer: false,
+    guidance: "The agent is idle, so your message starts a turn now.",
+  },
+] as const)(
+  "the receipt for $behavior (running: $running, can steer: $canSteer) tells the sender what happens",
+  async ({ behavior, running, canSteer, guidance }) => {
+    const recipient = createRecipient({ running, canSteer });
+    const receipt = recipient.delivery.enqueue({
+      recipientId: "recipient",
+      source: { kind: "agent-message", agentId: "sender" },
+      prompt: "report",
+      activeTurnBehavior: behavior,
+    });
+    expect({ behavior: receipt.activeTurnBehavior, guidance: receipt.guidance }).toEqual({
+      behavior,
+      guidance,
+    });
+    await recipient.delivery.close();
+  },
+);
+
 test("an interrupt is dispatched at admission while other messages keep arriving", async () => {
   const recipient = createRecipient();
   recipient.send("interrupt", "pause");
@@ -1199,7 +1360,7 @@ test("an interrupt is dispatched at admission while other messages keep arriving
   expect(recipient.ids()).toEqual(["pause"]);
   // Reports that keep the quiet window open cannot hold a later interrupt back either.
   for (let i = 0; i < 5; i++) {
-    recipient.send("steer", `report-${i}`);
+    recipient.send("queue", `report-${i}`);
     await recipient.tick(1900);
   }
   recipient.send("interrupt", "pause-again");
@@ -1214,7 +1375,7 @@ test("an interrupt is dispatched at admission while other messages keep arriving
 test("steady arrivals cannot keep an idle recipient's quiet window open past ten seconds", async () => {
   const recipient = createRecipient({ running: false });
   for (let i = 0; i < 6; i++) {
-    recipient.send("steer", `report-${i}`);
+    recipient.send("queue", `report-${i}`);
     await recipient.tick(1900);
   }
   // 11.4 seconds of arrivals under two seconds apart: the window closed at ten.
@@ -1225,7 +1386,7 @@ test("steady arrivals cannot keep an idle recipient's quiet window open past ten
 });
 
 test("the provider receives every prompt in admission order for every short interleaving", async () => {
-  const actions = ["steer", "interrupt", "person", "stop", "end-turn", "tick"] as const;
+  const actions = ["queue", "steer", "interrupt", "person", "stop", "end-turn", "tick"] as const;
   const length = 5;
   for (let scenario = 0; scenario < actions.length ** length; scenario++) {
     const recipient = createRecipient();
@@ -1259,7 +1420,7 @@ test("the provider receives every prompt in admission order for every short inte
 });
 
 test("order and Stop hold for every short interleaving while the provider is slow to answer", async () => {
-  const actions = ["steer", "interrupt", "person", "stop", "tick", "hold", "answer"] as const;
+  const actions = ["queue", "interrupt", "person", "stop", "tick", "hold", "answer"] as const;
   const length = 5;
   for (let scenario = 0; scenario < actions.length ** length; scenario++) {
     // The provider is offered waiting messages as commands, so closed windows line up queue
@@ -1334,7 +1495,7 @@ test("order and Stop hold for every short interleaving while the provider is slo
 
 test("a person's prompt carries the queued messages ahead of it in the same prompt", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "go-ahead");
+  recipient.send("queue", "go-ahead");
   await recipient.tick();
 
   const { prompt, result } = await recipient.person("pause it", "person-1");
@@ -1356,7 +1517,7 @@ test("a person's prompt is untouched when nothing is queued, and a command trave
   const recipient = createRecipient();
   expect((await recipient.person("hello", "person-1")).prompt).toBe("hello");
 
-  recipient.send("steer", "report");
+  recipient.send("queue", "report");
   await recipient.tick();
   // Providers parse commands from raw text, so the queue stays where it is.
   expect((await recipient.person("/compact", "person-2")).prompt).toBe("/compact");
@@ -1368,7 +1529,7 @@ test("a person's prompt is untouched when nothing is queued, and a command trave
 
 test("queued messages survive a person's prompt that fails to send", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "report");
+  recipient.send("queue", "report");
   await recipient.tick();
   const failure = new Error("provider refused the prompt");
   expect((await recipient.person("hello", "person-1", { fail: failure })).result).toBe(failure);
@@ -1380,7 +1541,7 @@ test("queued messages survive a person's prompt that fails to send", async () =>
 
 test("Stop holds the messages queued before it until the recipient's next prompt", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "go-ahead");
+  recipient.send("queue", "go-ahead");
   await recipient.tick();
 
   await recipient.stop();
@@ -1393,7 +1554,7 @@ test("Stop holds the messages queued before it until the recipient's next prompt
   await recipient.delivery.waitForDispatch("recipient", new AbortController().signal);
 
   // A message admitted after the Stop is a new prompt: the held one goes ahead of it.
-  recipient.send("steer", "later");
+  recipient.send("queue", "later");
   await recipient.tick();
   expect(recipient.sent).toEqual([
     { ids: ["go-ahead", "later"], behavior: "steer", idleOnly: true, mode: undefined },
@@ -1403,7 +1564,7 @@ test("Stop holds the messages queued before it until the recipient's next prompt
 
 test("a person's prompt after Stop carries the held messages", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "go-ahead");
+  recipient.send("queue", "go-ahead");
   await recipient.stop();
 
   const { prompt } = await recipient.person("continue", "person-1");
@@ -1417,7 +1578,7 @@ test("a person's prompt after Stop carries the held messages", async () => {
 
 test("a turn that ends on its own still releases the queue", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "report");
+  recipient.send("queue", "report");
   await recipient.tick();
   await recipient.endTurn();
   expect(recipient.ids()).toEqual(["report"]);
@@ -1431,9 +1592,9 @@ test("a prompt's place in line is decided when it is sent, not when the provider
   await recipient.settle();
 
   // All three arrive while the provider has not answered the first dispatch yet.
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   const person = recipient.person("stop and wait", "person-1");
-  recipient.send("steer", "newer");
+  recipient.send("queue", "newer");
   await provider.accept();
 
   expect((await person).ids).toEqual(["older", "person-1"]);
@@ -1449,7 +1610,7 @@ test("an interrupt sent after a person's prompt does not take older messages pas
   recipient.send("interrupt", "first");
   await recipient.settle();
 
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   const person = recipient.person("stop and wait", "person-1");
   recipient.send("interrupt", "newer");
   await provider.accept();
@@ -1468,12 +1629,12 @@ test("a queue step already in line does not pick up an interrupt sent after a pe
   const provider = recipient.holdProviderAnswer();
   recipient.send("interrupt", "first");
   await recipient.settle();
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   await recipient.tick();
 
   const person = recipient.person("stop and wait", "person-1");
   recipient.send("interrupt", "newer");
-  recipient.send("steer", "newest");
+  recipient.send("queue", "newest");
   await provider.accept();
 
   expect((await person).ids).toEqual(["older", "person-1"]);
@@ -1520,7 +1681,7 @@ test("a held interrupt waits like any other message once a later message release
   await recipient.stop();
   await provider.refuse(new Error("run was canceled before its turn started"));
 
-  recipient.send("steer", "later");
+  recipient.send("queue", "later");
   await recipient.settle();
   expect(recipient.ids()).toEqual(["first"]);
   await recipient.tick();
@@ -1566,7 +1727,7 @@ test("queued messages return to the queue when the provider rejects the person's
 
 test("a person's prompt that begins with a path is plain text and carries the queue", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "go-ahead");
+  recipient.send("queue", "go-ahead");
   await recipient.tick();
 
   const path = await recipient.person(
@@ -1575,7 +1736,7 @@ test("a person's prompt that begins with a path is plain text and carries the qu
   );
   expect(path.ids).toEqual(["go-ahead", "person-1"]);
 
-  recipient.send("steer", "report");
+  recipient.send("queue", "report");
   await recipient.tick();
   for (const command of ["/compact", "  /goal pause", "/review focus on tests"]) {
     expect((await recipient.person(command, "person-2")).prompt).toBe(command);
@@ -1586,7 +1747,7 @@ test("a person's prompt that begins with a path is plain text and carries the qu
 
 test("an interrupt the provider runs as a command beside the turn takes no queued message along", async () => {
   const recipient = createRecipient({ outOfBand: (prompt) => prompt === "/compact" });
-  recipient.send("steer", "report");
+  recipient.send("queue", "report");
   await recipient.tick();
 
   const compact = recipient.delivery.enqueue({
@@ -1603,7 +1764,7 @@ test("an interrupt the provider runs as a command beside the turn takes no queue
   expect(recipient.ids()).toEqual(["report"]);
 
   // An interrupt the provider declines to run beside the turn replaces it, queue first.
-  recipient.send("steer", "another-report");
+  recipient.send("queue", "another-report");
   const plain = recipient.delivery.enqueue({
     recipientId: "recipient",
     source: { kind: "agent-message", agentId: "sender" },
@@ -1626,7 +1787,7 @@ test("an interrupt keeps its place ahead of a later person's prompt when a queue
   const provider = recipient.holdProviderAnswer();
   recipient.send("interrupt", "first");
   await recipient.settle();
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   await recipient.tick();
 
   recipient.send("interrupt", "pause");
@@ -1653,7 +1814,7 @@ test("an interrupt that was waiting when Stop arrived stays held when a later me
 
   // The later steer arrives before the manager gets back to the interrupt.
   await recipient.stop();
-  recipient.send("steer", "later");
+  recipient.send("queue", "later");
   await manager.release();
   expect(recipient.sent).toEqual([]);
 
@@ -1678,7 +1839,7 @@ test("messages whose starting turn Stop canceled are kept when a later message r
   expect(recipient.ids()).toEqual(["report"]);
 
   await recipient.stop();
-  recipient.send("steer", "later");
+  recipient.send("queue", "later");
   await provider.refuse(new Error("run was canceled before its turn started"));
 
   await recipient.tick();
@@ -1726,7 +1887,7 @@ test("a queue step reserved before Stop releases nothing once the queue reopens"
   const provider = recipient.holdProviderAnswer();
   recipient.send("interrupt", "first");
   await recipient.settle();
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   await recipient.tick();
 
   // The new interrupt arrives before the provider has finished stopping.
@@ -1744,11 +1905,11 @@ test("a queue step reserved before Stop releases nothing once the queue reopens"
 
 test("held messages stay held when the message that reopened the queue is withdrawn", async () => {
   const recipient = createRecipient();
-  recipient.send("steer", "older");
+  recipient.send("queue", "older");
   await recipient.stop();
 
   // A later message reopens the queue, then its sender takes it back before the window closes.
-  recipient.send("steer", "update", "watcher");
+  recipient.send("queue", "update", "watcher");
   expect(
     recipient.delivery.withdrawPending(
       "recipient",

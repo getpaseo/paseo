@@ -1127,6 +1127,7 @@ test("advertises client capabilities in hello", async () => {
     clientType: "cli",
     protocolVersion: 1,
     capabilities: {
+      agent_active_turn_behaviors: true,
       all_providers: true,
       selective_agent_timeline: true,
       timeline_replacement_invalidation: true,
@@ -8827,6 +8828,97 @@ test.each([false, true])(
     await send;
   },
 );
+
+describe("agent sender active-turn behaviors", () => {
+  async function connect(features: Record<string, boolean>) {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "agent-behaviors",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { agentMessageProvenance: true, ...features } });
+    await connecting;
+    return { client, transport };
+  }
+
+  function respond(
+    transport: ReturnType<typeof createMockTransport>,
+    payload: Record<string, unknown> = {},
+  ) {
+    const request = parseSentFrame(transport.sent.at(-1));
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+          ...payload,
+        },
+      }),
+    );
+    return request;
+  }
+
+  test("a capable host gets the behavior as asked and returns the applied behavior with guidance", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    const send = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "steer",
+    });
+    const request = respond(transport, {
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+    expect(request.activeTurnBehavior).toBe("steer");
+    await expect(send).resolves.toEqual({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+  });
+
+  test("an older host gets its own agent default for queue and refuses a steer", async () => {
+    const { client, transport } = await connect({});
+    const queued = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "queue",
+    });
+    const request = respond(transport, { deliveryStatus: "queued" });
+    expect("activeTurnBehavior" in request).toBe(false);
+    await expect(queued).resolves.toEqual({ deliveryStatus: "queued" });
+
+    const interrupt = client.sendAgentMessage("recipient", "stop", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "interrupt",
+    });
+    expect(respond(transport, { deliveryStatus: "queued" }).activeTurnBehavior).toBe("interrupt");
+    await interrupt;
+
+    const sentBefore = transport.sent.length;
+    await expect(
+      client.sendAgentMessage("recipient", "now", {
+        sourceAgentId: "sender",
+        activeTurnBehavior: "steer",
+      }),
+    ).rejects.toThrow("Update the Paseo host to steer a running turn from an agent");
+    expect(transport.sent).toHaveLength(sentBefore);
+  });
+
+  test("queue needs an agent sender", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    await expect(
+      client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" }),
+    ).rejects.toThrow('activeTurnBehavior "queue" needs an agent sender');
+    expect(transport.sent).toHaveLength(0);
+  });
+});
 
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
   const mock = createMockTransport();

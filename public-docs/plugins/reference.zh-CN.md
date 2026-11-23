@@ -357,7 +357,7 @@ Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、
 
 使用来自 `@getpaseo/plugin/server/provider` 的 `ProviderRegistration` 调用 `server.registerProvider()`。它的连接通过 `send()` 接收输入，并通过 `onEvent()` 发出完整的状态快照。`send()` 只报告是否接受；提示词的处理结果、轮次、配置、持久化、权限和失败都是事件。
 
-消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。
+消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。通过已完成的 `session.turn` 上的 `metrics` 和 `session.metrics` 报告测量数据，见[报告指标](/docs/plugins/providers#report-metrics)。
 
 Provider 选项是一个记录，即 `session.open` 中的 `ProviderSessionConfig.providerOptions`。它包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。在 `session.config` 中为需要在 Composer 里显示开关或选择器的顶层键报告 `controls`，并在 `providerOptions` 下报告会话正在使用的值。运行中会话的修改会以 `session.configure` 的形式到达，内容在 `changes.providerOptions` 中。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
 
@@ -421,6 +421,38 @@ Provider 设置中的 **刷新** 会跳过保留的结果，并清除失败的�
 | `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` 或 `{ status: "failed", message: string }`                                                 |
 
 Paseo 按原样显示 `version`、`versions` 和 `message`，不解析或排序它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
+
+#### Provider 故障排查 {#provider-troubleshooting}
+
+**需要 Paseo 0.18**。较旧的版本会忽略 `docsUrl`，并且只显示 `diagnostic` 文本。Provider 设置中有一个 **故障排查** 部分，其中包含 **诊断报告** 和 **文档**。用户会把报告复制到问题反馈中，所以请把能解释错误结果的事实写进报告。
+
+`ProviderRegistration.docsUrl` 是 **文档** 打开的 `http` 或 `https` 页面。请让它指向说明如何设置该 Provider 以及如何解决常见问题的页面。它是其他类型的 URL 时，插件会启动失败。没有声明时，Paseo 会隐藏 **文档**。
+
+报告由 Provider 的 `label` 和若干行组成，每行是一个 `Label: value`。Paseo 会写入以下各行：
+
+| 行                                                             | 显示条件                                                  |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `Command source`、`Configured command`                         | 声明了 `command`                                          |
+| `Daemon PATH`、`Daemon shell`、`PATH matches`、`Resolved path` | 声明了 `command`                                          |
+| `Version`                                                      | Paseo 找到了可执行文件，且你声明了 `installation.inspect` |
+| `Models`、`Status`                                             | 始终显示                                                  |
+
+`status(request)` 会在这些行之后添加你的行。`request.launch` 是会话将使用的启动配置。
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| 结果                               | 效果                                                             |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `{ available: true, diagnostic? }` | `diagnostic` 的每一行是报告中的一行。每行请写成 `Label: value`。 |
+| `{ available: false, diagnostic }` | Provider 不可用。报告在 `Error` 行中显示 `diagnostic`。          |
+
+Paseo 每次检查 Provider 是否可用时都会调用 `status`，不只是在生成报告时。报告不会自动换行，所以每一行请写得简短。
 
 ### 用量来源 {#usage-sources}
 

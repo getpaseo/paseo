@@ -34,6 +34,7 @@ import {
   openUsageFromItem,
   pinRow,
   openUsageOptions,
+  openUsageSources,
   closeUsageOptions,
   pickUsageHost,
   usageModalHost,
@@ -250,16 +251,15 @@ test.describe("usage modal", () => {
     await expect(alphaHandle).toHaveCSS("opacity", "1");
     await alphaHandle.blur();
 
-    // The off card collapses to its header, which still names the account.
-    await setUsageCardOn(page, "beta plan (work)", false);
-    const work = page.getByTestId("usage-report-beta:work");
-    await expect(work.getByText("12% used")).toHaveCount(0);
-    await expect(work.getByText("work", { exact: true })).toBeVisible();
+    // Turning a source off in the dedicated Sources list removes its card and sidebar summary.
+    await setUsageCardOn(page, "beta:work", false);
+    await expectUsageCardOrder(page, ["alpha:a", "beta:home"]);
+    await expect(page.getByTestId("usage-report-beta:work")).toHaveCount(0);
     await expectPinnedUsage(page, ["31% Weekly", "20% Weekly"]);
 
     const stopRecording = await recordUsageCardPositionsAfterRelease(page);
     await dragUsageCardAbove(page, "beta:home", "alpha:a");
-    await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
+    await expectUsageCardOrder(page, ["beta:home", "alpha:a"]);
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
     // The cards are in their new slots from the first frame after the drop.
     const framesAfterDrop = await stopRecording();
@@ -270,9 +270,113 @@ test.describe("usage modal", () => {
     await page.reload();
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
     await openUsageFromItem(page);
-    await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
-    await expect(page.getByTestId("usage-report-beta:work").getByText("12% used")).toHaveCount(0);
+    await expectUsageCardOrder(page, ["beta:home", "alpha:a"]);
+    await expect(page.getByTestId("usage-report-beta:work")).toHaveCount(0);
   });
+
+  for (const [size, viewport] of Object.entries({
+    desktop: { width: 1440, height: 900 },
+    compact: { width: 390, height: 844 },
+  })) {
+    test(`dedicated Sources list manages default-off sources without clutter (${size})`, async ({
+      page,
+    }) => {
+      test.setTimeout(120_000);
+      const [claude, codex] = claudeAndCodexReports();
+      const fetchedAt = twoHoursAgo();
+      await installUsageReportsFixture(page, {
+        lists: [
+          () => [
+            claude!,
+            codex!,
+            {
+              id: "copilot:default",
+              account: {},
+              fetchedAt,
+              sourceId: "copilot",
+              sourceLabel: "GitHub Copilot",
+              defaultEnabled: false,
+              report: {
+                status: "unavailable",
+                problem: { kind: "rejected", status: 403 },
+              },
+            },
+            {
+              id: "cursor:default",
+              account: { label: "dev@example.com" },
+              fetchedAt,
+              sourceId: "cursor",
+              sourceLabel: "Cursor",
+              defaultEnabled: false,
+              report: {
+                status: "available",
+                windows: [
+                  { id: "monthly", label: "Monthly", shortLabel: "mo", summary: true, usedPct: 18 },
+                ],
+              },
+            },
+          ],
+        ],
+      });
+      await page.setViewportSize(viewport);
+      await gotoAppShell(page);
+      if (size === "compact") await openCompactSidebar(page);
+      // Only active sources appear in the sidebar summary and modal cards.
+      await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+      await openUsageFromItem(page);
+      await expectUsageCardOrder(page, ["claude:default", "codex:default"]);
+      await expect(page.getByTestId("usage-report-copilot:default")).toHaveCount(0);
+      await expect(page.getByTestId("usage-report-cursor:default")).toHaveCount(0);
+      await qaScreenshot(page, `usage-sources-${size}-cards`);
+
+      await openUsageOptions(page);
+      await expect(page.getByTestId("usage-options-sources")).toContainText("2 of 4");
+      await qaScreenshot(page, `usage-sources-${size}-settings`);
+
+      if (size === "compact") {
+        // Compact sheets expose menu rows in the browser Tab order so keyboard users can open
+        // Sources and toggle checkboxes without a pointer.
+        await page.getByTestId("usage-options-sources").focus();
+        await expect(page.getByTestId("usage-options-sources")).toBeFocused();
+        await expect(page.getByTestId("usage-options-sources")).toHaveAttribute("tabindex", "0");
+        await page.keyboard.press("Enter");
+      } else {
+        await openUsageSources(page);
+      }
+      const claudeToggle = page.getByRole("checkbox", { name: /^Claude/ });
+      const copilotToggle = page.getByRole("checkbox", { name: /^GitHub Copilot/ });
+      const cursorToggle = page.getByRole("checkbox", { name: /^Cursor/ });
+      await expect(claudeToggle).toBeChecked();
+      await expect(copilotToggle).not.toBeChecked();
+      await expect(copilotToggle).toContainText("Provider inactive");
+      await qaScreenshot(page, `usage-sources-${size}-list`);
+
+      // Opting into a default-off source brings its card and summary window in immediately.
+      if (size === "compact") {
+        await cursorToggle.focus();
+        await expect(cursorToggle).toBeFocused();
+        await expect(cursorToggle).toHaveAttribute("tabindex", "0");
+        await page.keyboard.press("Space");
+      } else {
+        await cursorToggle.click();
+      }
+      await expect(cursorToggle).toBeChecked();
+      await closeUsageOptions(page);
+      await expectUsageCardOrder(page, ["claude:default", "codex:default", "cursor:default"]);
+
+      // Hiding every source shows a quiet empty state with a shortcut back to Settings.
+      await openUsageSources(page);
+      await page.getByTestId("usage-source-toggle-claude:default").click();
+      await page.getByTestId("usage-source-toggle-codex:default").click();
+      await page.getByTestId("usage-source-toggle-cursor:default").click();
+      await closeUsageOptions(page);
+      await expect(page.getByTestId("usage-all-hidden")).toBeVisible();
+      await expect(page.getByTestId("usage-choose-sources")).toBeVisible();
+      await qaScreenshot(page, `usage-sources-${size}-empty`);
+      await page.getByTestId("usage-choose-sources").click();
+      await expect(page.getByTestId("usage-options-sources")).toContainText("0 of 4");
+    });
+  }
 
   test("refreshes one report from its card", async ({ page }) => {
     test.setTimeout(120_000);

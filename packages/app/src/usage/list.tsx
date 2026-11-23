@@ -16,8 +16,8 @@ function reportKey(entry: UsageReportEntry): string {
 }
 
 /**
- * One card per report (source + account), in the user's order. Each card drags by its handle and
- * turns off from its switch. Window rows pin while the sidebar summary is on.
+ * One card per shown report (source + account), in the user's order. Each card drags by its handle.
+ * Window rows pin while the sidebar summary is on.
  */
 export function UsageList({
   serverId,
@@ -29,8 +29,7 @@ export function UsageList({
   display: UsageDisplay;
 }) {
   const { inSidebar } = useUsageInSidebar();
-  const { arrange, arrangeCards } = display;
-  const arranged = useMemo(() => arrange(reports), [arrange, reports]);
+  const { arrangeCards } = display;
   const handleDragEnd = useCallback(
     (next: UsageReportEntry[], moved: string) =>
       arrangeCards({ moved, after: next.map(reportKey) }),
@@ -52,7 +51,7 @@ export function UsageList({
   );
   return (
     <DraggableList
-      data={arranged}
+      data={reports}
       keyExtractor={reportKey}
       renderItem={renderItem}
       onDragEnd={handleDragEnd}
@@ -90,19 +89,11 @@ function UsageListCard({
   const [hasFocus, setHasFocus] = useState(false);
   const handleFocus = useCallback(() => setHasFocus(true), []);
   const handleBlur = useCallback(() => setHasFocus(false), []);
-  const { isCardOn, setCardOn } = display;
-  const on = isCardOn(entry.id);
-  const handleSetOn = useCallback(
-    (next: boolean) => setCardOn(entry.id, next),
-    [entry.id, setCardOn],
-  );
   const arrangement = useMemo(
     () => ({
-      on,
-      onSetOn: handleSetOn,
       handleVisible: isHovered || hasFocus || dragging || isNative || isCompact,
     }),
-    [dragging, handleSetOn, hasFocus, isCompact, isHovered, on],
+    [dragging, hasFocus, isCompact, isHovered],
   );
   return (
     <View

@@ -322,7 +322,12 @@ paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
 ```
 
-Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
+Leave `--behavior` out unless the message cannot wait. The defaults depend on who sends:
+
+- From an agent (`PASEO_AGENT_ID` set), the default is `queue`. The message waits until the recipient's running turn ends. `--behavior steer` adds the message to the running turn, and `--behavior interrupt` stops the turn and starts a new one with the message. A steer or interrupt also delivers the messages you queued before it, in order.
+- From a person, the default is `interrupt`. `--behavior steer` adds the message to the running turn instead.
+
+If the recipient's provider cannot steer, `steer` interrupts the running turn instead. With `--no-wait`, the output says what happened to an agent's message and how to deliver a queued message now.
 
 ## Viewing logs
 
