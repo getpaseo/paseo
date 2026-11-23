@@ -135,7 +135,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
         return { requestId, agentInvoked };
       }
       if (disposition === "handled") {
-        return { requestId, agentInvoked: false };
+        return { requestId, handledByExtension: true };
       }
       if (disposition === "started" || disposition === "queued") {
         return { requestId, agentInvoked: true };
