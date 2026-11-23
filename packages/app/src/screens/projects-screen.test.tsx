@@ -148,6 +148,11 @@ vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ show: vi.fn(), error: vi.fn() }),
 }));
 
+vi.mock("@/components/settings/detail-row", () => ({
+  SettingsDetailRow: ({ label, onPress }: { label: string; onPress: () => void }) =>
+    React.createElement("button", { type: "button", "aria-label": label, onClick: onPress }, label),
+}));
+
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: ({ size }: { size?: string | number }) =>
     React.createElement("span", {
@@ -370,12 +375,13 @@ describe("ProjectsScreen", () => {
     expect(container?.querySelector('[data-testid="projects-loading-spinner"]')).not.toBeNull();
   });
 
-  it("renders the empty state when there are no projects", () => {
+  it("keeps project links available when the host has no projects", () => {
     setProjectsState({ projects: [] });
 
     render();
 
     expect(container?.textContent).toContain("No projects yet");
+    expect(container?.querySelector('[aria-label="Project links"]')).not.toBeNull();
     expect(container?.textContent).not.toContain("Non-GitHub remote projects aren't supported yet");
   });
 

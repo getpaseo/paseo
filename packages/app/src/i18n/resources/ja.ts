@@ -2357,11 +2357,9 @@ export const ja: TranslationResources = {
       editProject: "{{projectName}}を編集",
     },
     projectLinks: {
-      banner: {
-        matchesTitle: "リンクできる可能性があるプロジェクト",
-        linkedTitle: "プロジェクトリンク",
-        description: "このデバイスに保存された、Git で確認済みのプロジェクトリンクを確認します。",
-        review: "リンクを確認",
+      entry: {
+        matches: "リンクできる可能性があるプロジェクト",
+        hint: "一致するプロジェクトを確認し、このデバイス上のリンクを管理します。",
       },
       sheet: {
         title: "プロジェクトリンク",
@@ -2373,7 +2371,7 @@ export const ja: TranslationResources = {
         linkedTitle: "リンク済みプロジェクト",
         noMatchesTitle: "確認するプロジェクトリンクはありません",
         noMatchesDescription:
-          "各ホストでワークスペースを開くと、Paseo が Git リモートとプロジェクトサブディレクトリを確認できます。",
+          "2 台のホストで同じリポジトリのワークスペースを開きます。一致していて、まだ別々に表示されているプロジェクトがここに表示されます。",
         linkProjects: "{{count}} 個のプロジェクトをリンク",
         remote: "Git リモート",
         subdirectory: "プロジェクトサブディレクトリ",

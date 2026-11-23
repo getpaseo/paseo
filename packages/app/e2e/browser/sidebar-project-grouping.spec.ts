@@ -416,18 +416,30 @@ test.describe("Sidebar project grouping", () => {
     });
   });
 
-  test("reviews and unlinks a device-local cross-host project link", async ({
+  test("reviews and unlinks a device-local cross-host link from project settings", async ({
     page,
     crossHostProject,
   }) => {
     await openScenario(page, crossHostProject);
+    const savedLink = localProjectLinkFor(crossHostProject);
     await reloadWithLocalProjectLinks(page, crossHostProject, [
-      localProjectLinkFor(crossHostProject),
+      savedLink,
+      {
+        id: "unrelated-project-link",
+        members: savedLink.members.map(({ serverId }) => ({
+          serverId,
+          projectId: "unrelated-project",
+        })),
+        identity: { repository: "github.com/paseo-e2e/unrelated-project", subdirectory: "" },
+      },
     ]);
-    await openProjectsSettings(page, getServerId());
+    await openGroupedProjectSettings(page, {
+      serverId: getServerId(),
+      projectName: GROUPED_PROJECT_NAME,
+    });
 
-    await expect(page.getByTestId("project-links-banner")).toBeVisible();
-    await page.getByRole("button", { name: "Review links", exact: true }).click();
+    const entry = page.getByRole("button", { name: "Project links", exact: true });
+    await entry.click();
 
     const sheet = page.getByTestId("project-links-sheet");
     await expect(sheet).toBeVisible();
@@ -436,6 +448,7 @@ test.describe("Sidebar project grouping", () => {
     await expect(sheet).toContainText(SECONDARY_HOST_LABEL);
     await expect(sheet).toContainText(crossHostProject.primaryProjectPath);
     await expect(sheet).toContainText(crossHostProject.secondaryProjectPath);
+    await expect(sheet).not.toContainText("github.com/paseo-e2e/unrelated-project");
 
     await page
       .getByTestId(projectUnlinkTestId(getServerId(), crossHostProject.primaryProjectId))
@@ -443,7 +456,7 @@ test.describe("Sidebar project grouping", () => {
     await expect(sheet.getByTestId("project-links-no-matches")).toBeVisible();
 
     await page.getByTestId("project-links-close").click();
-    await expect(page.getByTestId("project-links-banner")).toHaveCount(0);
+    await expect(entry).toBeVisible();
   });
 
   test("keeps saved project links reachable after their host project is removed", async ({
@@ -463,8 +476,7 @@ test.describe("Sidebar project grouping", () => {
     await openProjectsSettings(page, getServerId());
 
     await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("project-links-banner")).toBeVisible();
-    await page.getByRole("button", { name: "Review links", exact: true }).click();
+    await page.getByRole("button", { name: "Project links", exact: true }).click();
 
     const sheet = page.getByTestId("project-links-sheet");
     await expect(sheet).toBeVisible();

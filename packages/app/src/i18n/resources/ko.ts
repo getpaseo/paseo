@@ -2345,11 +2345,9 @@ export const ko: TranslationResources = {
       editProject: "{{projectName}} 편집",
     },
     projectLinks: {
-      banner: {
-        matchesTitle: "연결할 수 있는 프로젝트",
-        linkedTitle: "프로젝트 연결",
-        description: "이 기기에 저장된 Git 확인 프로젝트 연결을 검토합니다.",
-        review: "연결 검토",
+      entry: {
+        matches: "연결할 수 있는 프로젝트",
+        hint: "일치하는 프로젝트를 검토하고 이 기기에서 링크를 관리합니다.",
       },
       sheet: {
         title: "프로젝트 연결",
@@ -2361,7 +2359,7 @@ export const ko: TranslationResources = {
         linkedTitle: "연결된 프로젝트",
         noMatchesTitle: "검토할 프로젝트 연결이 없습니다",
         noMatchesDescription:
-          "각 호스트에서 워크스페이스를 열면 Paseo가 Git 원격 저장소와 프로젝트 하위 디렉터리를 확인할 수 있습니다.",
+          "두 호스트에서 같은 저장소의 작업 공간을 여세요. 일치하지만 아직 별도로 표시되는 프로젝트가 여기에 나타납니다.",
         linkProjects: "프로젝트 {{count}}개 연결",
         remote: "Git 원격 저장소",
         subdirectory: "프로젝트 하위 디렉터리",

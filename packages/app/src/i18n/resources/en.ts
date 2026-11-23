@@ -2362,11 +2362,9 @@ export const en = {
       editProject: "Edit {{projectName}}",
     },
     projectLinks: {
-      banner: {
-        matchesTitle: "Possible project links",
-        linkedTitle: "Project links",
-        description: "Review Git-verified project links stored on this device.",
-        review: "Review links",
+      entry: {
+        matches: "Possible project links",
+        hint: "Review matches and manage links on this device.",
       },
       sheet: {
         title: "Project links",
@@ -2378,7 +2376,7 @@ export const en = {
         linkedTitle: "Linked projects",
         noMatchesTitle: "No project links to review",
         noMatchesDescription:
-          "Open a workspace on each host so Paseo can verify its Git remote and project subdirectory.",
+          "Open a workspace in the same repository on two hosts. Matching projects that are still separate appear here.",
         linkProjects: "Link {{count}} projects",
         remote: "Git remote",
         subdirectory: "Project subdirectory",

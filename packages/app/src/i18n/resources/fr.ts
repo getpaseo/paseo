@@ -2384,12 +2384,9 @@ export const fr: TranslationResources = {
       editProject: "Modifier {{projectName}}",
     },
     projectLinks: {
-      banner: {
-        matchesTitle: "Liens de projets possibles",
-        linkedTitle: "Liens de projets",
-        description:
-          "Examinez les liens de projets vérifiés par Git et enregistrés sur cet appareil.",
-        review: "Examiner les liens",
+      entry: {
+        matches: "Liens de projets possibles",
+        hint: "Passez en revue les correspondances et gérez les liens sur cet appareil.",
       },
       sheet: {
         title: "Liens de projets",
@@ -2401,7 +2398,7 @@ export const fr: TranslationResources = {
         linkedTitle: "Projets liés",
         noMatchesTitle: "Aucun lien de projet à examiner",
         noMatchesDescription:
-          "Ouvrez un espace de travail sur chaque hôte afin que Paseo puisse vérifier le dépôt distant Git et le sous-répertoire du projet.",
+          "Ouvrez un espace de travail dans le même dépôt sur deux hôtes. Les projets correspondants qui sont encore séparés apparaissent ici.",
         linkProjects: "Lier {{count}} projets",
         remote: "Dépôt distant Git",
         subdirectory: "Sous-répertoire du projet",

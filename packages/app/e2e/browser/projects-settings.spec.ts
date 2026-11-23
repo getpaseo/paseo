@@ -214,6 +214,10 @@ test.describe("Projects settings", () => {
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
+      await page.getByRole("button", { name: "Project links", exact: true }).click();
+      await expect(page.getByTestId("project-links-no-matches")).toBeVisible();
+      await page.getByTestId("project-links-close").click();
+      await expectProjectSettingsFormVisible(page);
     } finally {
       if (projectViewKey) {
         const project = (await client.listProjects()).projects.find(

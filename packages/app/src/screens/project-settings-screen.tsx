@@ -7,6 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { ProjectLinksEntry } from "@/components/project-links-entry";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -31,7 +32,7 @@ import { SettingsGroup } from "@/components/settings/headings/settings-group";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { SettingsBackLink, SettingsDetailHeader } from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
-import { useProjects } from "@/hooks/use-projects";
+import { useProjects, type UseProjectsResult } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
@@ -104,7 +105,7 @@ export default function ProjectSettingsScreen({
   onBackToProjects,
   showBackToProjects,
 }: ProjectSettingsScreenProps) {
-  const { projects } = useProjects();
+  const { projects, projectLinkPlacements, projectLinkSuggestions } = useProjects();
   const project = useMemo(
     () => getProjectSummaryForHostProject(projects, serverId, projectId),
     [projectId, projects, serverId],
@@ -139,6 +140,8 @@ export default function ProjectSettingsScreen({
       isHostGone={isHostGone}
       onBackToProjects={onBackToProjects}
       showBackToProjects={showBackToProjects}
+      projectLinkPlacements={projectLinkPlacements}
+      projectLinkSuggestions={projectLinkSuggestions}
     />
   );
 }
@@ -179,7 +182,10 @@ function BackToProjectsButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-interface ProjectSettingsBodyProps {
+interface ProjectSettingsBodyProps extends Pick<
+  UseProjectsResult,
+  "projectLinkPlacements" | "projectLinkSuggestions"
+> {
   project: ProjectSummary;
   selectedHost: ProjectHostEntry;
   client: DaemonClient;
@@ -195,6 +201,8 @@ function ProjectSettingsBody({
   isHostGone,
   onBackToProjects,
   showBackToProjects,
+  projectLinkPlacements,
+  projectLinkSuggestions,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -300,6 +308,14 @@ function ProjectSettingsBody({
         icon={titleIcon}
         title={selectedHost.projectName}
         trailing={editButton}
+      />
+
+      <ProjectLinksEntry
+        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
       />
 
       <ProjectEditSheet

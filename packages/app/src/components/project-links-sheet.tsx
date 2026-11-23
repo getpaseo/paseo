@@ -20,6 +20,7 @@ export interface ProjectLinksSheetProps {
   onClose: () => void;
   placements: readonly ProjectLinkPlacement[];
   suggestions: readonly ProjectLinkSuggestion[];
+  links: readonly LocalProjectLink[];
 }
 
 /** Device-local link management. Git facts are displayed before a local grouping is changed. */
@@ -28,10 +29,10 @@ export function ProjectLinksSheet({
   onClose,
   placements,
   suggestions,
+  links,
 }: ProjectLinksSheetProps) {
   const { t } = useTranslation();
   const toast = useToast();
-  const links = useLocalProjectLinksStore((state) => state.links);
   const linkProjects = useLocalProjectLinksStore((state) => state.linkProjects);
   const unlinkProject = useLocalProjectLinksStore((state) => state.unlinkProject);
   const [pendingOperationKey, setPendingOperationKey] = useState<string | null>(null);
