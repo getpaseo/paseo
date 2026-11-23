@@ -600,8 +600,19 @@ interface WatchRecoveryState {
   setupTimeoutCount: number;
 }
 
-function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-  return left.size === right.size && [...left].every((value) => right.has(value));
+// True when every remote ref that appeared or disappeared since the last snapshot is one
+// this fetch itself reported adding or deleting; anything else came from another client.
+function remoteRefShapeExplainedByChanges(
+  known: ReadonlySet<string>,
+  current: ReadonlySet<string>,
+  changes: readonly WorkspaceGitRemoteRefChange[],
+): boolean {
+  const reported = new Set(
+    changes.filter((change) => change.kind !== "moved").map((change) => change.ref),
+  );
+  for (const ref of current) if (!known.has(ref) && !reported.has(ref)) return false;
+  for (const ref of known) if (!current.has(ref) && !reported.has(ref)) return false;
+  return true;
 }
 
 type WorkingTreeWatchFallbackReason =
@@ -2835,13 +2846,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         } else {
           if (event.type === "delete") {
             target.recentFetchRemoteRefChanges.delete(effect.ref);
-            target.knownRemoteRefs = null;
-            return false;
+            target.knownRemoteRefs?.delete(effect.ref);
+            this.routeRemoteBranchRef(target, effect.ref, refreshes, { addedOrDeleted: true });
+            return true;
           }
           const recent = target.recentFetchRemoteRefChanges.get(effect.ref);
           if (recent && recent.expiresAtMs >= this.deps.now().getTime()) {
             this.routeRemoteBranchRef(target, effect.ref, refreshes, {
               narrow: recent.change.kind === "moved",
+              addedOrDeleted: recent.change.kind !== "moved",
             });
           } else {
             target.recentFetchRemoteRefChanges.delete(effect.ref);
@@ -2853,6 +2866,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
               [...target.knownRemoteRefs].some((ref) => ref.startsWith(`${effect.ref}/`))
             ) {
               return true;
+            } else if (event.type === "create") {
+              target.knownRemoteRefs?.add(effect.ref);
+              this.routeRemoteBranchRef(target, effect.ref, refreshes, { addedOrDeleted: true });
             } else {
               return false;
             }
@@ -2942,9 +2958,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: RepoGitTarget,
     remoteRef: string,
     refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
-    options?: { narrow?: boolean; queueIfBusy?: boolean },
+    options?: { narrow?: boolean; queueIfBusy?: boolean; addedOrDeleted?: boolean },
   ): void {
     const qualifiedRemoteRef = `refs/remotes/${remoteRef}`;
+    // A ref appearing or disappearing can change which ref a branch name resolves to (a
+    // base of "main" may resolve to "origin/main" once it exists) and whether a checkout's
+    // own branch is published, so an add or delete reaches every checkout that names the
+    // branch in any form, not only those already pointing at the exact remote ref.
+    const changedBranch = options?.addedOrDeleted
+      ? remoteRef.slice(remoteRef.indexOf("/") + 1)
+      : null;
+    const remotePrefix = `${remoteRef.slice(0, remoteRef.indexOf("/"))}/`;
+    const branchNameOf = (ref: string | null | undefined): string | null => {
+      if (!ref) return null;
+      const bare = ref.replace(/^refs\/(heads|remotes)\//, "");
+      return bare.startsWith(remotePrefix) ? bare.slice(remotePrefix.length) : bare;
+    };
     for (const workspaceKey of target.workspaceKeys) {
       const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
       if (!facts?.isGit) continue;
@@ -2968,7 +2997,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         configuredRemoteRef,
         shortstatRemoteRef,
       ];
-      const usesRemoteRef = refs.some((ref) => ref === remoteRef || ref === qualifiedRemoteRef);
+      const usesRemoteRef =
+        refs.some((ref) => ref === remoteRef || ref === qualifiedRemoteRef) ||
+        (changedBranch !== null &&
+          [...refs, facts.currentBranch, trackedBranch].some(
+            (ref) => branchNameOf(ref) === changedBranch,
+          ));
       if (usesRemoteRef) {
         this.addWorkspaceMetadataRefresh(refreshes, workspaceKey, true, {
           structural: options?.narrow !== true,
@@ -4116,7 +4150,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const remoteRefShapeChanged =
       target.knownRemoteRefs !== null &&
       result.remoteRefs !== undefined &&
-      !setsEqual(target.knownRemoteRefs, result.remoteRefs);
+      !remoteRefShapeExplainedByChanges(target.knownRemoteRefs, result.remoteRefs, result.changes);
     if (result.remoteRefs) {
       target.knownRemoteRefs = new Set(result.remoteRefs);
     }
@@ -4127,8 +4161,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.flushBufferedFetchMetadataEvents(target);
     if (
       result.nonRemoteRefsChanged === true ||
-      remoteRefShapeChanged ||
-      result.changes.some((change) => change.kind !== "moved")
+      remoteRefShapeChanged
     ) {
       this.scheduleRepoMetadataRefresh(target, "repo-fetch-ref-shape", false);
       return;
@@ -4138,7 +4171,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
     for (const change of result.changes) {
-      this.routeRemoteBranchRef(target, change.ref, refreshes, { narrow: true });
+      this.routeRemoteBranchRef(target, change.ref, refreshes, {
+        narrow: change.kind === "moved",
+        addedOrDeleted: change.kind !== "moved",
+      });
     }
     this.scheduleRepoMetadataRefresh(target, "repo-fetch", false, refreshes);
   }
