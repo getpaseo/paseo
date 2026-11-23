@@ -1089,3 +1089,31 @@ describe("speech provider config normalization", () => {
     }
   });
 });
+
+test.each([
+  ["goose", "acp"],
+  ["/opt/bin/goose", "acp"],
+])(
+  "migrates the legacy goose entry and preserves command overrides (%s %s)",
+  (binary, subcommand) => {
+    const command = [binary, subcommand];
+    const overrides = {
+      enabled: false,
+      label: "My goose",
+      env: { GOOSE_PROVIDER: "openai" },
+      models: [{ id: "primary", label: "Primary" }],
+      additionalModels: [{ id: "secondary", label: "Secondary" }],
+    };
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          goose: { ...overrides, extends: "acp", description: "Old description", command },
+        },
+      },
+    });
+    expect(parsed.agents?.providers?.goose).toEqual({
+      ...overrides,
+      ...(command[0] === "goose" ? {} : { command }),
+    });
+  },
+);

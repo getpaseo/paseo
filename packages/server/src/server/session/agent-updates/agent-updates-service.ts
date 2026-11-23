@@ -44,6 +44,7 @@ export interface AgentUpdatesService {
   hasSubscription(): boolean;
   includesLiveAgent(agent: ManagedAgent, subscriptionIds?: ReadonlySet<string>): Promise<boolean>;
   forwardLiveAgent(agent: ManagedAgent): Promise<void>;
+  forwardStoredAgent(record: StoredAgentRecord): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
   dispose(): void;
@@ -302,10 +303,13 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return payload;
   }
 
-  async function emitLiveAgentUpdate(payload: AgentSnapshotPayload): Promise<void> {
+  async function emitAgentUpdate(
+    workspaceId: string | undefined,
+    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>,
+  ): Promise<void> {
     try {
-      if (hasSubscription()) await publishPayload(await deps.enrichAgentPayload(payload));
-      if (payload.workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
+      if (projectPayload && hasSubscription()) await publishPayload(await projectPayload());
+      if (workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
     }
@@ -330,17 +334,20 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     if (!hasSubscription()) {
       const workspaceId = agent.workspaceId;
       return workspaceId
-        ? enqueueAgentUpdate(agent.id, async () => {
-            try {
-              await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
-            } catch (error) {
-              deps.logger.error({ err: error }, "Failed to emit workspace update");
-            }
-          })
+        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(workspaceId))
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
-    return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
+    return enqueueAgentUpdate(payload.id, () =>
+      emitAgentUpdate(payload.workspaceId, () => deps.enrichAgentPayload(payload)),
+    );
+  }
+
+  function forwardStoredAgent(record: StoredAgentRecord): Promise<void> {
+    if (!hasSubscription() && !record.workspaceId) return Promise.resolve();
+    return enqueueAgentUpdate(record.id, () =>
+      emitAgentUpdate(record.workspaceId, () => deps.buildStoredAgentPayload(record)),
+    );
   }
 
   function removeAgent(agentId: string): Promise<void> {
@@ -362,6 +369,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     hasSubscription,
     includesLiveAgent,
     forwardLiveAgent,
+    forwardStoredAgent,
     emitStoredRecord,
     removeAgent,
     dispose,

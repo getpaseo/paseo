@@ -54,8 +54,16 @@ type OlderHistoryInput = Pick<
   "onNearHistoryStart" | "hasOlderHistory" | "olderHistoryProgressKey"
 >;
 
-function mountTimeline(historyMounted: StreamItem[], olderHistory?: OlderHistoryInput) {
-  const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+interface MountTimelineOptions {
+  olderHistory?: OlderHistoryInput;
+  isMobileBreakpoint?: boolean;
+}
+
+function mountTimeline(
+  historyMounted: StreamItem[],
+  { olderHistory, isMobileBreakpoint = true }: MountTimelineOptions = {},
+) {
+  const strategy = createWebStreamStrategy({ isMobileBreakpoint });
   const viewportRef = React.createRef<StreamViewportHandle>();
   const input: StreamRenderInput = {
     agentId: "agent",
@@ -113,6 +121,13 @@ function mountTimeline(historyMounted: StreamItem[], olderHistory?: OlderHistory
     },
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
+    scrollTop: () => scrollContainer.scrollTop,
+    scrollUp: (distance: number) =>
+      act(() => {
+        scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -distance }));
+        scrollContainer.scrollTop -= distance;
+        scrollContainer.dispatchEvent(new Event("scroll"));
+      }),
     // Resize observers and the hold's settle run on animation frames.
     settle: () =>
       act(async () => {
@@ -124,6 +139,53 @@ function mountTimeline(historyMounted: StreamItem[], olderHistory?: OlderHistory
 }
 
 describe("web disclosure hold", () => {
+  it.each([{ isMobileBreakpoint: true }, { isMobileBreakpoint: false }])(
+    "keeps the reading position when mounted history becomes virtualized (compact: $isMobileBreakpoint)",
+    async (options) => {
+      const history = Array.from({ length: 80 }, (_, index) => row(index));
+      const timeline = mountTimeline(history, options);
+      await timeline.settle();
+      timeline.scrollUp(600);
+      await timeline.settle();
+      const offset = timeline.scrollTop();
+      const readingTop = timeline.rowTop("message-64");
+      expect(offset).toBeGreaterThan(0);
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+      });
+      await timeline.settle();
+
+      expect(timeline.scrollTop()).toBe(offset);
+      expect(timeline.rowTop("message-64")).toBe(readingTop);
+    },
+  );
+
+  it.each([{ isMobileBreakpoint: true }, { isMobileBreakpoint: false }])(
+    "keeps following output when mounted history becomes virtualized at the end (compact: $isMobileBreakpoint)",
+    async (options) => {
+      const history = Array.from({ length: 80 }, (_, index) => row(index));
+      const timeline = mountTimeline(history, options);
+      await timeline.settle();
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+      });
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+        liveHead: [row(80)],
+      });
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+    },
+  );
+
   it("keeps the trigger's top when an anchored toggle at the bottom opens rows below it, and stops following", async () => {
     const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
     const timeline = mountTimeline(history);
@@ -225,11 +287,13 @@ describe("web history start", () => {
     let olderHistoryLoads = 0;
     const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
     const timeline = mountTimeline(history, {
-      hasOlderHistory: true,
-      olderHistoryProgressKey: "epoch:1",
-      onNearHistoryStart: async () => {
-        olderHistoryLoads += 1;
-        return true;
+      olderHistory: {
+        hasOlderHistory: true,
+        olderHistoryProgressKey: "epoch:1",
+        onNearHistoryStart: async () => {
+          olderHistoryLoads += 1;
+          return true;
+        },
       },
     });
     await timeline.settle();

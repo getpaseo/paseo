@@ -68,24 +68,27 @@ const theme = {
 } as unknown as Theme;
 
 describe("control sizing gate", () => {
-  it("is touch-sized in the compact layout or on a touch screen, and pointer-sized otherwise", () => {
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: false })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: false })).toBe("pointer");
+  it("is touch-sized in the compact layout or where touch is the primary input, and pointer-sized otherwise", () => {
+    expect(resolveControlSizing({ compactLayout: true, touchPrimaryPointer: true })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: true, touchPrimaryPointer: false })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: false, touchPrimaryPointer: true })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: false, touchPrimaryPointer: false })).toBe(
+      "pointer",
+    );
   });
 
-  it("gives a touch screen its touch sizes at every width", () => {
+  it("gives a touch primary pointer its touch sizes at every width", () => {
     const sizes = { touch: 44, pointer: 32 };
 
     // An iPad: touch-sized in the docked desktop layout too.
     expect(bySizing(sizes, true)).toEqual({ xs: 44, md: 44 });
-    // A mouse-driven window: touch-sized only once it narrows into the compact layout.
+    // A mouse- or trackpad-driven window, touch screen or not: touch-sized only once it narrows
+    // into the compact layout.
     expect(bySizing(sizes, false)).toEqual({ xs: 44, md: 32 });
   });
 
-  it("keeps a device without a touch screen on pointer sizes from md up", () => {
-    // The unit runtime has no touch screen, which is the desktop that must not change.
+  it("keeps a device without a touch primary pointer on pointer sizes from md up", () => {
+    // The unit runtime has no touch primary pointer, which is the desktop that must not change.
     expect(controlSizingForLayout(false)).toBe("pointer");
     expect(controlSizingForLayout(true)).toBe("touch");
     expect(CONTROL_HEIGHTS.md).toEqual({ xs: 44, md: 32 });
@@ -299,23 +302,23 @@ describe("control geometry", () => {
       trackHeight: 20,
       thumbSize: 16,
       thumbTravel: 14,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("md", true)).toEqual({
       trackWidth: 44,
       trackHeight: 26,
       thumbSize: 22,
       thumbTravel: 18,
-      reservedHeight: 44,
+      hitHeight: 44,
     });
-    // Tight chrome keeps the pointer-sized track on every layout and reserves its row's height.
+    // Tight chrome keeps the pointer-sized track on every layout and takes presses over its row's control height.
     expect(switchGeometryForLayout("sm", true)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("sm", false)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 28,
+      hitHeight: 28,
     });
   });
 

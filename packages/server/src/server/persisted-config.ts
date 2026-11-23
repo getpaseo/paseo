@@ -199,16 +199,32 @@ function isLegacyProviderEntry(value: unknown): boolean {
 }
 
 function normalizeAgentProviders(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return value;
+  if (!isConfigRecord(value)) return value;
+
+  let rawProviders = value;
+  const goose = configRecord(value.goose);
+  // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once legacy configs have migrated.
+  if (goose?.extends === "acp") {
+    const { extends: _base, description: _description, command, ...overrides } = goose;
+    const usesDefaultCommand =
+      Array.isArray(command) &&
+      command.length === 2 &&
+      command[0] === "goose" &&
+      command[1] === "acp";
+    rawProviders = {
+      ...value,
+      goose: {
+        ...overrides,
+        ...(command !== undefined && !usesDefaultCommand ? { command } : {}),
+      },
+    };
   }
 
-  const rawProviders = value as Record<string, unknown>;
   const hasLegacyEntries = Object.values(rawProviders).some((entry) =>
     isLegacyProviderEntry(entry),
   );
   if (!hasLegacyEntries) {
-    return value;
+    return rawProviders;
   }
 
   const legacyEntries: Record<string, unknown> = {};
@@ -224,7 +240,7 @@ function normalizeAgentProviders(value: unknown): unknown {
 
   const parsedLegacyEntries = AgentProviderRuntimeSettingsMapSchema.safeParse(legacyEntries);
   if (!parsedLegacyEntries.success) {
-    return value;
+    return rawProviders;
   }
 
   return {

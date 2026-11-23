@@ -191,6 +191,7 @@ export function WorkspaceLabelManagerModal({
               selectedHost={state.serverId}
               onSelectHost={selectHost}
               includeAllHost={false}
+              hang
               triggerTestID="workspace-label-manager-host"
               hostOptionTestID={managerHostOptionTestID}
             />

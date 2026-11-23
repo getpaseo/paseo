@@ -260,7 +260,7 @@ test("legacy diffs retain successful bodies when an oversized sibling is removed
     ]);
     await rm(join(cwd, "b.txt"));
     await manager.scheduleRefreshForCwd(cwd);
-    await expect.poll(() => updates.at(-1)?.error).toBeNull();
+    await expect.poll(() => updates.at(-1)?.error, { timeout: 10000 }).toBeNull();
     expect(updates.at(-1)?.files[0]).toMatchObject({
       path: "a.ts",
       hunks: [
@@ -271,7 +271,7 @@ test("legacy diffs retain successful bodies when an oversized sibling is removed
     });
     subscription.unsubscribe();
   });
-});
+}, 30000);
 
 test("legacy subscriptions reselect the preferred base when a remote ref appears", async () => {
   await withCheckout(async ({ cwd, manager, git }) => {

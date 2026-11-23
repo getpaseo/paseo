@@ -59,6 +59,35 @@ async function selectClientSlashCommand(page: Page, query: string, label: string
   await input.press("Enter");
 }
 
+async function typeBeforeMenuFilters(
+  page: Page,
+  input: { text: string; key: "Tab" | "Enter" },
+): Promise<void> {
+  await composerLocator(page).evaluate(async (element, { text, key }) => {
+    if (!(element instanceof HTMLTextAreaElement)) {
+      throw new Error("Composer input is not a textarea");
+    }
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    if (!setValue) throw new Error("Textarea value setter is unavailable");
+    setValue.call(element, text);
+    element.setSelectionRange(text.length, text.length);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    await Promise.resolve();
+    element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  }, input);
+}
+
+async function showExitSuggestion(page: Page, query: string): Promise<void> {
+  await composerLocator(page).fill(query);
+  await expect(page.getByText("/exit", { exact: true }).first()).toBeVisible();
+}
+
+async function expectOpenAgentWithInput(page: Page, agentId: string, text: string): Promise<void> {
+  await expect(composerLocator(page)).toHaveValue(text);
+  await expectWorkspaceTabVisible(page, agentId);
+}
+
 async function expectAgentArchivedInSessions(page: Page, title: string): Promise<void> {
   await openSessions(page);
   await expectSessionRowArchived(page, title);
@@ -130,6 +159,16 @@ test.describe("Client slash commands", () => {
       },
     );
   });
+
+  for (const key of ["Tab", "Enter"] as const) {
+    test(`${key} ignores an exit suggestion for an earlier query`, async ({ page }) => {
+      await withOpenReadyMockAgent(page, { title: "Stale slash command" }, async ({ agentId }) => {
+        await showExitSuggestion(page, "/e");
+        await typeBeforeMenuFilters(page, { text: "/co", key });
+        await expectOpenAgentWithInput(page, agentId, "/co");
+      });
+    });
+  }
 
   test("slash clear replaces the active agent with a matching draft", async ({ page }) => {
     await withOpenReadyMockAgent(

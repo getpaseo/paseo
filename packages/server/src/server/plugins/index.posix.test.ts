@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   cp,
@@ -236,6 +237,47 @@ function nextNotification(service: PluginService, pluginId: string): Promise<voi
 }
 
 describe("PluginService", () => {
+  it.skipIf(process.platform === "win32")(
+    "reaps compiler children after starting and reloading a client-only directory plugin",
+    async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-reaping-"));
+      roots.push(directory);
+      const id = "client-only-reaping";
+      await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id }));
+      await writeFile(
+        path.join(directory, "index.client.ts"),
+        "export default function contribute() {}",
+      );
+      const service = createService(
+        directory,
+        { [id]: { source: "directory", path: directory } },
+        { builtinPlugins: new BuiltinPluginLoader(directory, []) },
+      );
+      const compilerChildren = () =>
+        execFileSync("ps", ["-axo", "ppid=,stat=,command="], { encoding: "utf8" })
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => {
+            const [parent, state, ...command] = line.split(/\s+/);
+            return (
+              parent === String(process.pid) &&
+              (state?.startsWith("Z") || /esbuild|compiler-worker/.test(command.join(" ")))
+            );
+          });
+      try {
+        await service.start();
+        expect(service.catalog()[0]?.id).toBe(id);
+        await expect.poll(compilerChildren, { timeout: 5_000 }).toEqual([]);
+        await service.reloadPlugin(id);
+        expect(service.catalog()[0]?.id).toBe(id);
+        await expect.poll(compilerChildren, { timeout: 5_000 }).toEqual([]);
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+    20_000,
+  );
+
   it.each([
     { shadow: false, runtime: "subprocess" },
     { shadow: true, runtime: "subprocess" },
@@ -308,6 +350,176 @@ describe("PluginService", () => {
     },
   );
 
+  it.each(["subprocess", "builtin"] as const)(
+    "carries a provider update's output and result through the %s plugin runtime",
+    async (runtime) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-update",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        installation: {
+          async update({ launch, report }) {
+            report({ type: "message", text: "Running " + launch.command + " update\\n" });
+            report({ type: "stdout", text: " added 1 package\\r\\n" });
+            report({ type: "bogus", text: "dropped" });
+            report({ type: "stderr", text: "warn \\u001b[33mold\\u001b[0m\\n" });
+            if (launch.env.MODE === "throw") throw new Error(" updater crashed \\n");
+            if (launch.env.MODE === "fail") return { status: "failed", message: " exit 3 \\n" };
+            return { status: "succeeded", message: " Restart agents \\n" };
+          },
+        },
+        async connect() { throw new Error("not connected by this test"); },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-update"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-update"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        const update = registration!.installation!.update!;
+        const run = async (env: Record<string, string>) => {
+          const output: unknown[] = [];
+          const result = await update({
+            launch: { command: "/bin/agent", args: [], env, resolved: true },
+            signal: new AbortController().signal,
+            report: (event) => output.push(event),
+          }).catch((error: Error) => ({ thrown: error.message }));
+          return { result, output };
+        };
+        const output = [
+          { type: "message", text: "Running /bin/agent update\n" },
+          { type: "stdout", text: " added 1 package\r\n" },
+          { type: "stderr", text: "warn \u001b[33mold\u001b[0m\n" },
+        ];
+        await expect(run({})).resolves.toEqual({
+          result: { status: "succeeded", message: " Restart agents \n" },
+          output,
+        });
+        await expect(run({ MODE: "fail" })).resolves.toEqual({
+          result: { status: "failed", message: " exit 3 \n" },
+          output,
+        });
+        await expect(run({ MODE: "throw" })).resolves.toEqual({
+          result: { thrown: " updater crashed \n" },
+          output,
+        });
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
+  it.each(["subprocess", "builtin"] as const)(
+    "carries provider installation links, inspect and update checks through the %s plugin runtime",
+    async (runtime) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-installation",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        docsUrl: "https://example.com/docs",
+        installation: {
+          installUrl: "https://example.com/install",
+          updateUrl: "https://example.com/update",
+          async inspect({ launch, signal }) {
+            if (launch.env.HANG === "yes")
+              return await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+            if (!launch.resolved) return { status: "not_installed" };
+            return { status: "installed", version: launch.command + " " + launch.env.VERSION };
+          },
+          async checkForUpdates({ launch, installedVersion, signal }) {
+            if (launch.env.HANG === "yes")
+              return await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+            if (launch.env.FEED === "down") throw new Error("feed down");
+            return { status: "available", versions: [installedVersion, "nightly"], message: launch.env.NOTE };
+          },
+        },
+        async connect() { throw new Error("not connected by this test"); },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-installation"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-installation"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        expect(registration!.docsUrl).toBe("https://example.com/docs");
+        const installation = registration!.installation!;
+        expect(installation).toMatchObject({
+          installUrl: "https://example.com/install",
+          updateUrl: "https://example.com/update",
+        });
+        const signal = new AbortController().signal;
+        const launch = { command: "/bin/agent", args: [], env: { VERSION: " 1.0 (beta)\n" } };
+        await expect(
+          installation.inspect!({ launch: { ...launch, resolved: true }, signal }),
+        ).resolves.toEqual({ status: "installed", version: "/bin/agent  1.0 (beta)\n" });
+        await expect(
+          installation.inspect!({ launch: { ...launch, resolved: false }, signal }),
+        ).resolves.toEqual({ status: "not_installed" });
+        await expect(
+          installation.checkForUpdates!({
+            launch: { ...launch, env: { ...launch.env, NOTE: " Restart \n" }, resolved: true },
+            installedVersion: " 1.0 (beta)\n",
+            signal,
+          }),
+        ).resolves.toEqual({
+          status: "available",
+          versions: [" 1.0 (beta)\n", "nightly"],
+          message: " Restart \n",
+        });
+        await expect(
+          installation.checkForUpdates!({
+            launch: { ...launch, env: { FEED: "down" }, resolved: true },
+            signal,
+          }),
+        ).rejects.toThrow("feed down");
+
+        for (const call of [installation.inspect!, installation.checkForUpdates!]) {
+          const abort = new AbortController();
+          const hanging = call({
+            launch: { ...launch, env: { HANG: "yes" }, resolved: true },
+            signal: abort.signal,
+          });
+          abort.abort(new Error("stop waiting"));
+          await expect(hanging).rejects.toThrow("stop waiting");
+        }
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -342,6 +554,33 @@ describe("PluginService", () => {
       await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
     ).toBe("runtime:/project-b");
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("fails a plugin whose provider docs link is not an http(s) page", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-docs-link",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    docsUrl: "file:///etc/passwd",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory }).catch(() => undefined);
+
+    expect(service.getProviderRegistrations()).toEqual([]);
+    expect(await service.listPlugins()).toMatchObject([
+      { status: "failed", error: "Plugin provider plugin-agent docsUrl must be an http(s) URL" },
+    ]);
+    await service.stopAllPlugins();
   });
 
   it("publishes provider registrations only while their plugin is running", async () => {

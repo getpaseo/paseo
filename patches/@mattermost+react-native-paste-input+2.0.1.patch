@@ -28,17 +28,28 @@ index 73466dd..8440ac9 100644
  
    auto textSize = textLayoutManager_
 diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-index 9e429b8..1d10014 100644
+index 1794b53..eca5e57 100644
 --- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
 +++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+@@ -33,8 +33,8 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+     return mOnPasteListener
+   }
+ 
 -  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
 -    val ic = super.onCreateInputConnection(outAttrs)
 +  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
 +    val ic = super.onCreateInputConnection(outAttrs) ?: return null
-@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+ 
+     EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("*/*"))
+ 
+@@ -55,6 +55,6 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+       true
+     }
+ 
 -    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+   }
+ }
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 index 51b9dfa..501badf 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
@@ -108,10 +119,18 @@ index 51b9dfa..501badf 100644
    // For Android, PasteTextInput already handles everything internally
    // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
-index 5119e65..287216a 100644
+index 5119e65..77c3aea 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
-@@ -52,6 +52,7 @@ function InternalTextInput(props) {
+@@ -16,7 +16,6 @@ var _nullthrows = _interopRequireDefault(require("nullthrows"));
+ var _jsxRuntime = require("react/jsx-runtime");
+ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+ function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }
+-const emptyFunctionThatReturnsTrue = () => true;
+ function useMergeRefs(...refs) {
+   return React.useCallback(current => {
+     for (const ref of refs) {
+@@ -52,6 +51,7 @@ function InternalTextInput(props) {
      end: propsSelection.end ?? propsSelection.start
    }, [propsSelection]);
    const [mostRecentEventCount, setMostRecentEventCount] = React.useState(0);
@@ -119,7 +138,7 @@ index 5119e65..287216a 100644
    const [lastNativeText, setLastNativeText] = React.useState(props.value);
    const [lastNativeSelectionState, setLastNativeSelection] = React.useState({
      selection: {
-@@ -103,7 +104,12 @@ function InternalTextInput(props) {
+@@ -103,7 +103,12 @@ function InternalTextInput(props) {
        Object.assign(instance, {
          clear() {
            if (inputRef.current != null) {
@@ -133,7 +152,7 @@ index 5119e65..287216a 100644
            }
          },
          isFocused() {
-@@ -114,12 +120,12 @@ function InternalTextInput(props) {
+@@ -114,12 +119,12 @@ function InternalTextInput(props) {
          },
          setSelection(start, end) {
            if (inputRef.current != null) {
@@ -148,7 +167,7 @@ index 5119e65..287216a 100644
    const ref = useMergeRefs(setLocalRef, props.forwardedRef);
    const _onChange = event => {
      const currentText = event.nativeEvent.text;
-@@ -128,6 +134,7 @@ function InternalTextInput(props) {
+@@ -128,6 +133,7 @@ function InternalTextInput(props) {
      if (inputRef.current == null) {
        return;
      }
@@ -156,6 +175,14 @@ index 5119e65..287216a 100644
      setLastNativeText(currentText);
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
+@@ -294,7 +300,6 @@ function InternalTextInput(props) {
+     onPaste: _onPaste,
+     onScroll: _onScroll,
+     onSelectionChange: _onSelectionChange,
+-    onSelectionChangeShouldSetResponder: emptyFunctionThatReturnsTrue,
+     placeholder: placeholder,
+     style: _style,
+     text: text,
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
 index 75fe015..1d3cd64 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
@@ -225,10 +252,18 @@ index 75fe015..1d3cd64 100644
    // For Android, PasteTextInput already handles everything internally
    // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
-index 39bd607..f2b1d2f 100644
+index 39bd607..832dcc2 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
-@@ -46,6 +46,7 @@ function InternalTextInput(props) {
+@@ -10,7 +10,6 @@ import usePressability from 'react-native/Libraries/Pressability/usePressability
+ import flattenStyle from 'react-native/Libraries/StyleSheet/flattenStyle';
+ import nullthrows from 'nullthrows';
+ import { jsx as _jsx } from "react/jsx-runtime";
+-const emptyFunctionThatReturnsTrue = () => true;
+ function useMergeRefs(...refs) {
+   return React.useCallback(current => {
+     for (const ref of refs) {
+@@ -46,6 +45,7 @@ function InternalTextInput(props) {
      end: propsSelection.end ?? propsSelection.start
    }, [propsSelection]);
    const [mostRecentEventCount, setMostRecentEventCount] = React.useState(0);
@@ -236,7 +271,7 @@ index 39bd607..f2b1d2f 100644
    const [lastNativeText, setLastNativeText] = React.useState(props.value);
    const [lastNativeSelectionState, setLastNativeSelection] = React.useState({
      selection: {
-@@ -97,7 +98,12 @@ function InternalTextInput(props) {
+@@ -97,7 +97,12 @@ function InternalTextInput(props) {
        Object.assign(instance, {
          clear() {
            if (inputRef.current != null) {
@@ -250,7 +285,7 @@ index 39bd607..f2b1d2f 100644
            }
          },
          isFocused() {
-@@ -108,12 +114,12 @@ function InternalTextInput(props) {
+@@ -108,12 +113,12 @@ function InternalTextInput(props) {
          },
          setSelection(start, end) {
            if (inputRef.current != null) {
@@ -265,7 +300,7 @@ index 39bd607..f2b1d2f 100644
    const ref = useMergeRefs(setLocalRef, props.forwardedRef);
    const _onChange = event => {
      const currentText = event.nativeEvent.text;
-@@ -122,6 +128,7 @@ function InternalTextInput(props) {
+@@ -122,6 +127,7 @@ function InternalTextInput(props) {
      if (inputRef.current == null) {
        return;
      }
@@ -273,6 +308,14 @@ index 39bd607..f2b1d2f 100644
      setLastNativeText(currentText);
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
+@@ -288,7 +294,6 @@ function InternalTextInput(props) {
+     onPaste: _onPaste,
+     onScroll: _onScroll,
+     onSelectionChange: _onSelectionChange,
+-    onSelectionChangeShouldSetResponder: emptyFunctionThatReturnsTrue,
+     placeholder: placeholder,
+     style: _style,
+     text: text,
 diff --git a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx b/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
 index 12befab..0d23ca5 100644
 --- a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
@@ -342,10 +385,19 @@ index 12befab..0d23ca5 100644
      // For Android, PasteTextInput already handles everything internally
      // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx b/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
-index dcc4a2b..1156458 100644
+index dcc4a2b..7d10e11 100644
 --- a/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
 +++ b/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
-@@ -84,6 +84,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -27,8 +27,6 @@ import usePressability from 'react-native/Libraries/Pressability/usePressability
+ import flattenStyle from 'react-native/Libraries/StyleSheet/flattenStyle';
+ import nullthrows from 'nullthrows';
+ 
+-const emptyFunctionThatReturnsTrue = () => true;
+-
+ function useMergeRefs<Instance>(
+     ...refs: ReadonlyArray<React.ForwardedRef<Instance> | null | undefined>
+ ): (arg0: Instance | null) => void {
+@@ -84,6 +82,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
  
      const [mostRecentEventCount, setMostRecentEventCount] =
          React.useState<number>(0);
@@ -353,7 +405,7 @@ index dcc4a2b..1156458 100644
      const [lastNativeText, setLastNativeText] = React.useState<
          string | undefined
      >(props.value);
-@@ -181,13 +182,24 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -181,13 +180,24 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                          if (inputRef.current != null) {
                              Commands.setTextAndSelection(
                                  inputRef.current,
@@ -379,7 +431,7 @@ index dcc4a2b..1156458 100644
                      isFocused(): boolean {
                          return (
                              TextInputState.currentlyFocusedInput() ===
-@@ -203,7 +215,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -203,7 +213,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                          if (inputRef.current != null) {
                              Commands.setTextAndSelection(
                                  inputRef.current,
@@ -388,7 +440,7 @@ index dcc4a2b..1156458 100644
                                  null,
                                  start,
                                  end
-@@ -213,7 +225,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -213,7 +223,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                  });
              }
          },
@@ -397,7 +449,7 @@ index dcc4a2b..1156458 100644
      );
  
      const ref = useMergeRefs<PasteTextInputInstance>(
-@@ -232,6 +244,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -232,6 +242,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
              return;
          }
  
@@ -405,3 +457,11 @@ index dcc4a2b..1156458 100644
          setLastNativeText(currentText);
          setMostRecentEventCount(event.nativeEvent.eventCount);
      };
+@@ -445,7 +456,6 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+             onPaste={_onPaste}
+             onScroll={_onScroll}
+             onSelectionChange={_onSelectionChange}
+-            onSelectionChangeShouldSetResponder={emptyFunctionThatReturnsTrue}
+             placeholder={placeholder}
+             style={_style}
+             text={text}

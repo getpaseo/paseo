@@ -5,6 +5,8 @@ import {
   StreamLanguage,
 } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -48,6 +50,9 @@ function language(
     }),
   );
 }
+
+const shellLanguage = StreamLanguage.define(shell);
+const dockerfileLanguage = StreamLanguage.define(dockerFile);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -99,6 +104,12 @@ const languagesByExtension: Record<string, Language> = {
   yml: language(yamlParser, hashComments),
   // Rust
   rs: language(rustParser, cStyleComments),
+  // Shell
+  sh: shellLanguage,
+  bash: shellLanguage,
+  zsh: shellLanguage,
+  // Docker
+  dockerfile: dockerfileLanguage,
   // Swift
   swift: StreamLanguage.define(swift),
   // Dart
@@ -120,7 +131,16 @@ const languagesByExtension: Record<string, Language> = {
 };
 
 export function getLanguageForFile(filename: string): Language | null {
-  const ext = filename.split(".").pop()?.toLowerCase();
+  const basename = filename.slice(
+    Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\")) + 1,
+  );
+  if (basename.toLowerCase() === "dockerfile") return dockerfileLanguage;
+
+  const dot = basename.lastIndexOf(".");
+  // Callers also pass bare language keys for code fences.
+  if (dot === -1 && basename !== filename) return null;
+
+  const ext = basename.slice(dot + 1).toLowerCase();
   if (!ext) return null;
   return languagesByExtension[ext] ?? null;
 }

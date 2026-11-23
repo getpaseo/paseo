@@ -64,6 +64,7 @@ import {
   type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import {
   getAgentStreamEventTurnId,
@@ -838,32 +839,126 @@ export function deriveModelDefinitionsFromACP(
   models: SessionModelState | null | undefined,
   configOptions?: SessionConfigOption[] | null,
 ): AgentModelDefinition[] {
-  const thinkingOptions = deriveSelectorOptions(configOptions, "thought_level");
-  const defaultThinkingOptionId = thinkingOptions.find((option) => option.isDefault)?.id ?? null;
+  const sessionThinking = deriveSessionThinking(configOptions);
 
   if (models?.availableModels?.length) {
-    return models.availableModels.map((model) => ({
-      provider,
-      id: model.modelId,
-      label: model.name,
-      description: model.description ?? undefined,
-      isDefault: model.modelId === models.currentModelId,
-      thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-      defaultThinkingOptionId: defaultThinkingOptionId ?? undefined,
-    }));
+    return models.availableModels.map((model) => {
+      const isDefault = model.modelId === models.currentModelId;
+      const thinking = deriveACPModelThinking({
+        metadata: model._meta,
+        isDefault,
+        sessionThinking,
+      });
+      return {
+        provider,
+        id: model.modelId,
+        label: model.name,
+        description: model.description ?? undefined,
+        isDefault,
+        thinkingOptions: thinking.thinkingOptions,
+        defaultThinkingOptionId: thinking.defaultThinkingOptionId,
+      };
+    });
   }
 
   const modelOptions = deriveSelectorOptions(configOptions, "model");
-  return modelOptions.map((option) => ({
-    provider,
-    id: option.id,
-    label: option.label,
-    description: option.description,
-    isDefault: option.isDefault,
-    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-    defaultThinkingOptionId: defaultThinkingOptionId ?? undefined,
-    metadata: option.metadata,
-  }));
+  return modelOptions.map((option) => {
+    const thinking = deriveACPModelThinking({
+      metadata: option.metadata,
+      isDefault: option.isDefault === true,
+      sessionThinking,
+    });
+    return {
+      provider,
+      id: option.id,
+      label: option.label,
+      description: option.description,
+      isDefault: option.isDefault,
+      thinkingOptions: thinking.thinkingOptions,
+      defaultThinkingOptionId: thinking.defaultThinkingOptionId,
+      metadata: option.metadata,
+    };
+  });
+}
+
+type ACPModelThinking = Pick<AgentModelDefinition, "thinkingOptions" | "defaultThinkingOptionId">;
+
+const NO_THINKING: ACPModelThinking = {
+  thinkingOptions: undefined,
+  defaultThinkingOptionId: undefined,
+};
+
+// Some ACP agents describe each model's reasoning levels in the model's `_meta`.
+const ACPModelReasoningSchema = z.object({
+  supportsReasoningEffort: z.boolean().optional(),
+  reasoningEffort: z.string().min(1).nullish(),
+  reasoningEfforts: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        value: z.string().min(1).optional(),
+        label: z.string(),
+        description: z.string().nullish(),
+        default: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+});
+
+function deriveSessionThinking(
+  configOptions: SessionConfigOption[] | null | undefined,
+): ACPModelThinking {
+  const thinkingOptions = deriveSelectorOptions(configOptions, "thought_level");
+  if (thinkingOptions.length === 0) {
+    return NO_THINKING;
+  }
+  return {
+    thinkingOptions,
+    defaultThinkingOptionId: thinkingOptions.find((option) => option.isDefault)?.id,
+  };
+}
+
+// A model's own reasoning metadata describes that model. A model that reports none
+// keeps the session's thought_level options, which describe the startup model.
+function deriveACPModelThinking(input: {
+  metadata: Record<string, unknown> | null | undefined;
+  isDefault: boolean;
+  sessionThinking: ACPModelThinking;
+}): ACPModelThinking {
+  const { metadata, isDefault, sessionThinking } = input;
+  const parsed = ACPModelReasoningSchema.safeParse(metadata ?? {});
+  if (!parsed.success) {
+    return sessionThinking;
+  }
+  const { supportsReasoningEffort, reasoningEffort, reasoningEfforts } = parsed.data;
+  if (supportsReasoningEffort === false || reasoningEfforts?.length === 0) {
+    return NO_THINKING;
+  }
+  if (!reasoningEfforts) {
+    return sessionThinking;
+  }
+
+  const ids = reasoningEfforts.map((effort) => effort.value ?? effort.id);
+  if (new Set(ids).size !== ids.length) {
+    return sessionThinking;
+  }
+  const markedDefault = reasoningEfforts.find((effort) => effort.default);
+  const defaultCandidates = [
+    isDefault ? sessionThinking.defaultThinkingOptionId : undefined,
+    reasoningEffort,
+    markedDefault ? (markedDefault.value ?? markedDefault.id) : undefined,
+  ];
+  const defaultThinkingOptionId =
+    defaultCandidates.find((id) => id && ids.includes(id)) ?? undefined;
+  return {
+    thinkingOptions: reasoningEfforts.map((effort, index) => ({
+      id: ids[index],
+      label: effort.label,
+      description: effort.description ?? undefined,
+      isDefault: ids[index] === defaultThinkingOptionId,
+    })),
+    defaultThinkingOptionId,
+  };
 }
 
 export function deriveControlsFromACP(

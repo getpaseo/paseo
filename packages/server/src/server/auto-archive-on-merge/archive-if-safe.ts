@@ -6,6 +6,7 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
+  type ArchiveDependencies,
   killTerminalsForWorkspace,
 } from "../workspace-archive-service.js";
 import type {
@@ -16,10 +17,15 @@ import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import type { WorkspaceArchiveContext } from "../workspace-registry.js";
+import type { PluginWorktreeManagerRuntime } from "../plugins/runtime.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
   paseoWorktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  getWorkspace?: ArchiveDependencies["getWorkspace"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: ForgeService;
@@ -99,11 +105,15 @@ export async function archiveIfSafe(input: {
       {
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
+        worktreeManagers: options.worktreeManagers,
+        workspaceArchiveOperations: options.workspaceArchiveOperations,
         github: options.github,
         workspaceGitService: options.workspaceGitService,
         agentManager: options.agentManager,
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+        getWorkspace: options.getWorkspace,
+        isCheckoutUntrusted: options.isCheckoutUntrusted,
         listActiveWorkspaces: options.listActiveWorkspaces,
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           options.archiveWorkspaceRecord(

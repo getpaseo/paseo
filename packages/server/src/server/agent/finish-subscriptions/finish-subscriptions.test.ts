@@ -498,3 +498,26 @@ test("finish recovery protects callers before durable intent has loaded", async 
   expect(recovered.hasPendingForCaller("parent")).toBe(true);
   expect(recovered.hasPendingForCaller("unrelated")).toBe(false);
 });
+
+test("an undispatched follow-up does not block the running child's permission notification", async () => {
+  const state = await scenario();
+  await state.service.register(intent);
+  await until(() => state.observation.waits.length === 1);
+  await state.service.register(intent, true);
+  const result = outcome("running");
+  result.status = "permission";
+  result.final!.pendingPermissions = [
+    {
+      id: "approval",
+      provider: "codex",
+      name: "Bash",
+      kind: "tool",
+      input: { command: "run tests" },
+    } as NonNullable<typeof result.final>["pendingPermissions"][number],
+  ];
+  state.observation.waits[0]!.result.resolve(result);
+  await until(() => state.delivery.prompts.length === 1);
+  expect(state.delivery.prompts[0]).toContain("needs permission");
+  expect(state.delivery.prompts[0]).toContain("approval");
+  expect(await state.store.list()).toHaveLength(2);
+});
