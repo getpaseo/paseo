@@ -1,6 +1,6 @@
 import { PendingOpenProjectStore } from "../pending-open-project-store.js";
 
-export interface OwnedDesktopWindow<TAgentTarget> {
+export interface OwnedDesktopWindow {
   webContentsId: number;
   isDestroyed(): boolean;
   isVisible(): boolean;
@@ -8,38 +8,37 @@ export interface OwnedDesktopWindow<TAgentTarget> {
   restore(): void;
   show(): void;
   focus(): void;
-  sendAgent(target: TAgentTarget): void;
 }
 
-interface DesktopWindowOwnerPort<TAgentTarget> {
+interface DesktopWindowOwnerPort {
   create(input: {
     initialRoute: string | null;
     restoreWindowState: boolean;
     onCreated(webContentsId: number): void;
     onClosed(webContentsId: number): void;
-  }): Promise<OwnedDesktopWindow<TAgentTarget>>;
-  windows(): OwnedDesktopWindow<TAgentTarget>[];
-  focusedWindow(): OwnedDesktopWindow<TAgentTarget> | null;
-  agentRoute(target: TAgentTarget): string;
-  deliverAgent(webContentsId: number, target: TAgentTarget): TAgentTarget | null;
+  }): Promise<OwnedDesktopWindow>;
+  windows(): OwnedDesktopWindow[];
+  focusedWindow(): OwnedDesktopWindow | null;
 }
 
-export interface DesktopWindowOwner<TAgentTarget> {
+export interface DesktopWindowOwner {
   openPrimary(input?: {
     initialRoute?: string | null;
     pendingProjectPath?: string | null;
   }): Promise<void>;
   openAdditional(input?: { pendingProjectPath?: string | null }): Promise<void>;
-  openOrFocusAgent(target: TAgentTarget): Promise<void>;
+  openOrFocusLink(input: {
+    initialRoute?: string;
+    deliver(webContentsId: number): void;
+  }): Promise<void>;
   restoreWhenActivated(): Promise<void>;
   takePendingProject(webContentsId: number): string | null;
 }
 
-export function createDesktopWindowOwner<TAgentTarget>(
-  port: DesktopWindowOwnerPort<TAgentTarget>,
-): DesktopWindowOwner<TAgentTarget> {
+export function createDesktopWindowOwner(port: DesktopWindowOwnerPort): DesktopWindowOwner {
   const pendingProjects = new PendingOpenProjectStore();
-  let agentWindowCreation: Promise<void> | null = null;
+  let primaryWindowCreation: Promise<void> | null = null;
+  let linkSequence = 0;
 
   const open = async (input: {
     initialRoute: string | null;
@@ -54,45 +53,47 @@ export function createDesktopWindowOwner<TAgentTarget>(
     });
   };
 
-  const owner: DesktopWindowOwner<TAgentTarget> = {
-    openPrimary: (input = {}) =>
-      open({
+  const findWindow = () => {
+    const focused = port.focusedWindow();
+    if (focused && !focused.isDestroyed()) return focused;
+    const windows = port.windows().filter((window) => !window.isDestroyed());
+    return windows.find((window) => window.isVisible()) ?? windows[0];
+  };
+
+  const owner: DesktopWindowOwner = {
+    openPrimary: (input = {}) => {
+      primaryWindowCreation ??= open({
         initialRoute: input.initialRoute ?? null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: true,
-      }),
+      }).finally(() => {
+        primaryWindowCreation = null;
+      });
+      return primaryWindowCreation;
+    },
     openAdditional: (input = {}) =>
       open({
         initialRoute: null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: false,
       }),
-    async openOrFocusAgent(target) {
-      const windows = port.windows();
-      const window =
-        port.focusedWindow() ?? windows.find((candidate) => candidate.isVisible()) ?? windows[0];
-      if (!window || window.isDestroyed()) {
-        if (!agentWindowCreation) {
-          agentWindowCreation = owner
-            .openPrimary({ initialRoute: port.agentRoute(target) })
-            .finally(() => {
-              agentWindowCreation = null;
-            });
-          await agentWindowCreation;
-          return;
-        }
-        await agentWindowCreation;
-        await owner.openOrFocusAgent(target);
-        return;
+    async openOrFocusLink({ initialRoute, deliver }) {
+      const sequence = ++linkSequence;
+      let window = findWindow();
+      if (!window) {
+        const opensAtTarget = !primaryWindowCreation && initialRoute !== undefined;
+        await owner.openPrimary({ initialRoute: initialRoute ?? null });
+        if (sequence !== linkSequence || opensAtTarget) return;
+        window = findWindow();
+        if (!window) return;
       }
       if (window.isMinimized()) window.restore();
       window.show();
       window.focus();
-      const deliverable = port.deliverAgent(window.webContentsId, target);
-      if (deliverable) window.sendAgent(deliverable);
+      deliver(window.webContentsId);
     },
     async restoreWhenActivated() {
-      if (port.windows().length === 0) await owner.openPrimary();
+      if (!findWindow()) await owner.openPrimary();
     },
     takePendingProject: (webContentsId) => pendingProjects.take(webContentsId),
   };
