@@ -600,11 +600,12 @@ function hasPushableCommits(input: BuildGitActionsInput): boolean {
       // A first push, which sets the upstream. The commits to send are the ones ahead of the base.
       return input.aheadCount > 0;
     case "gone":
-      // Paseo worktrees re-publish a branch whose remote copy was deleted, for example after a
-      // merged PR. Regular checkouts do not.
-      return input.isPaseoOwnedWorktree && input.aheadCount > 0;
     case "unknown":
-      return false;
+      // The branch has an upstream that is deleted or unreadable, so nothing counts the commits
+      // left to send. Paseo worktrees publish whenever the branch is ahead of its base, for
+      // example after a merged PR. Regular checkouts do not: Push would re-create a branch that
+      // was deleted on the remote.
+      return input.isPaseoOwnedWorktree && input.aheadCount > 0;
   }
 }
 

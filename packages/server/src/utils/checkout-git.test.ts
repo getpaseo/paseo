@@ -1207,6 +1207,32 @@ const x = 1;
     expect(status.pushRemote).toBe("origin");
   });
 
+  it("does not report a published branch as never pushed when the clone fetches only main", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    // What `git clone --single-branch` and `--depth` leave behind: no tracking ref for other branches.
+    execFileSync(
+      "git",
+      ["config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main"],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["push", "-u", "origin", "feature"], { cwd: repoDir });
+    execFileSync("git", ["push", "origin", "--delete", "feature"], { cwd: repoDir });
+    execFileSync("git", ["fetch", "--prune", "origin"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status).toMatchObject({
+      isGit: true,
+      aheadBehind: { ahead: 1, behind: 0 },
+      upstreamRef: null,
+      aheadOfOrigin: null,
+      upstreamState: "unknown",
+      pushRemote: "origin",
+    });
+  });
+
   it("re-publishes a Paseo worktree branch whose remote copy was deleted and pruned", async () => {
     const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
     const worktree = await createLegacyWorktreeForTest({

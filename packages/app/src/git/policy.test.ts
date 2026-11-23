@@ -453,6 +453,37 @@ describe("git-actions-policy", () => {
     );
   });
 
+  describe("a published branch whose upstream the daemon cannot read", () => {
+    const unreadableUpstream = {
+      hasRemote: true,
+      upstream: "unknown",
+      isOnBaseBranch: false,
+      aheadCount: 2,
+      aheadOfOrigin: null,
+      behindOfOrigin: null,
+      shipDefault: "pr",
+    } as const;
+
+    it("does not offer a first push in a regular checkout", () => {
+      const actions = buildGitActions(createInput(unreadableUpstream));
+
+      expect(actions.primary).toMatchObject({ id: "pr", label: "Create PR" });
+      expect(pushActionOf(actions)?.unavailableMessage).toEqual(expect.any(String));
+    });
+
+    it("keeps offering Push in a Paseo worktree", () => {
+      const actions = buildGitActions(
+        createInput({ ...unreadableUpstream, isPaseoOwnedWorktree: true }),
+      );
+
+      expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+      expect(pushActionOf(actions)).toMatchObject({
+        disabled: false,
+        unavailableMessage: undefined,
+      });
+    });
+  });
+
   it("offers Push on a branch that tracks a remote not named origin", () => {
     const actions = buildGitActions(
       createInput({

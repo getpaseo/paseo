@@ -1898,9 +1898,11 @@ async function getAheadBehind(
   return getAheadBehindForComparisonRef(cwd, comparisonBaseRef, currentBranch, context);
 }
 
-// How the current branch relates to its upstream. "gone" is git's `[gone]`: an upstream is
-// configured but its remote-tracking ref no longer exists, as after the remote branch is deleted
-// and pruned. "unknown" means git could not read it.
+// How the current branch relates to its upstream. "none" means no upstream is configured: the
+// branch was never pushed. "gone" is git's `[gone]`: an upstream is configured but its
+// remote-tracking ref no longer exists, as after the remote branch is deleted and pruned.
+// "unknown" means git cannot say: the read failed, or an upstream is configured that this clone
+// keeps no remote-tracking ref for, as in a `--single-branch` or `--depth` clone.
 export type UpstreamStatus =
   | { state: "tracked"; ref: string; aheadBehind: AheadBehind }
   | { state: "gone"; ref: string }
@@ -1978,7 +1980,8 @@ async function getUpstreamStatus(
     );
     const [ref = "", track = ""] = stdout.trim().split("\0", 2);
     if (!ref) {
-      return { state: "none" };
+      const hasUpstream = await hasConfiguredUpstream(cwd, currentBranch, context);
+      return hasUpstream ? { state: "unknown" } : { state: "none" };
     }
     if (track === "gone") {
       return { state: "gone", ref };
@@ -1989,6 +1992,19 @@ async function getUpstreamStatus(
   } catch {
     return { state: "unknown" };
   }
+}
+
+async function hasConfiguredUpstream(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<boolean> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
+  if (!remoteName) {
+    return false;
+  }
+  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
+  return mergeRef !== null;
 }
 
 interface CheckoutInspectionContext {
