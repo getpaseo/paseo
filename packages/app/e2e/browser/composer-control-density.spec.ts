@@ -1,4 +1,4 @@
-import { test, expect } from "../support/fixtures";
+import { test, expect, type Page } from "../support/fixtures";
 import { openWorkspaceWithAgents } from "../support/helpers/archive-tab";
 import {
   composerLocator,
@@ -308,6 +308,91 @@ test.describe("Composer trailing disc on a new chat", () => {
       await expect(send).toBeEnabled();
     } finally {
       await workspace.cleanup();
+    }
+  });
+});
+
+const SHORTCUT_MOD = process.platform === "darwin" ? "Meta" : "Control";
+
+async function toggleModelPickerFromComposer(page: Page) {
+  await composerLocator(page).focus();
+  await page.keyboard.press(`${SHORTCUT_MOD}+Slash`);
+}
+
+async function expectModelPickerClosesFromSearch(page: Page) {
+  const search = page.getByPlaceholder(/Search (all )?models/);
+  await expect(search).toBeVisible();
+  await search.focus();
+  await page.keyboard.press(`${SHORTCUT_MOD}+Slash`);
+  await expect(search).toBeHidden();
+}
+
+async function cycleComposerEffort(page: Page) {
+  await composerLocator(page).focus();
+  await page.keyboard.press(`${SHORTCUT_MOD}+Shift+Slash`);
+}
+
+function modelControl(page: Page) {
+  return page.getByRole("button", { name: "Select model (Ten second stream)", exact: true });
+}
+
+function thinkingControl(page: Page, effort: string) {
+  return page.getByRole("button", { name: `Select thinking option (${effort})`, exact: true });
+}
+
+async function expectShortcutHint(
+  page: Page,
+  control: ReturnType<typeof modelControl>,
+  label: string,
+) {
+  await control.hover();
+  const tooltip = page.getByRole("tooltip").filter({ hasText: label });
+  await expect(tooltip).toContainText("/");
+}
+
+test.describe("Composer model and effort shortcuts", () => {
+  test("opens and closes the model picker and wraps effort in toolbar order", async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "composer-shortcuts-",
+      title: "Composer shortcuts",
+      model: "ten-second-stream",
+      thinkingOptionId: "high",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      await expect(thinkingControl(page, "High")).toBeVisible();
+
+      await test.step("Focus model search without opening its tooltip", async () => {
+        await toggleModelPickerFromComposer(page);
+        await expect(page.getByPlaceholder(/Search (all )?models/)).toBeFocused();
+        await expect(page.getByRole("tooltip").filter({ hasText: "Change model" })).toBeHidden();
+        await expectModelPickerClosesFromSearch(page);
+      });
+
+      await test.step("Show both shortcuts in the toolbar tooltips", async () => {
+        await expectShortcutHint(page, modelControl(page), "Change model");
+        await expectShortcutHint(page, thinkingControl(page, "High"), "Thinking mode");
+      });
+
+      await test.step("Wrap from High to Low and advance to Medium", async () => {
+        await cycleComposerEffort(page);
+        await expect(thinkingControl(page, "Low")).toBeVisible();
+        await cycleComposerEffort(page);
+        await expect(thinkingControl(page, "Medium")).toBeVisible();
+      });
+
+      await test.step("Toggle the folded picker and cycle effort in a compact window", async () => {
+        await page.setViewportSize({ width: 480, height: 844 });
+        const effortLabel = page.getByTestId("combined-model-selector-thinking-label");
+        await expect(effortLabel).toHaveText("Medium");
+        await toggleModelPickerFromComposer(page);
+        await expectModelPickerClosesFromSearch(page);
+        await cycleComposerEffort(page);
+        await expect(effortLabel).toHaveText("High");
+      });
+    } finally {
+      await agent.cleanup();
     }
   });
 });

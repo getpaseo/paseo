@@ -1,1 +1,0 @@
-{"t_ms": 371, "stream": "stdin", "data": {"event": "user", "message": {"content": "Use run_command to run sleep 30; printf FINISHED in <WORKSPACE>, WaitMsBeforeAsync 1000. Wait until it finishes."}}}

@@ -451,7 +451,7 @@ describe("translation resources", () => {
       "Update the host to remove projects.",
     );
     expect(en.newWorkspace.title).toBe("New workspace");
-    expect(en.newWorkspace.refPicker.searchPlaceholder).toBe("Search branches and PRs");
+    expect(en.newWorkspace.refPicker.searchBranches).toBe("Search branches");
     expect(en.openProject.tiles.addProject.title).toBe("Add a project");
   });
 

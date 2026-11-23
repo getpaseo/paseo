@@ -260,6 +260,62 @@ const SourceSchema = z.object({
     });
   });
 
+  it("preserves turn metrics on a completed turn and on its timeline row", () => {
+    const metrics = [
+      { label: "Model", value: "gpt-5.5" },
+      { label: "Cache", value: "82%", tone: "ok" },
+    ];
+    const completed = {
+      type: "session",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-1",
+          event: { type: "turn_completed", provider: "codex", turnId: "turn-1", metrics },
+          timestamp: "2026-11-22T00:00:00.000Z",
+        },
+      },
+    };
+    const timeline = {
+      type: "session",
+      message: {
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: "timeline",
+          agentId: "agent-1",
+          agent: null,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+          startCursor: null,
+          endCursor: null,
+          hasOlder: false,
+          hasNewer: false,
+          entries: [
+            {
+              provider: "codex",
+              item: { type: "assistant_message", text: "Done" },
+              timestamp: "2026-11-22T00:00:00.000Z",
+              seqStart: 1,
+              seqEnd: 1,
+              sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+              collapsed: [],
+              turnMetrics: metrics,
+            },
+          ],
+          error: null,
+        },
+      },
+    };
+
+    expect(validateWSOutboundMessage(completed)).toEqual({ success: true, data: completed });
+    expect(validateWSOutboundMessage(timeline)).toEqual({ success: true, data: timeline });
+  });
+
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "./ws-outbound-schema-metadata.js"');

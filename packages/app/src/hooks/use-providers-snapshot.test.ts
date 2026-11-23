@@ -352,6 +352,19 @@ describe("applyProvidersSnapshotUpdate", () => {
     queryClient = new QueryClient();
   });
 
+  // Announcements only download for directories a screen is showing, so these tests mount one.
+  function showSnapshot(cwd?: string) {
+    const queryKey = providersSnapshotQueryKey(serverId, cwd);
+    if (queryClient.getQueryData(queryKey) === undefined) {
+      queryClient.setQueryData(queryKey, providersSnapshot([]));
+    }
+    return new QueryObserver(queryClient, {
+      queryKey,
+      queryFn: async () => providersSnapshot([]),
+      staleTime: Infinity,
+    }).subscribe(() => {});
+  }
+
   function updateMessage(entries: ProviderSnapshotEntry[], cwd?: string): ProvidersSnapshotUpdate {
     return {
       type: "providers_snapshot_update",
@@ -364,6 +377,7 @@ describe("applyProvidersSnapshotUpdate", () => {
   }
 
   it("refreshes active commands only when their provider changes after discovery", async () => {
+    showSnapshot("/repo-a");
     const key = sessionAgentCommandsQueryKey({ serverId, agentId: "agent-1" });
     let requests = 0;
     const observer = new QueryObserver(queryClient, {
@@ -447,6 +461,7 @@ describe("applyProvidersSnapshotUpdate", () => {
   });
 
   it("retries a failed command discovery when its provider first becomes ready", async () => {
+    showSnapshot("/repo-a");
     const key = sessionAgentCommandsQueryKey({ serverId, agentId: "agent-1" });
     let ready = false;
     let requests = 0;
@@ -493,6 +508,7 @@ describe("applyProvidersSnapshotUpdate", () => {
       providersSnapshotQueryKey(serverId, "/repo-a"),
       providersSnapshot([codexEntry("ready", [readyCodexModel])]),
     );
+    showSnapshot("/repo-a");
     const send = (label: string) =>
       applyProvidersSnapshotUpdate({
         client: createClient(),
@@ -511,6 +527,7 @@ describe("applyProvidersSnapshotUpdate", () => {
   });
 
   it("routes updates to the home query cache when the message carries no cwd", async () => {
+    showSnapshot();
     await applyProvidersSnapshotUpdate({
       client: createClient(),
       serverId,
@@ -527,6 +544,7 @@ describe("applyProvidersSnapshotUpdate", () => {
 
   it("routes workspace updates to the matching scope without touching siblings", async () => {
     queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-b"), providersSnapshot([]));
+    showSnapshot("/repo-a");
 
     await applyProvidersSnapshotUpdate({
       client: createClient(),
@@ -546,6 +564,7 @@ describe("applyProvidersSnapshotUpdate", () => {
   });
 
   it("persists compact push updates", async () => {
+    showSnapshot("/repo-a");
     const entries = [codexEntry("ready", [readyCodexModel])];
     const compactSnapshot = compactProviderSnapshot(entries);
     const cache = createCache();
@@ -579,6 +598,7 @@ describe("applyProvidersSnapshotUpdate", () => {
       providersSnapshotQueryKey(serverId, workspaceCwd),
       providersSnapshot([codexEntry("loading")]),
     );
+    showSnapshot(workspaceCwd);
 
     await applyProvidersSnapshotUpdate({
       client: createClient(),
@@ -606,6 +626,7 @@ describe("applyProvidersSnapshotUpdate", () => {
       providersSnapshotQueryKey(serverId, "/repo-a"),
       providersSnapshot([codexEntry("ready")]),
     );
+    showSnapshot("/repo-a");
 
     await applyProvidersSnapshotUpdate({
       client: createClient(),

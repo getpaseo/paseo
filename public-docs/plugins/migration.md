@@ -2,7 +2,7 @@
 title: Migrate a plugin to runtime entries
 description: Mechanical migration from a mixed plugin entry to explicit client and server entries.
 nav: Migration
-order: 47
+order: 48
 category: Plugins
 ---
 
