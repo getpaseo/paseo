@@ -49,6 +49,7 @@ interface TooltipContextValue {
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<TooltipTriggerElement | null>;
   triggerRect: Rect | null;
+  measureTrigger: () => void;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
@@ -253,6 +254,7 @@ export function Tooltip({
 }>): ReactElement {
   const triggerRef = useRef<TooltipTriggerElement>(null);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
+  const triggerRectRequestRef = useRef(0);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -270,22 +272,24 @@ export function Tooltip({
     if (!active && isOpen) setIsOpen(false);
   }, [active, isOpen, setIsOpen]);
 
+  const measureTrigger = useCallback(() => {
+    const element = triggerRef.current;
+    if (!element) return;
+    const request = ++triggerRectRequestRef.current;
+    void measureElement(element).then((rect) => {
+      // A measurement that resolves after the tooltip closed, or after a newer
+      // measurement was requested, would position the next content wrongly.
+      if (request === triggerRectRequestRef.current) setTriggerRect(rect);
+      return undefined;
+    });
+  }, []);
+
   useEffect(() => {
-    const trigger = triggerRef.current;
-    const shouldMeasure = isOpen && enabled && trigger !== null;
-    if (!shouldMeasure) {
+    if (!isOpen || !enabled) {
+      triggerRectRequestRef.current += 1;
       setTriggerRect(null);
       return;
     }
-
-    let cancelled = false;
-    const measureTrigger = (element: TooltipTriggerElement) => {
-      void measureElement(element).then((rect) => {
-        if (!cancelled) setTriggerRect(rect);
-        return undefined;
-      });
-    };
-    measureTrigger(trigger);
 
     const handleScroll = (event: Event) => {
       const target = event.target;
@@ -298,7 +302,7 @@ export function Tooltip({
       const focused = element.ownerDocument.activeElement;
       const hasKeyboardFocus = focused?.matches(":focus-visible") && element.contains(focused);
       if (hasKeyboardFocus) {
-        measureTrigger(element);
+        measureTrigger();
       } else {
         setIsOpen(false);
       }
@@ -308,10 +312,9 @@ export function Tooltip({
     const canListenForScroll = isWeb && typeof window !== "undefined";
     if (canListenForScroll) window.addEventListener("scroll", handleScroll, true);
     return () => {
-      cancelled = true;
       if (canListenForScroll) window.removeEventListener("scroll", handleScroll, true);
     };
-  }, [enabled, isOpen, setIsOpen]);
+  }, [enabled, isOpen, setIsOpen, measureTrigger]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -319,11 +322,12 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       triggerRect,
+      measureTrigger,
       enabled,
       openOnPress: opensOnPress,
       delayDuration,
     }),
-    [isOpen, setIsOpen, triggerRect, enabled, opensOnPress, delayDuration],
+    [isOpen, setIsOpen, triggerRect, measureTrigger, enabled, opensOnPress, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -520,9 +524,15 @@ export function TooltipContent({
   maxWidth?: number;
 }>): ReactElement | null {
   const ctx = useTooltipContext("TooltipContent");
-  const { triggerRect } = ctx;
+  const { measureTrigger, triggerRect } = ctx;
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<SurfacePosition | null>(null);
+
+  // Tooltip content can mount after opening while a file path resolves.
+  useEffect(() => {
+    if (!ctx.open || !ctx.enabled) return;
+    measureTrigger();
+  }, [ctx.enabled, ctx.open, measureTrigger]);
 
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {

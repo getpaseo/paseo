@@ -1,4 +1,4 @@
-import { act, createRef } from "react";
+import { act, createRef, useCallback, useMemo, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Text } from "react-native";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -10,6 +10,7 @@ let container: HTMLDivElement;
 
 const scrollerStyle = { height: 160, overflowY: "auto" } as const;
 const spacerStyle = { height: 300 };
+const stageStyle = { height: 600, overflow: "hidden" } as const;
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -71,4 +72,51 @@ it("keeps the tooltip anchored when tabbing to an offscreen trigger scrolls it i
   await userEvent.keyboard("{Tab}");
   await expect.element(page.getByRole("button", { name: "After trigger" })).toHaveFocus();
   await expect.element(tooltip).not.toBeInTheDocument();
+});
+
+it("positions content that mounts after the tooltip opened against the trigger's current rect", async () => {
+  const offset = 6;
+
+  function Harness() {
+    const [mounted, setMounted] = useState(false);
+    const [topSpacer, setTopSpacer] = useState(200);
+    const topSpacerStyle = useMemo(() => ({ height: topSpacer }), [topSpacer]);
+    const shiftAndMount = useCallback(() => {
+      setTopSpacer(240);
+      setMounted(true);
+    }, []);
+    return (
+      <div style={stageStyle}>
+        <div style={topSpacerStyle} />
+        <Tooltip open>
+          <TooltipTrigger accessibilityRole="button">
+            <Text>Send</Text>
+          </TooltipTrigger>
+          {mounted ? (
+            <TooltipContent offset={offset}>
+              <Text>Send message</Text>
+            </TooltipContent>
+          ) : null}
+          <button type="button" onClick={shiftAndMount}>
+            Resolve path
+          </button>
+        </Tooltip>
+      </div>
+    );
+  }
+
+  act(() => root.render(<Harness />));
+
+  const trigger = page.getByRole("button", { name: "Send" });
+  const tooltip = page.getByRole("tooltip");
+  const gap = () =>
+    trigger.element().getBoundingClientRect().top -
+    tooltip.element().getBoundingClientRect().bottom;
+  await expect.element(tooltip).not.toBeInTheDocument();
+
+  // A non-scroll layout shift and the content arriving in the same commit.
+  await page.getByRole("button", { name: "Resolve path" }).click();
+
+  await expect.element(tooltip).toBeVisible();
+  await expect.poll(gap).toBeCloseTo(offset, 0);
 });
