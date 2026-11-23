@@ -13,12 +13,12 @@ const packageName = "react-native-draggable-flatlist";
 const patchFile = `${packageName}+4.0.3.patch`;
 
 for (const platform of ["ios", "android"]) {
-  test(`patched Markdown ships ${platform} props generated from its native specs`, () => {
-    const packageDir = path.resolve("packages/app/node_modules/react-native-enriched-markdown");
+  test(`vendored Markdown ships ${platform} props generated from its native specs`, () => {
+    const packageDir = path.resolve("packages/react-native-enriched-markdown");
     const output = mkdtempSync(path.join(tmpdir(), `markdown-${platform}-codegen-`));
     try {
       // includesGeneratedCode makes native builds use the shipped headers instead of
-      // regenerating them after patch-package changes the TypeScript specs.
+      // regenerating them from the TypeScript specs, so a spec edit must regenerate them.
       const result = spawnSync(
         process.execPath,
         [

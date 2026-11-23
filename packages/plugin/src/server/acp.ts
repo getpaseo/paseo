@@ -49,6 +49,11 @@ export interface AcpOptions {
   startupTimeoutMs?: number;
   /** Global discovery initializes ACP but returns an empty catalog without opening a session. */
   workspaceOnlyCatalog?: boolean;
+  /**
+   * For an agent that lists thinking options only for the selected model: discovery selects each
+   * model in turn and records the thinking options the agent lists for it, or none.
+   */
+  perModelThinkingOptions?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
   /**

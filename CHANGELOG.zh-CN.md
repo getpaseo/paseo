@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.17.3 - 2026-11-22
+
+### 修复
+
+- 修复 iPhone 上“Workspace 标签”等弹窗忽略主体滑动、无法展开、滚动或收起的问题 ([#10525](https://github.com/getpaseo/paseo/pull/10525))
+- 修复 Antigravity 将默认模型的思考级别套用到所有模型，导致无法打开 Orchestrator 对话的问题 ([#10524](https://github.com/getpaseo/paseo/pull/10524))
+- 修复通过窗口历史记录返回工作区后，`/` 和 `@` 选择器在刷新前一直消失的问题 ([#8954](https://github.com/getpaseo/paseo/pull/8954)，贡献者：[@viking1201](https://github.com/viking1201))
+
+## 0.17.2 - 2026-11-22
+
+- **回合和会话统计**：查看 Claude、OpenCode v2、Pi、Oh My Pi 和插件 Provider 的单轮及会话耗时、token、缓存和费用指标。([#10496](https://github.com/getpaseo/paseo/pull/10496), [#10510](https://github.com/getpaseo/paseo/pull/10510))
+- **自动刷新模型列表**：已启用的 Provider 每 30 分钟在后台刷新一次模型列表。([#10481](https://github.com/getpaseo/paseo/pull/10481))
+- **默认显示侧边栏用量**：侧边栏用量摘要现在默认开启，未启用 Provider 的用量来源默认隐藏，来源开关移至“来源”列表。([#10491](https://github.com/getpaseo/paseo/pull/10491))
+- **Agent 可引导进行中的轮次**：Agent 除了排队或中断外，现在可以引导另一个 Agent 正在运行的轮次，并在响应中收到投递指引。([#10483](https://github.com/getpaseo/paseo/pull/10483))
+
+### 新增
+
+- 在移动端工作区操作菜单中新增“归档工作区” ([#10507](https://github.com/getpaseo/paseo/pull/10507))
+- 在 Provider 设置中新增文档链接、更完整的诊断报告，以及带内联刷新按钮的可滚动 Models 列表 ([#10487](https://github.com/getpaseo/paseo/pull/10487))
+
+### 变更
+
+- 移除 OpenCode v2 对话中的“This chat uses OpenCode v2.”提示行 ([#10490](https://github.com/getpaseo/paseo/pull/10490))
+
+### 修复
+
+- 修复在斜杠菜单中按 Tab 或 Enter 时误触发过期的 `/exit` 选项并归档 Agent 的问题 ([#10484](https://github.com/getpaseo/paseo/pull/10484)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
+- 修复保存了多个主机连接时，繁忙的正常连接会断开重连的问题 ([#10395](https://github.com/getpaseo/paseo/pull/10395))
+- 修复新建工作区启动失败后，修改表单再重试时出现冲突错误的问题，并统一了 Composer 错误提示 ([#10482](https://github.com/getpaseo/paseo/pull/10482))
+- 修复 Antigravity 创建循环定时任务后轮次一直停留在运行状态的问题 ([#10469](https://github.com/getpaseo/paseo/pull/10469))
+- 修复启动 daemon 和重载本地目录插件后遗留僵尸子进程的问题 ([#10470](https://github.com/getpaseo/paseo/pull/10470))
+
 ## 0.17.1 - 2026-11-21
 
 - **Antigravity 审批和历史记录**：选择权限模式、回复工具审批，以及导入或重新打开会话。需要 [Antigravity CLI 1.5.0 或更高版本](https://paseo.sh/zh-CN/docs/supported-providers/antigravity)。([#10193](https://github.com/getpaseo/paseo/pull/10193))

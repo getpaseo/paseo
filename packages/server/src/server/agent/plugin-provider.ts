@@ -2092,14 +2092,21 @@ function mapModel(
   catalogThinkingOptions: Extract<ProviderEvent, { type: "catalog" }>["catalog"]["thinkingOptions"],
   catalogDefaultThinkingOption: string | undefined,
 ): AgentModelDefinition {
-  const thinkingOptions = model.thinkingOptions ?? catalogThinkingOptions;
+  // A default belongs to the options it was chosen from, so a model with its own options never
+  // takes the catalog's default.
+  const thinking = model.thinkingOptions
+    ? { options: model.thinkingOptions, defaultId: model.defaultThinkingOptionId }
+    : {
+        options: catalogThinkingOptions,
+        defaultId: model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
+      };
   return {
     ...model,
     provider,
     isDefault: model.isDefault ?? model.id === defaultModel,
     metadata: model.metadata ? { ...model.metadata } : undefined,
-    thinkingOptions: thinkingOptions?.map((option) => Object.assign({}, option)),
-    defaultThinkingOptionId: model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
+    thinkingOptions: thinking.options?.map((option) => Object.assign({}, option)),
+    defaultThinkingOptionId: thinking.defaultId,
   };
 }
 

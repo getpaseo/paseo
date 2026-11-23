@@ -121,6 +121,12 @@ from `packages/app/android`:
 
 These check terminal arrow ownership, held-key repeats and modifiers, and ordinary text-field editing.
 
+Run the terminal module's tests the same way with `:paseo-terminal:connectedDebugAndroidTest`. Besides
+row layout, they check that the terminal input asks the keyboard not to learn what is typed
+(`IME_FLAG_NO_PERSONALIZED_LEARNING`), so passwords typed at a prompt stay out of Gboard's
+suggestions in other apps. React Native's TextInput has no prop for that flag, and it replaces
+`imeOptions` when `returnKeyType` or `disableFullscreenUI` is set, so the terminal input sets neither.
+
 Run the display density regression tests the same way:
 
 ```bash

@@ -132,7 +132,7 @@ using namespace facebook::react;
   if (!props.maintainVisibleContentPosition || scrollView.contentSize.width > self.frame.size.width) {
     return nil;
   }
-  NSArray<UIView *> *children = [self contentView].subviews;
+  NSArray<UIView *> *children = [self paseoScrollContentView].subviews;
   NSUInteger first = props.maintainVisibleContentPosition.value().minIndexForVisible;
   for (NSUInteger index = first; index < children.count; ++index) {
     UIView *child = children[index];
@@ -149,7 +149,11 @@ using namespace facebook::react;
       [((RCTViewComponentView *)view).nativeId isEqualToString:@"paseo-end-pin"];
 }
 
-- (UIView *)contentView
+// Not `contentView`: that name would override RCTViewComponentView's getter, which
+// react-native-gesture-handler reads to pick the view a gesture binds to. Bound to the content
+// child, a bottom sheet's scroll gesture loses its pairing with the scroll view, so body drags
+// neither expand the sheet nor scroll the list until the sheet is at its top detent.
+- (UIView *)paseoScrollContentView
 {
   for (UIView *child in self.containerView.subviews) {
     if (![child conformsToProtocol:@protocol(RCTCustomPullToRefreshViewProtocol)]) {

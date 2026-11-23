@@ -65,6 +65,24 @@ async function waitForEvent(
   return events.find(predicate)!;
 }
 
+interface ModelThinking {
+  id: string;
+  thinkingOptions?: readonly { id: string }[];
+  defaultThinkingOptionId?: string;
+}
+
+function modelThinking(model: ModelThinking) {
+  return {
+    id: model.id,
+    thinkingOptions: model.thinkingOptions?.map(optionId),
+    defaultThinkingOptionId: model.defaultThinkingOptionId,
+  };
+}
+
+function optionId(option: { id: string }): string {
+  return option.id;
+}
+
 type AcpRequestMessage = Extract<AcpStreamMessage, { id: string | number | null; method: string }>;
 
 interface ConnectorInstance {
@@ -1996,6 +2014,70 @@ lines.on("line", (line) => {
       await connection.close();
     },
   );
+
+  it("discovers each model's own thinking options when the agent describes only the selected model", async () => {
+    const executable = await fakeAcp(`const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const levels = (values) => values.map((value) => ({ name: value[0].toUpperCase() + value.slice(1), value }));
+const thinking = {
+  neon: { currentValue: "high", options: levels(["low", "high", "xhigh"]) },
+  carbon: { currentValue: "medium", options: levels(["low", "medium", "high"]) },
+};
+let model = "neon";
+const options = () => [
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [{ name: "Neon", value: "neon" }, { name: "Carbon", value: "carbon" }, { name: "Orchestrator", value: "orchestrator" }] },
+  ...(thinking[model] ? [{ id: "thought_level", name: "Thinking", category: "thought_level", type: "select", ...thinking[model] }] : []),
+];
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes: null, configOptions: options() } });
+  else if (message.method === "session/set_config_option") {
+    if (message.params.configId === "model") model = message.params.value;
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: options() } });
+  }
+});`);
+    let modelSeenByTransformer: unknown;
+    const registration = runAcpProvider({
+      id: "test-acp",
+      label: "Test ACP",
+      command: [process.execPath, executable],
+      acpOptions: { perModelThinkingOptions: true },
+      transformers: [
+        {
+          async discover(catalog, { config }) {
+            modelSeenByTransformer = (await config.read()).model;
+            return catalog;
+          },
+        },
+      ],
+    });
+    const connection = await registration.connect({ versions: [1], capabilities: [] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1", cwd: process.cwd() });
+      const event = await waitForEvent(
+        events,
+        (candidate) => candidate.type === "catalog" || candidate.type === "request.failed",
+      );
+      if (event.type !== "catalog") throw new Error(`Expected catalog, got ${event.type}`);
+      expect(event.catalog.defaultModel).toBe("neon");
+      expect(event.catalog.models.map(modelThinking)).toEqual([
+        { id: "neon", thinkingOptions: ["low", "high", "xhigh"], defaultThinkingOptionId: "high" },
+        {
+          id: "carbon",
+          thinkingOptions: ["low", "medium", "high"],
+          defaultThinkingOptionId: "medium",
+        },
+        { id: "orchestrator", thinkingOptions: [], defaultThinkingOptionId: undefined },
+      ]);
+      expect(modelSeenByTransformer).toBe("neon");
+    } finally {
+      await connection.close();
+    }
+  });
 
   it("selects the model control when an agent files several controls under the model category", async () => {
     const executable = await fakeAcp(`const readline = require("node:readline");
