@@ -846,16 +846,14 @@ export function BrowserPane({
         applyAnnotationMarkers(webview, markers);
       }
     };
-    const handleWebviewFocus = (event: Event) => {
+    // The main process refuses focus not preceded by a user press (#4679).
+    const claimFocusOrRestore = (previous: HTMLElement | null) => {
       const focusBrowser = getDesktopHost()?.browser?.focus;
       if (typeof focusBrowser !== "function") {
         onFocusPane?.();
         webview.focus?.();
         return;
       }
-      const related = event instanceof FocusEvent ? event.relatedTarget : null;
-      const previous = related instanceof HTMLElement ? related : getLastHostFocus();
-      // The main process refuses focus not preceded by a user press (#4679).
       void focusBrowser(browserIdRef.current)
         .then((focused) => {
           if (focused) {
@@ -872,6 +870,20 @@ export function BrowserPane({
           console.error("[browser-webview] focus failed", error);
         });
     };
+    const handleWebviewFocus = (event: Event) => {
+      const related = event instanceof FocusEvent ? event.relatedTarget : null;
+      claimFocusOrRestore(related instanceof HTMLElement ? related : getLastHostFocus());
+    };
+    // Agent CDP clicks move focus into the guest without a webview focus event.
+    const handleHostFocusOut = (event: FocusEvent) => {
+      const target = event.target;
+      if (event.relatedTarget !== null || !(target instanceof HTMLElement) || target === webview) {
+        return;
+      }
+      setTimeout(() => {
+        if (document.activeElement === webview) claimFocusOrRestore(target);
+      }, 0);
+    };
 
     webview.addEventListener("did-start-loading", handleStartLoading);
     webview.addEventListener("did-stop-loading", handleStopLoading);
@@ -885,6 +897,7 @@ export function BrowserPane({
     trackLastHostFocus();
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
+    document.addEventListener("focusout", handleHostFocusOut, true);
 
     if (isPresentedRef.current) {
       rememberResolvedBrowserWebviewSize(browserId, webview);
@@ -911,6 +924,7 @@ export function BrowserPane({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
+      document.removeEventListener("focusout", handleHostFocusOut, true);
       const browserStillExists = Boolean(
         useBrowserStore.getState().browsersById[browserIdRef.current],
       );
