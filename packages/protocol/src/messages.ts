@@ -3465,6 +3465,7 @@ export const HubExecutionAgentValidateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.validate.request"),
   requestId: z.string(),
   provider: z.string(),
+  cwd: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
