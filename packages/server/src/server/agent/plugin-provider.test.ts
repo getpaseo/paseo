@@ -450,6 +450,8 @@ async function withRewindAgent(
 test("conversation rewind discards withdrawn plugin turns before and after a replacement prompt", async () => {
   await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
     await manager.rewind(agentId, "user-B", "conversation");
+    expect(manager.getAgent(agentId)?.reviewResult).toBeUndefined();
+    expect(manager.getAgent(agentId)?.attention.requiresAttention).toBe(false);
     const afterRewind = messages();
     expect(nativeMessages).toEqual(["A"]);
     await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
@@ -464,7 +466,10 @@ test("conversation rewind discards withdrawn plugin turns before and after a rep
 
 test("file-only plugin rewind preserves the conversation before and after a replacement prompt", async () => {
   await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
+    const result = manager.getAgent(agentId)?.reviewResult;
+    expect(result?.id).toBeTruthy();
     await manager.rewind(agentId, "user-B", "files");
+    expect(manager.getAgent(agentId)?.reviewResult).toEqual(result);
     expect(nativeMessages).toEqual(["A", "B", "C"]);
     expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
     await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
@@ -845,9 +850,16 @@ test("reload after failed plugin rewind replay resumes the committed fork", asyn
   let failReplay = true;
   await withRewindAgent(
     async ({ manager, agentId, messages }) => {
+      expect(manager.getAgent(agentId)?.reviewResult?.id).toBeTruthy();
+      await expect(manager.rewind(agentId, "unknown", "conversation")).rejects.toThrow(
+        "No provider revert token",
+      );
+      expect(manager.getAgent(agentId)?.reviewResult?.id).toBeTruthy();
       await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
         "replay failed",
       );
+      expect(manager.getAgent(agentId)?.reviewResult).toBeUndefined();
+      expect(manager.getAgent(agentId)?.attention.requiresAttention).toBe(false);
       await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
       await manager.hydrateTimelineFromProvider(agentId, { force: true });
       expect(messages()).toEqual(["A", "Reply A"]);

@@ -1,8 +1,5 @@
-import {
-  getWorkspaceDisplayStatus,
-  type WorkspaceDisplayStatus,
-} from "@getpaseo/protocol/agent-state-bucket";
-import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import { type WorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
+import { deriveWorkspaceDisplayStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
@@ -145,17 +142,6 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
-function deriveSidebarWorkspaceStatus(input: Parameters<typeof deriveEffectiveWorkspaceStatus>[0]) {
-  const effective = deriveEffectiveWorkspaceStatus(input);
-  return {
-    ...effective,
-    status: getWorkspaceDisplayStatus({
-      status: effective.status,
-      reviewResults: input.workspace.reviewResults,
-    }),
-  };
-}
-
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -164,7 +150,7 @@ export function createSidebarWorkspaceEntry(input: {
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
-  const effectiveStatus = deriveSidebarWorkspaceStatus(input);
+  const effectiveStatus = deriveWorkspaceDisplayStatus(input);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -241,7 +227,7 @@ export function deriveProjectStatusBucket(input: {
       const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : undefined;
       if (!workspace) continue;
       buckets.push(
-        deriveSidebarWorkspaceStatus({
+        deriveWorkspaceDisplayStatus({
           serverId,
           workspace,
           pendingCreateAttempts: input.pendingCreateAttempts,

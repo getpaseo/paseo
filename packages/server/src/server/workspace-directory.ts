@@ -13,7 +13,7 @@ import {
   getWorkspaceDisplayStatus,
   type WorkspaceDisplayStatus,
 } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { resolveProjectDisplayName } from "./workspace-registry.js";
@@ -71,6 +71,7 @@ export type ProviderSubagentWorkspaceActivity = Pick<
 >;
 
 export interface WorkspaceDirectoryDeps {
+  serverId?: string;
   logger: pino.Logger;
   projectRegistry: {
     list(): Promise<PersistedProjectRecord[]>;
@@ -348,7 +349,11 @@ export class WorkspaceDirectory {
       if (!parent) {
         continue;
       }
-      const workspaceAgent = resolveWorkspaceRootAgent(parent, activeAgentsById);
+      const workspaceAgent = resolveWorkspaceRootAgent(
+        parent,
+        activeAgentsById,
+        this.deps.serverId,
+      );
       const workspaceId = workspaceAgent?.workspaceId;
       if (!workspaceId) {
         continue;
@@ -382,7 +387,7 @@ export class WorkspaceDirectory {
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
 
     for (const agent of activeAgents) {
-      const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById);
+      const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById, this.deps.serverId);
       if (!workspaceAgent) {
         continue;
       }
@@ -751,15 +756,17 @@ function groupAgentsByWorkspaceId(
 export function resolveWorkspaceRootAgent(
   agent: AgentSnapshotPayload,
   activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>,
+  serverId = "",
 ): AgentSnapshotPayload | null {
   const seen = new Set<string>([agent.id]);
   let current = agent;
 
   while (true) {
-    const parentAgentId = getParentAgentIdFromLabels(current.labels);
-    if (!parentAgentId) {
+    const address = getParentAddressFromLabels(current.labels, serverId);
+    if (!address || address.serverId !== serverId) {
       return current;
     }
+    const parentAgentId = address.agentId;
     if (seen.has(parentAgentId)) {
       return null;
     }

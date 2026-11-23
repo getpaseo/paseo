@@ -1,3 +1,4 @@
+import { CommittedRewindError } from "./rewind/rewind.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { PluginSessionHistory } from "./plugin-session-history.js";
@@ -2052,9 +2053,13 @@ class PluginAgentSession implements AgentSession {
     });
     if (scope !== "files") {
       const persistence = this.bridge.persistence;
-      if (!persistence) throw new Error("Plugin rewind removed session persistence");
-      this.replay = { persistence, config: this.bridge.config, messageId, scope, closed: false };
-      await this.ensureReplay();
+      try {
+        if (!persistence) throw new Error("Plugin rewind removed session persistence");
+        this.replay = { persistence, config: this.bridge.config, messageId, scope, closed: false };
+        await this.ensureReplay();
+      } catch (cause) {
+        throw new CommittedRewindError(cause);
+      }
     }
   }
 

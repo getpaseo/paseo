@@ -1,3 +1,4 @@
+import { CommittedRewindError } from "../../rewind/rewind.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
@@ -1201,8 +1202,12 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("OMP rewind requires a user message id");
     }
     await this.runtimeSession.branch(target);
-    await this.refreshState();
     this.activeToolCalls.clear();
+    try {
+      await this.refreshState();
+    } catch (cause) {
+      throw new CommittedRewindError(cause);
+    }
   }
 
   async canStopRuntime(): Promise<boolean> {

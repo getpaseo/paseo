@@ -6896,7 +6896,17 @@ test("an autonomous finish replaces only the result identity, and a rejected rep
   await manager.clearAgentAttention(id, getAttentionKey(first));
   await manager.markAgentDone(id, first.reviewResult!.id);
   expect(snapshot().requiresAttention).toBe(true);
-  await manager.clearAgentAttention(id, getAttentionKey(next));
+  await expect(manager.streamAgent(id, "rejected while unread").next()).rejects.toThrow(
+    "Reply rejected",
+  );
+  const failed = snapshot();
+  expect(failed).toMatchObject({ attentionReason: "error", reviewResult: next.reviewResult });
+  expect(failed.reviewResult?.followUpAt).toBeUndefined();
+  expect(await manager.clearAgentAttention(id, getAttentionKey(next))).toBe(false);
+  await manager.markAgentDone(id, first.reviewResult!.id);
+  expect(snapshot().attentionReason).toBe("error");
+  await manager.clearAgentAttention(id, getAttentionKey(failed));
+  expect(snapshot().requiresAttention).toBe(false);
   const reminder = snapshot().reviewResult;
   expect(reminder?.followUpAt).toEqual(expect.any(String));
   await expect(manager.streamAgent(id, "rejected").next()).rejects.toThrow("Reply rejected");

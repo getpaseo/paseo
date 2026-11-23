@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { describe, expect, test } from "vitest";
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { PARENT_AGENT_ID_LABEL, parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./messages.js";
 import { getWorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
@@ -80,6 +80,7 @@ class WorkspaceStatus {
     activity: TerminalActivity | null;
   }> = [];
   private readonly directory = new WorkspaceDirectory({
+    serverId: "local",
     getArchivingAt: () => null,
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
@@ -268,6 +269,7 @@ class WorkspaceStatus {
 }
 
 interface AgentState {
+  labels?: Record<string, string>;
   id: string;
   status: AgentSnapshotPayload["status"];
   lastUserMessageAt?: string | null;
@@ -330,6 +332,22 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("a delegated result belongs to the child host even when the remote parent ID exists locally", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent", status: "idle" });
+    workspace.hasRootAgent({
+      id: "child",
+      status: "idle",
+      labels: parentAddressLabels({ serverId: "remote", agentId: "parent" }),
+      reviewResult: { id: "result", followUpAt: NOW },
+    });
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(getWorkspaceDisplayStatus(descriptor)).toBe("needs_follow_up");
+    expect(descriptor.reviewResults).toEqual([
+      { id: "result", followUpAt: NOW, agentId: "child", title: null },
+    ]);
+  });
+
   test("projects each root review while higher priorities retain the workspace indicator", async () => {
     const workspace = new WorkspaceStatus();
     const reviewResult = { id: "result", followUpAt: NOW };

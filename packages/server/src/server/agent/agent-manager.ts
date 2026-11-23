@@ -106,7 +106,7 @@ import {
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
-import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
+import { CommittedRewindError, invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
@@ -472,7 +472,7 @@ function applyReviewAction(
   return {
     clearAttention: true,
     reviewResult:
-      attentionReason === "finished" && reviewResult && !reviewResult.followUpAt
+      reviewResult && !reviewResult.followUpAt
         ? { ...reviewResult, followUpAt: new Date().toISOString() }
         : reviewResult,
   };
@@ -3401,6 +3401,7 @@ export class AgentManager {
           provider: agent.provider,
           error: errorMsg,
         });
+        this.raiseErrorAttention(agent);
         this.finalizeForegroundTurn(agent);
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
@@ -4298,6 +4299,7 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "rewind");
     }
 
+    const previousSessionId = agent.session.describePersistence()?.sessionId;
     const lock = this.runs.createPendingRun(agentId);
     try {
       this.logger.info(
@@ -4306,6 +4308,7 @@ export class AgentManager {
       );
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
+        this.retireRewoundResult(agent);
         await this.hydrateTimelineFromProvider(agentId, {
           force: true,
           broadcast: true,
@@ -4330,7 +4333,15 @@ export class AgentManager {
       // Native rewind can commit a fork before history refresh fails. Recovery
       // must resume that latest handle rather than the abandoned conversation.
       this.refreshSessionPersistence(agent);
+      if (
+        mode !== "files" &&
+        (error instanceof CommittedRewindError ||
+          agent.session.describePersistence()?.sessionId !== previousSessionId)
+      ) {
+        this.retireRewoundResult(agent);
+      }
       await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
       this.logger.warn(
         { err: error, agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.failed",
@@ -4338,6 +4349,14 @@ export class AgentManager {
       throw error;
     } finally {
       this.runs.settleForegroundRun(agentId, lock.token);
+    }
+  }
+
+  private retireRewoundResult(agent: ManagedAgent): void {
+    if (!agent.reviewResult) return;
+    agent.reviewResult = undefined;
+    if (agent.attention.requiresAttention && agent.attention.attentionReason === "finished") {
+      agent.attention = { requiresAttention: false };
     }
   }
 
@@ -6205,7 +6224,6 @@ export class AgentManager {
     if (agent.attention.requiresAttention && agent.attention.attentionReason !== "finished") {
       return;
     }
-    if (!agent.reviewResult?.followUpAt) agent.reviewResult = undefined;
     agent.attention = {
       requiresAttention: true,
       attentionReason: "error",

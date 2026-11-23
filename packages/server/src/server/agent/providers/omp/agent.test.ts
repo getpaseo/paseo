@@ -1,3 +1,4 @@
+import { CommittedRewindError } from "../../rewind/rewind.js";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -1541,6 +1542,17 @@ describe("OMP agent client and session", () => {
     });
     expect(omp.runtimeLaunches()).toHaveLength(1);
     expect(await omp.currentMode()).toBe("full");
+  });
+
+  test("reports a committed rewind if the native branch succeeds before state refresh fails", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    onTestFinished(() => omp.close());
+    omp.failProviderStateChecks(new Error("state refresh failed"));
+    await expect(omp.rewind("user-history", "from history")).rejects.toBeInstanceOf(
+      CommittedRewindError,
+    );
+    expect(omp.branchRequests()).toEqual(["user-history"]);
   });
 
   test("rewinds natively, interrupts, and shuts down", async () => {

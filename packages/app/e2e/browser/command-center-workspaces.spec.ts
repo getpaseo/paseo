@@ -14,7 +14,11 @@ import { addOfflineHostAndReload } from "../support/helpers/hosts";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { seedRunningMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
+import {
+  seedMockAgentWorkspace,
+  seedRunningMockAgentWorkspace,
+  openAgentRoute,
+} from "../support/helpers/mock-agent";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
@@ -25,6 +29,44 @@ const AGENT_TITLE = "Fix checkout retries";
 
 test.describe("Command center workspaces", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("workspace results show and resolve a follow-up", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "command-center-follow-up-",
+      title: "Review checkout retries",
+      initialPrompt: "Finish this turn.",
+    });
+    try {
+      await workspace.client.waitForFinish(workspace.agentId, 20_000);
+      await workspace.client.clearWorkspaceAttention(workspace.workspaceId);
+      const result = (await workspace.client.fetchAgent({ agentId: workspace.agentId }))?.agent
+        .reviewResult;
+      expect(result?.id).toBeTruthy();
+      await openAgentRoute(page, workspace);
+      await expectAgentTabActive(page, workspace.agentId);
+      const sidebarDot = page
+        .getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`)
+        .getByTestId("workspace-status-indicator-needs_follow_up")
+        .locator(":scope > *");
+      await expect(sidebarDot).toBeVisible();
+      const followUpColor = await sidebarDot.evaluate(
+        (dot) => getComputedStyle(dot).backgroundColor,
+      );
+      const panel = await openCommandCenter(page);
+      await selectCommandCenterTab(panel, "Workspaces");
+      const row = panel.getByTestId(
+        `command-center-workspace-${getServerId()}:${workspace.workspaceId}`,
+      );
+      await expect(row.getByTestId("agent-status-dot")).toHaveCSS(
+        "background-color",
+        followUpColor,
+      );
+      await workspace.client.markAgentDone(workspace.agentId, result!.id);
+      await expect(row.getByTestId("agent-status-dot")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
   test("workspace results overlay live status", async ({ page }) => {
     const workspace = await seedRunningMockAgentWorkspace({

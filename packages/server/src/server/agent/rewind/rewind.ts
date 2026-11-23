@@ -2,6 +2,14 @@ import type { AgentSession } from "../agent-sdk-types.js";
 
 export type RewindMode = "conversation" | "files" | "both";
 
+/** The provider changed conversation history before its local refresh failed. */
+export class CommittedRewindError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "CommittedRewindError";
+  }
+}
+
 export class RewindCapabilityError extends Error {
   constructor(mode: RewindMode) {
     super(`Provider does not support rewinding ${mode}`);

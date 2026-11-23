@@ -1,3 +1,4 @@
+import { getWorkspaceDisplayStatus } from "@getpaseo/protocol/agent-state-bucket";
 import { useShallow } from "zustand/shallow";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -54,6 +55,19 @@ function getPendingInitialAgentCreateStartedAt(input: {
   return latestStartedAt;
 }
 
+export function deriveWorkspaceDisplayStatus(
+  input: Parameters<typeof deriveEffectiveWorkspaceStatus>[0],
+) {
+  const effective = deriveEffectiveWorkspaceStatus(input);
+  return {
+    ...effective,
+    status: getWorkspaceDisplayStatus({
+      status: effective.status,
+      reviewResults: input.workspace.reviewResults,
+    }),
+  };
+}
+
 export function useWorkspaceStatus(serverId: string, workspaceId: string) {
   const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
   return useSessionStore(
@@ -63,7 +77,7 @@ export function useWorkspaceStatus(serverId: string, workspaceId: string) {
       const key = resolveWorkspaceMapKeyByIdentity({ workspaces: session.workspaces, workspaceId });
       const workspace = key ? session.workspaces.get(key) : null;
       if (!workspace) return null;
-      return deriveEffectiveWorkspaceStatus({
+      return deriveWorkspaceDisplayStatus({
         serverId,
         workspace,
         pendingCreateAttempts,

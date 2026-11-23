@@ -1,4 +1,4 @@
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "../messages.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
@@ -26,6 +26,7 @@ interface DiscoverableAgent {
 export class AgentDirectory {
   constructor(
     private readonly deps: {
+      serverId?: string;
       manager: Pick<AgentManager, "listAgents">;
       storage: Pick<
         AgentStorage,
@@ -77,8 +78,10 @@ export class AgentDirectory {
     const liveById = new Map(live.map((agent) => [agent.id, agent]));
     const pending = [...selectedLive, ...records];
     for (const agent of pending) {
-      const parentId = getParentAgentIdFromLabels(agent.labels);
-      if (!parentId || selectedIds.has(parentId)) continue;
+      const serverId = this.deps.serverId ?? "";
+      const address = getParentAddressFromLabels(agent.labels, serverId);
+      if (!address || address.serverId !== serverId || selectedIds.has(address.agentId)) continue;
+      const parentId = address.agentId;
       selectedIds.add(parentId);
       const liveParent = liveById.get(parentId);
       if (liveParent) {

@@ -104,7 +104,7 @@ import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-stor
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority, getAttentionKey } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
@@ -796,6 +796,7 @@ export class Session {
       ),
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
+  private readonly serverId?: string;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -969,6 +970,7 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
+    this.serverId = serverId;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
 
@@ -1264,6 +1266,7 @@ export class Session {
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({
+      serverId,
       manager: this.agentManager,
       storage: this.agentStorage,
       workspaces: this.workspaceRegistry,
@@ -1370,6 +1373,7 @@ export class Session {
       getGlobalServicePorts: () => this.daemonConfigStore.readServicePorts(),
     });
     this.workspaceDirectory = new WorkspaceDirectory({
+      serverId,
       getArchivingAt: (workspaceId) => this.workspaceArchiveOperations.getArchivingAt(workspaceId),
       logger: this.sessionLogger,
       projectRegistry: this.projectRegistry,
@@ -6021,11 +6025,12 @@ export class Session {
         return null;
       }
 
-      const parentAgentId = getParentAgentIdFromLabels(source.labels);
-      if (!parentAgentId) {
+      const serverId = this.serverId ?? "";
+      const parent = getParentAddressFromLabels(source.labels, serverId);
+      if (!parent || parent.serverId !== serverId) {
         return source.workspaceId ?? null;
       }
-      currentAgentId = parentAgentId;
+      currentAgentId = parent.agentId;
     }
   }
 
@@ -8525,7 +8530,9 @@ export class Session {
       const candidates = agents
         .filter((agent) => !agent.archivedAt && !agent.background)
         .filter((agent) => agent.workspaceId === workspace.workspaceId)
-        .filter((agent) => resolveWorkspaceRootAgent(agent, agentsById)?.id === agent.id)
+        .filter(
+          (agent) => resolveWorkspaceRootAgent(agent, agentsById, this.serverId)?.id === agent.id,
+        )
         .filter(
           (agent) =>
             agent.status === "idle" || agent.status === "closed" || agent.status === "error",
