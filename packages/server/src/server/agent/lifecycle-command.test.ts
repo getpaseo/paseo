@@ -45,6 +45,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   inFlightAgentIds = new Set<string>();
   readonly settledDuringCancellationAgentIds = new Set<string>();
   readonly rejectedCancellationAgentIds = new Set<string>();
+  readonly cancellationErrors = new Map<string, { error: Error; removeLiveAgent: boolean }>();
 
   constructor(private readonly storage: FakeLifecycleAgentStorage) {}
 
@@ -58,6 +59,13 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 
   async cancelAgentRun(agentId: string) {
     this.cancelledAgentIds.push(agentId);
+    const configuredError = this.cancellationErrors.get(agentId);
+    if (configuredError) {
+      if (configuredError.removeLiveAgent) {
+        this.liveAgents.delete(agentId);
+      }
+      throw configuredError.error;
+    }
     if (this.settledDuringCancellationAgentIds.delete(agentId)) {
       this.inFlightAgentIds.delete(agentId);
       return { status: "not_running" } as const;
@@ -266,6 +274,44 @@ describe("agent lifecycle commands", () => {
     expect(result.agentId).toBe("agent-1");
     expect(result.archivedAt).toEqual(expect.any(String));
     expect(result.record.archivedAt).toBe(result.archivedAt);
+    expect(manager.archivedAgentIds).toEqual([]);
+  });
+
+  test("continues archiving when cancellation fails because a concurrent archive removed the live agent", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
+    manager.inFlightAgentIds.add("agent-1");
+    manager.cancellationErrors.set("agent-1", {
+      error: new Error("Agent 'agent-1' has no managed session"),
+      removeLiveAgent: true,
+    });
+    storage.records.set("agent-1", storedAgent("agent-1"));
+
+    const result = await archiveAgentCommand(
+      { agentManager: manager, agentStorage: storage, logger },
+      "agent-1",
+    );
+
+    expect(result.agentId).toBe("agent-1");
+    expect(result.archivedAt).toBe("2026-05-10T10:00:00.000Z");
+    expect(manager.archivedAgentIds).toEqual(["agent-1"]);
+  });
+
+  test("rethrows cancellation failure when the agent is still live", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
+    manager.inFlightAgentIds.add("agent-1");
+    manager.cancellationErrors.set("agent-1", {
+      error: new Error("interrupt transport failed"),
+      removeLiveAgent: false,
+    });
+    storage.records.set("agent-1", storedAgent("agent-1"));
+
+    await expect(
+      archiveAgentCommand({ agentManager: manager, agentStorage: storage, logger }, "agent-1"),
+    ).rejects.toThrow("interrupt transport failed");
     expect(manager.archivedAgentIds).toEqual([]);
   });
 

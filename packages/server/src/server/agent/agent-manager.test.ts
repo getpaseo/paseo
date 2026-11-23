@@ -16259,3 +16259,172 @@ test("importProviderSession keeps the stats the provider reported with its histo
     ["assistant_message", null],
   ]);
 });
+
+test("concurrent archiveAgent calls are idempotent while session close is in flight", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-archive-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+  let closeCalls = 0;
+
+  class SlowCloseClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeCalls += 1;
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowCloseClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Slow close agent" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const firstArchive = manager.archiveAgent(agent.id);
+    await closeStarted.promise;
+    const secondArchive = manager.archiveAgent(agent.id);
+
+    closeAllowed.resolve();
+    const [firstResult, secondResult] = await Promise.all([firstArchive, secondArchive]);
+
+    expect(firstResult.archivedAt).toEqual(expect.any(String));
+    expect(secondResult).toEqual(firstResult);
+    expect(closeCalls).toBe(1);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect((await storage.get(agent.id))?.archivedAt).toBe(firstResult.archivedAt);
+  } finally {
+    closeAllowed.resolve();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent archiveAgent calls on an internal agent are idempotent while close is in flight", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-archive-internal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+  let closeCalls = 0;
+
+  class SlowCloseClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeCalls += 1;
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowCloseClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Internal slow close", internal: true },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const firstArchive = manager.archiveAgent(agent.id);
+    await closeStarted.promise;
+    const secondArchive = manager.archiveAgent(agent.id);
+
+    closeAllowed.resolve();
+    const [firstResult, secondResult] = await Promise.all([firstArchive, secondArchive]);
+
+    expect(firstResult.archivedAt).toEqual(expect.any(String));
+    expect(secondResult).toEqual(firstResult);
+    expect(closeCalls).toBe(1);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toBeNull();
+  } finally {
+    closeAllowed.resolve();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archiveAgent queued behind closeAgent archives the stored snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-after-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+
+  class SlowCloseClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowCloseClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Close before archive" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const closeOp = manager.closeAgent(agent.id);
+    await closeStarted.promise;
+    const archiveOp = manager.archiveAgent(agent.id);
+
+    closeAllowed.resolve();
+    await closeOp;
+    const result = await archiveOp;
+
+    expect(result.archivedAt).toEqual(expect.any(String));
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect((await storage.get(agent.id))?.archivedAt).toBe(result.archivedAt);
+  } finally {
+    closeAllowed.resolve();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archiveAgent still rejects unknown agent ids", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-missing-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    await expect(manager.archiveAgent("00000000-0000-4000-8000-000000000404")).rejects.toThrow(
+      "Unknown agent '00000000-0000-4000-8000-000000000404'",
+    );
+  } finally {
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
