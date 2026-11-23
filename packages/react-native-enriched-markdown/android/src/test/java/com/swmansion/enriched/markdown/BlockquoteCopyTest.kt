@@ -173,6 +173,23 @@ class BlockquoteCopyTest {
     assertEquals("Second draft\n\nWith more", clipboardText())
   }
 
+  @Test fun codeBlockWithAnInnerFenceStaysOneBlock() {
+    val view = quoteView()
+    view.applyBlockquoteNode(
+      quote(
+        node(
+          NodeType.CodeBlock,
+          text("```js\nrun()\n```\n"),
+          attributes = mapOf("language" to "markdown", "fenceChar" to "`"),
+        ),
+      ),
+    )
+
+    view.copyButton().performClick()
+
+    assertEquals("````markdown\n```js\nrun()\n```\n````", clipboardText())
+  }
+
   @Test fun nestedQuoteCopiesOnlyItsOwnBody() {
     val view = quoteView()
     view.applyBlockquoteNode(quote(paragraph(text("Outer")), quote(paragraph(text("Inner")))))

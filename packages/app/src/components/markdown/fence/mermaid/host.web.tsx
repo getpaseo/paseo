@@ -86,13 +86,15 @@ function MermaidFenceHostImpl({
   );
   const sourceVisible = !diagramVisible;
   // A visible diagram stands in for its fence, so copying the surrounding block takes
-  // the source from here. The source view copies as its own code block.
-  const diagramCopyAttributes = diagramVisible
-    ? {
-        [MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE]: code,
-        [MARKDOWN_COPY_LANGUAGE_ATTRIBUTE]: "mermaid",
-      }
-    : null;
+  // the source from here: the revision on screen, which lags `code` while a streamed
+  // revision renders. The source view copies as its own code block.
+  const diagramCopyAttributes =
+    diagramVisible && visible
+      ? {
+          [MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE]: visible.source,
+          [MARKDOWN_COPY_LANGUAGE_ATTRIBUTE]: "mermaid",
+        }
+      : null;
   const viewportStyle = diagramVisible ? diagramStyle : measuringStyle;
 
   return (
