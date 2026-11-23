@@ -10050,7 +10050,6 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
     branchRemoteName: "origin",
     branchMergeRef: "refs/heads/feature",
     upstreamStatus: { state: "none" },
-    pushRemoteName: "origin",
     pullRequestLookupTarget: { headRef: "feature" },
   };
   const githubStub = {

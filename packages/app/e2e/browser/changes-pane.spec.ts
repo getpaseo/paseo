@@ -495,23 +495,6 @@ test("Changes offers Push for a branch that was never pushed and the push sets i
   });
 });
 
-test("Changes offers Push to the tracked remote when it is not named origin", async ({ page }) => {
-  const workspace = await createWorkspaceWithRemote((repoPath) => {
-    execFileSync("git", ["remote", "rename", "origin", "upstream"], { cwd: repoPath });
-  });
-  await openWorkspaceChangesSurface(page, workspace);
-  const primary = page.getByTestId("changes-primary-cta");
-
-  await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
-  commitAllWithGit(workspace.repoPath, "Main work");
-  await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
-  await primary.click();
-  await expect
-    .poll(() => remoteBranchHead(workspace, "main"), { timeout: 30_000 })
-    .toBe(localHead(workspace));
-  expect(branchUpstream(workspace)).toBe("upstream/main");
-});
-
 test("Changes selects exact local and remote bases and retains the selection after reload", async ({
   page,
 }, testInfo) => {

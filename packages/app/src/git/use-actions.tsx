@@ -15,11 +15,11 @@ import {
   isCurrentBranchBase,
   canMergeIntoLocalBase,
   narrowPullRequestState,
-  readPushTarget,
+  readUpstreamState,
   type BuildGitActionsInput,
   type GitAction,
   type GitActions,
-  type PushTarget,
+  type GitUpstreamState,
 } from "@/git/policy";
 import { deriveMergeCapability } from "@/git/merge-capability";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
@@ -131,14 +131,12 @@ interface DerivedGitActionsState {
   behindOfOrigin: number | null;
   hasPullRequest: boolean;
   hasRemote: boolean;
-  pushTarget: PushTarget;
+  upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
   canMergeLocally: boolean;
   shouldPromoteArchive: boolean;
 }
-
-const NO_PUSH_TARGET: PushTarget = { upstream: "unknown", hasPushRemote: false };
 
 interface GitCommitCounts {
   aheadCount: number;
@@ -185,7 +183,7 @@ function deriveGitActionsState(args: DeriveGitActionsStateArgs): DerivedGitActio
     ...extractGitCommitCounts(gitStatus),
     hasPullRequest: Boolean(prStatus?.url),
     hasRemote: gitStatus?.hasRemote ?? false,
-    pushTarget: gitStatus ? readPushTarget(gitStatus) : NO_PUSH_TARGET,
+    upstream: gitStatus ? readUpstreamState(gitStatus) : "unknown",
     isPaseoOwnedWorktree,
     isOnBaseBranch: isCurrentBranchBase(gitStatus?.currentBranch, baseRef),
     canMergeLocally: canMergeIntoLocalBase(gitStatus?.currentBranch, baseRef),
@@ -674,13 +672,12 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     behindOfOrigin,
     hasPullRequest,
     hasRemote,
-    pushTarget,
+    upstream,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
     canMergeLocally,
     shouldPromoteArchive,
   } = derived;
-  const { upstream, hasPushRemote } = pushTarget;
 
   const handlePrAction = useCallback(() => {
     if (prStatus?.url) {
@@ -707,7 +704,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
       mergeCapability: deriveMergeCapability(prStatus?.forgeSpecific, prStatus?.github),
       hasRemote,
-      hasPushRemote,
       upstream,
       isPaseoOwnedWorktree,
       isOnBaseBranch,
@@ -817,7 +813,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   }, [
     isGit,
     hasRemote,
-    hasPushRemote,
     upstream,
     hasPullRequest,
     prStatus?.url,

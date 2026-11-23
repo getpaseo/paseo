@@ -5822,10 +5822,6 @@ const CheckoutStatusCommonSchema = z.object({
   // as when the clone keeps no remote-tracking ref for the upstream). Absent from daemons that
   // predate it, which report all but "tracked" as a null upstreamRef.
   upstreamState: z.enum(["tracked", "none", "gone", "unknown"]).optional(),
-  // The remote Push sends currentBranch to, resolved as the daemon's push resolves it. Unlike
-  // hasRemote it is not limited to origin. Null when Push has nowhere to send. Absent from daemons
-  // that predate it.
-  pushRemote: z.string().nullable().optional(),
   forgeWeb: ForgeWebSchema.optional(),
 });
 

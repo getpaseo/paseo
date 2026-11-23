@@ -81,32 +81,19 @@ type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
 export type GitUpstreamState = NonNullable<CheckoutStatusPayload["upstreamState"]>;
 
-export interface PushTarget {
-  upstream: GitUpstreamState;
-  /** Push has a remote to send the branch to. Not limited to origin. */
-  hasPushRemote: boolean;
-}
-
-export function readPushTarget(
-  status: Pick<
-    CheckoutStatusPayload,
-    "upstreamState" | "pushRemote" | "aheadOfOrigin" | "hasRemote" | "isPaseoOwnedWorktree"
-  >,
-): PushTarget {
-  if (status.upstreamState !== undefined && status.pushRemote !== undefined) {
-    return { upstream: status.upstreamState, hasPushRemote: status.pushRemote !== null };
+export function readUpstreamState(
+  status: Pick<CheckoutStatusPayload, "upstreamState" | "aheadOfOrigin" | "isPaseoOwnedWorktree">,
+): GitUpstreamState {
+  if (status.upstreamState !== undefined) {
+    return status.upstreamState;
   }
-  // COMPAT(checkoutPushTarget): added in v0.17.4, remove after 2027-05-23 once the daemon floor
-  // reports upstreamState and pushRemote. Older daemons send a null upstream for both a
-  // never-pushed and a deleted remote branch, and only know origin. Only a Paseo worktree's null
-  // was trusted as never pushed.
-  let upstream: GitUpstreamState = "unknown";
+  // COMPAT(checkoutUpstreamState): added in v0.17.4, remove after 2027-05-23 once the daemon
+  // floor reports upstreamState. Older daemons send a null upstream for both a never-pushed and
+  // a deleted remote branch. Only a Paseo worktree's null was trusted as never pushed.
   if (status.aheadOfOrigin !== null) {
-    upstream = "tracked";
-  } else if (status.isPaseoOwnedWorktree) {
-    upstream = "none";
+    return "tracked";
   }
-  return { upstream, hasPushRemote: status.hasRemote };
+  return status.isPaseoOwnedWorktree ? "none" : "unknown";
 }
 
 export interface BuildGitActionsInput {
@@ -124,9 +111,7 @@ export interface BuildGitActionsInput {
   pullRequestIsMerged: boolean;
   pullRequestMergeable: PullRequestMergeable;
   mergeCapability: MergeCapability | null;
-  /** origin is configured. Pull and Pull and push use it. */
   hasRemote: boolean;
-  hasPushRemote: boolean;
   upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
@@ -589,7 +574,7 @@ function canPull(input: BuildGitActionsInput): boolean {
 }
 
 function canPush(input: BuildGitActionsInput): boolean {
-  return input.hasPushRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
+  return input.hasRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
 }
 
 function hasPushableCommits(input: BuildGitActionsInput): boolean {
@@ -705,7 +690,7 @@ function getPullUnavailableMessage(input: BuildGitActionsInput): string | undefi
 }
 
 function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasPushRemote) {
+  if (!input.hasRemote) {
     return i18n.t("workspace.git.actions.unavailable.pushNoRemote");
   }
   if ((input.behindOfOrigin ?? 0) > 0) {
@@ -721,7 +706,7 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
 }
 
 function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote || !input.hasPushRemote) {
+  if (!input.hasRemote) {
     return i18n.t("workspace.git.actions.unavailable.pullAndPushNoRemote");
   }
   if (input.hasUncommittedChanges) {

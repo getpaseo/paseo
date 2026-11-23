@@ -67,7 +67,6 @@ function seedFeatureCheckout(): {
         ref: "refs/remotes/origin/main",
         aheadBehind: { ahead: 0, behind: 0 },
       },
-      pushRemoteName: "origin",
       pullRequestLookupTarget: { headRef: "feature" },
     },
   };
@@ -111,7 +110,6 @@ function seedMainCheckout(): {
         ref: "refs/remotes/origin/main",
         aheadBehind: { ahead: 1, behind: 0 },
       },
-      pushRemoteName: "origin",
       pullRequestLookupTarget: { headRef: "main" },
     },
   };

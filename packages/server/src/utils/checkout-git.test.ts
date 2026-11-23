@@ -923,13 +923,12 @@ const x = 1;
     expect(status.mainRepoRoot ?? null).toBeNull();
   });
 
-  it("exposes hasRemote and the push remote when origin is configured", async () => {
+  it("exposes hasRemote when origin is configured", async () => {
     const withoutRemote = await getCheckoutStatus(repoDir);
     expect(withoutRemote).toMatchObject({
       isGit: true,
       hasRemote: false,
       upstreamState: "none",
-      pushRemote: null,
     });
 
     const remoteDir = join(tempDir, "remote.git");
@@ -941,7 +940,6 @@ const x = 1;
       isGit: true,
       hasRemote: true,
       upstreamState: "none",
-      pushRemote: "origin",
     });
   });
 
@@ -1016,7 +1014,6 @@ const x = 1;
     }
     expect(status.upstreamRef).toBe("refs/remotes/upstream/main");
     expect(status.upstreamState).toBe("tracked");
-    expect(status.pushRemote).toBe("upstream");
   });
 
   it("reports the upstream branch name when it differs from the local branch name", async () => {
@@ -1031,7 +1028,6 @@ const x = 1;
       return;
     }
     expect(status.upstreamRef).toBe("refs/remotes/origin/other-name");
-    expect(status.pushRemote).toBe("origin");
   });
 
   it("reports the upstream when the repo's only remote is not origin", async () => {
@@ -1049,121 +1045,10 @@ const x = 1;
     expect(status.aheadOfOrigin).toBe(0);
     expect(status.hasRemote).toBe(false);
     expect(status.upstreamState).toBe("tracked");
-    expect(status.pushRemote).toBe("upstream");
-  });
-
-  it.each([
-    { name: "the branch's pushRemote", key: "branch.feature.pushRemote" },
-    { name: "remote.pushDefault", key: "remote.pushDefault" },
-  ])(
-    "does not push to the shared upstream when $name sends the branch to a fork",
-    async ({ key }) => {
-      const sharedDir = join(tempDir, "shared.git");
-      const forkDir = join(tempDir, "fork.git");
-      execFileSync("git", ["init", "--bare", "-b", "main", sharedDir]);
-      execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
-      execFileSync("git", ["remote", "add", "upstream", sharedDir], { cwd: repoDir });
-      execFileSync("git", ["remote", "add", "fork", forkDir], { cwd: repoDir });
-      execFileSync("git", ["push", "upstream", "main"], { cwd: repoDir });
-      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
-      execFileSync("git", ["checkout", "-b", "feature", "--track", "upstream/main"], {
-        cwd: repoDir,
-      });
-      execFileSync("git", ["config", key, "fork"], { cwd: repoDir });
-      const sharedMainBefore = execFileSync("git", [
-        "--git-dir",
-        sharedDir,
-        "rev-parse",
-        "refs/heads/main",
-      ])
-        .toString()
-        .trim();
-      commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
-
-      const status = await getCheckoutStatus(repoDir);
-      await expect(pushCurrentBranch(repoDir)).rejects.toThrow(
-        "Git is set to push this branch to 'fork'",
-      );
-
-      expect(status).toMatchObject({
-        upstreamState: "tracked",
-        aheadOfOrigin: 1,
-        pushRemote: null,
-      });
-      const sharedMainAfter = execFileSync("git", [
-        "--git-dir",
-        sharedDir,
-        "rev-parse",
-        "refs/heads/main",
-      ])
-        .toString()
-        .trim();
-      expect(sharedMainAfter).toBe(sharedMainBefore);
-    },
-  );
-
-  it("does not push a branch to a differently named upstream branch when there is no origin", async () => {
-    const sharedDir = join(tempDir, "shared.git");
-    execFileSync("git", ["init", "--bare", "-b", "main", sharedDir]);
-    execFileSync("git", ["remote", "add", "upstream", sharedDir], { cwd: repoDir });
-    execFileSync("git", ["push", "upstream", "main"], { cwd: repoDir });
-    execFileSync("git", ["fetch", "upstream"], { cwd: repoDir });
-    execFileSync("git", ["checkout", "-b", "feature", "--track", "upstream/main"], {
-      cwd: repoDir,
-    });
-    const sharedMainBefore = execFileSync("git", [
-      "--git-dir",
-      sharedDir,
-      "rev-parse",
-      "refs/heads/main",
-    ])
-      .toString()
-      .trim();
-    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
-
-    const status = await getCheckoutStatus(repoDir);
-    await expect(pushCurrentBranch(repoDir)).rejects.toThrow("Remote 'origin' is not configured.");
-
-    expect(status).toMatchObject({ upstreamState: "tracked", aheadOfOrigin: 1, pushRemote: null });
-    const sharedMainAfter = execFileSync("git", [
-      "--git-dir",
-      sharedDir,
-      "rev-parse",
-      "refs/heads/main",
-    ])
-      .toString()
-      .trim();
-    expect(sharedMainAfter).toBe(sharedMainBefore);
-  });
-
-  it("pushes to the tracked remote when the branch's pushRemote names the same remote", async () => {
-    const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
-    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
-    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
-    execFileSync("git", ["push", "-u", "origin", "feature"], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.feature.pushRemote", "origin"], { cwd: repoDir });
-    commitFile(repoDir, "second.txt", "second\n", "second commit");
-
-    const status = await getCheckoutStatus(repoDir);
-    await pushCurrentBranch(repoDir);
-
-    expect(status).toMatchObject({ aheadOfOrigin: 1, pushRemote: "origin" });
-    const localHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir })
-      .toString()
-      .trim();
-    const remoteHead = execFileSync("git", [
-      "--git-dir",
-      remoteDir,
-      "rev-parse",
-      "refs/heads/feature",
-    ])
-      .toString()
-      .trim();
-    expect(remoteHead).toBe(localHead);
   });
 
   // Push's first push targets origin, so without origin a never-pushed branch has nowhere to go.
-  it("reports no push remote for a never-pushed branch when origin is missing", async () => {
+  it("reports a never-pushed branch and refuses its first push when origin is missing", async () => {
     const forkDir = join(tempDir, "fork.git");
     execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
     execFileSync("git", ["remote", "add", "upstream", forkDir], { cwd: repoDir });
@@ -1172,7 +1057,7 @@ const x = 1;
 
     const status = await getCheckoutStatus(repoDir);
 
-    expect(status).toMatchObject({ isGit: true, upstreamState: "none", pushRemote: null });
+    expect(status).toMatchObject({ isGit: true, upstreamState: "none", hasRemote: false });
     await expect(pushCurrentBranch(repoDir)).rejects.toThrow("Remote 'origin' is not configured.");
   });
 
@@ -1208,7 +1093,6 @@ const x = 1;
     expect(status.upstreamRef).toBeNull();
     expect(status.aheadOfOrigin).toBeNull();
     expect(status.upstreamState).toBe("none");
-    expect(status.pushRemote).toBe("origin");
     expect(status.aheadBehind).toEqual({ ahead: 1, behind: 0 });
   });
 
@@ -1315,7 +1199,6 @@ const x = 1;
     expect(status.behindOfOrigin).toBeNull();
     expect(status.upstreamRef).toBeNull();
     expect(status.upstreamState).toBe("gone");
-    expect(status.pushRemote).toBe("origin");
   });
 
   it("does not report a published branch as never pushed when the clone fetches only main", async () => {
@@ -1340,7 +1223,6 @@ const x = 1;
       upstreamRef: null,
       aheadOfOrigin: null,
       upstreamState: "unknown",
-      pushRemote: "origin",
     });
   });
 
@@ -1365,7 +1247,6 @@ const x = 1;
       aheadBehind: { ahead: 1, behind: 0 },
       aheadOfOrigin: null,
       upstreamState: "gone",
-      pushRemote: "origin",
     });
 
     await pushCurrentBranch(worktreeDir);
@@ -2628,7 +2509,6 @@ const x = 1;
       .toString()
       .trim();
     const upstreamBeforePush = getBranchUpstream(repoDir);
-    const beforePushStatus = await getCheckoutStatus(repoDir);
 
     await pushCurrentBranch(repoDir);
 
@@ -2656,7 +2536,6 @@ const x = 1;
       .trim();
     const afterPushStatus = await getCheckoutStatus(repoDir);
     expect(upstreamBeforePush).toBeNull();
-    expect(beforePushStatus).toMatchObject({ upstreamState: "none", pushRemote: "paseo-pr-526" });
     expect(prRemoteMain).toBe(localHead);
     expect(getBranchUpstream(repoDir)).toBe("paseo-pr-526/main");
     expect(trackedPrRemoteHead).toBe(localHead);

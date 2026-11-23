@@ -7,7 +7,7 @@ import {
   buildGitActions,
   isCurrentBranchBase,
   canMergeIntoLocalBase,
-  readPushTarget,
+  readUpstreamState,
   type BuildGitActionsInput,
 } from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
@@ -77,7 +77,6 @@ function createInput(
     pullRequestMergeable: "UNKNOWN",
     mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
-    hasPushRemote: rest.hasRemote ?? false,
     upstream: "tracked",
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
@@ -422,8 +421,8 @@ describe("git-actions-policy", () => {
       );
     });
 
-    it("does not offer Push when Push has no remote to send to", () => {
-      const actions = buildGitActions(createInput({ ...neverPushed, hasPushRemote: false }));
+    it("does not offer Push when the repository has no origin", () => {
+      const actions = buildGitActions(createInput({ ...neverPushed, hasRemote: false }));
       const pushAction = pushActionOf(actions);
 
       expect(actions.primary?.id).not.toBe("push");
@@ -484,96 +483,55 @@ describe("git-actions-policy", () => {
     });
   });
 
-  it("offers Push on a branch that tracks a remote not named origin", () => {
-    const actions = buildGitActions(
-      createInput({
-        hasRemote: false,
-        hasPushRemote: true,
-        upstream: "tracked",
-        aheadOfOrigin: 1,
-        behindOfOrigin: 0,
-      }),
-    );
-
-    expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
-  });
-
-  describe("readPushTarget", () => {
-    it("uses the upstream state and push remote the daemon reports", () => {
+  describe("readUpstreamState", () => {
+    it("uses the upstream state the daemon reports", () => {
       expect(
-        readPushTarget({
+        readUpstreamState({
           upstreamState: "none",
-          pushRemote: "origin",
           aheadOfOrigin: null,
-          hasRemote: true,
           isPaseoOwnedWorktree: false,
         }),
-      ).toEqual({ upstream: "none", hasPushRemote: true });
+      ).toBe("none");
       expect(
-        readPushTarget({
-          upstreamState: "tracked",
-          pushRemote: "upstream",
-          aheadOfOrigin: 1,
-          hasRemote: false,
-          isPaseoOwnedWorktree: false,
-        }),
-      ).toEqual({ upstream: "tracked", hasPushRemote: true });
-      expect(
-        readPushTarget({
-          upstreamState: "none",
-          pushRemote: null,
+        readUpstreamState({
+          upstreamState: "gone",
           aheadOfOrigin: null,
-          hasRemote: false,
-          isPaseoOwnedWorktree: false,
+          isPaseoOwnedWorktree: true,
         }),
-      ).toEqual({ upstream: "none", hasPushRemote: false });
+      ).toBe("gone");
     });
 
     it("keeps the old guess for daemons that predate upstream states", () => {
-      const legacy = { upstreamState: undefined, pushRemote: undefined } as const;
       expect(
-        readPushTarget({
-          ...legacy,
+        readUpstreamState({
+          upstreamState: undefined,
           aheadOfOrigin: 1,
-          hasRemote: true,
           isPaseoOwnedWorktree: false,
         }),
-      ).toEqual({ upstream: "tracked", hasPushRemote: true });
+      ).toBe("tracked");
       expect(
-        readPushTarget({
-          ...legacy,
+        readUpstreamState({
+          upstreamState: undefined,
           aheadOfOrigin: null,
-          hasRemote: true,
           isPaseoOwnedWorktree: true,
         }),
-      ).toEqual({ upstream: "none", hasPushRemote: true });
+      ).toBe("none");
       expect(
-        readPushTarget({
-          ...legacy,
+        readUpstreamState({
+          upstreamState: undefined,
           aheadOfOrigin: null,
-          hasRemote: true,
           isPaseoOwnedWorktree: false,
         }),
-      ).toEqual({ upstream: "unknown", hasPushRemote: true });
-      expect(
-        readPushTarget({
-          ...legacy,
-          aheadOfOrigin: 1,
-          hasRemote: false,
-          isPaseoOwnedWorktree: false,
-        }),
-      ).toEqual({ upstream: "tracked", hasPushRemote: false });
+      ).toBe("unknown");
     });
 
     it("keeps an old daemon's never-pushed regular branch off Push", () => {
       const actions = buildGitActions(
         createInput({
           hasRemote: true,
-          ...readPushTarget({
+          upstream: readUpstreamState({
             upstreamState: undefined,
-            pushRemote: undefined,
             aheadOfOrigin: null,
-            hasRemote: true,
             isPaseoOwnedWorktree: false,
           }),
           isOnBaseBranch: false,
@@ -697,22 +655,6 @@ describe("git-actions-policy", () => {
       disabled: false,
       unavailableMessage: undefined,
     });
-  });
-
-  it("keeps pull-and-push unavailable when Push has no remote to send to", () => {
-    const actions = buildGitActions(
-      createInput({
-        hasRemote: true,
-        hasPushRemote: false,
-        aheadOfOrigin: 2,
-        behindOfOrigin: 3,
-      }),
-    );
-    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
-
-    expect(action?.unavailableMessage).toBe(
-      "Pull and push isn't available here because this branch is not connected to a remote yet",
-    );
   });
 
   it("keeps pull-and-push unavailable when the branch only has outgoing commits", () => {
