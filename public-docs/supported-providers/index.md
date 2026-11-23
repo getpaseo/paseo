@@ -12,24 +12,30 @@ Paseo runs coding agents that you install and sign in to on your daemon host. Fo
 
 ## Native support
 
-Paseo ships an integration for each of these agents.
+Paseo ships an integration for each of these agents. Most appear in Paseo automatically after you install and sign in to the CLI. Open a provider page for setup steps and defaults.
 
-- [Antigravity](/docs/supported-providers/antigravity), runs through your installed `agy` CLI.
+- [Antigravity](/docs/supported-providers/antigravity), runs through your installed `agy` CLI over ACP.
 - [Claude Code](/docs/supported-providers/claude-code), Anthropic's coding agent.
 - [Codex](/docs/supported-providers/codex), OpenAI's workspace agent.
-- [fx](/docs/supported-providers/fx), Vercel Labs' coding agent.
+- [fx](/docs/supported-providers/fx), Vercel Labs' coding agent (add from Settings).
 - [GitHub Copilot](/docs/supported-providers/github-copilot), GitHub's AI pair programmer.
-- [Hoplite](/docs/supported-providers/hoplite), cloud coding agent.
+- [Hoplite](/docs/supported-providers/hoplite), cloud coding agent (add from Settings).
 - [Muse Code](/docs/supported-providers/muse-code), Meta's terminal coding agent.
-- [Oh My Pi](/docs/supported-providers/omp), multi-provider coding agent.
+- [Oh My Pi](/docs/supported-providers/omp), multi-provider coding agent (off by default).
 - [OpenCode](/docs/supported-providers/opencode), open-source coding assistant.
 - [Pi](/docs/supported-providers/pi), minimal terminal coding agent.
 
 ## More agents through ACP
 
-Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). The in-app catalog lists the agents below.
+Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). The in-app catalog lists these agents.
 
-To add one, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find the agent, and choose **Add**. Entries that launch through `npx` or `uvx` need only that tool on your daemon host. For the other entries, install the CLI of the agent first. If the CLI is missing, the page of the provider says **Not installed**, and **Install** opens its install instructions.
+To add one from the catalog:
+
+1. If the agent does not launch through `npx` or `uvx`, install its CLI on your daemon host.
+2. Open **Settings → Hosts → your host → Providers** in Paseo.
+3. Select **+ Provider**, find the agent, and select **Add**.
+
+Entries that launch through `npx` or `uvx` need only that tool on your daemon host. If a CLI is missing, the provider page shows **Not installed**, and **Install** opens its install instructions.
 
 - [Agoragentic](https://agoragentic.com), agent marketplace with 174+ AI capabilities.
 - [Amp](https://github.com/tao12345666333/amp-acp), frontier coding agent.

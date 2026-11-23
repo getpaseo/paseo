@@ -86,6 +86,21 @@ async function readAgyVersion(
   return /\b\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? (firstLine || undefined);
 }
 
+// agy 1.5.14 reads its sign-in from a token file when any of these is set, and from the OS keyring
+// otherwise. https://github.com/google-antigravity/antigravity-cli/issues/1336
+const sshSessionVariables = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"];
+
+/**
+ * Report rows that say whether agy runs in an SSH session, because that decides which sign-in it
+ * uses. The report does not wrap, so each row stays short enough to read without scrolling.
+ */
+function describeSignIn(env: Readonly<Record<string, string>>): string {
+  const variable = sshSessionVariables.find((name) => env[name]);
+  return variable
+    ? `SSH session: yes (${variable})\nSign-in: can differ from agy outside SSH`
+    : "SSH session: no\nSign-in: can differ from agy over SSH";
+}
+
 export function createAntigravityProvider(): ProviderRegistration {
   const provider = runAcpProvider({
     id: "antigravity",
@@ -94,16 +109,23 @@ export function createAntigravityProvider(): ProviderRegistration {
     icon: "icon.svg",
     command: ["agy", "acp", "--disable-telemetry"],
     acpOptions: {
+      // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
+      perModelThinkingOptions: true,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {
           const input = toolCall.input;
-          if (typeof input === "object" && input !== null && !Array.isArray(input)) {
-            return input.IsDaemon !== true;
-          }
-          return true;
+          if (typeof input !== "object" || input === null || Array.isArray(input)) return true;
+          if (input.IsDaemon === true) return false;
+
+          // agy leaves recurring schedules in progress after registering them.
+          const recurringSchedule =
+            toolCall.name === "schedule" &&
+            typeof input.CronExpression === "string" &&
+            input.CronExpression.trim().length > 0;
+          return !recurringSchedule;
         },
       },
       autoAcceptMode: {
@@ -122,6 +144,7 @@ export function createAntigravityProvider(): ProviderRegistration {
   });
   return {
     ...provider,
+    docsUrl: "https://paseo.sh/docs/supported-providers/antigravity#troubleshooting",
     // agy documents no update command and no release source, so there is nothing to check or run.
     installation: {
       installUrl: "https://antigravity.google/docs/getting-started?tab=cli",
@@ -133,6 +156,8 @@ export function createAntigravityProvider(): ProviderRegistration {
     },
     async status({ launch }) {
       if (!launch) return { available: false, diagnostic: "Install Antigravity 1.5.0 or later." };
+      // A sign-in problem can stop ACP from starting, so the report says which sign-in either way.
+      const signIn = describeSignIn(launch.env);
       try {
         const connection = await provider.connect({
           launch,
@@ -140,12 +165,11 @@ export function createAntigravityProvider(): ProviderRegistration {
           capabilities: [],
         });
         await connection.close();
-        return { available: true };
+        return { available: true, diagnostic: signIn };
       } catch {
         return {
           available: false,
-          diagnostic:
-            "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+          diagnostic: `Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.\n${signIn}`,
         };
       }
     },

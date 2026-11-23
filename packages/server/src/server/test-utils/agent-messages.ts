@@ -23,6 +23,7 @@ export function createTestAgentMessages(params: {
         onAccepted,
       ),
     isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
+    canSteer: (agentId) => params.agentManager.canSteer(agentId),
     hasPendingPermission: (agentId) => params.agentManager.hasPendingPermissions(agentId),
     subscribe: (notify) =>
       params.agentManager.subscribe(

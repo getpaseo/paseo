@@ -47,6 +47,7 @@ import type {
   AgentDraftControls,
   AgentOptionControl,
   AgentLaunchContext,
+  AgentMetric,
   AgentPromptInput,
   AgentProvider,
   AgentPersistenceHandle,
@@ -1224,6 +1225,37 @@ test("starts its own turn when the previous turn fails to start under a steer se
   }
 });
 
+test("answers whether an agent's session can steer a running turn", async () => {
+  const steering = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const plain = new TestAgentSession({ provider: "claude", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-can-steer-"));
+  const clientFor = (session: AgentSession) =>
+    new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+  const manager = new AgentManager({
+    clients: { codex: clientFor(steering), claude: clientFor(plain) },
+    logger,
+  });
+  try {
+    const steerable = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const unsteerable = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(manager.canSteer(steerable.id)).toBe(true);
+    expect(manager.canSteer(unsteerable.id)).toBe(false);
+    expect(manager.canSteer("00000000-0000-4000-8000-000000000000")).toBe(false);
+    await manager.closeAgent(steerable.id);
+    await manager.closeAgent(unsteerable.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders an accepted steer before output emitted while acknowledgement is pending", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
@@ -2105,6 +2137,10 @@ class StreamingAssistantClient implements AgentClient {
 interface FakeCodexEmitterArgs {
   turnItems?: AgentTimelineItem[];
   historyItems?: AgentTimelineItem[];
+  /** Metrics the provider attaches to the turn it completes. */
+  turnMetrics?: AgentMetric[];
+  /** A raw replay, for history that is more than timeline items. */
+  history?: AgentStreamEvent[];
 }
 
 function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
@@ -2119,12 +2155,18 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
         for (const item of turnItems) {
           this.pushEvent({ type: "timeline", provider: this.provider, item, turnId });
         }
-        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_completed",
+          provider: this.provider,
+          turnId,
+          ...(args.turnMetrics ? { metrics: args.turnMetrics } : {}),
+        });
       }, 0);
       return { turnId };
     }
 
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* args.history ?? [];
       for (const item of historyItems) {
         yield { type: "timeline", provider: this.provider, item };
       }
@@ -2140,8 +2182,8 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
     async createSession(config: AgentSessionConfig) {
       return new FakeCodexSession(config);
     },
-    async resumeSession() {
-      throw new Error("unused");
+    async resumeSession(_handle, config) {
+      return new FakeCodexSession({ provider: "codex", cwd: config?.cwd ?? process.cwd() });
     },
   };
 }
@@ -13665,6 +13707,257 @@ test("system-injected prompts appear as trigger tools during history replay", as
   expect(userMessages[0].text).toBe("real user message");
 });
 
+function completedTurns(events: AgentManagerEvent[]) {
+  return events.flatMap((event) =>
+    event.type === "agent_stream" && event.event.type === "turn_completed" ? [event.event] : [],
+  );
+}
+
+test("a completed turn's metrics go out with the turn and stay on its footer row", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-metrics-"));
+  const store = new RecordingTimelineStore();
+  const metrics: AgentMetric[] = [
+    { label: "Model", value: "GPT-5.4" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ];
+  const manager = new AgentManager({
+    clients: {
+      codex: fakeCodexEmitting({
+        turnItems: [
+          { type: "assistant_message", text: "Working" },
+          {
+            type: "tool_call",
+            callId: "call-1",
+            name: "shell",
+            status: "completed",
+            error: null,
+            detail: { type: "unknown", input: null, output: null },
+          },
+          { type: "assistant_message", text: "Done" },
+        ],
+        turnMetrics: metrics,
+      }),
+    },
+    durableTimelineStore: store,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+  await manager.runAgent(agent.id, { text: "go" });
+  await manager.flush();
+
+  expect(completedTurns(events)).toEqual([
+    { type: "turn_completed", provider: "codex", turnId: "turn-fake-codex", metrics },
+  ]);
+  const stamped = { item: { type: "assistant_message", text: "Done" }, turnMetrics: metrics };
+  expect(manager.fetchTimeline(agent.id).rows.filter((row) => row.turnMetrics)).toEqual([
+    expect.objectContaining(stamped),
+  ]);
+  expect((await manager.getTimelineRows(agent.id)).filter((row) => row.turnMetrics)).toEqual([
+    expect.objectContaining(stamped),
+  ]);
+  await manager.closeAgent(agent.id);
+});
+
+test.each<{
+  name: string;
+  model?: string;
+  turnMetrics?: AgentMetric[];
+  expected: AgentMetric[] | undefined;
+}>([
+  {
+    name: "leads with the agent's model when the provider names none",
+    model: "gpt-5.4",
+    turnMetrics: [{ label: "Elapsed", value: "1.2s" }],
+    expected: [
+      { label: "Model", value: "gpt-5.4" },
+      { label: "Elapsed", value: "1.2s" },
+    ],
+  },
+  {
+    name: "shows the agent's model for a provider that reports no metrics",
+    model: "gpt-5.4",
+    expected: [{ label: "Model", value: "gpt-5.4" }],
+  },
+  {
+    name: "keeps the provider's own model row",
+    model: "gpt-5.4",
+    turnMetrics: [{ label: "MODEL", value: "GPT-5.4 (fast)" }],
+    expected: [{ label: "MODEL", value: "GPT-5.4 (fast)" }],
+  },
+  {
+    name: "sends no metrics when neither the provider nor the agent names a model",
+    expected: undefined,
+  },
+])("a live turn $name", async ({ model, turnMetrics, expected }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-model-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: fakeCodexEmitting({
+        turnItems: [{ type: "assistant_message", text: "Done" }],
+        turnMetrics,
+      }),
+    },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+  await manager.runAgent(agent.id, { text: "go" });
+
+  expect(completedTurns(events).map((event) => event.metrics)).toEqual([expected]);
+  expect(manager.fetchTimeline(agent.id).rows.at(-1)?.turnMetrics).toEqual(expected);
+  await manager.closeAgent(agent.id);
+});
+
+test.each(["first load", "forced refresh"])(
+  "turn metrics in provider history return to their footer rows on %s",
+  async (path) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-metrics-"));
+    const first: AgentMetric[] = [{ label: "Model", value: "GPT-5.4" }];
+    const second: AgentMetric[] = [{ label: "Elapsed", value: "4.0s" }];
+    const tool: AgentTimelineItem = {
+      type: "tool_call",
+      callId: "call-1",
+      name: "shell",
+      status: "completed",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    };
+    const history: AgentStreamEvent[] = [
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "one" } },
+      { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "A1" } },
+      { type: "turn_completed", provider: "codex", turnId: "old-1", metrics: first },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "two" } },
+      { type: "timeline", provider: "codex", item: tool },
+      { type: "turn_completed", provider: "codex", turnId: "old-2", metrics: second },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "three" } },
+      { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "A3" } },
+      { type: "turn_completed", provider: "codex", turnId: "old-3" },
+    ];
+    const manager = new AgentManager({
+      clients: { codex: fakeCodexEmitting({ history }) },
+      logger,
+    });
+    // The agent's model is known, but a replayed turn may have run on another one.
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    if (path === "forced refresh") {
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    } else {
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id);
+    }
+
+    expect(manager.fetchTimeline(agent.id).rows.map((row) => row.turnMetrics ?? null)).toEqual([
+      null,
+      first,
+      null,
+      second,
+      null,
+      null,
+    ]);
+    await manager.closeAgent(agent.id);
+  },
+);
+
+test.each(["first load", "forced refresh"])(
+  "session metrics in provider history show the provider's latest totals on %s",
+  async (path) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-session-metrics-"));
+    const latest: AgentMetric[] = [{ label: "Cost", value: "$0.42" }];
+    const history: AgentStreamEvent[] = [
+      {
+        type: "session_metrics_updated",
+        provider: "codex",
+        metrics: [{ label: "Cost", value: "$0.10" }],
+      },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "one" } },
+      { type: "session_metrics_updated", provider: "codex", metrics: latest },
+    ];
+    const manager = new AgentManager({
+      clients: { codex: fakeCodexEmitting({ history }) },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+    if (path === "forced refresh") {
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    } else {
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id);
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({ sessionMetrics: latest }),
+      }),
+    );
+    expect(manager.getAgent(agent.id)?.sessionMetrics).toEqual(latest);
+    await manager.closeAgent(agent.id);
+  },
+);
+
+test("session metrics reach the agent snapshot, stay off the stream, and survive a restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-metrics-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+  const metrics: AgentMetric[] = [
+    { label: "Cost", value: "$1.23" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ];
+
+  client.sessions[0].pushEvent({ type: "session_metrics_updated", provider: "codex", metrics });
+  await manager.flush();
+
+  expect(toAgentPayload(manager.getAgent(agent.id)!).sessionMetrics).toEqual(metrics);
+  expect(events.filter((event) => event.type === "agent_stream")).toEqual([]);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: "agent_state",
+      agent: expect.objectContaining({ sessionMetrics: metrics }),
+    }),
+  );
+
+  await manager.reloadAgentSession(agent.id);
+  expect(manager.getAgent(agent.id)?.sessionMetrics).toEqual(metrics);
+
+  await manager.closeAgent(agent.id);
+  await manager.flush();
+  const restarted = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const record = await storage.get(agent.id);
+  expect(record?.sessionMetrics).toEqual(metrics);
+  const resumed = await restarted.resumeAgentFromPersistence(
+    record!.persistence!,
+    { cwd: workdir },
+    agent.id,
+  );
+  expect(toAgentPayload(resumed).sessionMetrics).toEqual(metrics);
+  await restarted.closeAgent(agent.id);
+});
+
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {
   // GitHub PR operations (remote, no local file changes)
   expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
@@ -15914,3 +16207,55 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("importProviderSession keeps the stats the provider reported with its history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-metrics-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const turnMetrics = [{ label: "Elapsed", value: "1.2s" }];
+  const sessionMetrics = [{ label: "Cost", value: "$0.011" }];
+
+  class ImportClient extends TestAgentClient {
+    async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          { item: { type: "user_message" as const, text: "Hi" } },
+          { item: { type: "assistant_message" as const, text: "Done" }, turnMetrics },
+          { item: { type: "user_message" as const, text: "Again" } },
+          { item: { type: "assistant_message" as const, text: "Done again" } },
+        ],
+        sessionMetrics,
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    logger,
+  });
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-selected",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+  });
+
+  expect(imported.sessionMetrics).toEqual(sessionMetrics);
+  expect(
+    manager.fetchTimeline(imported.id).rows.map((row) => [row.item.type, row.turnMetrics ?? null]),
+  ).toEqual([
+    ["user_message", null],
+    ["assistant_message", turnMetrics],
+    ["user_message", null],
+    ["assistant_message", null],
+  ]);
+});

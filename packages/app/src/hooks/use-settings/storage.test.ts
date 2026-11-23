@@ -331,7 +331,7 @@ describe("loadAppSettingsFromStorage", () => {
       pins: null,
       serverId: null,
       cardOrder: [],
-      cardsOff: [],
+      cardVisibility: {},
     });
 
     const deps = makeDeps({
@@ -357,7 +357,7 @@ describe("loadAppSettingsFromStorage", () => {
       ],
       serverId: "server",
       cardOrder: [],
-      cardsOff: [],
+      cardVisibility: {},
     });
   });
 
@@ -374,7 +374,7 @@ describe("loadAppSettingsFromStorage", () => {
       pins: [],
       serverId: "server",
       cardOrder: [],
-      cardsOff: [],
+      cardVisibility: {},
     });
   });
 
@@ -396,7 +396,7 @@ describe("loadAppSettingsFromStorage", () => {
       pins: [{ sourceId: "claude", windowId: "weekly" }],
       serverId: null,
       cardOrder: [],
-      cardsOff: [],
+      cardVisibility: {},
     });
   });
 

@@ -14,14 +14,6 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/expo-modules-core",
     patchPrefix: "expo-modules-core+",
   },
-  // Backport https://github.com/software-mansion/enriched-markdown/pull/924: preserve settled
-  // Android measurements across parent clones. Remove those hunks when upgrading past
-  // 1.2.0-nightly-20261019-926ef06f0; reconcile the other local patch hunks separately.
-  {
-    nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
-    patchPrefix: "react-native-enriched-markdown+",
-    cwd: "packages/app",
-  },
   // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.

@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
+import { BuiltinPluginLoader } from "./plugins/builtin/index.js";
 import { loadConfig } from "./config.js";
 import {
   FileBackedProjectRegistry,
@@ -193,7 +194,10 @@ describe("paseo daemon bootstrap", () => {
         voiceTts: { provider: "local", explicit: true, enabled: false },
       },
     };
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
+    });
     let client: DaemonClient | null = null;
     let proxyUpstream: http.Server | null = null;
 
@@ -239,7 +243,9 @@ describe("paseo daemon bootstrap", () => {
       const beforeMcp = await fetch(`http://127.0.0.1:${target.port}/mcp/agents`, {
         method: "POST",
       });
-      expect(beforeMcp.status).toBe(406);
+      // Any answer from the agent MCP handler proves the route is live; the handler
+      // rejects a body-less POST as an unsupported media type.
+      expect(beforeMcp.status).toBe(415);
       const beforeProxyReload = await httpGetWithHost(target.port, proxyHost, "/", {
         "x-forwarded-proto": "https",
       });
@@ -467,7 +473,10 @@ describe("paseo daemon bootstrap", () => {
         standaloneListen: `127.0.0.1:${address.port}`,
       },
     };
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
+    });
 
     try {
       await expect(daemon.start()).rejects.toThrow();
@@ -580,6 +589,8 @@ describe("paseo daemon bootstrap", () => {
       speech: undefined,
     };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
       hubRelationshipRemote: remote,
     });
     const starting = daemon.start();
@@ -720,7 +731,10 @@ export default function contribute(plugin: unknown) {
         ? {}
         : { "startup-rollback": { source: "directory", path: pluginDirectory } },
     };
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
+    });
 
     try {
       await expect(daemon.start()).rejects.toThrow();
@@ -812,7 +826,10 @@ export default function contribute(plugin: unknown) {
     };
 
     try {
-      const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+      const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+        builtinPlugins: new BuiltinPluginLoader(undefined, []),
+        lazyTerminalWorker: true,
+      });
       try {
         await daemon.start();
         expect(daemon.getListenTarget()).toBeDefined();
@@ -943,7 +960,10 @@ export default function contribute(plugin: unknown) {
         speech: undefined,
       };
 
-      const daemon = await createPaseoDaemon(config, logger);
+      const daemon = await createPaseoDaemon(config, logger, {
+        builtinPlugins: new BuiltinPluginLoader(undefined, []),
+        lazyTerminalWorker: true,
+      });
 
       try {
         await daemon.start();
