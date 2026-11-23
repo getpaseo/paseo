@@ -49,7 +49,8 @@ NSString *ENRMCodeBlockFencedMarkdown(NSString *code, NSString *language, NSStri
     run = [code characterAtIndex:index] == fenceUnit ? run + 1 : 0;
     longestRun = MAX(longestRun, run);
   }
-  NSString *fence = [@"" stringByPaddingToLength:MAX(3, longestRun + 1) withString:fenceChar startingAtIndex:0];
+  NSUInteger fenceLength = MAX((NSUInteger)3, longestRun + 1);
+  NSString *fence = [@"" stringByPaddingToLength:fenceLength withString:fenceChar startingAtIndex:0];
   return [NSString stringWithFormat:@"%@%@\n%@\n%@", fence, language ?: @"", code, fence];
 }
 
