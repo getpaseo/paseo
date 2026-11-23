@@ -11,6 +11,7 @@ import {
   startGitCommandTrace,
   submitGitCommandTrace,
 } from "./git-command-trace.js";
+import { isLinkedBareRepository } from "./linked-bare-repository.js";
 import { spawnProcess } from "./spawn.js";
 import {
   GitProcessScheduler,
@@ -302,7 +303,7 @@ function executeGitCommand<Output>(
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
-  const startCommand = () => {
+  const spawnCommand = (configArgs: string[]) => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -407,19 +408,12 @@ function executeGitCommand<Output>(
 
       let child: ReturnType<typeof spawnProcess>;
       try {
-        // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
-        // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        // `core.fsmonitor=false` prevents repository config from launching a command.
-        child = spawnProcess(
-          "git",
-          ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
-          {
-            cwd: options.cwd,
-            envOverlay,
-            shell: false,
-            stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-          },
-        );
+        child = spawnProcess("git", [...configArgs, ...args], {
+          cwd: options.cwd,
+          envOverlay,
+          shell: false,
+          stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+        });
         spawnGitCommandTrace(commandTrace, child.pid);
       } catch (error) {
         rejectSpawnFailure(error);
@@ -574,12 +568,33 @@ function executeGitCommand<Output>(
     });
     return { result: resultPromise, exited };
   };
+  // The process slot stays held through the config lookup because `exited`
+  // settles only after the spawned process exits. `resolveGitConfigArgs` never rejects.
+  const startCommand = () => {
+    const spawned = resolveGitConfigArgs(options.cwd).then(spawnCommand);
+    return {
+      result: spawned.then((scheduled) => scheduled.result),
+      exited: spawned.then((scheduled) => scheduled.exited),
+    };
+  };
   const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,
     gitProcessScheduler.pendingCount,
   );
   return promise;
+}
+
+// `core.quotepath=false` makes git emit raw UTF-8 paths instead of
+// octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
+// `core.fsmonitor=false` prevents repository config from launching a command.
+// `safe.bareRepository=explicit` stops git from adopting a directory that only
+// looks like a bare repository, at `cwd` or above it. A bare repository with
+// linked worktrees still works when `cwd` is that repository.
+async function resolveGitConfigArgs(cwd: string): Promise<string[]> {
+  const args = ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false"];
+  if (await isLinkedBareRepository(cwd)) return args;
+  return [...args, "-c", "safe.bareRepository=explicit"];
 }
 
 export const runGitCommand: RunGitCommand = (args, options) =>

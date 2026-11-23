@@ -12,7 +12,7 @@ import {
   type CheckoutDiffCompare,
 } from "../../utils/checkout-git.js";
 import { lstat, readFile, readlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { DiffEndpoint, DiffSubscribeRequest } from "@getpaseo/protocol/messages";
 import type { DiffEntry, DiffBody } from "@getpaseo/protocol/binary-frames/index";
 import { runGitCommand, type GitCommandOptions } from "../../utils/run-git-command.js";
@@ -444,13 +444,26 @@ async function readWorktreeContent({
   if (value.isSymbolicLink())
     return { hashed: false, literal: `symlink:${await readlink(absolutePath)}` };
   if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
-    const submodule = await runGitCommand(
-      ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
-      { cwd: absolutePath, envOverlay: { GIT_OPTIONAL_LOCKS: "0" } },
-    );
-    return { hashed: false, literal: `submodule:${submodule.stdout}` };
+    return { hashed: false, literal: `submodule:${await readSubmoduleStatus(absolutePath)}` };
   }
   return { hashed: value.isFile() && text, literal: null };
+}
+
+// An uninitialized submodule has no `.git`; running git there would discover
+// whichever repository sits above it. Pinning GIT_DIR keeps an initialized
+// submodule's status on its own `.git`.
+async function readSubmoduleStatus(submodulePath: string): Promise<string> {
+  try {
+    await lstat(join(submodulePath, ".git"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+  const status = await runGitCommand(
+    ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
+    { cwd: submodulePath, envOverlay: { GIT_DIR: ".git", GIT_OPTIONAL_LOCKS: "0" } },
+  );
+  return status.stdout;
 }
 
 function diffArguments(compare: Compare, baseSha: string, headSha: string): string[] {
