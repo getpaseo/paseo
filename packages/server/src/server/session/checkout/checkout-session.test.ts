@@ -1,6 +1,14 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2151,6 +2159,36 @@ it("previews related issues and creates only explicitly approved issue links", a
     expect(readFileSync(marker, "utf8")).toBe("invoked");
     expect(() =>
       git(root, "--git-dir", otherRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toThrow();
+    mkdirSync(join(root, "nested", "nested"), { recursive: true });
+    const expandedRemote = join(root, "nested", "remote.git");
+    const doubleExpandedRemote = join(root, "nested", "nested", "remote.git");
+    git(root, "init", "--bare", expandedRemote);
+    git(root, "init", "--bare", doubleExpandedRemote);
+    git(repo, "remote", "set-url", "origin", remote);
+    git(repo, "config", "remote.origin.pushurl", remote);
+    git(repo, "config", `url.${root}/nested/.insteadOf`, `${root}/`);
+    const rewritten = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
+    expect(rewritten.pushUrls).toEqual([expandedRemote]);
+    await createPullRequest(
+      created.worktreePath,
+      {
+        title: "One expansion",
+        head: rewritten.head,
+        base: rewritten.base,
+        approvedHeadSha: rewritten.headSha,
+        approvedPushUrls: rewritten.pushUrls,
+        approvedOriginConfig: rewritten.originConfig,
+        approvedRepositoryUrl: rewritten.origin,
+      },
+      service,
+      { paseoHome },
+    );
+    expect(
+      git(root, "--git-dir", expandedRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toBe(rewritten.headSha);
+    expect(() =>
+      git(root, "--git-dir", doubleExpandedRemote, "rev-parse", `refs/heads/${created.branchName}`),
     ).toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });

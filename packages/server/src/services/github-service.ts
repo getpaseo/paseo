@@ -2779,6 +2779,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       // `gh repo view` is the fallback: it auto-routes to the cwd remote's host
       // (covering GitHub Enterprise Server) and survives a renamed repo.
       const approved = input.repositoryUrl ? parseGitRemoteLocation(input.repositoryUrl) : null;
+      const approvedHost =
+        input.repositoryApiHost ??
+        (input.repositoryUrl ? await resolveGitHubApiHost(input.repositoryUrl) : null);
       if (input.repositoryUrl && !approved)
         throw new Error("Invalid approved GitHub repository URL");
       let slug = approved
@@ -2805,7 +2808,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
       const parsed = await runGhJson(
         args,
-        { cwd: input.cwd, ...(approved ? { envOverlay: { GH_HOST: approved.host } } : {}) },
+        { cwd: input.cwd, ...(approvedHost ? { envOverlay: { GH_HOST: approvedHost } } : {}) },
         z.object({
           url: z.string(),
           number: z.number(),
@@ -4399,7 +4402,16 @@ async function resolveGitHubEnterpriseHost(cwd: string): Promise<string | null> 
     return null;
   }
 
-  const location = parseGitRemoteLocation(stdout.trim());
+  const host = await resolveGitHubApiHost(stdout.trim());
+  if (!host || host === "github.com") return null;
+  if (await probeGitHubAuthStatusForRouting(host)) return host;
+  throw new GitHubAuthenticationError({
+    stderr: `GitHub CLI is not authenticated for host ${host}`,
+  });
+}
+
+export async function resolveGitHubApiHost(remoteUrl: string): Promise<string | null> {
+  const location = parseGitRemoteLocation(remoteUrl);
   if (!location) {
     return null;
   }
@@ -4409,21 +4421,11 @@ async function resolveGitHubEnterpriseHost(cwd: string): Promise<string | null> 
     // before probing/routing, or gh would be pointed at the alias name.
     host = (await resolveSshHostname(host)) ?? host;
   }
-  // github.com (including via ssh alias) needs no GH_HOST — gh defaults there.
-  // Only a self-hosted/Enterprise host must be passed explicitly.
+  // Cloud SSH endpoints and aliases are transport names, not API hosts.
   if (isGitHubHost(host)) {
-    return null;
+    return "github.com";
   }
-  if (await probeGitHubAuthStatusForRouting(host)) {
-    return host;
-  }
-  // A non-cloud (Enterprise) host that isn't authenticated must NOT resolve to
-  // "no host": that would let gh default to github.com and silently query the
-  // wrong server for a GHES workspace. Surface the auth gap instead, so read
-  // paths (and authState) report unauthenticated rather than hitting github.com.
-  throw new GitHubAuthenticationError({
-    stderr: `GitHub CLI is not authenticated for host ${host}`,
-  });
+  return host;
 }
 
 function parseGitHubPullRequestRepo(url: string): { owner: string; name: string } | null {

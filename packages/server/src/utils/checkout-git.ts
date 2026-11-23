@@ -4329,6 +4329,7 @@ function parseHeadPushRefspec(refspec: string | null): string | null {
 }
 
 export interface CreatePullRequestOptions {
+  approvedApiHost?: string;
   approvedRepositoryUrl?: string;
   approvedOriginConfig?: Array<[string, string]>;
   approvedPushUrls?: string[];
@@ -4464,12 +4465,25 @@ export async function createPullRequest(
       ? [
           "-c",
           `remote.${remote}.url=${destination}`,
+          "-c",
+          `remote.${remote}.pushurl=${destination}`,
+          // This URL is already expanded by remote get-url. An identity rule
+          // at the full destination takes precedence over shorter rewrites.
+          "-c",
+          `url.${destination}.insteadOf=${destination}`,
           ...options.approvedOriginConfig.flatMap(([key, value]) => [
             "-c",
             `remote.${remote}.${key}=${value}`,
           ]),
         ]
       : [];
+    if (remoteConfig.length) {
+      const resolved = await runGitCommand([...remoteConfig, "ls-remote", "--get-url", remote], {
+        cwd,
+      });
+      if (resolved.stdout.trim() !== destination)
+        throw new Error("Approved push URL cannot be preserved by Git's URL configuration");
+    }
     const pushArgs = options.approvedHeadSha
       ? [
           ...remoteConfig,
@@ -4497,6 +4511,7 @@ export async function createPullRequest(
   const result = await forgeService.createPullRequest({
     cwd,
     ...(options.approvedRepositoryUrl ? { repositoryUrl: options.approvedRepositoryUrl } : {}),
+    ...(options.approvedApiHost ? { repositoryApiHost: options.approvedApiHost } : {}),
     title: options.title,
     body: options.body,
     draft: options.draft,

@@ -57,6 +57,7 @@ import {
   listCheckoutCommits,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
+import { resolveGitHubApiHost } from "../../../services/github-service.js";
 import { expandTilde } from "../../../utils/path.js";
 import { listGitWorktrees } from "../../../utils/worktree.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
@@ -108,6 +109,7 @@ interface PrIssueCandidate {
 }
 
 interface PrCreateInput {
+  approvedApiHost?: string;
   approvedRepositoryUrl?: string;
   approvedOriginConfig?: Array<[string, string]>;
   approvedPushUrls?: string[];
@@ -120,6 +122,7 @@ interface PrCreateInput {
 }
 
 interface PrCreateProposal {
+  approvedApiHost?: string;
   checkoutState: Awaited<ReturnType<typeof capturePrCheckoutState>>;
   requestedBaseRef?: string;
   id: string;
@@ -1092,6 +1095,7 @@ export class CheckoutSession {
           base: input.baseRef,
           ...(input.head ? { head: input.head } : {}),
           ...(input.approvedHeadSha ? { approvedHeadSha: input.approvedHeadSha } : {}),
+          ...(input.approvedApiHost ? { approvedApiHost: input.approvedApiHost } : {}),
           ...(input.approvedPushUrls ? { approvedPushUrls: input.approvedPushUrls } : {}),
           ...(input.approvedRepositoryUrl
             ? { approvedRepositoryUrl: input.approvedRepositoryUrl }
@@ -1138,6 +1142,9 @@ export class CheckoutSession {
     }
     const context = { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot };
     const checkoutState = await capturePrCheckoutState(msg.cwd, msg.baseRef, context);
+    const { service, forge } = await this.requireForgeService(msg.cwd);
+    const approvedApiHost =
+      forge === "github" ? await resolveGitHubApiHost(checkoutState.origin) : null;
     const generated = await this.gitMetadataGenerator.generatePullRequestText(
       msg.cwd,
       checkoutState.base,
@@ -1151,7 +1158,6 @@ export class CheckoutSession {
         "Generated PR text contains issue-closing directives; regenerate without issue directives and select relationships in the preview",
       );
     }
-    const { service } = await this.requireForgeService(msg.cwd);
     const matches = generated.issueSearchQuery
       ? await service.listIssues({
           cwd: msg.cwd,
@@ -1165,6 +1171,7 @@ export class CheckoutSession {
     if (JSON.stringify(current) !== JSON.stringify(checkoutState))
       throw new Error("Branch or base changed during PR generation; preview the PR again");
     const proposal: PrCreateProposal = {
+      ...(approvedApiHost ? { approvedApiHost } : {}),
       id: randomUUID(),
       cwd: msg.cwd,
       headSha: checkoutState.headSha,
@@ -1216,6 +1223,7 @@ export class CheckoutSession {
       approvedHeadSha: proposal.checkoutState.headSha,
       approvedPushUrls: proposal.checkoutState.pushUrls,
       approvedRepositoryUrl: proposal.checkoutState.origin,
+      approvedApiHost: proposal.approvedApiHost,
       approvedOriginConfig: proposal.checkoutState.originConfig,
       title: proposal.title,
       body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),

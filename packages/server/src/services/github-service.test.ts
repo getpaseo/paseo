@@ -4898,6 +4898,49 @@ describe("ForgeService", () => {
     expect(runner.calls[0]?.envOverlay?.GH_HOST).toBe("approved.example");
   });
 
+  it("normalizes an approved cloud SSH endpoint to the GitHub API host", async () => {
+    const runner = createRunner([
+      JSON.stringify({ url: "https://github.com/acme/repo/pull/8", number: 8 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        throw new Error("Live origin must not be read");
+      },
+    });
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "ssh://git@ssh.github.com:443/acme/repo.git",
+    });
+    expect(runner.calls[0]?.envOverlay?.GH_HOST).toBe("github.com");
+  });
+
+  it("uses a captured API host rather than an approved SSH transport alias", async () => {
+    const runner = createRunner([
+      JSON.stringify({ url: "https://api.example/acme/repo/pull/8", number: 8 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        throw new Error("Live origin must not be read");
+      },
+    });
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "git@work-alias:acme/repo.git",
+      repositoryApiHost: "api.example",
+    });
+    expect(runner.calls[0]?.envOverlay?.GH_HOST).toBe("api.example");
+  });
+
   it("routes gh calls to the resolved GitHub Enterprise host via GH_HOST", async () => {
     const runner = createRunner([
       JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
