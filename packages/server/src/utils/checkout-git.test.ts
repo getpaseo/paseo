@@ -1058,12 +1058,12 @@ const x = 1;
   });
 
   // The daemon's first push goes to origin. When git would send the branch to a fork instead,
-  // the status must not present origin as the place to publish it.
+  // the status must not present origin as the place to publish it, and Push must not send it.
   it.each([
     { name: "the branch's pushRemote", key: "branch.feature.pushRemote" },
     { name: "remote.pushDefault", key: "remote.pushDefault" },
-  ])("reports no first push remote when $name sends the branch to a fork", async ({ key }) => {
-    setupRemoteTrackingMain(repoDir, tempDir);
+  ])("does not publish to origin when $name sends the branch to a fork", async ({ key }) => {
+    const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
     const forkDir = join(tempDir, "fork.git");
     execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
     execFileSync("git", ["remote", "add", "fork", forkDir], { cwd: repoDir });
@@ -1072,12 +1072,72 @@ const x = 1;
     commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
 
     const status = await getCheckoutStatus(repoDir);
+    await expect(pushCurrentBranch(repoDir)).rejects.toThrow(
+      "Git is set to push this branch to 'fork'",
+    );
 
     expect(status).toMatchObject({
       upstreamState: "none",
       hasRemote: true,
       firstPushRemote: null,
     });
+    const originBranches = execFileSync("git", ["--git-dir", remoteDir, "branch", "--list"])
+      .toString()
+      .trim();
+    expect(originBranches).toBe("* main");
+  });
+
+  it("still publishes a branch that tracks a local branch to origin", async () => {
+    const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature", "--track", "main"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+
+    await pushCurrentBranch(repoDir);
+
+    const localHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir })
+      .toString()
+      .trim();
+    const remoteHead = execFileSync("git", [
+      "--git-dir",
+      remoteDir,
+      "rev-parse",
+      "refs/heads/feature",
+    ])
+      .toString()
+      .trim();
+    expect(remoteHead).toBe(localHead);
+  });
+
+  it("still publishes a never-pushed Paseo worktree branch to origin in a fork setup", async () => {
+    const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    const forkDir = join(tempDir, "fork.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
+    execFileSync("git", ["remote", "add", "fork", forkDir], { cwd: repoDir });
+    execFileSync("git", ["config", "remote.pushDefault", "fork"], { cwd: repoDir });
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "worktree-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "worktree-feature",
+      paseoHome,
+    });
+    const worktreeDir = worktree.worktreePath;
+    commitFile(worktreeDir, "feature.txt", "feature\n", "feature commit");
+
+    await pushCurrentBranch(worktreeDir, undefined, { paseoHome });
+
+    const localHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktreeDir })
+      .toString()
+      .trim();
+    const remoteHead = execFileSync("git", [
+      "--git-dir",
+      remoteDir,
+      "rev-parse",
+      "refs/heads/worktree-feature",
+    ])
+      .toString()
+      .trim();
+    expect(remoteHead).toBe(localHead);
   });
 
   // Push's first push targets origin, so without origin a never-pushed branch has nowhere to go.

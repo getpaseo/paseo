@@ -1987,11 +1987,28 @@ function resolveUpstreamStatus(
   return { state: "tracked", ref: tracking.ref, aheadBehind: { ahead, behind } };
 }
 
+// The remote git pushes a branch to: branch.<name>.pushRemote, then remote.pushDefault, then the
+// branch's own remote, then origin.
+async function readGitPushRemote(input: {
+  cwd: string;
+  currentBranch: string;
+  branchRemoteName: string | null;
+  context?: CheckoutContext;
+}): Promise<string> {
+  const { cwd, currentBranch, context } = input;
+  const [branchPushRemote, pushDefault] = await Promise.all([
+    getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context),
+    getGitConfigValue(cwd, "remote.pushDefault", context),
+  ]);
+  return branchPushRemote ?? pushDefault ?? input.branchRemoteName ?? "origin";
+}
+
+// pushCurrentBranch publishes a branch with no upstream here.
+const FIRST_PUSH_REMOTE = "origin";
+
 // Where a first push publishes the branch, when the daemon can confirm git would push it there
-// too. pushCurrentBranch sends a branch with no upstream to origin. Git picks a push remote from
-// branch.<name>.pushRemote, then remote.pushDefault, then the branch's own remote, then origin.
-// When git picks another remote, as in a fork setup, this is null so that clients do not offer a
-// first push that lands in a different repository than `git push` would use.
+// too. When git picks another remote, as in a fork setup, this is null so that clients do not
+// offer a first push that lands in a different repository than `git push` would use.
 async function readFirstPushRemote(input: {
   cwd: string;
   currentBranch: string | null;
@@ -1999,16 +2016,12 @@ async function readFirstPushRemote(input: {
   hasOrigin: boolean;
   context?: CheckoutContext;
 }): Promise<string | null> {
-  const { cwd, currentBranch, context } = input;
+  const { cwd, currentBranch, branchRemoteName, context } = input;
   if (!currentBranch || !input.hasOrigin) {
     return null;
   }
-  const [branchPushRemote, pushDefault] = await Promise.all([
-    getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context),
-    getGitConfigValue(cwd, "remote.pushDefault", context),
-  ]);
-  const gitPushRemote = branchPushRemote ?? pushDefault ?? input.branchRemoteName ?? "origin";
-  return gitPushRemote === "origin" ? "origin" : null;
+  const gitPushRemote = await readGitPushRemote({ cwd, currentBranch, branchRemoteName, context });
+  return gitPushRemote === FIRST_PUSH_REMOTE ? FIRST_PUSH_REMOTE : null;
 }
 
 interface CheckoutInspectionContext {
@@ -4289,7 +4302,11 @@ export async function pullCurrentBranch(cwd: string, forgeService?: ForgeService
   }
 }
 
-export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService): Promise<void> {
+export async function pushCurrentBranch(
+  cwd: string,
+  forgeService?: ForgeService,
+  context?: CheckoutContext,
+): Promise<void> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
@@ -4320,8 +4337,37 @@ export async function pushCurrentBranch(cwd: string, forgeService?: ForgeService
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
+  await requireFirstPushAgreesWithGit(cwd, currentBranch, context);
+  await runGitCommand(["push", "-u", FIRST_PUSH_REMOTE, currentBranch], { cwd, timeout: 120_000 });
   forgeService?.invalidate({ cwd });
+}
+
+// The status a client acted on can be older than the git configuration, so a first push checks
+// the destination again before it sends anything. Paseo worktrees always publish to origin.
+async function requireFirstPushAgreesWithGit(
+  cwd: string,
+  currentBranch: string,
+  context?: CheckoutContext,
+): Promise<void> {
+  const [branchRemoteName, branchMergeRef] = await Promise.all([
+    getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context),
+    getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context),
+  ]);
+  // A branch with a configured upstream gets here when that upstream is not a remote branch, as
+  // when it tracks a local branch. That is not a first push, and it goes to origin as before.
+  if (branchRemoteName !== null && branchMergeRef !== null) {
+    return;
+  }
+  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, { context });
+  if (paseoWorktree.isPaseoOwnedWorktree) {
+    return;
+  }
+  const gitPushRemote = await readGitPushRemote({ cwd, currentBranch, branchRemoteName, context });
+  if (gitPushRemote !== FIRST_PUSH_REMOTE) {
+    throw new Error(
+      `Git is set to push this branch to '${gitPushRemote}', so Push did not publish it to '${FIRST_PUSH_REMOTE}'. Push it from a terminal instead.`,
+    );
+  }
 }
 
 async function getCurrentBranchConfiguredPushTarget(
