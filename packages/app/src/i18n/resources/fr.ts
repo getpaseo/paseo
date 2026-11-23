@@ -2571,6 +2571,11 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
+      rememberLaunchTarget: {
+        label: "Mémoriser Chat ou Terminal",
+        description:
+          "Les nouveaux espaces de travail s'ouvrent sur la dernière cible utilisée. Désactivé, ils s'ouvrent toujours sur Chat.",
+      },
       sendShortcut: {
         label: "Raccourci d’envoi",
         options: {

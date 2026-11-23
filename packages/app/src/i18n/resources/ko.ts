@@ -2530,6 +2530,11 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      rememberLaunchTarget: {
+        label: "채팅/터미널 선택 기억",
+        description:
+          "새 워크스페이스가 마지막으로 사용한 대상으로 열립니다. 끄면 항상 채팅으로 열립니다.",
+      },
       sendShortcut: {
         label: "전송 단축키",
         options: {

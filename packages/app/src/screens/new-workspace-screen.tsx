@@ -62,6 +62,7 @@ import {
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
+import { useSettings } from "@/hooks/use-settings";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
@@ -994,10 +995,14 @@ export function NewWorkspaceScreen({
   // reads live from preferences so the async load can't race a frozen
   // initializer. Both go through `resolveLaunchTarget`, so a profile deleted
   // daemon-side falls back to chat rather than leaving a dead selection.
+  // With `rememberLaunchTarget` off, every new workspace starts on Chat, so
+  // Enter never lands in a terminal picked in an earlier window.
+  const rememberLaunchTarget = useSettings((settings) => settings.rememberLaunchTarget);
+  const rememberedLaunchTarget = rememberLaunchTarget ? formPreferences.launchTarget : undefined;
   const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
   const launchTarget = useMemo(
-    () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
-    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
+    () => resolveLaunchTarget(manualLaunchTarget ?? rememberedLaunchTarget, terminalProfiles),
+    [manualLaunchTarget, rememberedLaunchTarget, terminalProfiles],
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
@@ -1403,12 +1408,18 @@ export function NewWorkspaceScreen({
     ],
   );
 
+  const persistLaunchTarget = useCallback(async () => {
+    if (rememberLaunchTarget) {
+      await updateFormPreferences({ launchTarget });
+    }
+  }, [rememberLaunchTarget, launchTarget, updateFormPreferences]);
+
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
-        await updateFormPreferences({ launchTarget });
+        await persistLaunchTarget();
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";
@@ -1473,13 +1484,12 @@ export function NewWorkspaceScreen({
       ensureWorkspace,
       forkDraftSetup,
       isStillOnCreateScreen,
-      launchTarget,
       leaveFullscreen,
       selectedServerId,
       supportsForgeSearch,
       t,
       toast,
-      updateFormPreferences,
+      persistLaunchTarget,
       withConnectedClient,
     ],
   );
@@ -1487,7 +1497,7 @@ export function NewWorkspaceScreen({
   const handleSubmitTerminalLaunch = useCallback(async () => {
     try {
       setErrorMessage(null);
-      await updateFormPreferences({ launchTarget });
+      await persistLaunchTarget();
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
       await runCreateTerminalWorkspace({
@@ -1549,7 +1559,6 @@ export function NewWorkspaceScreen({
   }, [
     ensureWorkspace,
     isStillOnCreateScreen,
-    launchTarget,
     queryClient,
     selectedServerId,
     selectedTerminalProfile,
@@ -1557,7 +1566,7 @@ export function NewWorkspaceScreen({
     terminalPromptText,
     toast,
     leaveFullscreen,
-    updateFormPreferences,
+    persistLaunchTarget,
     withConnectedClient,
     workingDirectory,
   ]);

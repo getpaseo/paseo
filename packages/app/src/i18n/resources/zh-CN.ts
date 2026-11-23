@@ -2489,6 +2489,10 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      rememberLaunchTarget: {
+        label: "记住聊天或终端",
+        description: "新工作区会使用你上次选择的启动目标打开。关闭后，始终以聊天打开。",
+      },
       sendShortcut: {
         label: "发送快捷键",
         options: {

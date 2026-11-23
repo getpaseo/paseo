@@ -2553,6 +2553,11 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      rememberLaunchTarget: {
+        label: "Lembrar Chat ou Terminal",
+        description:
+          "Novos espaços de trabalho abrem no destino usado por último. Desativado, sempre abrem no Chat.",
+      },
       sendShortcut: {
         label: "Atalho de envio",
         options: {

@@ -2571,6 +2571,11 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      rememberLaunchTarget: {
+        label: "Recordar Chat o Terminal",
+        description:
+          "Los nuevos espacios de trabajo se abren con el destino que usaste por última vez. Si está desactivado, siempre se abren en Chat.",
+      },
       sendShortcut: {
         label: "Atajo de envío",
         options: {

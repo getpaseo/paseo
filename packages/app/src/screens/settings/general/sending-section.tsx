@@ -1,6 +1,11 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { SettingsCard, SettingsSection, SettingsSelect } from "@/components/settings";
+import {
+  SettingsCard,
+  SettingsSection,
+  SettingsSelect,
+  SettingsSwitch,
+} from "@/components/settings";
 import { useAppSettings, type SendShortcut, type SendBehavior } from "@/hooks/use-settings";
 import { useHardwareKeyboardPresent, supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { getShortcutOs } from "@/utils/shortcut-platform";
@@ -36,6 +41,10 @@ export function SendingSection() {
     (sendShortcut: SendShortcut) => void updateSettings({ sendShortcut }),
     [updateSettings],
   );
+  const changeRememberLaunchTarget = useCallback(
+    (rememberLaunchTarget: boolean) => void updateSettings({ rememberLaunchTarget }),
+    [updateSettings],
+  );
   return (
     <SettingsSection title={t("settings.general.sending")}>
       <SettingsCard>
@@ -58,6 +67,12 @@ export function SendingSection() {
           value={settings.sendBehavior}
           options={options}
           onValueChange={change}
+        />
+        <SettingsSwitch
+          label={t("settings.general.rememberLaunchTarget.label")}
+          hint={t("settings.general.rememberLaunchTarget.description")}
+          value={settings.rememberLaunchTarget}
+          onValueChange={changeRememberLaunchTarget}
         />
       </SettingsCard>
     </SettingsSection>

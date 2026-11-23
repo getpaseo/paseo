@@ -2558,6 +2558,11 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
+      rememberLaunchTarget: {
+        label: "Запоминать Chat или Terminal",
+        description:
+          "Новые рабочие пространства открываются в режиме, который вы использовали последним. Если выключено, всегда открываются в Chat.",
+      },
       sendShortcut: {
         label: "Сочетание клавиш для отправки",
         options: {

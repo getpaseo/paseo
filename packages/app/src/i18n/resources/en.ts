@@ -2647,6 +2647,11 @@ export const en = {
           queue: "Queue",
         },
       },
+      rememberLaunchTarget: {
+        label: "Remember Chat or Terminal",
+        description:
+          "New workspaces open on the target you used last. When off, they always open on Chat.",
+      },
       sendShortcut: {
         label: "Send shortcut",
         options: {

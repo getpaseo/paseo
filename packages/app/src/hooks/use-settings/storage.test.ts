@@ -227,6 +227,26 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("starts new workspaces on Chat by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.rememberLaunchTarget).toBe(false);
+  });
+
+  it("loads an enabled remember-launch-target preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ rememberLaunchTarget: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.rememberLaunchTarget).toBe(true);
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 

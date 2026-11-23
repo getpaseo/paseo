@@ -2539,6 +2539,11 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      rememberLaunchTarget: {
+        label: "チャット／ターミナルの選択を記憶",
+        description:
+          "新しいワークスペースは前回使った起動先で開きます。オフにすると常にチャットで開きます。",
+      },
       sendShortcut: {
         label: "送信ショートカット",
         options: {

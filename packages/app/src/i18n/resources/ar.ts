@@ -2552,6 +2552,11 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      rememberLaunchTarget: {
+        label: "تذكّر الدردشة أو الطرفية",
+        description:
+          "تُفتح مساحات العمل الجديدة على آخر هدف استخدمته. عند الإيقاف، تُفتح دائمًا على الدردشة.",
+      },
       sendShortcut: {
         label: "اختصار الإرسال",
         options: {
