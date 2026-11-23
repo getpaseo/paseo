@@ -1,3 +1,4 @@
+import type { WorkspaceArchiveRestoreRequest } from "../../workspace-archive-service.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
@@ -51,6 +52,7 @@ export interface CreateWorktreeWorkspaceInput {
   worktreeRoot: string;
   branch: string | null;
   baseBranch: string | null;
+  worktreeManagerPluginId?: string | null;
   title: string | null;
   metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
@@ -84,6 +86,7 @@ export interface WorkspaceProvisioningService {
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
+    archivedAt?: string | null,
   ): Promise<PersistedWorkspaceRecord>;
 }
 
@@ -104,6 +107,7 @@ export class WorkspaceProvisioningError extends Error {
 }
 
 export function createWorkspaceProvisioningService(deps: {
+  unarchiveWorkspaceAgents: (request: WorkspaceArchiveRestoreRequest) => Promise<void>;
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
@@ -270,14 +274,23 @@ export function createWorkspaceProvisioningService(deps: {
         checkout.isGit && checkout.isPaseoOwnedWorktree
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
+      const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
+      const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+      const inheritedUntrustedSource = (await workspaceRegistry.listAll()).find(
+        (candidate) =>
+          Boolean(candidate.untrustedSource) &&
+          matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+      )?.untrustedSource;
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
         projectId: project.projectId,
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
+        worktreeManagerPluginId: baseMetadata?.worktreeManagerPluginId ?? null,
         title: title?.trim() || null,
         metadata: context?.metadata,
+        ...(inheritedUntrustedSource ? { untrustedSource: inheritedUntrustedSource } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),
@@ -317,6 +330,7 @@ export function createWorkspaceProvisioningService(deps: {
         baseBranch: input.baseBranch,
         mainRepoRoot: repoRoot,
       }),
+      worktreeManagerPluginId: input.worktreeManagerPluginId ?? null,
       title: input.title,
       metadata: input.metadata,
       createdAt: timestamp,
@@ -433,6 +447,7 @@ export function createWorkspaceProvisioningService(deps: {
 
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
+    archivedAt = workspace.archivedAt,
   ): Promise<PersistedWorkspaceRecord> {
     const project = await projectRegistry.get(workspace.projectId);
     if (!project) throw new Error(`Unknown project: ${workspace.projectId}`);
@@ -480,9 +495,16 @@ export function createWorkspaceProvisioningService(deps: {
         });
       }
     }
-    if (!next) return workspace;
-    await workspaceRegistry.upsert(next);
-    return next;
+    if (next) await workspaceRegistry.upsert(next);
+    // A canceled archive supplies a modern stamp before the record itself is archived.
+    if (archivedAt) {
+      await deps.unarchiveWorkspaceAgents({
+        workspaceId: workspace.workspaceId,
+        archivedAt,
+        allowLegacyFallback: Boolean(workspace.archivedAt),
+      });
+    }
+    return next ?? workspace;
   }
 
   async function refreshWorkspaceRecord(

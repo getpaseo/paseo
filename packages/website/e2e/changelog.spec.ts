@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "./fixtures";
+import { expect, test, waitForHydration, type Locator, type Page } from "./fixtures";
 
 // The page renders the repository's CHANGELOG.md, so releases are found by shape, never by version:
 // a release with highlights has the toggle, a release without them does not.
@@ -6,12 +6,9 @@ function releases(page: Page): Locator {
   return page.getByRole("region");
 }
 
-// The router resets the scroll position when the page hydrates. A click sent before that is aimed
-// at where the control was, so wait for the page to be interactive: the language button is enabled
-// once it has hydrated.
 async function openChangelog(page: Page): Promise<void> {
   await page.goto("/changelog");
-  await expect(page.getByRole("button", { name: /^Language/ }).first()).toBeEnabled();
+  await waitForHydration(page);
 }
 
 function releaseWithHighlights(page: Page): Locator {

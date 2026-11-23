@@ -199,7 +199,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           title,
           event: finishNotificationEvents[reason],
         },
-        activeTurnBehavior: "steer",
+        // A finish report never enters a running turn.
+        activeTurnBehavior: "queue",
         unarchive: false,
       });
       acknowledgments.push(
@@ -267,7 +268,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             continue;
           }
           if (signal.aborted) return;
-          await decisions(group);
+          // A queued follow-up cannot start until the current permission is answered.
+          // Its pending registration must not hold the running turn's checkpoint.
+          if (pending.status !== "permission" || watch.pending) await decisions(group);
           if (signal.aborted) return;
           if (await suppressed(record, pending)) {
             await remove(watch);

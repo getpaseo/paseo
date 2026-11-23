@@ -8,6 +8,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  readWorktreeHeadReference,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
@@ -18,19 +19,26 @@ import type {
   WorkspaceArchiveContext,
   WorkspaceRegistry,
 } from "./workspace-registry.js";
-import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
+import type { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
->;
+> & {
+  worktreeManagerPluginId?: string | null;
+  untrustedSource?: PersistedWorkspaceRecord["untrustedSource"];
+};
 
 export interface ArchiveDependencies {
   paseoHome?: string;
   // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  workspaceArchiveOperations?: Pick<WorkspaceArchiveOperations, "withCheckout">;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "invalidateWorktrees">;
   agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
@@ -45,13 +53,14 @@ export interface ArchiveDependencies {
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  archiveWorkspaceRecord: (workspaceId: string, archivedAt: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
   assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
+  isCheckoutUntrusted?: (checkoutPath: string) => Promise<boolean>;
   sessionLogger?: Logger;
 }
 
@@ -67,9 +76,6 @@ export type ArchiveScope =
 
 export interface ArchiveResult {
   archivedAgentIds: string[];
-  // Agents this request moved from active to archived. `archivedAgentIds` also lists agents that
-  // were already archived; undo must restore only the ones this archive took down.
-  newlyArchivedAgentIds: string[];
   archivedWorkspaceIds: string[];
   removedDirectory: boolean;
   // Set when the record archived but its worktree directory was left on
@@ -86,16 +92,9 @@ export interface ArchiveByScopeRequest {
   signal?: AbortSignal;
 }
 
-/**
- * The archive stopped at a checkpoint because its signal aborted. Whatever ran before the
- * checkpoint stays done; `newlyArchivedAgentIds` and `recordArchived` say how far it got so the
- * canceller can put it back.
- */
+// Cancellation carries the operation stamp even before the workspace record is archived.
 export class WorkspaceArchiveCanceledError extends Error {
-  constructor(
-    public readonly newlyArchivedAgentIds: string[],
-    public readonly recordArchived: boolean,
-  ) {
+  constructor(public readonly archivedAt: string) {
     super("Workspace archive was canceled");
     this.name = "WorkspaceArchiveCanceledError";
   }
@@ -128,6 +127,8 @@ interface BackingDirectory {
   registryProven: boolean;
   mainRepoRoot: string | null;
   paseoWorktreesRoot: string | null;
+  worktreeManagerPluginId: string | null;
+  untrusted: boolean;
 }
 
 interface ArchiveTarget {
@@ -151,6 +152,13 @@ export async function resolveWorkspaceIdAtPath(
   return dependencies.findWorkspaceIdForCwd(targetPath);
 }
 
+export async function resolveWorkspaceBackingPath(
+  workspace: ActiveWorkspaceRef,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+): Promise<string> {
+  return (await resolveWorkspaceBackingDirectory(workspace, dependencies)).path;
+}
+
 // Resolves the in-scope record set, tears each down
 // (agents + terminals + record), then removes the backing directory iff it is
 // Paseo-owned AND no active workspace still references it.
@@ -165,86 +173,106 @@ async function archiveByScopeWithPriority(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const progress: ArchiveProgress = { newlyArchivedAgentIds: new Set(), recordArchived: false };
+  const archivedAt = new Date().toISOString();
   const checkpoint = () => {
     if (request.signal?.aborted) {
-      throw new WorkspaceArchiveCanceledError(
-        Array.from(progress.newlyArchivedAgentIds),
-        progress.recordArchived,
-      );
+      throw new WorkspaceArchiveCanceledError(archivedAt);
     }
   };
 
   checkpoint();
-  const target = await resolveArchiveTarget(dependencies, request.scope);
-  const targetWorkspaceIds = target.workspaceIds;
+  const runArchive = async (): Promise<ArchiveResult> => {
+    checkpoint();
+    const target = await resolveArchiveTarget(dependencies, request.scope);
+    const targetWorkspaceIds = target.workspaceIds;
 
-  await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
-  checkpoint();
+    await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
+    checkpoint();
 
-  if (targetWorkspaceIds.length > 0) {
-    dependencies.markWorkspaceArchiving(targetWorkspaceIds, new Date().toISOString());
-  }
-
-  let removedDirectory = false;
-  let directoryLeftBehind: ArchiveResult["directoryLeftBehind"];
-
-  try {
     if (targetWorkspaceIds.length > 0) {
-      await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
+      dependencies.markWorkspaceArchiving(targetWorkspaceIds, new Date().toISOString());
     }
-    checkpoint();
 
-    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
-      dependencies,
-      targetWorkspaceIds,
-      { requestId: request.requestId, checkpoint, progress },
-    );
-    checkpoint();
+    let removedDirectory = false;
+    let directoryLeftBehind: ArchiveResult["directoryLeftBehind"];
 
-    if (target.backing?.mainRepoRoot) {
-      try {
-        await dependencies.workspaceGitService.getSnapshot(target.backing.mainRepoRoot, {
-          force: true,
-          reason: "archive-worktree",
-        });
-      } catch (error) {
-        dependencies.sessionLogger?.warn(
-          { err: error, cwd: target.backing.mainRepoRoot, requestId: request.requestId },
-          "Failed to force-refresh workspace git snapshot after archiving",
+    try {
+      if (targetWorkspaceIds.length > 0) {
+        await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
+      }
+      checkpoint();
+
+      const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
+        dependencies,
+        targetWorkspaceIds,
+        { requestId: request.requestId, checkpoint, archivedAt },
+      );
+      checkpoint();
+
+      if (target.backing?.mainRepoRoot) {
+        try {
+          await dependencies.workspaceGitService.getSnapshot(target.backing.mainRepoRoot, {
+            force: true,
+            reason: "archive-worktree",
+          });
+        } catch (error) {
+          dependencies.sessionLogger?.warn(
+            { err: error, cwd: target.backing.mainRepoRoot, requestId: request.requestId },
+            "Failed to force-refresh workspace git snapshot after archiving",
+          );
+        }
+      }
+
+      if (target.backing !== null) {
+        const removal = await maybeRemoveDirectory(
+          dependencies,
+          { requestId: request.requestId, checkpoint },
+          target,
+          archivedWorkspaceIds,
         );
+        removedDirectory = removal.removedDirectory;
+        directoryLeftBehind = removal.directoryLeftBehind;
+      }
+
+      return {
+        archivedAgentIds: Array.from(archivedAgents),
+        archivedWorkspaceIds,
+        removedDirectory,
+        ...(directoryLeftBehind ? { directoryLeftBehind } : {}),
+      };
+    } finally {
+      if (targetWorkspaceIds.length > 0) {
+        dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
+        await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
       }
     }
+  };
 
-    if (target.backing !== null) {
-      const removal = await maybeRemoveDirectory(
-        dependencies,
-        { requestId: request.requestId, checkpoint },
-        target,
-        archivedWorkspaceIds,
-      );
-      removedDirectory = removal.removedDirectory;
-      directoryLeftBehind = removal.directoryLeftBehind;
-    }
-
-    return {
-      archivedAgentIds: Array.from(archivedAgents),
-      newlyArchivedAgentIds: Array.from(progress.newlyArchivedAgentIds),
-      archivedWorkspaceIds,
-      removedDirectory,
-      ...(directoryLeftBehind ? { directoryLeftBehind } : {}),
-    };
-  } finally {
-    if (targetWorkspaceIds.length > 0) {
-      dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
-      await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
-    }
+  const checkoutPath = dependencies.workspaceArchiveOperations
+    ? await resolveArchiveCheckoutPath(dependencies, request.scope)
+    : null;
+  if (dependencies.workspaceArchiveOperations && checkoutPath) {
+    return dependencies.workspaceArchiveOperations.withCheckout(checkoutPath, runArchive);
   }
+  return runArchive();
 }
 
-interface ArchiveProgress {
-  newlyArchivedAgentIds: Set<string>;
-  recordArchived: boolean;
+async function resolveArchiveCheckoutPath(
+  dependencies: ArchiveDependencies,
+  scope: ArchiveScope,
+): Promise<string | null> {
+  if (scope.kind === "workspace") {
+    const record =
+      (await dependencies.getWorkspace?.(scope.workspaceId)) ??
+      (await dependencies.listActiveWorkspaces()).find(
+        (workspace) => workspace.workspaceId === scope.workspaceId,
+      );
+    if (!record) {
+      return null;
+    }
+    return resolveWorkspaceBackingPath(record, dependencies);
+  }
+  return (await resolveBackingDirectory(scope.targetPath, dependencies)).path;
 }
 
 async function resolveArchiveTarget(
@@ -331,6 +359,8 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  const worktreeManagerPluginId = workspace.worktreeManagerPluginId ?? null;
+  const untrusted = Boolean(workspace.untrustedSource);
   if (workspace.isPaseoOwnedWorktree === false) {
     return {
       path: resolve(workspace.worktreeRoot ?? workspace.cwd),
@@ -339,6 +369,8 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: false,
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
+      untrusted,
     };
   }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
@@ -349,6 +381,8 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: true,
       mainRepoRoot: workspace.mainRepoRoot,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
+      untrusted,
     };
   }
   if (workspace.kind !== "worktree") {
@@ -359,6 +393,8 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: false,
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
+      untrusted,
     };
   }
 
@@ -368,7 +404,12 @@ async function resolveWorkspaceBackingDirectory(
     workspace.worktreeRoot ?? workspace.cwd,
     dependencies,
   );
-  return { ...backing, mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot };
+  return {
+    ...backing,
+    mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot,
+    worktreeManagerPluginId: worktreeManagerPluginId ?? backing.worktreeManagerPluginId,
+    untrusted: untrusted || backing.untrusted,
+  };
 }
 
 async function resolveBackingDirectory(
@@ -387,29 +428,35 @@ async function resolveBackingDirectory(
     registryProven: false,
     mainRepoRoot: ownership.repoRoot ?? null,
     paseoWorktreesRoot: ownership.worktreeRoot ?? null,
+    worktreeManagerPluginId: null,
+    untrusted: false,
   };
 }
 
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
-  options: { requestId: string; checkpoint: () => void; progress: ArchiveProgress },
+  options: {
+    requestId: string;
+    checkpoint: () => void;
+    archivedAt: string;
+  },
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const contents = await archiveWorkspaceContentsWithProgress(dependencies, workspaceId);
-      for (const agentId of contents.newlyArchivedAgentIds) {
-        options.progress.newlyArchivedAgentIds.add(agentId);
-      }
+      const contents = await archiveWorkspaceContents(
+        dependencies,
+        workspaceId,
+        options.archivedAt,
+      );
       // Agents and terminals are down, the record is not: an abort here leaves the workspace
-      // listed, and the canceller restores the agents it reports.
+      // listed, and cancellation restores agents carrying this operation stamp.
       options.checkpoint();
-      await dependencies.archiveWorkspaceRecord(workspaceId);
-      options.progress.recordArchived = true;
-      return { workspaceId, agents: contents.agentIds };
+      await dependencies.archiveWorkspaceRecord(workspaceId, options.archivedAt);
+      return { workspaceId, agents: contents };
     }),
   );
 
@@ -420,10 +467,7 @@ async function archiveTargetRecords(
         archivedAgents.add(agentId);
       }
     } else if (result.reason instanceof WorkspaceArchiveCanceledError) {
-      throw new WorkspaceArchiveCanceledError(
-        Array.from(options.progress.newlyArchivedAgentIds),
-        options.progress.recordArchived,
-      );
+      throw result.reason;
     } else {
       dependencies.sessionLogger?.warn(
         { err: result.reason, requestId: options.requestId },
@@ -470,11 +514,16 @@ async function maybeRemoveDirectory(
       teardownTarget.workspaceId === null || archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
   );
 
+  let untrustedBacking =
+    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted?.(backing.path));
   try {
     const allowedTeardownTargets = await filterAllowedTeardownTargets(
       dependencies,
       teardownTargets,
     );
+    if (allowedTeardownTargets.length < teardownTargets.length) {
+      untrustedBacking = true;
+    }
     for (const teardownTarget of uniqueTeardownTargets(allowedTeardownTargets)) {
       request.checkpoint();
       await runWorktreeTeardownCommands({
@@ -498,7 +547,7 @@ async function maybeRemoveDirectory(
   if (
     !(await isDirectoryUnreferenced(
       remainingActive,
-      backing.path,
+      backing,
       new Set(archivedWorkspaceIds),
       dependencies,
     ))
@@ -518,6 +567,10 @@ async function maybeRemoveDirectory(
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
       registryProven: backing.registryProven,
+      worktreeManagers: dependencies.worktreeManagers,
+      worktreeManagerPluginId: backing.worktreeManagerPluginId,
+      removeReason: "archive",
+      untrusted: untrustedBacking,
     });
     dependencies.workspaceGitService.invalidateWorktrees();
     dependencies.github.invalidate({ cwd: backing.path });
@@ -574,14 +627,8 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  archivedAt = new Date().toISOString(),
 ): Promise<Set<string>> {
-  return (await archiveWorkspaceContentsWithProgress(dependencies, workspaceId)).agentIds;
-}
-
-async function archiveWorkspaceContentsWithProgress(
-  dependencies: ArchiveWorkspaceContentsDependencies,
-  workspaceId: string,
-): Promise<{ agentIds: Set<string>; newlyArchivedAgentIds: string[] }> {
   const archivedAgents = new Set<string>();
 
   const liveAgents = dependencies.agentManager
@@ -605,34 +652,23 @@ async function archiveWorkspaceContentsWithProgress(
     archivedAgents.add(record.id);
   }
 
-  const archivedAt = new Date().toISOString();
   const agentIdsToArchive = [
     ...new Set([
       ...liveAgents.map((agent) => agent.id),
       ...matchingStoredRecords.filter((record) => !record.archivedAt).map((record) => record.id),
     ]),
   ];
-  // Undo brings back only what this archive took down. Internal agents are retired rather than
-  // archived, and an agent loaded only to read its history was archived before this request.
-  const restorableAgentIds = new Set(agentIdsToArchive);
-  for (const agent of liveAgents) {
-    if (agent.internal) restorableAgentIds.delete(agent.id);
-  }
-  for (const record of matchingStoredRecords) {
-    if (record.archivedAt) restorableAgentIds.delete(record.id);
-  }
   const [agentResults, [terminalResult]] = await Promise.all([
     Promise.allSettled(
       agentIdsToArchive.map((agentId) =>
         dependencies.agentManager.getAgent(agentId)
-          ? dependencies.agentManager.archiveAgent(agentId)
+          ? dependencies.agentManager.archiveAgent(agentId, archivedAt)
           : dependencies.agentManager.archiveSnapshot(agentId, archivedAt),
       ),
     ),
     Promise.allSettled([dependencies.killTerminalsForWorkspace(workspaceId)]),
   ]);
 
-  const newlyArchivedAgentIds: string[] = [];
   for (const [index, result] of agentResults.entries()) {
     const agentId = agentIdsToArchive[index]!;
     if (result.status === "rejected") {
@@ -640,8 +676,6 @@ async function archiveWorkspaceContentsWithProgress(
         { err: result.reason, workspaceId, agentId },
         "Workspace archive teardown step failed; continuing",
       );
-    } else if (restorableAgentIds.has(agentId)) {
-      newlyArchivedAgentIds.push(agentId);
     }
   }
   if (terminalResult?.status === "rejected") {
@@ -651,24 +685,31 @@ async function archiveWorkspaceContentsWithProgress(
     );
   }
 
-  return { agentIds: archivedAgents, newlyArchivedAgentIds };
+  return archivedAgents;
 }
 
-// True when, after archiving
-// the in-scope records, no active workspace still points at targetDir. Derived
-// from records each call — no stored counter.
+// Active workspaces on the same checkout keep it alive. A manager can place
+// a checkout anywhere, so also protect nested workspaces when either checkout
+// is manager-owned.
 async function isDirectoryUnreferenced(
   activeWorkspaces: ActiveWorkspaceRef[],
-  targetDir: string,
+  targetDirectory: BackingDirectory,
   archivedWorkspaceIds: ReadonlySet<string>,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<boolean> {
-  const target = resolve(targetDir);
+  const target = targetDirectory.path;
   const matchesTarget = createRealpathAwarePathMatcher(target);
   for (const workspace of activeWorkspaces) {
     if (archivedWorkspaceIds.has(workspace.workspaceId)) continue;
     const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
     if (matchesTarget(backingDirectory.path)) return false;
+    if (
+      (targetDirectory.worktreeManagerPluginId || backingDirectory.worktreeManagerPluginId) &&
+      (isRealpathInsideRoot(target, backingDirectory.path) ||
+        isRealpathInsideRoot(target, workspace.cwd))
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -744,7 +785,55 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   const archivedAt = input.archivedAt ?? new Date().toISOString();
-  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
+  let head: string | null = null;
+  if (existingWorkspace.kind === "worktree") {
+    const cwd = existingWorkspace.worktreeRoot ?? existingWorkspace.cwd;
+    head = await readWorktreeHeadReference(cwd);
+  }
+  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, {
+    ...input.context,
+    ...(head ? { head } : {}),
+  });
 
   return existingWorkspace;
+}
+
+export interface WorkspaceArchiveRestoreRequest {
+  workspaceId: string;
+  archivedAt: string;
+  allowLegacyFallback?: boolean;
+}
+
+interface UnarchiveWorkspaceAgentsInput extends WorkspaceArchiveRestoreRequest {
+  agentStorage: Pick<AgentStorage, "listByWorkspace">;
+  unarchiveAgent: (agentId: string) => Promise<unknown>;
+  sessionLogger?: Logger;
+}
+
+export async function unarchiveWorkspaceAgents(
+  input: UnarchiveWorkspaceAgentsInput,
+): Promise<void> {
+  const { workspaceId, archivedAt, allowLegacyFallback = true } = input;
+  const records = await input.agentStorage.listByWorkspace(workspaceId);
+  const exact = records.filter((record) => record.archivedAt === archivedAt);
+  // COMPAT(workspaceArchiveStamp): added in v0.15.3; remove after 2027-05-09 once old workspace archives no longer need restoration.
+  const matching =
+    exact.length > 0 || !allowLegacyFallback
+      ? exact
+      : records.filter((record) => {
+          if (!record.archivedAt) return false;
+          const age = Date.parse(archivedAt) - Date.parse(record.archivedAt);
+          return age >= 0 && age <= 60_000;
+        });
+  const results = await Promise.allSettled(
+    matching.map((record) => input.unarchiveAgent(record.id)),
+  );
+  for (const [index, result] of results.entries()) {
+    if (result.status === "rejected") {
+      input.sessionLogger?.warn(
+        { err: result.reason, workspaceId, agentId: matching[index]!.id },
+        "Failed to unarchive workspace agent",
+      );
+    }
+  }
 }

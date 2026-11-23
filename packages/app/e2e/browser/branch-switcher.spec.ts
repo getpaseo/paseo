@@ -125,11 +125,13 @@ async function renameWorkspaceViaSidebar(
   await expect(renameItem).toBeVisible({ timeout: 10_000 });
   await renameItem.click();
 
-  const modalPrefix = `sidebar-workspace-rename-modal-${serverId}:${input.workspaceId}`;
-  const renameInput = page.getByTestId(`${modalPrefix}-input`);
-  await expect(renameInput).toBeVisible({ timeout: 10_000 });
+  // Desktop-width sidebars rename in place.
+  const renameInput = page.getByTestId(
+    `sidebar-workspace-rename-input-${serverId}:${input.workspaceId}`,
+  );
+  await expect(renameInput).toBeFocused({ timeout: 10_000 });
   await renameInput.fill(input.title);
-  await page.getByTestId(`${modalPrefix}-submit`).click();
+  await renameInput.press("Enter");
   await expect(renameInput).toHaveCount(0, { timeout: 15_000 });
 }
 

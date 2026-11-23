@@ -37,6 +37,7 @@ function installed(): InstalledPlugin {
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
+    workspaceRowBadgeItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -105,6 +106,7 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
     isLive: () => true,
     revealed: true,
     isRevealed: () => view.revealed,
+    isFocused: () => false,
     focus: async (options) => {
       view.focused.push(options);
     },

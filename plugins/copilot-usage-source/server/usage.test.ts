@@ -171,3 +171,90 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     else process.env["COPILOT_TOKEN"] = previous;
   }
 });
+
+it.each([
+  { remaining: 1500, percentRemaining: 100, usedPct: 0 },
+  { remaining: 1125, percentRemaining: 75, usedPct: 25 },
+  { remaining: 0, percentRemaining: 0, usedPct: 100 },
+])(
+  "reports premium quota with $remaining requests remaining",
+  async ({ remaining, percentRemaining, usedPct }) => {
+    const report = await fetchPremiumQuota({
+      entitlement: 1500,
+      remaining,
+      percent_remaining: percentRemaining,
+      unlimited: false,
+    });
+    expect(report).toMatchObject({
+      status: "available",
+      planLabel: "individual",
+      windows: [
+        {
+          id: "premium_interactions",
+          label: "Premium requests",
+          usedPct,
+          remainingPct: percentRemaining,
+          resetsAt: "2026-12-01T00:00:00.000Z",
+        },
+      ],
+      details: expect.arrayContaining([
+        {
+          id: "premium_remaining",
+          label: "Premium requests remaining",
+          value: `${remaining} / 1500`,
+        },
+      ]),
+    });
+  },
+);
+
+it.each([
+  undefined,
+  null,
+  { unlimited: true, percent_remaining: 100, remaining: 1500, entitlement: 1500 },
+])(
+  "does not invent a finite quota for absent or unlimited premium snapshots (%j)",
+  async (premium) => {
+    const report = await fetchPremiumQuota(premium);
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [],
+      details: [{ id: "reset", label: "Quota reset", value: "2026-12-01" }],
+    });
+  },
+);
+
+it("reports a percentage without inventing missing counts and falls back to the legacy reset", async () => {
+  const report = await fetchPremiumQuota({ percent_remaining: 60, unlimited: false }, null);
+  expect(report).toMatchObject({
+    status: "available",
+    windows: [{ usedPct: 40, remainingPct: 60, resetsAt: "2026-12-01" }],
+    details: [{ id: "reset", label: "Quota reset", value: "2026-12-01" }],
+  });
+});
+
+async function fetchPremiumQuota(
+  premium: unknown,
+  utcReset: string | null = "2026-12-01T00:00:00.000Z",
+) {
+  const { writeFile } = await import("node:fs/promises");
+  const directory = mkdtempSync(join(tmpdir(), "copilot-premium-"));
+  const locator = join(directory, "hosts.yml");
+  try {
+    await writeFile(locator, "github.com:\n  oauth_token: fixture-copilot\n");
+    return await fetchUsage({ store: "file", locator }, async () =>
+      jsonResponse({
+        copilot_plan: "individual",
+        quota_reset_date: "2026-12-01",
+        quota_reset_date_utc: utcReset,
+        quota_snapshots: {
+          premium_interactions: premium,
+          chat: { unlimited: true, percent_remaining: 100 },
+          completions: { unlimited: true, percent_remaining: 100 },
+        },
+      }),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}

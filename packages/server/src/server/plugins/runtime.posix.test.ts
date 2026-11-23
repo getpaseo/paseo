@@ -257,6 +257,59 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("reports a spent create budget without blaming a manager it did not call", async () => {
+    const first = await createPlugin(
+      "first-manager",
+      `import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create({ path: directory }, { signal }) {
+      writeFileSync(path.join(directory, "started"), "");
+      while (!existsSync(path.join(directory, "decline"))) {
+        signal.throwIfAborted();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    },
+  });
+}`,
+    );
+    const second = await createPlugin(
+      "second-manager",
+      `export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create() { throw new Error("Second manager was called"); },
+  });
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("first-manager", first);
+      await runtime.startPlugin("second-manager", second);
+      // Advance the deadline clock while real subprocess IPC and timers keep running.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const creation = runtime.createWorktree({
+        kind: "branch-off",
+        repoRoot: first,
+        sourceCheckout: first,
+        branch: "topic",
+        slug: "topic",
+        path: first,
+        baseRef: "main",
+        untrusted: false,
+      });
+      const failure = creation.catch((error: unknown) => error);
+      await expect.poll(() => readTextIfPresent(path.join(first, "started"))).toBe("");
+      vi.setSystemTime(Date.now() + 120_000);
+      await writeFile(path.join(first, "decline"), "");
+      expect(await failure).toMatchObject({ message: "Worktree creation manager budget expired" });
+    } finally {
+      vi.useRealTimers();
+      await runtime.stopAll();
+    }
+  });
+
   it.each([
     { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
     { specifier: "@getpaseo/plugin", moduleDirectory: "server" },
@@ -1070,12 +1123,10 @@ export default function contribute(plugin: unknown) {
   });
 
   it("rejects provider input while a connection is closing", async () => {
-    const releaseDirectory = await mkdtemp(path.join(tmpdir(), "paseo-provider-close-"));
-    const releaseFile = path.join(releaseDirectory, "release");
     const directory = await createPlugin(
       "closing-provider",
-      `import { readFile, writeFile } from "node:fs/promises";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+      `import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+const closeReleased = Promise.withResolvers<void>();
 const provider: ProviderRegistration = {
   id: "delayed",
   label: "Delayed",
@@ -1087,10 +1138,7 @@ const provider: ProviderRegistration = {
       onEvent() { return () => undefined; },
       async close() {
         console.log("provider close started");
-        while (true) {
-          try { await readFile(${JSON.stringify(releaseFile)}); break; }
-          catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
-        }
+        await closeReleased.promise;
         console.log("provider close completed");
       },
     };
@@ -1098,7 +1146,11 @@ const provider: ProviderRegistration = {
 };
 export default function contribute(server: { registerProvider(provider: ProviderRegistration): void }) {
   server.registerProvider(provider);
-  return () => console.log("plugin cleanup started");
+  return () => {
+    console.log("plugin cleanup started");
+    // Let shutdown reach the pending close before releasing it.
+    setImmediate(closeReleased.resolve);
+  };
 }`,
     );
     const closedReports: unknown[] = [];
@@ -1121,20 +1173,14 @@ export default function contribute(server: { registerProvider(provider: Provider
       await expect(connection.send({ type: "catalog", requestId: "during-close" })).rejects.toThrow(
         "Provider connection is closing",
       );
-      const stopping = runtime.stopPluginById("closing-provider");
-      await expect
-        .poll(() => pluginMessages(runtime, "closing-provider"))
-        .toContain("plugin cleanup started");
-      await writeFile(releaseFile, "release");
-      await Promise.all([closing, stopping]);
+      await Promise.all([closing, runtime.stopPluginById("closing-provider")]);
       const messages = pluginMessages(runtime, "closing-provider");
+      expect(messages).toContain("plugin cleanup started");
       expect(messages).toContain("provider close completed");
       expect(messages).not.toContain("provider accepted input");
       expect(closedReports).toHaveLength(1);
     } finally {
-      await writeFile(releaseFile, "release");
       await runtime.stopAll();
-      await rm(releaseDirectory, { recursive: true, force: true });
     }
   });
 
@@ -1932,6 +1978,38 @@ export default function contribute(plugin: any) {
     expect(runtime.catalog()).toEqual([]);
     expect(runtime.getLogs("crashing").map((entry) => entry.message)).toContain("before crash");
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
+      "Plugin is not available",
+    );
+  });
+
+  it("reports and removes a plugin it terminated for an invalid message", async () => {
+    const directory = await createPlugin(
+      "invalid-message",
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  setTimeout(() => process.send?.({ type: "not-a-plugin-message" }), 20);
+  return () => undefined;
+}`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    const exited = new Promise<string>((resolve) => {
+      runtime.subscribe((pluginId, error) => {
+        if (pluginId === "invalid-message" && error) resolve(error);
+      });
+    });
+    await runtime.startPlugin("invalid-message", directory);
+
+    // The runtime kills the process; it must then treat it like any other exited plugin.
+    await expect(exited).resolves.toBe("Plugin process exited: invalid-message");
+    expect(sessions.active.size).toBe(0);
+    expect(runtime.catalog()).toEqual([]);
+    expect(
+      pluginMessages(runtime, "invalid-message").some((message) =>
+        message.includes("sent an invalid message"),
+      ),
+    ).toBe(true);
+    await expect(runtime.invoke("invalid-message", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
   });

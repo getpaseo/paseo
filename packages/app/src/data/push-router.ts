@@ -8,7 +8,10 @@ import type {
   MutableDaemonConfig,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import { invalidateCommandsForProviderChange } from "@/agent-commands/cache";
+import {
+  invalidateCommandsForDirectory,
+  invalidateCommandsForProviderChange,
+} from "@/agent-commands/cache";
 import { shareCheckoutDiff } from "@/git/diff-sharing";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
@@ -184,6 +187,20 @@ export async function applyProvidersSnapshotUpdate(input: {
   const snapshot = { ...input.message.payload, requestId: "providers_snapshot_update" };
   const cwd = normalizeProvidersSnapshotCwd(snapshot.cwd);
   const queryKey = providersSnapshotQueryKey(input.serverId, cwd);
+  const cached = input.queryClient.getQueryCache().find({ queryKey, exact: true });
+  // Only a screen showing this directory is worth a download. A cached but unobserved
+  // directory refetches on its next mount; one this client never opened needs nothing.
+  if (!cached) return;
+  if (!cached.isActive()) {
+    await input.queryClient.cancelQueries({ queryKey, exact: true });
+    await input.queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+    await invalidateCommandsForDirectory({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      cwd,
+    });
+    return;
+  }
   const previous = input.queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(queryKey);
   let announcement: typeof snapshot | undefined = snapshot;
   void input.queryClient.cancelQueries({ queryKey, exact: true });

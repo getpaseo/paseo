@@ -130,9 +130,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
           console.error("[VoiceEngine] Failed to stop after audio interruption:", error);
         });
       },
-      onError: (error) => {
-        console.error("[VoiceEngine] Capture error:", error);
-      },
     });
 
     runtime = createVoiceRuntime({
