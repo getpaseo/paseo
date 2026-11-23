@@ -138,6 +138,8 @@ export interface ComboboxProps {
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
+  /** Where focus goes when the picker closes. Defaults to whatever had focus when it opened. */
+  restoreFocusRef?: React.RefObject<unknown>;
   children?: ReactNode;
 }
 
@@ -1402,6 +1404,7 @@ export function Combobox({
   footer,
   keepOpenOnSelect = false,
   anchorRef,
+  restoreFocusRef,
   children,
 }: ComboboxProps): ReactElement | null {
   const { t } = useTranslation();
@@ -1667,6 +1670,7 @@ export function Combobox({
     layer: floatingLayer,
     keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
     onKeyDown: (event) => (isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false),
+    restoreFocusRef,
   });
 
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;

@@ -1578,9 +1578,17 @@ export function NewWorkspaceScreen({
       ? t("newWorkspace.refPicker.searching")
       : t("newWorkspace.refPicker.noMatchingRefs");
 
+  // The prompt is where the user types; when a field's picker closes, focus returns there rather
+  // than to whatever had focus when the picker opened.
+  const composerFocusRef = useRef<{ focus: () => void } | null>(null);
+  const handleComposerFocusInput = useCallback((focus: () => void) => {
+    composerFocusRef.current = { focus };
+  }, []);
+
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
+    restoreFocusRef: composerFocusRef,
     pluginItems: (
       <PluginNewWorkspaceItems serverId={selectedServerId} screen={pluginScreen} setup={setup} />
     ),
@@ -1682,6 +1690,7 @@ export function NewWorkspaceScreen({
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
+      onFocusInput={handleComposerFocusInput}
       error={errorMessage}
     />
   ) : (
@@ -1712,6 +1721,7 @@ export function NewWorkspaceScreen({
       clearDraft={handleClearDraft}
       autoFocus
       autoFocusKey={launchFocusKey}
+      onFocusInput={handleComposerFocusInput}
       commandDraft={composerState?.commandDraft}
       agentControls={agentControlsWithDisabled}
       error={errorMessage}
