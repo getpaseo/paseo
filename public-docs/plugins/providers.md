@@ -711,6 +711,10 @@ The adapter selects an unambiguous ACP `allow_once` action without opening a Pas
 Set `default: true` to make this the default for new sessions. The adapter requires an idle
 session without pending approvals before it switches to or from this mode.
 
+Set `acpOptions.perModelThinkingOptions` for an agent that lists `thought_level` choices only for
+the selected model. Catalog discovery selects each model in turn and gives it the thinking options
+the agent lists for it. A model without a `thought_level` option gets no thinking picker.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:

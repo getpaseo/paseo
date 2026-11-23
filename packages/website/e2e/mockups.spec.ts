@@ -110,7 +110,12 @@ test("the hero opens on orchestration across providers and machines", async ({ p
 test("the orchestration scene plays from an empty chat to the open roster of subagents", async ({
   page,
 }) => {
+  // The scene clock moves at most 64ms per animation frame. Headless WebKit on a busy CI runner
+  // paints a few frames a second, so on the real clock the scene plays in slow motion and misses
+  // any wall-clock timeout. The test holds the page clock and plays the scene itself.
+  await page.clock.install();
   await openHomepage(page);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const composer = mockup.getByText("Message the agent, tag @files, or use /commands and /skills");
   await playScene(page, "Orchestration", composer);
@@ -118,8 +123,9 @@ test("the orchestration scene plays from an empty chat to the open roster of sub
   await expect(mockup.getByText("3 subagents", { exact: true })).toHaveCount(0);
 
   // The orchestrator lists the issues and the agent profiles, launches three agents and says so,
-  // then the pointer clicks the pill and the roster opens.
-  await expect(mockup.getByText("3 subagents", { exact: true })).toBeVisible({ timeout: 20_000 });
+  // then the pointer clicks the pill and the roster opens. Ten seconds outlasts the scene.
+  await page.clock.runFor(10_000);
+  await expect(mockup.getByText("3 subagents", { exact: true })).toBeVisible();
   await expect(mockup.getByText("gh issue list --label ready", { exact: true })).toBeVisible();
   await expect(mockup.getByText("List agent profiles", { exact: true })).toBeVisible();
   await expect(
@@ -131,7 +137,7 @@ test("the orchestration scene plays from an empty chat to the open roster of sub
   await expect(
     mockup.getByText("All three are launched. Paseo will notify me when each one finishes."),
   ).toBeVisible();
-  await expect(mockup.getByText("Pi · GLM-5.2", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(mockup.getByText("Pi · GLM-5.2", { exact: true })).toBeVisible();
 });
 
 test("the opening scene waits until most of the mockup is on screen", async ({ page }) => {

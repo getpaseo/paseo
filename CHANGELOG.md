@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.17.3 - 2026-11-22
+
+### Fixed
+
+- Fixed iPhone sheets such as Workspace tabs ignoring body swipes to expand, scroll, or collapse ([#10525](https://github.com/getpaseo/paseo/pull/10525))
+- Fixed Antigravity applying the default model's thinking levels to every model, which blocked Orchestrator chats from opening ([#10524](https://github.com/getpaseo/paseo/pull/10524))
+- Fixed `/` and `@` pickers disappearing until reload after returning to a workspace through window history ([#8954](https://github.com/getpaseo/paseo/pull/8954) by [@viking1201](https://github.com/viking1201))
+
+## 0.17.2 - 2026-11-22
+
+- **Turn and session stats:** View per-turn and session timing, token, cache, and cost metrics for Claude, OpenCode v2, Pi, Oh My Pi, and plugin providers. ([#10496](https://github.com/getpaseo/paseo/pull/10496), [#10510](https://github.com/getpaseo/paseo/pull/10510))
+- **Automatic model list refresh:** Enabled providers refresh their model lists in the background every 30 minutes. ([#10481](https://github.com/getpaseo/paseo/pull/10481))
+- **Sidebar usage by default:** The sidebar usage summary is enabled by default, sources for inactive providers start hidden, and source toggles move to a Sources list. ([#10491](https://github.com/getpaseo/paseo/pull/10491))
+- **Agents can steer turns:** Agents can steer another agent's running turn alongside queueing or interrupting it, and receive delivery guidance in the response. ([#10483](https://github.com/getpaseo/paseo/pull/10483))
+
+### Added
+
+- Added Archive workspace to the mobile workspace actions menu ([#10507](https://github.com/getpaseo/paseo/pull/10507))
+- Added provider docs links, fuller diagnostic reports, and a scrollable Models list with inline refresh to provider settings ([#10487](https://github.com/getpaseo/paseo/pull/10487))
+
+### Changed
+
+- Removed the "This chat uses OpenCode v2." info row from OpenCode v2 chats ([#10490](https://github.com/getpaseo/paseo/pull/10490))
+
+### Fixed
+
+- Fixed pressing Tab or Enter in the slash menu running a stale `/exit` choice and archiving the agent ([#10484](https://github.com/getpaseo/paseo/pull/10484) by [@3ae3ae](https://github.com/3ae3ae))
+- Fixed busy host connections dropping to reconnect when multiple connections are saved ([#10395](https://github.com/getpaseo/paseo/pull/10395))
+- Fixed retrying an edited New workspace form hitting a conflict error after a failed start, and unified composer error alerts ([#10482](https://github.com/getpaseo/paseo/pull/10482))
+- Fixed Antigravity turns staying running after creating a recurring schedule ([#10469](https://github.com/getpaseo/paseo/pull/10469))
+- Fixed daemon startup and plugin reloads leaving zombie child processes for local directory plugins ([#10470](https://github.com/getpaseo/paseo/pull/10470))
+
 ## 0.17.1 - 2026-11-21
 
 - **Antigravity approvals and history:** Choose a permission mode, answer tool approvals, and import or reopen sessions. Requires [Antigravity CLI 1.5.0 or later](https://paseo.sh/docs/supported-providers/antigravity). ([#10193](https://github.com/getpaseo/paseo/pull/10193))

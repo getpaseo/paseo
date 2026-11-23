@@ -299,10 +299,7 @@ jobs:
         run: npm run test:integration --workspace=@getpaseo/server
         env: *server_test_env
 
-  # native-recursive.ts serves darwin and win32, but windows-latest above is the only
-  # runner that exercises it. macOS — the platform the reported watcher bug was on —
-  # otherwise has no server-test coverage. Keep this job scoped to regressions
-  # reported on macOS.
+  # Keep this job scoped to regressions reported on macOS.
   server-tests-macos:
     name: server-tests (macos-latest, file observation)
     needs: changes
@@ -330,11 +327,23 @@ jobs:
             src/server/workspace-git-service.observation.integration.test.ts \
             --bail=1
 
+      - name: Verify path casing on macOS
+        run: |
+          npm run test:unit --workspace=@getpaseo/server -- \
+            src/server/agent/agent-storage.test.ts \
+            src/utils/directory-suggestions.test.ts \
+            --bail=1
+
       - name: Verify plugin compiler children are reaped
         run: |
           npm run test:unit --workspace=@getpaseo/server -- \
             src/server/plugins/index.posix.test.ts \
             -t "reaps compiler children" --bail=1
+
+      - name: Verify plugin session sockets survive a dead plugin child
+        run: |
+          npm run test:unit --workspace=@getpaseo/server -- \
+            src/server/plugins/session-socket.posix.test.ts --bail=1
 
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)

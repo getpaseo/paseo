@@ -573,6 +573,8 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
+如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
+
 ## 测试与发布 {#test-and-publish}
 
 用真实的 Agent 测试 Provider，而不只是模拟的数据帧：

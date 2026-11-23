@@ -88,6 +88,20 @@ function nodeTerminalCommand(script: string): { command: string; args: string[] 
   };
 }
 
+const terminalStopFile = ".test-terminal-stop";
+const terminalStopDirectories = new Set<string>();
+
+function terminalCommandWithStopFile(cwd: string, script = "") {
+  terminalStopDirectories.add(cwd);
+  return nodeTerminalCommand(`
+    ${script}
+    const { existsSync } = require('node:fs');
+    setInterval(() => {
+      if (existsSync('${terminalStopFile}')) process.exit(0);
+    }, 50);
+  `);
+}
+
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
@@ -217,9 +231,8 @@ function trackTerminal(session: TerminalSession): TerminalSession {
   return session;
 }
 
-// Processes of workers a test killed. On Windows a killed worker's terminal programs end only
-// once its console closes, a moment later, and a temporary dir that is still a live program's
-// cwd cannot be removed. afterEach waits for them before it removes the dirs.
+// A forcibly stopped worker can leave a terminal program alive with a temporary
+// directory as its cwd. Remember the processes until teardown confirms they exited.
 const crashedWorkerProcesses: number[] = [];
 
 function crashWorker(record: TerminalWorkerRecord): void {
@@ -255,6 +268,11 @@ afterEach(async () => {
   );
   await manager?.closeTerminals();
   manager = null;
+  // The stop file reaches fixtures even if the worker and its PTY connection are gone.
+  for (const cwd of terminalStopDirectories) {
+    writeFileSync(join(cwd, terminalStopFile), "");
+  }
+  terminalStopDirectories.clear();
   const crashed = crashedWorkerProcesses.splice(0);
   await waitForCondition(() => !crashed.some(isProcessAlive), 10000);
   while (temporaryDirs.length > 0) {
@@ -265,6 +283,27 @@ afterEach(async () => {
   }
 });
 
+it("teardown stops a terminal fixture without a worker connection", async () => {
+  const cwd = createTemporaryHome();
+  // Bound the child lifetime if teardown fails to deliver the stop file.
+  const command = terminalCommandWithStopFile(
+    cwd,
+    "process.send('ready'); setTimeout(() => process.exit(0), 15000);",
+  );
+  const child = spawn(command.command, command.args, {
+    cwd,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("message", () => resolve());
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      reject(new Error(`Terminal fixture exited before ready: ${code}`)),
+    );
+  });
+  crashedWorkerProcesses.push(child.pid!);
+});
+
 it("retires a killed worker's sessions and shares one replacement across concurrent creates", async () => {
   const paseoHome = createTemporaryHome();
   manager = await startRealWorkerManager({ paseoHome });
@@ -272,8 +311,9 @@ it("retires a killed worker's sessions and shares one replacement across concurr
   const terminal = await manager.createTerminal({
     workspaceId: "ws-recovery",
     cwd: paseoHome,
-    ...nodeTerminalCommand(
-      "process.stdin.on('data', chunk => process.stdout.write('echo:' + process.env.QA_RECOVERY_ENV + ':' + chunk)); setInterval(() => {}, 1000)",
+    ...terminalCommandWithStopFile(
+      paseoHome,
+      "process.stdin.on('data', chunk => process.stdout.write('echo:' + process.env.QA_RECOVERY_ENV + ':' + chunk));",
     ),
   });
   const records = await listTerminalWorkerRecords(paseoHome);
@@ -364,7 +404,7 @@ it.each(["detach", "closeTerminals"] as const)(
     await manager.createTerminal({
       workspaceId: "ws-stop-recovery",
       cwd: paseoHome,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(paseoHome),
     });
     const [record] = await workerRecords(paseoHome);
     crashWorker(record!);
@@ -386,7 +426,7 @@ it.each(["detach", "closeTerminals"] as const)(
     const terminal = await manager.createTerminal({
       workspaceId: "ws-launch-race",
       cwd: paseoHome,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(paseoHome),
     });
     const [record] = await workerRecords(paseoHome);
     crashWorker(record!);
@@ -416,7 +456,7 @@ it.each(["current", "draining"] as const)(
     const added = await manager.createTerminal({
       workspaceId: "ws-peer",
       cwd: seed.cwd,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(seed.cwd),
     });
     const records = await workerRecords(paseoHome);
     const current = records.find((record) =>
@@ -1737,7 +1777,7 @@ async function launchDetachedWorkerWithTerminal(
   const session = await worker.createTerminal({
     workspaceId: "ws-detached",
     cwd,
-    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+    ...terminalCommandWithStopFile(cwd),
   });
   await worker.detach();
   return { terminalId: session.id, workerPid: launched.record.pid, cwd };
