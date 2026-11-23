@@ -62,30 +62,34 @@ describe("PluginSessionSocket child-process transport", () => {
 
   // Without an "error" listener, an error event on the child is an uncaught exception
   // that crashes the daemon. The listeners below only record what the daemon would throw.
-  it("closes after a frame write to a dead child fails with EPIPE", async () => {
-    const child = forkEchoChild();
-    const pid = await waitForSpawn(child);
-    const childErrors: unknown[] = [];
-    child.on("error", (error) => childErrors.push(error));
-    const socket = new PluginSessionSocket(child);
-    let closed = false;
-    socket.on("close", () => {
-      closed = true;
-    });
-    let sendError: Error | undefined;
+  // Waiting for the child without running the event loop needs `sh`, `kill` and `ps`.
+  it.skipIf(process.platform === "win32")(
+    "closes after a frame write to a dead child fails with EPIPE",
+    async () => {
+      const child = forkEchoChild();
+      const pid = await waitForSpawn(child);
+      const childErrors: unknown[] = [];
+      child.on("error", (error) => childErrors.push(error));
+      const socket = new PluginSessionSocket(child);
+      let closed = false;
+      socket.on("close", () => {
+        closed = true;
+      });
+      let sendError: Error | undefined;
 
-    killAndWaitUnnoticed(child, pid);
-    // The websocket server's outbound transport closes the socket when a write fails.
-    socket.send("frame", (error) => {
-      sendError = error;
-      socket.close();
-    });
-    await settle();
+      killAndWaitUnnoticed(child, pid);
+      // The websocket server's outbound transport closes the socket when a write fails.
+      socket.send("frame", (error) => {
+        sendError = error;
+        socket.close();
+      });
+      await settle();
 
-    expect(sendError).toMatchObject({ code: "EPIPE" });
-    expect(closed).toBe(true);
-    expect(childErrors).toEqual([]);
-  });
+      expect(sendError).toMatchObject({ code: "EPIPE" });
+      expect(closed).toBe(true);
+      expect(childErrors).toEqual([]);
+    },
+  );
 
   it("closes after the child's IPC channel has disconnected", async () => {
     const child = forkEchoChild();
