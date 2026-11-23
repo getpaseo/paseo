@@ -131,6 +131,7 @@ interface DerivedGitActionsState {
   behindOfOrigin: number | null;
   hasPullRequest: boolean;
   hasRemote: boolean;
+  hasFirstPushRemote: boolean;
   upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
@@ -183,6 +184,7 @@ function deriveGitActionsState(args: DeriveGitActionsStateArgs): DerivedGitActio
     ...extractGitCommitCounts(gitStatus),
     hasPullRequest: Boolean(prStatus?.url),
     hasRemote: gitStatus?.hasRemote ?? false,
+    hasFirstPushRemote: (gitStatus?.firstPushRemote ?? null) !== null,
     upstream: gitStatus ? readUpstreamState(gitStatus) : "unknown",
     isPaseoOwnedWorktree,
     isOnBaseBranch: isCurrentBranchBase(gitStatus?.currentBranch, baseRef),
@@ -672,6 +674,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     behindOfOrigin,
     hasPullRequest,
     hasRemote,
+    hasFirstPushRemote,
     upstream,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
@@ -704,6 +707,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
       mergeCapability: deriveMergeCapability(prStatus?.forgeSpecific, prStatus?.github),
       hasRemote,
+      hasFirstPushRemote,
       upstream,
       isPaseoOwnedWorktree,
       isOnBaseBranch,
@@ -813,6 +817,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   }, [
     isGit,
     hasRemote,
+    hasFirstPushRemote,
     upstream,
     hasPullRequest,
     prStatus?.url,

@@ -112,6 +112,8 @@ export interface BuildGitActionsInput {
   pullRequestMergeable: PullRequestMergeable;
   mergeCapability: MergeCapability | null;
   hasRemote: boolean;
+  /** The daemon confirmed where a first push publishes the branch. */
+  hasFirstPushRemote: boolean;
   upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
@@ -583,7 +585,9 @@ function hasPushableCommits(input: BuildGitActionsInput): boolean {
       return (input.aheadOfOrigin ?? 0) > 0;
     case "none":
       // A first push, which sets the upstream. The commits to send are the ones ahead of the base.
-      return input.aheadCount > 0;
+      // Paseo worktrees always publish to origin. A regular checkout publishes only where the
+      // daemon confirmed Git would push the branch too, so a fork setup is not sent to origin.
+      return input.aheadCount > 0 && (input.isPaseoOwnedWorktree || input.hasFirstPushRemote);
     case "gone":
     case "unknown":
       // The branch has an upstream that is deleted or unreadable, so nothing counts the commits
@@ -701,6 +705,9 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
   }
   if (input.upstream === "gone") {
     return i18n.t("workspace.git.actions.unavailable.pushUpstreamGone");
+  }
+  if (input.upstream === "none" && input.aheadCount > 0) {
+    return i18n.t("workspace.git.actions.unavailable.pushNoRemote");
   }
   return i18n.t("workspace.git.actions.unavailable.pushNothing");
 }

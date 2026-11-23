@@ -73,6 +73,7 @@ function createCheckoutFacts(cwd: string): CheckoutSnapshotFacts {
     branchRemoteName: null,
     branchMergeRef: null,
     upstreamStatus: { state: "none" },
+    firstPushRemote: null,
     pullRequestLookupTarget: { headRef: "main" },
   };
 }
@@ -1019,6 +1020,7 @@ describe("WorkspaceGitService checkout observation", () => {
         branchRemoteName: null,
         branchMergeRef: null,
         upstreamStatus: { state: "none" },
+        firstPushRemote: null,
       };
     });
     const runGitFetch = vi.fn(async () => ({
@@ -1162,6 +1164,7 @@ describe("WorkspaceGitService checkout observation", () => {
         branchRemoteName: "origin",
         branchMergeRef: `refs/heads/${branch}`,
         upstreamStatus: { state: "none" },
+        firstPushRemote: null,
       } satisfies CheckoutSnapshotFacts;
     });
     const getCheckoutStatus = vi.fn(async (cwd: string) =>

@@ -185,6 +185,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     behindOfOrigin: number | null;
     upstreamState: UpstreamState;
     hasRemote: boolean;
+    firstPushRemote: string | null;
     diffStat: { additions: number; deletions: number } | null;
   };
   forge: {
@@ -3784,6 +3785,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       behindOfOrigin: checkoutStatus.behindOfOrigin,
       upstreamState: checkoutStatus.upstreamState,
       hasRemote: checkoutStatus.hasRemote,
+      firstPushRemote: checkoutStatus.firstPushRemote,
       diffStat,
     };
     const loadedAtMs = this.deps.now().getTime();
@@ -4440,6 +4442,7 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
       behindOfOrigin: null,
       upstreamState: "none",
       hasRemote: false,
+      firstPushRemote: null,
       diffStat: null,
     },
     forge: buildForgeUnavailableSnapshot(),

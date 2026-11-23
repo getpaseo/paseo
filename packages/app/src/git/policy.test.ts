@@ -77,6 +77,7 @@ function createInput(
     pullRequestMergeable: "UNKNOWN",
     mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
+    hasFirstPushRemote: rest.hasRemote ?? false,
     upstream: "tracked",
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
@@ -429,6 +430,24 @@ describe("git-actions-policy", () => {
       expect(pushAction?.unavailableMessage).toBe(
         "Push isn't available here because this branch is not connected to a remote yet",
       );
+    });
+
+    it("does not offer Push when Git pushes the branch to another remote", () => {
+      const actions = buildGitActions(createInput({ ...neverPushed, hasFirstPushRemote: false }));
+      const pushAction = pushActionOf(actions);
+
+      expect(actions.primary?.id).not.toBe("push");
+      expect(pushAction?.unavailableMessage).toBe(
+        "Push isn't available here because this branch is not connected to a remote yet",
+      );
+    });
+
+    it("keeps offering Push in a Paseo worktree when Git pushes the branch to another remote", () => {
+      const actions = buildGitActions(
+        createInput({ ...neverPushed, hasFirstPushRemote: false, isPaseoOwnedWorktree: true }),
+      );
+
+      expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
     });
   });
 

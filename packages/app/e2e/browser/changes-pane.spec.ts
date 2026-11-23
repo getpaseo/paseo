@@ -490,7 +490,10 @@ test("Changes offers Push for a branch that was never pushed and the push sets i
     await expect
       .poll(() => remoteBranchHead(workspace, "feature"), { timeout: 30_000 })
       .toBe(localHead(workspace));
-    expect(branchUpstream(workspace)).toBe("origin/feature");
+    // git writes the upstream after the remote has the branch, so wait for it too.
+    await expect
+      .poll(() => branchUpstream(workspace, "feature"), { timeout: 30_000 })
+      .toBe("origin/feature");
     await expect(primary).not.toHaveAccessibleName("Push", { timeout: 30_000 });
   });
 });
@@ -2199,11 +2202,13 @@ function remoteBranchHead(workspace: RemoteWorkspace, branch: string): string | 
   return line ? (line.split("\t")[0] ?? null) : null;
 }
 
-function branchUpstream(workspace: RemoteWorkspace): string {
-  return execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], {
-    cwd: workspace.repoPath,
-    encoding: "utf8",
-  }).trim();
+// Empty until the branch has an upstream.
+function branchUpstream(workspace: RemoteWorkspace, branch: string): string {
+  return execFileSync(
+    "git",
+    ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${branch}`],
+    { cwd: workspace.repoPath, encoding: "utf8" },
+  ).trim();
 }
 
 async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {

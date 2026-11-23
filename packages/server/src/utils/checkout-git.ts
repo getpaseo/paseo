@@ -910,6 +910,7 @@ export interface CheckoutStatusGitNonPaseo {
   behindOfOrigin: number | null;
   upstreamState: UpstreamState;
   hasRemote: boolean;
+  firstPushRemote: string | null;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
 }
@@ -929,6 +930,7 @@ export interface CheckoutStatusGitPaseo {
   behindOfOrigin: number | null;
   upstreamState: UpstreamState;
   hasRemote: boolean;
+  firstPushRemote: string | null;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
 }
@@ -986,6 +988,7 @@ export type CheckoutSnapshotFacts =
       branchRemoteName: string | null;
       branchMergeRef: string | null;
       upstreamStatus: UpstreamStatus;
+      firstPushRemote: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
@@ -1984,6 +1987,30 @@ function resolveUpstreamStatus(
   return { state: "tracked", ref: tracking.ref, aheadBehind: { ahead, behind } };
 }
 
+// Where a first push publishes the branch, when the daemon can confirm git would push it there
+// too. pushCurrentBranch sends a branch with no upstream to origin. Git picks a push remote from
+// branch.<name>.pushRemote, then remote.pushDefault, then the branch's own remote, then origin.
+// When git picks another remote, as in a fork setup, this is null so that clients do not offer a
+// first push that lands in a different repository than `git push` would use.
+async function readFirstPushRemote(input: {
+  cwd: string;
+  currentBranch: string | null;
+  branchRemoteName: string | null;
+  hasOrigin: boolean;
+  context?: CheckoutContext;
+}): Promise<string | null> {
+  const { cwd, currentBranch, context } = input;
+  if (!currentBranch || !input.hasOrigin) {
+    return null;
+  }
+  const [branchPushRemote, pushDefault] = await Promise.all([
+    getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`, context),
+    getGitConfigValue(cwd, "remote.pushDefault", context),
+  ]);
+  const gitPushRemote = branchPushRemote ?? pushDefault ?? input.branchRemoteName ?? "origin";
+  return gitPushRemote === "origin" ? "origin" : null;
+}
+
 interface CheckoutInspectionContext {
   worktreeRoot: string;
   currentBranch: string | null;
@@ -2290,6 +2317,13 @@ export async function getCheckoutSnapshotFacts(
       ]);
     }
   }
+  const firstPushRemotePromise = readFirstPushRemote({
+    cwd,
+    currentBranch: inspected.currentBranch,
+    branchRemoteName,
+    hasOrigin: inspected.remoteUrl !== null,
+    context,
+  });
   let pullRequestLookupTarget = await resolveFactsPullRequestLookupTarget({
     cwd,
     inspected,
@@ -2325,6 +2359,7 @@ export async function getCheckoutSnapshotFacts(
     branchRemoteName,
     branchMergeRef,
     upstreamStatus,
+    firstPushRemote: await firstPushRemotePromise,
     pullRequestLookupTarget,
   };
 }
@@ -2516,6 +2551,7 @@ export async function getCheckoutStatus(
       aheadBehind,
       ...upstream,
       hasRemote,
+      firstPushRemote: facts.firstPushRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
     };
@@ -2534,6 +2570,7 @@ export async function getCheckoutStatus(
     aheadBehind,
     ...upstream,
     hasRemote,
+    firstPushRemote: facts.firstPushRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,
   };

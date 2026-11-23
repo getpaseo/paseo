@@ -248,6 +248,7 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
       behindOfOrigin: null,
       upstreamState: "none",
       hasRemote: false,
+      firstPushRemote: null,
       diffStat: null,
     },
     forge: {

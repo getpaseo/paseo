@@ -1047,6 +1047,39 @@ const x = 1;
     expect(status.upstreamState).toBe("tracked");
   });
 
+  it("reports origin as the first push remote for a never-pushed branch", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status).toMatchObject({ upstreamState: "none", firstPushRemote: "origin" });
+  });
+
+  // The daemon's first push goes to origin. When git would send the branch to a fork instead,
+  // the status must not present origin as the place to publish it.
+  it.each([
+    { name: "the branch's pushRemote", key: "branch.feature.pushRemote" },
+    { name: "remote.pushDefault", key: "remote.pushDefault" },
+  ])("reports no first push remote when $name sends the branch to a fork", async ({ key }) => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const forkDir = join(tempDir, "fork.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
+    execFileSync("git", ["remote", "add", "fork", forkDir], { cwd: repoDir });
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["config", key, "fork"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status).toMatchObject({
+      upstreamState: "none",
+      hasRemote: true,
+      firstPushRemote: null,
+    });
+  });
+
   // Push's first push targets origin, so without origin a never-pushed branch has nowhere to go.
   it("reports a never-pushed branch and refuses its first push when origin is missing", async () => {
     const forkDir = join(tempDir, "fork.git");
@@ -1057,7 +1090,12 @@ const x = 1;
 
     const status = await getCheckoutStatus(repoDir);
 
-    expect(status).toMatchObject({ isGit: true, upstreamState: "none", hasRemote: false });
+    expect(status).toMatchObject({
+      isGit: true,
+      upstreamState: "none",
+      hasRemote: false,
+      firstPushRemote: null,
+    });
     await expect(pushCurrentBranch(repoDir)).rejects.toThrow("Remote 'origin' is not configured.");
   });
 

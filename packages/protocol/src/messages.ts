@@ -5822,6 +5822,11 @@ const CheckoutStatusCommonSchema = z.object({
   // as when the clone keeps no remote-tracking ref for the upstream). Absent from daemons that
   // predate it, which report all but "tracked" as a null upstreamRef.
   upstreamState: z.enum(["tracked", "none", "gone", "unknown"]).optional(),
+  // The remote a first push publishes currentBranch to, when the daemon can confirm git would
+  // push the branch there too. Null when there is no such remote, as when origin is missing or
+  // git is set to push the branch to another remote (branch.<name>.pushRemote,
+  // remote.pushDefault). Absent from daemons that predate it.
+  firstPushRemote: z.string().nullable().optional(),
   forgeWeb: ForgeWebSchema.optional(),
 });
 
