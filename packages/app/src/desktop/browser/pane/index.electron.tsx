@@ -78,6 +78,7 @@ import {
   type BrowserElementSelection,
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
+import { getLastHostFocus, trackLastHostFocus } from "./last-host-focus";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -852,7 +853,8 @@ export function BrowserPane({
         webview.focus?.();
         return;
       }
-      const previous = event instanceof FocusEvent ? event.relatedTarget : null;
+      const related = event instanceof FocusEvent ? event.relatedTarget : null;
+      const previous = related instanceof HTMLElement ? related : getLastHostFocus();
       // The main process refuses focus not preceded by a user press (#4679).
       void focusBrowser(browserIdRef.current)
         .then((focused) => {
@@ -861,7 +863,7 @@ export function BrowserPane({
             webview.focus?.();
             return;
           }
-          if (previous instanceof HTMLElement && document.activeElement === webview) {
+          if (previous && document.activeElement === webview) {
             previous.focus({ preventScroll: true });
           }
           return;
@@ -880,6 +882,7 @@ export function BrowserPane({
     webview.addEventListener("page-favicon-updated", handleFaviconUpdated);
     webview.addEventListener("did-fail-load", handleLoadFailed);
     webview.addEventListener("dom-ready", handleDomReady);
+    trackLastHostFocus();
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
 
