@@ -1084,8 +1084,10 @@ class AcpRuntime {
     if (config.model) requested.push({ target: "model", value: config.model });
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
     const { settings, legacyAutoAccept } = this.withoutLegacyAutoAccept(config.settings);
+    // The toggle stays saved after a mode is chosen here, so it counts only while the saved mode
+    // is one the generic adapter wrote.
     const mode =
-      legacyAutoAccept && autoAcceptMode
+      legacyAutoAccept && autoAcceptMode && !this.offersMode(config.mode)
         ? autoAcceptMode.mode.id
         : (config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined));
     if (mode) requested.push({ target: "mode", value: mode });
@@ -1096,6 +1098,12 @@ class AcpRuntime {
       requested.push({ target: "setting", id, value });
     }
     for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  private offersMode(mode: string | undefined): boolean {
+    if (mode === undefined) return false;
+    if (mode === this.options.options.acpOptions?.autoAcceptMode?.mode.id) return true;
+    return toProviderCatalog(this.modes, this.configOptions).modes.some(({ id }) => id === mode);
   }
 
   /** Reads the generic ACP adapter's saved Auto Accept toggle unless the agent has such a setting. */

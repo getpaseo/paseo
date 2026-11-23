@@ -7074,4 +7074,45 @@ describe("ACP tool call rows", () => {
       await connection.close();
     }
   });
+
+  it("keeps a mode chosen after the generic ACP adapter's Auto Accept toggle was saved", async () => {
+    const harness = connectorHarness({
+      configOptions: [
+        {
+          id: "edit_approval_policy",
+          name: "Edits",
+          category: "mode",
+          type: "select",
+          currentValue: "session",
+          options: [
+            { value: "ask", name: "Default" },
+            { value: "session", name: "Don't Ask" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({
+      id: "former-generic",
+      label: "Former generic",
+      connector: harness.connector,
+      acpOptions: {
+        autoAcceptMode: { mode: { id: "full-access", label: "Full access" }, nativeMode: "ask" },
+      },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.configure"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.mode = "ask";
+      input.config.settings = { auto_accept: true };
+      await connection.send(input);
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const configs = events.flatMap((event) =>
+        event.type === "session.config" ? [event.config.mode] : [],
+      );
+      expect(configs.at(-1)).toBe("ask");
+    } finally {
+      await connection.close();
+    }
+  });
 });
