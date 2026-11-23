@@ -59,6 +59,7 @@ export async function fetchUsage(
 /**
  * OpenCode serves Go with the `opencode` credential whenever that Console workspace has Go, so
  * the card follows it. The `opencode-go` key serves Go when the Console refuses that credential.
+ * A temporary failure keeps OpenCode on the `opencode` credential, so it throws instead.
  */
 async function readEitherLogin(
   opencode: GoCredential,
@@ -66,14 +67,13 @@ async function readEitherLogin(
   fetchApi: typeof fetch,
 ): Promise<UsageReport> {
   if (opencode.type === "console") {
-    const signIn = await readSignIn(opencode, fetchApi).catch(() => null);
-    if (signIn?.status === "available") return signIn;
+    const signIn = await readSignIn(opencode, fetchApi);
+    if (signIn.status !== "unavailable") return signIn;
     const fallback = await readCredential(go, fetchApi);
     // A connected Console account explains a rejected fallback key better than the key does.
-    return signIn && isRejected(fallback) ? signIn : fallback;
+    return isRejected(fallback) ? signIn : fallback;
   }
   const primary = await readCredential(opencode, fetchApi, { workspaceKey: true });
-  // A temporary failure throws and keeps OpenCode on the `opencode` key, so the card stays too.
   return primary.status === "unavailable" ? readCredential(go, fetchApi) : primary;
 }
 
@@ -103,14 +103,15 @@ async function readSignIn(
 
 /**
  * A key reads the Console meters first, since the usage API floors each percent. Any Console
- * failure falls through to the usage API, which decides what the key's errors mean.
+ * failure falls through to the usage API, which decides what the key's errors mean. The Console
+ * gets a short budget so the usage API still answers within the daemon's 20 second refresh.
  */
 async function readKey(
   key: string,
   fetchApi: typeof fetch,
   { workspaceKey = false }: { workspaceKey?: boolean } = {},
 ): Promise<UsageReport> {
-  const fromConsole = await readConsoleGo({ token: key }, fetchApi).catch(() => null);
+  const fromConsole = await readConsoleGo({ token: key }, fetchApi, 3_000).catch(() => null);
   if (fromConsole?.status === "available") return fromConsole;
   const response = await fetchApi("https://opencode.ai/zen/go/v1/usage", {
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },

@@ -546,3 +546,31 @@ test("keeps the card on the opencode key through a temporary failure", async () 
   await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
   expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
 });
+
+test("keeps the card on the Console sign-in through a temporary failure", async () => {
+  const input = await storeWith([
+    ["opencode", consoleSignIn()],
+    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
+  ]);
+  const { requests, fetchApi } = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => new Response(null, { status: 503 }),
+    [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
+  });
+  await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
+  expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
+});
+
+test("reads a key's usage within the refresh deadline when the Console does not answer", async () => {
+  const fetchApi = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url) === USAGE_URL) return Response.json(upstreamResponse);
+    // The Console holds the request open until the caller gives up on it.
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+  }) as typeof fetch;
+  const started = Date.now();
+  const report = await fetchUsage({ store: "file", path: fixturePath }, fetchApi);
+  expect(report.status).toBe("available");
+  // The daemon gives a usage refresh 20 seconds, and the usage API keeps 15 of them.
+  expect(Date.now() - started).toBeLessThan(5_000);
+}, 20_000);

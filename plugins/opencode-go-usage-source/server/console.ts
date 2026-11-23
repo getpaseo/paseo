@@ -48,6 +48,7 @@ const METERS = [
 export async function readConsoleGo(
   login: { token: string; orgID?: string },
   fetchApi: typeof fetch,
+  timeoutMs = 15_000,
 ): Promise<UsageReport> {
   const response = await fetchApi(STATUS_URL, {
     headers: {
@@ -57,7 +58,7 @@ export async function readConsoleGo(
     },
     // The token goes to the Console origin only.
     redirect: "error",
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status === 401 || response.status === 403)
     return unavailable({ kind: "rejected", status: response.status, refreshedBy: "opencode" });
