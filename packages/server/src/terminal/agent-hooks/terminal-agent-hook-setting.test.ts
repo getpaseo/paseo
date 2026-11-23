@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DaemonConfigStore } from "../../server/daemon-config-store.js";
+import { agentHooksAreInstalled } from "./agent-hook-installer.js";
+import { AGENT_HOOK_PROVIDERS } from "./provider-registry.js";
 import { applyTerminalAgentHookSetting } from "./terminal-agent-hook-setting.js";
 
 const temporaryDirs: string[] = [];
@@ -26,6 +28,7 @@ function createInstallEnv(root: string) {
     env: {
       CLAUDE_CONFIG_DIR: join(root, "claude"),
       CODEX_HOME: join(root, "codex"),
+      COPILOT_HOME: join(root, "copilot"),
       OPENCODE_CONFIG_DIR: join(root, "opencode"),
     },
     homeDir: join(root, "home"),
@@ -36,6 +39,7 @@ function hookPaths(root: string) {
   return {
     claude: join(root, "claude", "settings.json"),
     codex: join(root, "codex", "hooks.json"),
+    copilot: join(root, "copilot", "hooks", "paseo-terminal-activity.json"),
     opencode: join(root, "opencode", "plugins", "paseo-terminal-activity.js"),
   };
 }
@@ -65,6 +69,7 @@ describe("applyTerminalAgentHookSetting", () => {
     const paths = hookPaths(root);
     expect(existsSync(paths.claude)).toBe(false);
     expect(existsSync(paths.codex)).toBe(false);
+    expect(existsSync(paths.copilot)).toBe(false);
     expect(existsSync(paths.opencode)).toBe(false);
   });
 
@@ -77,6 +82,7 @@ describe("applyTerminalAgentHookSetting", () => {
     const paths = hookPaths(root);
     expect(existsSync(paths.claude)).toBe(true);
     expect(existsSync(paths.codex)).toBe(true);
+    expect(existsSync(paths.copilot)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
   });
 
@@ -90,9 +96,13 @@ describe("applyTerminalAgentHookSetting", () => {
 
     await store.patch({ enableTerminalAgentHooks: true });
     expect(existsSync(paths.codex)).toBe(true);
+    expect(agentHooksAreInstalled(AGENT_HOOK_PROVIDERS.copilot, createInstallEnv(root))).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
 
     await store.patch({ enableTerminalAgentHooks: false });
+    expect(agentHooksAreInstalled(AGENT_HOOK_PROVIDERS.copilot, createInstallEnv(root))).toBe(
+      false,
+    );
     expect(existsSync(paths.opencode)).toBe(false);
   });
 });

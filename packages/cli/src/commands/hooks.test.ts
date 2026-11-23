@@ -117,6 +117,13 @@ describe("runHooksCommand", () => {
   });
 
   it.each([
+    ["userPromptSubmitted", "running"],
+    ["agentStop", "idle"],
+  ])("posts Copilot %s as %s", async (event, state) => {
+    expectPostedState(await runHook("copilot", event), state);
+  });
+
+  it.each([
     ["session.status.busy", "running"],
     ["session.status.retry", "running"],
     ["session.status.idle", "idle"],
