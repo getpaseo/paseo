@@ -375,6 +375,10 @@ async function listSessions(
   });
 }
 
+function sessionUpdatedAt(session: SessionInfo): number {
+  return Date.parse(session.updatedAt ?? "") || 0;
+}
+
 function retireSession(state: AcpConnectionState, sessionId: string): void {
   if (state.sessions.delete(sessionId)) {
     state.emit({ type: "session.closed", sessionId });
@@ -992,17 +996,20 @@ class AcpRuntime {
     return true;
   }
 
-  /** Follows `nextCursor` until `limit` sessions, the last page, or the scan cap. */
+  /** Selects the most recent sessions from a bounded scan of the provider's pages. */
   async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
-    const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;
-    do {
+    // ACP does not guarantee that sessions arrive in recency order.
+    for (let pages = 0; pages < SESSION_SCAN_LIMIT; pages += 1) {
       const page = await this.call(this.connection.listSessions({ cwd, cursor }));
-      sessions.push(...page.sessions);
+      sessions.push(...page.sessions.slice(0, SESSION_SCAN_LIMIT - sessions.length));
       cursor = page.nextCursor ?? undefined;
-    } while (cursor && sessions.length < wanted);
-    return sessions.slice(0, wanted);
+      if (!cursor || sessions.length === SESSION_SCAN_LIMIT) break;
+    }
+    return sessions
+      .sort((a, b) => sessionUpdatedAt(b) - sessionUpdatedAt(a))
+      .slice(0, limit ?? SESSION_SCAN_LIMIT);
   }
 
   async drainNotifications(): Promise<void> {

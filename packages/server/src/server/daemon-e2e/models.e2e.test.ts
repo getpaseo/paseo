@@ -165,6 +165,48 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
   }
 }, 120000);
 
+test.each(["one page", "two pages"])(
+  "Antigravity lists the latest importable sessions from %s in storage order",
+  async (pages) => {
+    const command = [
+      process.execPath,
+      path.resolve(import.meta.dirname, "antigravity-session-list-fixture.cjs"),
+    ];
+    if (pages === "two pages") command.push("--paginated");
+    const daemon = await createTestPaseoDaemon({
+      agentClients: {},
+      mcpEnabled: false,
+      builtinPlugins: new BuiltinPluginLoader(undefined, ["antigravity-provider"]),
+      providerOverrides: { antigravity: { command, paseoTools: { enabled: false } } },
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.17.3",
+    });
+    const providers = ["antigravity"];
+    try {
+      await client.connect();
+      await client.refreshProvidersSnapshot({ cwd: daemon.paseoHome, providers });
+
+      const search = await client.fetchRecentProviderSessions({
+        providers,
+        limit: 5,
+        query: "November",
+      });
+      expect(search.entries.map((session) => session.title)).toEqual(["Latest November session"]);
+      const wide = await client.fetchRecentProviderSessions({ providers, limit: 100 });
+      expect(wide.entries[0]?.title).toBe("Latest November session");
+      const recent = await client.fetchRecentProviderSessions({ providers });
+      expect(recent.entries).toHaveLength(20);
+      expect(recent.entries[0]?.title).toBe("Latest November session");
+    } finally {
+      await client.close();
+      await daemon.close();
+    }
+  },
+  30_000,
+);
+
 test("bundled fx requires a config entry and lists models instead of its providers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-fx-optin-"));
   const record = path.join(root, "launches.txt");
