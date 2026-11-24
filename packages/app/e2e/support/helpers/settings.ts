@@ -35,7 +35,7 @@ export async function bindCommandCenterToEnter(page: Page) {
 export async function activateSidebarHostSettingsWithKeyboard(page: Page) {
   const host = sidebarHostRowButton(page);
   await expect(host).toBeVisible();
-  await page.keyboard.press("ArrowDown");
+  await expect(host).toBeFocused();
   await page.keyboard.press("Enter");
 }
 
