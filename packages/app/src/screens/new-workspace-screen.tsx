@@ -1187,9 +1187,17 @@ export function NewWorkspaceScreen({
             .filter(
               (detail) =>
                 detail.name.startsWith("refs/remotes/") &&
-                !detail.name.startsWith("refs/remotes/origin/"),
+                (detail.remoteName !== undefined
+                  ? detail.remoteName !== "origin"
+                  : !detail.name.startsWith("refs/remotes/origin/")),
             )
-            .map(({ name, committerDate }) => ({ name, refName: name, committerDate })),
+            .map(({ name, committerDate, branchName, remoteName }) => ({
+              name,
+              refName: name,
+              committerDate,
+              branchName,
+              remoteName,
+            })),
         ],
       };
     },

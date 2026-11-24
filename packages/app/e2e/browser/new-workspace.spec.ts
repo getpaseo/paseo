@@ -919,6 +919,50 @@ test.describe("New workspace flow", () => {
       });
     }
 
+    test("checks out a slash-containing remote without reusing an unrelated worktree", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-slash-remote-", { withRemote: true });
+      try {
+        const remote = "team/company";
+        execFileSync("git", ["remote", "rename", "origin", remote], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "-c", "producer"], { cwd: tempRepo.path });
+        const selectedTip = commitLocalOnly(tempRepo.path, "selected-remote-only");
+        execFileSync("git", ["push", remote, "HEAD:topic"], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        const unrelated = path.join(tempRepo.path, "unrelated-worktree");
+        execFileSync("git", ["worktree", "add", "-b", "company/topic", unrelated, "main"], {
+          cwd: tempRepo.path,
+        });
+        const unrelatedTip = commitLocalOnly(unrelated, "unrelated-worktree-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByTestId("new-workspace-ref-picker-checkout").click();
+        await page.getByPlaceholder("Search branches").fill("topic");
+        await expectStartingRefRows(page, ["topic (team/company), team/company branch"]);
+        await startingRefRow(page, "topic (team/company), team/company branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.workspaceDirectory).not.toBe(unrelated);
+        expect(created.branchInfo.hasAncestor(selectedTip)).toBe(true);
+        expect(created.branchInfo.hasAncestor(unrelatedTip)).toBe(false);
+        expect(
+          execFileSync("git", ["branch", "--show-current"], {
+            cwd: created.workspaceDirectory,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+            cwd: created.workspaceDirectory,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("refs/remotes/team/company/topic");
+        expect(readRepoRef(unrelated, "HEAD")).toBe(unrelatedTip);
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     test("selects a local branch whose name resembles an exact remote ref", async ({ page }) => {
       const tempRepo = await createTempGitRepo("ref-local-exact-name-", { withRemote: true });
       try {

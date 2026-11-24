@@ -7,6 +7,8 @@ export interface BranchPickerDetail {
   name: string;
   /** Present only for details returned by the exact-ref lookup. */
   refName?: string;
+  branchName?: string;
+  remoteName?: string;
   committerDate: number;
   hasLocal?: boolean;
   hasRemote?: boolean;
@@ -19,6 +21,8 @@ export type PickerItem =
       kind: "branch";
       name: string;
       refName: string;
+      branchName?: string;
+      remoteName?: string;
       accessibilityLabel: string;
       divergenceLabel?: string;
       committerDate?: number;
@@ -74,20 +78,32 @@ function divergenceAccessibility(ahead: number, behind: number, counterpart: str
   return `${commitCount(behind)} behind ${counterpart}`;
 }
 
+function exactBranchPickerItem({
+  detail,
+  refName,
+}: {
+  detail: BranchPickerDetail;
+  refName: string;
+}): PickerItem {
+  const remote = detail.remoteName ?? refQualifier(refName);
+  const name = `${detail.branchName ?? branchNameFromRef(refName)} (${remote})`;
+  return {
+    kind: "branch",
+    name,
+    refName,
+    ...(detail.branchName !== undefined ? { branchName: detail.branchName } : {}),
+    ...(detail.remoteName !== undefined ? { remoteName: detail.remoteName } : {}),
+    accessibilityLabel: `${name}, ${remote} branch`,
+    committerDate: detail.committerDate,
+  };
+}
+
 export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): PickerItem[] {
   const items: PickerItem[] = [];
 
   for (const detail of details) {
     if (detail.refName) {
-      const remote = refQualifier(detail.refName);
-      const name = `${branchNameFromRef(detail.refName)} (${remote})`;
-      items.push({
-        kind: "branch",
-        name,
-        refName: detail.refName,
-        accessibilityLabel: `${name}, ${remote} branch`,
-        committerDate: detail.committerDate,
-      });
+      items.push(exactBranchPickerItem({ detail, refName: detail.refName }));
       continue;
     }
     const hasKnownProvenance = detail.hasLocal !== undefined || detail.hasRemote !== undefined;
@@ -164,6 +180,19 @@ export function branchNameFromRef(refName: string): string {
     return separator === -1 ? remainder : remainder.slice(separator + 1);
   }
   return refName;
+}
+
+/** The local branch a checkout would use, when its identity is known. */
+export function checkoutBranchName(item: Extract<PickerItem, { kind: "branch" }>): string | null {
+  if (item.branchName !== undefined) return item.branchName;
+  // COMPAT(branchSuggestionIdentity): added after v0.17.4; remove after 2027-11-25.
+  // Older hosts do not identify configured remotes. Never guess a non-origin holder.
+  if (
+    item.refName.startsWith(REMOTE_TRACKING_PREFIX) &&
+    !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`)
+  )
+    return null;
+  return branchNameFromRef(item.refName);
 }
 
 // Where a ref lives, for disambiguating two rows that would otherwise read the same.
@@ -284,7 +313,9 @@ export function refListOptions(input: {
     if (item?.kind !== "branch") continue;
     if (
       item.refName.startsWith(REMOTE_TRACKING_PREFIX) &&
-      !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`)
+      (item.remoteName !== undefined
+        ? item.remoteName !== "origin"
+        : !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`))
     ) {
       rowByBranch.set(option.id, option);
       continue;

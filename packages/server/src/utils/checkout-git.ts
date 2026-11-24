@@ -262,6 +262,8 @@ interface GitRef {
 
 export interface BranchSuggestion {
   name: string;
+  branchName?: string;
+  remoteName?: string;
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
@@ -327,6 +329,15 @@ function sortBranchSuggestions(
   });
 }
 
+async function listGitRemoteNames(cwd: string): Promise<string[]> {
+  const { stdout } = await runGitCommand(["remote"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  // A remote name can contain slashes; the longest configured prefix owns the ref.
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+}
+
 export async function listBranchSuggestions(
   cwd: string,
   options: { query?: string; limit?: number; refMode?: "exact" } = {},
@@ -339,23 +350,34 @@ export async function listBranchSuggestions(
   const query = normalizeBranchSuggestionName(rawQuery) ?? rawQuery;
 
   if (options.refMode === "exact") {
-    const refs = await listGitRefs(cwd, "refs");
+    const [refs, remotes] = await Promise.all([listGitRefs(cwd, "refs"), listGitRemoteNames(cwd)]);
     const branches = refs.filter((ref) => {
       const isBranch = ref.name.startsWith("refs/heads/") || ref.name.startsWith("refs/remotes/");
       return isBranch && !ref.name.endsWith("/HEAD") && ref.name.toLowerCase().includes(rawQuery);
     });
     branches.sort((a, b) => b.committerDate - a.committerDate || a.name.localeCompare(b.name));
-    return branches.slice(0, limit).map((ref) => ({
-      name: ref.name,
-      committerDate: ref.committerDate,
-      hasLocal: ref.name.startsWith("refs/heads/"),
-      hasRemote: ref.name.startsWith("refs/remotes/"),
-    }));
+    return branches.slice(0, limit).map((ref) => {
+      const hasLocal = ref.name.startsWith("refs/heads/");
+      const remoteName = remotes.find((remote) => ref.name.startsWith(`refs/remotes/${remote}/`));
+      const suggestion: BranchSuggestion = {
+        name: ref.name,
+        committerDate: ref.committerDate,
+        hasLocal,
+        hasRemote: !hasLocal,
+      };
+      if (hasLocal) suggestion.branchName = ref.name.slice("refs/heads/".length);
+      if (remoteName) {
+        suggestion.remoteName = remoteName;
+        suggestion.branchName = ref.name.slice(`refs/remotes/${remoteName}/`.length);
+      }
+      return suggestion;
+    });
   }
 
-  const [localRefs, remoteRefs] = await Promise.all([
+  const [localRefs, remoteRefs, remotes] = await Promise.all([
     listGitRefs(cwd, "refs/heads"),
     listGitRefs(cwd, "refs/remotes/origin"),
+    listGitRemoteNames(cwd),
   ]);
 
   const branchMeta = new Map<string, BranchSuggestionMeta>();
@@ -374,6 +396,13 @@ export async function listBranchSuggestions(
   }
 
   for (const ref of remoteRefs) {
+    // An origin/team remote is not an origin branch named team/… .
+    if (
+      remotes.some(
+        (remote) => remote !== "origin" && ref.name.startsWith(`refs/remotes/${remote}/`),
+      )
+    )
+      continue;
     const normalized = normalizeBranchSuggestionName(ref.name);
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);

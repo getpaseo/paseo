@@ -340,6 +340,27 @@ describe("checkout git utilities", () => {
     });
   });
 
+  it.each(["team/company", "origin/team"])(
+    "identifies the configured remote %s separately from its branch name",
+    async (remoteName) => {
+      execFileSync("git", ["remote", "add", remoteName, "."], { cwd: repoDir });
+      execFileSync("git", ["update-ref", `refs/remotes/${remoteName}/topic`, "HEAD"], {
+        cwd: repoDir,
+      });
+      expect(await listBranchSuggestions(repoDir, { refMode: "exact", query: "topic" })).toEqual([
+        {
+          name: `refs/remotes/${remoteName}/topic`,
+          branchName: "topic",
+          remoteName,
+          committerDate: expect.any(Number),
+          hasLocal: false,
+          hasRemote: true,
+        },
+      ]);
+      expect(await listBranchSuggestions(repoDir, { query: "topic" })).toEqual([]);
+    },
+  );
+
   it("throws NotGitRepoError for non-git directories", async () => {
     const nonGitDir = join(tempDir, "not-git");
     mkdirSync(nonGitDir, { recursive: true });

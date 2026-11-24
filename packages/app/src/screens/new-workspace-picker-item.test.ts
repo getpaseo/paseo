@@ -202,6 +202,35 @@ describe("refListOptions", () => {
 });
 
 describe("buildBranchPickerItems", () => {
+  it.each(["team/company", "origin/team"])(
+    "retains remote %s and branch identity in checkout rows",
+    (remoteName) => {
+      const refName = `refs/remotes/${remoteName}/topic`;
+      const data = buildPickerOptionData({
+        branchDetails: [
+          { name: refName, refName, branchName: "topic", remoteName, committerDate: 1 },
+        ],
+        prItems: [],
+        baseItem: null,
+      });
+      const [item] = [...data.itemById.values()];
+      expect(item).toMatchObject({
+        name: `topic (${remoteName})`,
+        branchName: "topic",
+        remoteName,
+        refName,
+      });
+      expect(
+        refListOptions({ ...data, selectedOptionId: "", kind: "branch", action: "checkout" }),
+      ).toMatchObject([{ label: `topic (${remoteName})` }]);
+      expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
+        action: "checkout",
+        refName,
+        refMode: "exact",
+      });
+    },
+  );
+
   it("keeps a normalized local name that resembles an exact remote ref", () => {
     const items = buildBranchPickerItems([
       { name: "refs/remotes/company/topic", committerDate: 1, hasLocal: true, hasRemote: false },

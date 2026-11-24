@@ -6535,6 +6535,8 @@ export const BranchSuggestionsResponseSchema = z.object({
       .array(
         z.object({
           name: z.string(),
+          branchName: z.string().optional(),
+          remoteName: z.string().optional(),
           committerDate: z.number(),
           hasLocal: z.boolean().optional(),
           hasRemote: z.boolean().optional(),
