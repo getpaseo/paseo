@@ -3,25 +3,33 @@ import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { HostBadge } from "@/hosts/host-badge";
-import type { HostColor } from "@/hosts/appearance";
+import type { HostColor, HostIcon } from "@/hosts/appearance";
 
 interface HostNetworkBadgeProps {
   isRouted: boolean;
   serverId: string;
   hostLabel: string;
   color: HostColor;
+  icon: HostIcon;
 }
 
-export function HostNetworkBadge({ isRouted, serverId, hostLabel, color }: HostNetworkBadgeProps) {
+export function HostNetworkBadge({
+  isRouted,
+  serverId,
+  hostLabel,
+  color,
+  icon,
+}: HostNetworkBadgeProps) {
   const { t } = useTranslation();
   const badge = useMemo(
     () => ({
       serverId,
       label: t("browserRouting.viaHost", { host: hostLabel }),
       color,
+      icon,
       showLabel: true,
     }),
-    [serverId, hostLabel, color, t],
+    [serverId, hostLabel, color, icon, t],
   );
   if (!isRouted) return null;
   return (

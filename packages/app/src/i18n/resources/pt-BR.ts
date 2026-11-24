@@ -2865,6 +2865,23 @@ export const ptBR: TranslationResources = {
         name: {
           label: "Nome",
         },
+        icon: {
+          label: "Ícone",
+          accessibilityLabel: "Ícone, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
+          options: {
+            server: "Servidor",
+            laptop: "Notebook",
+            desktop: "Desktop",
+            mini: "Mini",
+            workstation: "Estação de trabalho",
+            cloud: "Nuvem",
+            container: "Contêiner",
+            board: "PC de placa única",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Cor",
           accessibilityLabel: "Cor, {{value}}",
@@ -2900,6 +2917,14 @@ export const ptBR: TranslationResources = {
         relay: "Relay",
         local: "Local",
         remoteSsh: "SSH remoto",
+      },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relay",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Direto",
+        routed: "Via",
       },
       connections: {
         title: "Conexões",

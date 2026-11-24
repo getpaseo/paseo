@@ -1,6 +1,8 @@
 import { ROUTED_BROWSER_PARTITION_PREFIX } from "../network-routing/contract";
 import { HostNetworkBadge } from "../network-routing/host-network-badge";
 import { useHosts } from "@/runtime/host-runtime";
+import { DEFAULT_HOST_ICON, resolveHostIcon } from "@/hosts/appearance";
+import { useSessionStore } from "@/stores/session-store";
 import { getBrowserAttachError, getHostNetworkLoadError } from "../network-routing/load-error";
 import {
   useCallback,
@@ -607,6 +609,12 @@ export function BrowserPane({
   const [webviewRevision, setWebviewRevision] = useState(0);
   const [isRouted, setIsRouted] = useState(false);
   const hostLabel = routingHost?.label.trim() || serverId;
+  const detectedMachineKind = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const hostIcon = routingHost
+    ? resolveHostIcon({ appearance: routingHost.appearance, detectedMachineKind })
+    : DEFAULT_HOST_ICON;
   const hostLabelRef = useRef(hostLabel);
   hostLabelRef.current = hostLabel;
   useEffect(
@@ -1534,6 +1542,7 @@ export function BrowserPane({
             serverId={serverId}
             hostLabel={hostLabel}
             color={routingHost?.appearance.color ?? "none"}
+            icon={hostIcon}
           />
           <TextInput
             accessibilityLabel={t("workspace.browser.controls.browserUrl")}

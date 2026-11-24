@@ -1,42 +1,113 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
-import { defaultStorePaths } from "./stores.js";
-
 import { inputSchema } from "../shared/input.js";
+import { installedOpenCode, type OpenCodeInstall } from "./opencode.js";
+import { discover, fetchUsage } from "./usage.js";
 
-let fixtureDirectory: string;
-let fixturePath: string;
-function stores(path: string) {
-  return { file: path, database: join(dirname(path), "opencode.db") };
+// Stands in for the OpenCode CLI: it answers the two commands the source runs, the way the real
+// OpenCode 1.19.5 and 2.4.1 answer them, and logs every call.
+const OPENCODE_CLI = `
+import { appendFileSync, readFileSync } from "node:fs";
+const state = JSON.parse(readFileSync(new URL("./opencode-state.json", import.meta.url), "utf8"));
+const command = process.argv.slice(2).join(" ");
+const colors = process.env.FORCE_COLOR && !process.env.NO_COLOR;
+appendFileSync(new URL("./opencode-calls.log", import.meta.url), command + "\\n");
+if (command === "--version" && state.hangs) setInterval(() => {}, 60_000);
+else if (command === "--version" && state.version)
+  console.log(colors && state.coloredVersion ? state.coloredVersion : state.version);
+else if (command === "auth export --standalone" && state.exported !== undefined)
+  process.stdout.write(state.exported);
+else {
+  console.error("opencode providers");
+  process.exit(1);
 }
-async function database() {
+`;
+
+interface Credential {
+  integrationID: string;
+  value: unknown;
+  active?: boolean;
+}
+let fixtureDirectory: string;
+let authFile: string;
+let install: OpenCodeInstall;
+
+function installState(state: {
+  version?: string;
+  coloredVersion?: string;
+  exported?: string;
+  hangs?: boolean;
+}) {
+  return writeFile(join(fixtureDirectory, "opencode-state.json"), JSON.stringify(state));
+}
+/** OpenCode 1 keeps logins in auth.json and has no `auth export`. */
+function openCode1() {
+  return installState({ version: "1.19.5" });
+}
+/** OpenCode 2 lists its own logins and never reads auth.json. */
+function openCode2(credentials: Credential[]) {
+  const exported = credentials.map((credential, index) => ({
+    id: `cred_${index}`,
+    label: "API key",
+    active: true,
+    ...credential,
+  }));
+  return installState({
+    version: "opencode v2.4.1",
+    coloredVersion: "\u001b[1mopencode\u001b[0m \u001b[2mv\u001b[0m\u001b[1m2.4.1\u001b[0m",
+    exported: JSON.stringify(exported),
+  });
+}
+async function openCodeCalls() {
+  const log = await readFile(join(fixtureDirectory, "opencode-calls.log"), "utf8");
+  return log.trimEnd().split("\n");
+}
+/** The database OpenCode creates next to auth.json, with OpenCode's credential table. */
+async function database(credentials: Array<{ integration: string; label: string }> | null) {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(join(fixtureDirectory, "opencode.db"));
-  db.exec(
-    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER, time_created INTEGER DEFAULT 0)",
-  );
-  return db;
+  db.exec("CREATE TABLE session (id TEXT PRIMARY KEY)");
+  if (credentials) {
+    db.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT NOT NULL, value TEXT NOT NULL, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+    );
+    const insert = db.prepare(
+      "INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES (?, ?, ?, ?, 1, 1)",
+    );
+    for (const { integration, label } of credentials)
+      insert.run(integration, integration, label, JSON.stringify({ type: "key", key: "other" }));
+  }
+  db.close();
 }
+const account = (store: "file" | "credentials") => ({
+  key: expect.stringMatching(/^[a-f0-9]{64}$/),
+  input: { store },
+});
+const goKey = (key: string, active = true): Credential => ({
+  integrationID: "opencode-go",
+  value: { type: "key", key },
+  active,
+});
+
 beforeEach(async () => {
   fixtureDirectory = await mkdtemp(join(tmpdir(), "go-default-"));
-  fixturePath = join(fixtureDirectory, "auth.json");
-  await writeFile(
-    fixturePath,
-    JSON.stringify({ "opencode-go": { type: "api", key: "fixture-secret" } }),
-  );
+  authFile = join(fixtureDirectory, "auth.json");
+  await writeFile(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "file-key" } }));
+  const cli = join(fixtureDirectory, "opencode.mjs");
+  await writeFile(cli, OPENCODE_CLI);
+  install = { command: process.execPath, args: [cli], env: process.env, authFile };
+  await openCode1();
 });
 afterEach(async () => {
   await rm(fixtureDirectory, { recursive: true, force: true });
 });
 
-test("discovery input rejects an explicit API key", () => {
+test("discovery input holds no path and no API key", () => {
   expect(inputSchema.safeParse({ apiKey: "unused" }).success).toBe(false);
-  expect(
-    inputSchema.safeParse({ store: "database", path: "opencode.db", apiKey: "unused" }).success,
-  ).toBe(false);
+  expect(inputSchema.safeParse({ store: "credentials", apiKey: "unused" }).success).toBe(false);
+  expect(inputSchema.safeParse({ store: "file", path: authFile }).success).toBe(false);
   expect(() => inputSchema.parse({})).toThrow();
 });
 
@@ -49,287 +120,280 @@ const upstreamResponse = {
     monthly: { status: "rate-limited", percent: 100, resetsAt: "2026-10-01T00:00:00.000Z" },
   },
 };
+const bearer = (init?: RequestInit) => new Headers(init?.headers).get("Authorization");
 
-test("uses the active v2 Go key instead of a stale legacy key without writing either store", async () => {
-  const databasePath = join(fixtureDirectory, "opencode.db");
-  const db = await database();
-  const insert = db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  );
-  insert.run("inactive", "opencode-go", JSON.stringify({ type: "key", key: "inactive-key" }), 0, 3);
-  insert.run("active", "opencode-go", JSON.stringify({ type: "key", key: "active-key" }), 1, 1);
-  db.close();
-  const beforeDatabase = await readFile(databasePath);
-  const beforeFile = await readFile(fixturePath);
-  const accounts = await discover(stores(fixturePath));
-  expect(accounts).toEqual([
-    {
-      key: expect.stringMatching(/^[a-f0-9]{64}$/),
-      input: { store: "database", path: databasePath },
+// OpenCode 1.17.5 and newer creates the credential table too, and keeps every login in auth.json.
+// OpenCode 2 fills that table when it opens the same directory, and OpenCode 1 keeps using the file.
+test.each([
+  ["no credential table", null],
+  ["an empty credential table", []],
+  [
+    "only an unrelated credential that OpenCode 2 imported",
+    [{ integration: "manifest", label: "API key" }],
+  ],
+  [
+    "a Go credential that OpenCode 2 imported before the key changed",
+    [{ integration: "opencode-go", label: "API key" }],
+  ],
+])("reads OpenCode 1's Go key from auth.json next to a database with %s", async (_name, rows) => {
+  await database(rows);
+  const accounts = await discover(install);
+  expect(accounts).toEqual([account("file")]);
+  const report = await fetchUsage(
+    inputSchema.parse(accounts[0]!.input),
+    async (_url, init) => {
+      expect(bearer(init)).toBe("Bearer file-key");
+      return Response.json(upstreamResponse);
     },
-  ]);
-  const input = inputSchema.parse(accounts[0]!.input);
-  const report = await fetchUsage(input, async (_url, init) => {
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer active-key");
-    return Response.json(upstreamResponse);
-  });
+    install,
+  );
   expect(report.status).toBe("available");
-  expect(report.windows.map((window) => window.usedPct)).toEqual([21, 42, 100]);
-  expect(await readFile(databasePath)).toEqual(beforeDatabase);
-  expect(await readFile(fixturePath)).toEqual(beforeFile);
+  // OpenCode 1 has no login listing, so it is never asked for one.
+  expect(await openCodeCalls()).toEqual(["--version"]);
 });
 
-test("discovers v2 Go usage without a legacy auth.json", async () => {
-  const db = await database();
-  db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  ).run("go", "opencode-go", JSON.stringify({ type: "key", key: "database-key" }), 1, 1);
-  db.close();
-  await rm(fixturePath);
-  const accounts = await discover(stores(fixturePath));
-  expect(accounts).toEqual([
-    {
-      key: expect.stringMatching(/^[a-f0-9]{64}$/),
-      input: { store: "database", path: join(fixtureDirectory, "opencode.db") },
+test("reads auth.json when OpenCode is not installed", async () => {
+  const absent = { ...install, command: join(fixtureDirectory, "absent-opencode"), args: [] };
+  expect(await discover(absent)).toEqual([account("file")]);
+});
+
+test("reads auth.json when OpenCode fails its version check", async () => {
+  await installState({});
+  expect(await discover(install)).toEqual([account("file")]);
+});
+
+// A check that is cut off does not show which store OpenCode uses. Reading auth.json here would
+// drop the card of a login that only OpenCode 2 has.
+test("fails instead of reading auth.json when OpenCode does not answer its version check", async () => {
+  await installState({ hangs: true });
+  await expect(discover(install)).rejects.toThrow("OpenCode did not report its version in time");
+}, 15_000);
+
+test("uses the Go key OpenCode 2 marks active instead of a stale auth.json key", async () => {
+  await openCode2([goKey("inactive-key", false), goKey("active-key")]);
+  const beforeFile = await readFile(authFile);
+  const accounts = await discover(install);
+  expect(accounts).toEqual([account("credentials")]);
+  expect(JSON.stringify(accounts)).not.toContain("active-key");
+  const report = await fetchUsage(
+    inputSchema.parse(accounts[0]!.input),
+    async (_url, init) => {
+      expect(bearer(init)).toBe("Bearer active-key");
+      return Response.json(upstreamResponse);
     },
+    install,
+  );
+  expect(report.status).toBe("available");
+  expect(report.windows.map((window) => window.usedPct)).toEqual([21, 42, 100]);
+  expect(await readFile(authFile)).toEqual(beforeFile);
+  // --standalone keeps the listing from starting OpenCode's background service.
+  expect(await openCodeCalls()).toEqual([
+    "--version",
+    "auth export --standalone",
+    "auth export --standalone",
   ]);
-  expect(JSON.stringify(accounts)).not.toContain("database-key");
+});
+
+// OpenCode 2 colors its version when the environment forces colors, even into a pipe.
+test("recognizes OpenCode 2 when the daemon's environment forces terminal colors", async () => {
+  await openCode2([goKey("listed-key")]);
+  const { NO_COLOR: _unset, ...env } = process.env;
+  const colored = { ...install, env: { ...env, FORCE_COLOR: "1" } };
+  expect(await discover(colored)).toEqual([account("credentials")]);
+});
+
+test("discovers OpenCode 2 Go usage without an auth.json", async () => {
+  await openCode2([goKey("listed-key")]);
+  await rm(authFile);
+  const accounts = await discover(install);
+  expect(accounts).toEqual([account("credentials")]);
+  expect(JSON.stringify(accounts)).not.toContain("listed-key");
 });
 
 test("refresh follows the active Go account and re-reads its rotated key", async () => {
-  const db = await database();
-  const insert = db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  await openCode2([goKey("first-key"), goKey("second-key", false)]);
+  const accounts = await discover(install);
+  await openCode2([goKey("first-key", false), goKey("rotated-key")]);
+  expect(await discover(install)).toEqual(accounts);
+  const report = await fetchUsage(
+    inputSchema.parse(accounts[0]!.input),
+    async (_url, init) => {
+      expect(bearer(init)).toBe("Bearer rotated-key");
+      return Response.json(upstreamResponse);
+    },
+    install,
   );
-  insert.run("first", "opencode-go", JSON.stringify({ type: "key", key: "first-key" }), 1, 1);
-  insert.run("second", "opencode-go", JSON.stringify({ type: "key", key: "second-key" }), 0, 2);
-  db.close();
-  const paths = stores(fixturePath);
-  const accounts = await discover(paths);
-  const input = inputSchema.parse(accounts[0]!.input);
-  const { DatabaseSync } = await import("node:sqlite");
-  const writer = new DatabaseSync(paths.database);
-  writer.exec("UPDATE credential SET active = CASE id WHEN 'second' THEN 1 ELSE 0 END");
-  writer
-    .prepare("UPDATE credential SET value = ? WHERE id = 'second'")
-    .run(JSON.stringify({ type: "key", key: "rotated-key" }));
-  writer.close();
-  expect(await discover(paths)).toEqual(accounts);
-  const before = await readFile(paths.database);
-  const report = await fetchUsage(input, async (_url, init) => {
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer rotated-key");
-    return Response.json(upstreamResponse);
-  });
   expect(report.status).toBe("available");
   expect(JSON.stringify(report)).not.toContain("rotated-key");
-  expect(await readFile(paths.database)).toEqual(before);
 });
 
-test.each([
-  [null, false],
-  [null, true],
-  [0, false],
-  [0, true],
-])("discovers a selected Go key with active=%s and legacy file=%s", async (active, legacy) => {
-  const db = await database();
-  db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  ).run("migrated", "opencode-go", JSON.stringify({ type: "key", key: "migrated-key" }), active, 1);
-  db.close();
-  if (!legacy) await rm(fixturePath);
-  const accounts = await discover(stores(fixturePath));
-  expect(accounts).toEqual([
-    {
-      key: expect.stringMatching(/^[a-f0-9]{64}$/),
-      input: { store: "database", path: join(fixtureDirectory, "opencode.db") },
+// The state in #10659: OpenCode 2 opened the directory once and imported an unrelated login, and
+// the Go key is only in auth.json.
+test("reads the auth.json Go key when OpenCode 2 holds only an unrelated login", async () => {
+  await database([{ integration: "manifest", label: "API key" }]);
+  await openCode2([{ integrationID: "manifest", value: { type: "key", key: "other" } }]);
+  const accounts = await discover(install);
+  expect(accounts).toEqual([account("credentials")]);
+  const requests: Array<string | null> = [];
+  const report = await fetchUsage(
+    inputSchema.parse(accounts[0]!.input),
+    async (_url, init) => {
+      requests.push(bearer(init));
+      return Response.json(upstreamResponse);
     },
-  ]);
-  const report = await fetchUsage(inputSchema.parse(accounts[0]!.input), async (_url, init) => {
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer migrated-key");
-    return Response.json(upstreamResponse);
-  });
+    install,
+  );
+  expect(report.status).toBe("available");
+  expect(requests).toEqual(["Bearer file-key", "Bearer file-key"]);
+});
+
+// A login OpenCode 2 cannot serve Go with from opencode.ai counts as no login.
+test.each<[string, Credential[]]>([
+  ["no logins", []],
+  ["an unrelated login", [{ integrationID: "manifest", value: { type: "key", key: "other" } }]],
+  ["a Go key that is not the active one", [goKey("inactive-key", false)]],
+  [
+    "a Console sign-in on another server",
+    [
+      {
+        integrationID: "opencode",
+        value: {
+          type: "oauth",
+          access: "staging-token",
+          expires: 0,
+          metadata: { server: "https://staging.example.com/console", orgID: "org_TEST" },
+        },
+      },
+    ],
+  ],
+  [
+    "a Console key on another server",
+    [
+      {
+        integrationID: "opencode",
+        value: {
+          type: "key",
+          key: "staging-key",
+          metadata: { server: "https://staging.example.com/console" },
+        },
+      },
+    ],
+  ],
+  [
+    "a sign-in on opencode-go",
+    [{ integrationID: "opencode-go", value: { type: "oauth", access: "token", expires: 0 } }],
+  ],
+  ["an unreadable Go login", [{ integrationID: "opencode-go", value: "invalid" }]],
+  ["an empty Go key", [goKey("")]],
+])("reads the auth.json Go key when OpenCode 2 has %s", async (_name, credentials) => {
+  await openCode2(credentials);
+  expect(await discover(install)).toEqual([account("credentials")]);
+  const report = await fetchUsage(
+    { store: "credentials" },
+    async (_url, init) => {
+      expect(bearer(init)).toBe("Bearer file-key");
+      return Response.json(upstreamResponse);
+    },
+    install,
+  );
   expect(report.status).toBe("available");
 });
 
-test("selects the newest created Go key when no explicit active key exists", async () => {
-  const db = await database();
-  const insert = db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?)",
+test("discovers no account when neither OpenCode 2 nor auth.json has a Go login", async () => {
+  await openCode2([{ integrationID: "manifest", value: { type: "key", key: "other" } }]);
+  await rm(authFile);
+  expect(await discover(install)).toEqual([]);
+  await expect(
+    fetchUsage(
+      { store: "credentials" },
+      async () => {
+        throw new Error("must not fetch");
+      },
+      install,
+    ),
+  ).rejects.toThrow("login no longer exists");
+});
+
+// A failed listing does not show that OpenCode 2 has no Go login, so auth.json is not read.
+test.each([
+  ["has no login listing", { version: "opencode v2.0.10" }],
+  ["answers with something else", { version: "opencode v2.4.1", exported: "not JSON" }],
+  [
+    "lists logins in another shape",
+    { version: "opencode v2.4.1", exported: JSON.stringify({ "opencode-go": "listed-secret" }) },
+  ],
+])("fails instead of reading auth.json when OpenCode 2 %s", async (_name, state) => {
+  await installState(state);
+  const failure = await discover(install).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect(String(failure)).toContain("OpenCode could not list its logins");
+  expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain(
+    "listed-secret",
   );
-  insert.run("older", "opencode-go", JSON.stringify({ type: "key", key: "older-key" }), null, 1, 9);
-  insert.run("newer-a", "opencode-go", JSON.stringify({ type: "key", key: "tie-key" }), null, 2, 8);
-  insert.run(
-    "newer-b",
-    "opencode-go",
-    JSON.stringify({ type: "key", key: "selected-key" }),
-    null,
-    2,
-    1,
-  );
-  db.close();
-  const accounts = await discover(stores(fixturePath));
-  expect(accounts).toHaveLength(1);
-  await fetchUsage(inputSchema.parse(accounts[0]!.input), async (_url, init) => {
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer selected-key");
-    return Response.json(upstreamResponse);
+});
+
+test("resolves OpenCode and its auth.json from the daemon environment", () => {
+  expect(installedOpenCode({ HOME: fixtureDirectory })).toEqual({
+    command: "opencode",
+    args: [],
+    env: { HOME: fixtureDirectory },
+    authFile: join(fixtureDirectory, ".local", "share", "opencode", "auth.json"),
   });
+  expect(installedOpenCode({ XDG_DATA_HOME: fixtureDirectory }).authFile).toBe(
+    join(fixtureDirectory, "opencode", "auth.json"),
+  );
+});
+
+test("discovers and fetches the key from read-only auth.json", async () => {
+  const content = await readFile(authFile, "utf8");
+  expect(await discover(install)).toEqual([account("file")]);
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  const fetchApi = async (url: string | URL | Request, init?: RequestInit) => {
+    requests.push({ url: String(url), authorization: bearer(init) });
+    return Response.json(upstreamResponse);
+  };
+  const report = await fetchUsage({ store: "file" }, fetchApi, install);
+  expect(requests).toEqual([
+    { url: CONSOLE_STATUS_URL, authorization: "Bearer file-key" },
+    { url: USAGE_URL, authorization: "Bearer file-key" },
+  ]);
+  expect(report.status).toBe("available");
+  expect(report.windows.map((window) => [window.id, window.usedPct, window.resetsAt])).toEqual([
+    ["rolling", 21, "2026-09-26T20:00:00.000Z"],
+    ["weekly", 42, "2026-09-28T00:00:00.000Z"],
+    ["monthly", 100, "2026-10-01T00:00:00.000Z"],
+  ]);
+  // The rolling window's length is not reported, so its percent stands without a name.
+  expect(report.windows.map((window) => window.shortLabel)).toEqual(["", "wk", "mo"]);
+  // The current upstream endpoint returns windows only; do not invent balances.
+  expect(report.balances).toBeUndefined();
+  expect(await readFile(authFile, "utf8")).toBe(content);
 });
 
 test.each([
-  ["unrelated provider", "anthropic", 1, JSON.stringify({ type: "key", key: "other-key" })],
-  [
-    "Console sign-in on another server",
-    "opencode",
-    1,
-    JSON.stringify({
-      type: "oauth",
-      access: "staging-token",
-      expires: 0,
-      metadata: { server: "https://staging.example.com/console", orgID: "org_TEST" },
-    }),
-  ],
-  [
-    "Console key on another server",
-    "opencode",
-    1,
-    JSON.stringify({
-      type: "key",
-      key: "staging-key",
-      metadata: { server: "https://staging.example.com/console" },
-    }),
-  ],
-  ["Console OAuth", "opencode-go", 1, JSON.stringify({ type: "oauth", access: "oauth-token" })],
-  ["malformed credential", "opencode-go", 1, "invalid JSON"],
-  ["empty key", "opencode-go", 1, JSON.stringify({ type: "key", key: "" })],
-])(
-  "does not revive a legacy key for a v2 store with %s",
-  async (_name, provider, active, value) => {
-    const db = await database();
-    db.prepare(
-      "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-    ).run("credential", provider, value, active, 1);
-    db.close();
-    expect(await discover(stores(fixturePath))).toEqual([]);
-  },
-);
-
-test("keeps legacy discovery when the v1 session database has no credential table", async () => {
-  const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(join(fixtureDirectory, "opencode.db"));
-  db.exec("CREATE TABLE session (id TEXT PRIMARY KEY)");
-  db.close();
-  expect(await discover(stores(fixturePath))).toEqual([
-    {
-      key: expect.stringMatching(/^[a-f0-9]{64}$/),
-      input: { store: "file", path: fixturePath },
-    },
-  ]);
-});
-
-test("fails before fetching when the selected database disappears", async () => {
+  ["has another provider's login", JSON.stringify({ openai: { type: "oauth", access: "token" } })],
+  ["is empty", "{}"],
+  ["is missing", null],
+])("discovers no account when auth.json %s", async (_name, content) => {
+  if (content === null) await rm(authFile);
+  else await writeFile(authFile, content);
+  expect(await discover(install)).toEqual([]);
   await expect(
-    fetchUsage({ store: "database", path: join(fixtureDirectory, "missing.db") }, async () => {
-      throw new Error("must not fetch");
-    }),
-  ).rejects.toThrow("login store no longer exists");
-});
-
-test("resolves default and overridden OpenCode store paths", () => {
-  expect(defaultStorePaths({ HOME: fixtureDirectory })).toEqual({
-    file: join(fixtureDirectory, ".local", "share", "opencode", "auth.json"),
-    database: join(fixtureDirectory, ".local", "share", "opencode", "opencode.db"),
-  });
-  const customDatabase = join(fixtureDirectory, "custom.db");
-  expect(
-    defaultStorePaths({ XDG_DATA_HOME: fixtureDirectory, OPENCODE_DB: customDatabase }),
-  ).toEqual({
-    file: join(fixtureDirectory, "opencode", "auth.json"),
-    database: customDatabase,
-  });
-});
-
-test("discovers a relative OPENCODE_DB under the OpenCode data directory", async () => {
-  const paths = defaultStorePaths({
-    XDG_DATA_HOME: fixtureDirectory,
-    OPENCODE_DB: "go.db",
-  });
-  const databasePath = join(fixtureDirectory, "opencode", "go.db");
-  await mkdir(dirname(databasePath));
-  const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(databasePath);
-  db.exec(
-    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER, time_created INTEGER DEFAULT 0)",
-  );
-  db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  ).run("go", "opencode-go", JSON.stringify({ type: "key", key: "relative-key" }), 1, 1);
-  db.close();
-  expect(await discover(paths)).toEqual([
-    {
-      key: expect.stringMatching(/^[a-f0-9]{64}$/),
-      input: { store: "database", path: databasePath },
-    },
-  ]);
-});
-
-test("discovers and fetches the default key from read-only auth.json", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "paseo-go-usage-"));
-  const path = join(directory, "auth.json");
-  const content = JSON.stringify({ "opencode-go": { type: "api", key: "fixture-key" } });
-  try {
-    await writeFile(path, content);
-    expect(await discover(stores(path))).toEqual([
-      { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: { store: "file", path } },
-    ]);
-    const requests: Array<{ url: string; authorization: string | null }> = [];
-    const fetchApi = async (url: string | URL | Request, init?: RequestInit) => {
-      requests.push({
-        url: String(url),
-        authorization: new Headers(init?.headers).get("Authorization"),
-      });
-      return Response.json(upstreamResponse);
-    };
-    const report = await fetchUsage({ store: "file", path }, fetchApi);
-    expect(requests).toEqual([
-      { url: CONSOLE_STATUS_URL, authorization: "Bearer fixture-key" },
-      { url: USAGE_URL, authorization: "Bearer fixture-key" },
-    ]);
-    expect(report.status).toBe("available");
-    expect(report.windows.map((window) => [window.id, window.usedPct, window.resetsAt])).toEqual([
-      ["rolling", 21, "2026-09-26T20:00:00.000Z"],
-      ["weekly", 42, "2026-09-28T00:00:00.000Z"],
-      ["monthly", 100, "2026-10-01T00:00:00.000Z"],
-    ]);
-    // The rolling window's length is not reported, so its percent stands without a name.
-    expect(report.windows.map((window) => window.shortLabel)).toEqual(["", "wk", "mo"]);
-    // The current upstream endpoint returns windows only; do not invent balances.
-    expect(report.balances).toBeUndefined();
-    expect(await readFile(path, "utf8")).toBe(content);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("omits default discovery when auth.json lacks an OpenCode Go API key", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "paseo-go-usage-"));
-  const path = join(directory, "auth.json");
-  try {
-    await writeFile(path, JSON.stringify({ openai: { type: "oauth", access: "other-token" } }));
-    expect(await discover(stores(path))).toEqual([]);
-    await expect(
-      fetchUsage({ store: "file", path }, async () => {
+    fetchUsage(
+      { store: "file" },
+      async () => {
         throw new Error("must not fetch");
-      }),
-    ).rejects.toThrow("login store no longer exists");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+      },
+      install,
+    ),
+  ).rejects.toThrow("login no longer exists");
 });
 
 test.each([401, 403])("maps HTTP %i to unavailable", async (status) => {
   const report = await fetchUsage(
-    { store: "file", path: fixturePath },
+    { store: "file" },
     async () => new Response(null, { status }),
+    install,
   );
   expect(report).toEqual({
     status: "unavailable",
@@ -337,28 +401,18 @@ test.each([401, 403])("maps HTTP %i to unavailable", async (status) => {
   });
 });
 
-test.each(["missing file", "unrelated file"])("discovers no accounts for %s", async (scenario) => {
-  const path = join(fixtureDirectory, "missing.json");
-  if (scenario === "unrelated file") await writeFile(path, "{}");
-  expect(await discover(stores(path))).toEqual([]);
-});
-
-test("keeps the account identity when OpenCode v2 imports the legacy Go login", async () => {
-  const paths = stores(fixturePath);
-  const [legacy] = await discover(paths);
-  const db = await database();
-  db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  ).run("imported", "opencode-go", JSON.stringify({ type: "key", key: "fixture-secret" }), null, 1);
-  db.close();
-  const [migrated] = await discover(paths);
-  expect(migrated!.input).toEqual({ store: "database", path: paths.database });
+test("keeps the account identity when OpenCode 2 imports the auth.json Go login", async () => {
+  const [legacy] = await discover(install);
+  await openCode2([goKey("file-key")]);
+  const [migrated] = await discover(install);
+  expect(migrated!.input).toEqual({ store: "credentials" });
   // Usage settings are saved per account, so the card keeps its visibility and position.
   expect(migrated!.key).toBe(legacy!.key);
 });
 
-const consoleSignIn = (overrides: { expires?: number; server?: string } = {}) =>
-  JSON.stringify({
+const consoleSignIn = (overrides: { expires?: number; server?: string } = {}): Credential => ({
+  integrationID: "opencode",
+  value: {
     type: "oauth",
     methodID: "device",
     access: "console-token",
@@ -369,7 +423,12 @@ const consoleSignIn = (overrides: { expires?: number; server?: string } = {}) =>
       orgID: "org_TESTORG123",
       orgName: "Team",
     },
-  });
+  },
+});
+const consoleKey = (key: string): Credential => ({
+  integrationID: "opencode",
+  value: { type: "key", key },
+});
 const goStatus = (
   access: unknown = {
     meters: {
@@ -415,27 +474,19 @@ function upstream(answers: Record<string, () => Response>) {
   };
   return { requests, fetchApi: fetchApi as typeof fetch };
 }
-async function storeWith(rows: Array<[string, string]>) {
-  const db = await database();
-  const insert = db.prepare(
-    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
-  );
-  for (const [integration, value] of rows) insert.run(integration, integration, value, 1, 1);
-  db.close();
-  await rm(fixturePath);
-  const [account] = await discover(stores(fixturePath));
-  return inputSchema.parse(account!.input);
+async function storeWith(credentials: Credential[]) {
+  await openCode2(credentials);
+  await rm(authFile, { force: true });
+  const [found] = await discover(install);
+  return inputSchema.parse(found!.input);
 }
 
 test("reads Go from the Console sign-in OpenCode serves it with, ahead of the opencode-go key", async () => {
-  const input = await storeWith([
-    ["opencode", consoleSignIn()],
-    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
-  ]);
+  const input = await storeWith([consoleSignIn(), goKey("go-key")]);
   const { requests, fetchApi } = upstream({
     [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus()),
   });
-  const report = await fetchUsage(input, fetchApi);
+  const report = await fetchUsage(input, fetchApi, install);
   expect(requests).toEqual([
     {
       url: CONSOLE_STATUS_URL,
@@ -452,39 +503,34 @@ test("reads Go from the Console sign-in OpenCode serves it with, ahead of the op
 });
 
 test("discovers a Console sign-in on its own, including one saved for the retired host", async () => {
-  const input = await storeWith([
-    ["opencode", consoleSignIn({ server: "https://console.opencode.ai" })],
-  ]);
+  const input = await storeWith([consoleSignIn({ server: "https://console.opencode.ai" })]);
   const { fetchApi } = upstream({
     [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus()),
   });
-  expect((await fetchUsage(input, fetchApi)).status).toBe("available");
+  expect((await fetchUsage(input, fetchApi, install)).status).toBe("available");
 });
 
 test.each([
   ["another product", { product: "zen", access: null }],
   ["an ended subscription", goStatus(null)],
 ])("falls back to the opencode-go key when the sign-in's workspace has %s", async (_, body) => {
-  const input = await storeWith([
-    ["opencode", consoleSignIn()],
-    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
-  ]);
+  const input = await storeWith([consoleSignIn(), goKey("go-key")]);
   const { fetchApi } = upstream({
     [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(body),
     [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
   });
-  const report = await fetchUsage(input, fetchApi);
+  const report = await fetchUsage(input, fetchApi, install);
   expect(report.status === "available" && report.windows.map((w) => w.usedPct)).toEqual([
     21, 42, 100,
   ]);
 });
 
 test("reports the absent subscription for a Console sign-in without Go", async () => {
-  const input = await storeWith([["opencode", consoleSignIn()]]);
+  const input = await storeWith([consoleSignIn()]);
   const { fetchApi } = upstream({
     [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus(null)),
   });
-  expect(await fetchUsage(input, fetchApi)).toEqual({
+  expect(await fetchUsage(input, fetchApi, install)).toEqual({
     status: "unavailable",
     problem: { kind: "no_quota", detail: "No active OpenCode Go subscription" },
   });
@@ -492,7 +538,7 @@ test("reports the absent subscription for a Console sign-in without Go", async (
 
 test("reports an expired sign-in without a request, and keeps it over a rejected fallback key", async () => {
   const expires = Date.now() - 1000;
-  const alone = await storeWith([["opencode", consoleSignIn({ expires })]]);
+  const alone = await storeWith([consoleSignIn({ expires })]);
   const { requests, fetchApi } = upstream({});
   const expired = {
     status: "unavailable",
@@ -502,26 +548,18 @@ test("reports an expired sign-in without a request, and keeps it over a rejected
       refreshedBy: "opencode",
     },
   };
-  expect(await fetchUsage(alone, fetchApi)).toEqual(expired);
+  expect(await fetchUsage(alone, fetchApi, install)).toEqual(expired);
   expect(requests).toEqual([]);
-  await rm(join(fixtureDirectory, "opencode.db"));
-  await writeFile(fixturePath, "{}");
-  const withKey = await storeWith([
-    ["opencode", consoleSignIn({ expires })],
-    ["opencode-go", JSON.stringify({ type: "key", key: "expired-go-key" })],
-  ]);
-  expect(await fetchUsage(withKey, fetchApi)).toEqual(expired);
+  const withKey = await storeWith([consoleSignIn({ expires }), goKey("expired-go-key")]);
+  expect(await fetchUsage(withKey, fetchApi, install)).toEqual(expired);
 });
 
 test("reads Go with a key on the opencode integration and falls back when its workspace lacks Go", async () => {
-  const input = await storeWith([
-    ["opencode", JSON.stringify({ type: "key", key: "workspace-key" })],
-    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
-  ]);
+  const input = await storeWith([consoleKey("workspace-key"), goKey("go-key")]);
   const served = upstream({
     [`${CONSOLE_STATUS_URL} Bearer workspace-key`]: () => Response.json(goStatus()),
   });
-  const report = await fetchUsage(input, served.fetchApi);
+  const report = await fetchUsage(input, served.fetchApi, install);
   expect(report.status).toBe("available");
   expect(served.requests.map((request) => [request.authorization, request.orgID])).toEqual([
     ["Bearer workspace-key", null],
@@ -530,43 +568,82 @@ test("reads Go with a key on the opencode integration and falls back when its wo
     [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 403 }),
     [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
   });
-  expect((await fetchUsage(input, refused.fetchApi)).status).toBe("available");
+  expect((await fetchUsage(input, refused.fetchApi, install)).status).toBe("available");
   expect(refused.requests.at(-1)).toMatchObject({ url: USAGE_URL, authorization: "Bearer go-key" });
 });
 
 test("reports a key on the opencode integration without Go as the absent subscription", async () => {
-  const input = await storeWith([["opencode", JSON.stringify({ type: "key", key: "zen-key" })]]);
+  const input = await storeWith([consoleKey("zen-key")]);
   const { fetchApi } = upstream({
     [`${USAGE_URL} Bearer zen-key`]: () => new Response(null, { status: 403 }),
   });
-  expect(await fetchUsage(input, fetchApi)).toEqual({
+  expect(await fetchUsage(input, fetchApi, install)).toEqual({
     status: "unavailable",
     problem: { kind: "no_quota", detail: "No active OpenCode Go subscription" },
   });
 });
 
+// The auth.json key stands in for a Go login that OpenCode 2 never imported.
+test.each<[string, Credential, Record<string, () => Response>]>([
+  [
+    "key",
+    consoleKey("workspace-key"),
+    { [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 403 }) },
+  ],
+  [
+    "sign-in",
+    consoleSignIn(),
+    { [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus(null)) },
+  ],
+])(
+  "reads the auth.json Go key when the workspace of OpenCode 2's opencode %s has no Go",
+  async (_name, login, refusal) => {
+    await openCode2([login]);
+    const [found] = await discover(install);
+    const { requests, fetchApi } = upstream({
+      ...refusal,
+      [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+    });
+    const report = await fetchUsage(inputSchema.parse(found!.input), fetchApi, install);
+    expect(report.status).toBe("available");
+    expect(requests.at(-1)).toMatchObject({ url: USAGE_URL, authorization: "Bearer file-key" });
+  },
+);
+
+test("keeps the card on OpenCode 2's opencode key ahead of the auth.json Go key", async () => {
+  await openCode2([consoleKey("workspace-key")]);
+  const [found] = await discover(install);
+  const input = inputSchema.parse(found!.input);
+  const served = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer workspace-key`]: () => Response.json(goStatus()),
+    [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+  });
+  expect((await fetchUsage(input, served.fetchApi, install)).status).toBe("available");
+  const failing = upstream({
+    [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 503 }),
+    [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+  });
+  await expect(fetchUsage(input, failing.fetchApi, install)).rejects.toThrow("returned 503");
+  const asked = [...served.requests, ...failing.requests].map((request) => request.authorization);
+  expect(asked).not.toContain("Bearer file-key");
+});
+
 test("keeps the card on the opencode key through a temporary failure", async () => {
-  const input = await storeWith([
-    ["opencode", JSON.stringify({ type: "key", key: "workspace-key" })],
-    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
-  ]);
+  const input = await storeWith([consoleKey("workspace-key"), goKey("go-key")]);
   const { requests, fetchApi } = upstream({
     [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 503 }),
   });
-  await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
+  await expect(fetchUsage(input, fetchApi, install)).rejects.toThrow("returned 503");
   expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
 });
 
 test("keeps the card on the Console sign-in through a temporary failure", async () => {
-  const input = await storeWith([
-    ["opencode", consoleSignIn()],
-    ["opencode-go", JSON.stringify({ type: "key", key: "go-key" })],
-  ]);
+  const input = await storeWith([consoleSignIn(), goKey("go-key")]);
   const { requests, fetchApi } = upstream({
     [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => new Response(null, { status: 503 }),
     [`${USAGE_URL} Bearer go-key`]: () => Response.json(upstreamResponse),
   });
-  await expect(fetchUsage(input, fetchApi)).rejects.toThrow("returned 503");
+  await expect(fetchUsage(input, fetchApi, install)).rejects.toThrow("returned 503");
   expect(requests.some((request) => request.authorization === "Bearer go-key")).toBe(false);
 });
 
@@ -579,7 +656,7 @@ test("reads a key's usage within the refresh deadline when the Console does not 
     });
   }) as typeof fetch;
   const started = Date.now();
-  const report = await fetchUsage({ store: "file", path: fixturePath }, fetchApi);
+  const report = await fetchUsage({ store: "file" }, fetchApi, install);
   expect(report.status).toBe("available");
   // The daemon gives a usage refresh 20 seconds, and the usage API keeps 15 of them.
   expect(Date.now() - started).toBeLessThan(5_000);

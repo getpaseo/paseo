@@ -2789,6 +2789,23 @@ export const zhCN: TranslationResources = {
         name: {
           label: "名称",
         },
+        icon: {
+          label: "图标",
+          accessibilityLabel: "图标，{{value}}",
+          auto: "自动",
+          autoDetected: "自动 ({{icon}})",
+          options: {
+            server: "服务器",
+            laptop: "笔记本电脑",
+            desktop: "台式机",
+            mini: "迷你主机",
+            workstation: "工作站",
+            cloud: "云端",
+            container: "容器",
+            board: "单板机",
+            terminal: "终端",
+          },
+        },
         color: {
           label: "颜色",
           accessibilityLabel: "颜色，{{value}}",
@@ -2824,6 +2841,14 @@ export const zhCN: TranslationResources = {
         relay: "Relay",
         local: "本地",
         remoteSsh: "远程 SSH",
+      },
+      connectionKinds: {
+        local: "本地",
+        relay: "中继",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "直连",
+        routed: "经由",
       },
       connections: {
         title: "连接",

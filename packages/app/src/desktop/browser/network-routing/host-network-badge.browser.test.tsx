@@ -27,7 +27,13 @@ function renderBadge(isRouted: boolean, hostLabel = "Remote Mac") {
   act(() =>
     root!.render(
       <I18nextProvider i18n={i18n}>
-        <HostNetworkBadge isRouted={isRouted} serverId="remote" hostLabel={hostLabel} color="sky" />
+        <HostNetworkBadge
+          isRouted={isRouted}
+          serverId="remote"
+          hostLabel={hostLabel}
+          color="sky"
+          icon="server"
+        />
       </I18nextProvider>,
     ),
   );
@@ -74,6 +80,7 @@ describe("host network URL badge", () => {
               serverId="remote"
               hostLabel="A build host whose name was never meant to fit in a URL bar"
               color="sky"
+              icon="server"
             />
             <div data-testid="url" style={URL_FIELD_STYLE} />
           </I18nextProvider>,

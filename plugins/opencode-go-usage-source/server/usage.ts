@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/plugin/server/usage";
 import type { Input } from "../shared/input.js";
 import { NO_SUBSCRIPTION, readConsoleGo } from "./console.js";
-import { defaultStorePaths, readDatabaseLogins, readFileKey, type GoCredential } from "./stores.js";
+import { installedOpenCode, loginStore, readLogins, type GoCredential } from "./opencode.js";
 
 const windowSchema = z.object({
   status: z.enum(["ok", "rate-limited"]),
@@ -20,38 +20,23 @@ const responseSchema = z.object({
   usage: z.object({ rolling: windowSchema, weekly: windowSchema, monthly: windowSchema }),
 });
 
-export async function discover(paths = defaultStorePaths()): Promise<UsageAccount[]> {
+export async function discover(install = installedOpenCode()): Promise<UsageAccount[]> {
+  const store = await loginStore(install);
+  const logins = await readLogins(install, store);
+  if (!logins.opencode && !logins.go) return [];
   // One OpenCode data directory holds one Go login, whichever store it lives in. Usage settings
-  // are saved per account, so a login OpenCode v2 imports keeps the identity it had in auth.json.
-  const key = hashAccountKey(paths.file);
-  const logins = readDatabaseLogins(paths.database);
-  if (logins) {
-    return logins.opencode || logins.go
-      ? [
-          {
-            key,
-            input: { store: "database", path: paths.database },
-          },
-        ]
-      : [];
-  }
-  return (await readFileKey(paths.file))
-    ? [{ key, input: { store: "file", path: paths.file } }]
-    : [];
+  // are saved per account, so a login OpenCode 2 imports keeps the identity it had in auth.json.
+  return [{ key: hashAccountKey(install.authFile), input: { store } }];
 }
 
 export async function fetchUsage(
   input: Input,
   fetchApi: typeof fetch = fetch,
+  install = installedOpenCode(),
 ): Promise<UsageReport> {
-  if (input.store === "file") {
-    const key = await readFileKey(input.path);
-    if (!key) throw new Error("OpenCode Go login store no longer exists");
-    return readKey(key, fetchApi);
-  }
-  const logins = readDatabaseLogins(input.path);
-  const only = logins?.opencode ?? logins?.go;
-  if (!logins || !only) throw new Error("OpenCode Go login store no longer exists");
+  const logins = await readLogins(install, input.store);
+  const only = logins.opencode ?? logins.go;
+  if (!only) throw new Error("OpenCode Go login no longer exists");
   if (logins.opencode && logins.go) return readEitherLogin(logins.opencode, logins.go, fetchApi);
   return readCredential(only, fetchApi, { workspaceKey: only === logins.opencode });
 }

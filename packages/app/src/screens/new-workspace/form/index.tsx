@@ -438,7 +438,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       searchable={false}
       title={t("newWorkspace.fields.host")}
       desktopPlacement="bottom-start"
-      desktopMinWidth={200}
+      desktopMinWidth={320}
       hostOptionTestID={hostOptionTestID}
     >
       <FieldTrigger

@@ -16,8 +16,8 @@ export async function openSidebarHostPicker(page: Page) {
   await page.getByRole("button", { name: "Hosts", exact: true }).click();
 }
 
-export function sidebarHostSettingsButton(page: Page) {
-  return page.getByRole("button", { name: `Open ${TEST_HOST_LABEL} settings`, exact: true });
+export function sidebarHostRowButton(page: Page) {
+  return page.getByTestId(`sidebar-host-row-${getServerId()}`);
 }
 
 export async function bindCommandCenterToEnter(page: Page) {
@@ -32,20 +32,10 @@ export async function bindCommandCenterToEnter(page: Page) {
   });
 }
 
-export async function expectStandaloneSidebarHostSettingsButton(page: Page) {
-  const gear = sidebarHostSettingsButton(page);
-  await expect(gear).toBeVisible();
-  expect(await gear.evaluate((button) => button.parentElement?.closest("button") === null)).toBe(
-    true,
-  );
-}
-
 export async function activateSidebarHostSettingsWithKeyboard(page: Page) {
-  const host = page.getByRole("button", { name: TEST_HOST_LABEL, exact: true });
+  const host = sidebarHostRowButton(page);
+  await expect(host).toBeVisible();
   await expect(host).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Tab");
-  await expect(sidebarHostSettingsButton(page)).toBeFocused();
   await page.keyboard.press("Enter");
 }
 
