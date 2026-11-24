@@ -446,18 +446,40 @@ export function createWorkspaceProvisioningService(deps: {
     )?.untrustedSource;
   }
 
-  async function inheritActiveCheckoutUntrustedSource(
+  async function syncUnarchivedCheckoutUntrustedSource(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
-    if (workspace.untrustedSource) {
+    const checkoutRoot = workspace.worktreeRoot ?? workspace.cwd;
+    const metadataUntrustedSource = (
+      await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null)
+    )?.untrustedSource;
+    if (metadataUntrustedSource) {
+      return workspace.untrustedSource
+        ? workspace
+        : { ...workspace, untrustedSource: metadataUntrustedSource };
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+    const activeOnCheckout = (await workspaceRegistry.listActive()).filter((candidate) =>
+      matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    );
+    if (activeOnCheckout.length === 0) {
       return workspace;
     }
-    const inheritedUntrustedSource = await resolveCheckoutUntrustedSource(
-      workspace.worktreeRoot ?? workspace.cwd,
-    );
-    return inheritedUntrustedSource
-      ? { ...workspace, untrustedSource: inheritedUntrustedSource }
-      : workspace;
+    const activeUntrustedSource = activeOnCheckout.find((candidate) =>
+      Boolean(candidate.untrustedSource),
+    )?.untrustedSource;
+    if (activeUntrustedSource) {
+      return workspace.untrustedSource
+        ? workspace
+        : { ...workspace, untrustedSource: activeUntrustedSource };
+    }
+    if (!workspace.untrustedSource) {
+      return workspace;
+    }
+    // Live active workspaces already own this checkout and it is approved:
+    // drop stale untrustedSource from a previous checkout that used this path.
+    const { untrustedSource: _stale, ...approved } = workspace;
+    return approved;
   }
 
   async function resolveRestoredAutoArchiveChangeRequestUrl(
@@ -497,7 +519,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       });
       next = {
-        ...(await inheritActiveCheckoutUntrustedSource(placementUpdate?.workspace ?? workspace)),
+        ...(await syncUnarchivedCheckoutUntrustedSource(placementUpdate?.workspace ?? workspace)),
         archivedAt: null,
         autoArchivedChangeRequestUrl,
         updatedAt: timestamp,

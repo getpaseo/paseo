@@ -1347,3 +1347,46 @@ test("creating a directory workspace on a fresh checkout ignores archived unappr
 
   expect(extra.untrustedSource).toBeUndefined();
 });
+
+test("unarchiving an old unapproved workspace onto a live approved checkout drops its stale untrustedSource", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-unarchive-stale-block");
+  const worktreePath = path.join(tmpDir, "worktree-stale-block");
+  mkdirSync(sourceCwd, { recursive: true });
+  mkdirSync(worktreePath, { recursive: true });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const oldUntrusted = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "contributor/pr-59",
+    baseBranch: "main",
+    title: null,
+    untrustedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 59,
+      headRepository: "contributor/repo",
+    },
+  });
+  await workspaceRegistry.archive(oldUntrusted.workspaceId, ARCHIVED_AT);
+  const archivedOldUntrusted = (await workspaceRegistry.get(oldUntrusted.workspaceId))!;
+
+  await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "feature/fresh-approved",
+    baseBranch: "main",
+    title: null,
+  });
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(archivedOldUntrusted);
+
+  expect(unarchived.archivedAt).toBeNull();
+  expect(unarchived.untrustedSource).toBeUndefined();
+  expect((await workspaceRegistry.get(oldUntrusted.workspaceId))?.untrustedSource).toBeUndefined();
+});
