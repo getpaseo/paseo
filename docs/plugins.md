@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite, fx, goose, and Hermes use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -471,6 +471,18 @@ Workspace records decide ownership, including explicit non-ownership after recov
 ownership checks prefer the marker-verified worktree root over the legacy
 path shape: a plugin can place a worktree several directories below the default worktrees root.
 
+A plugin can also take over worktree creation, removal, and restoration with
+`server.registerWorktreeManager({ create, remove?, restore? })`. It runs after
+`worktree.create.before` and before `worktree.create.after`, with a 120-second timeout matching Git
+worktree commands. Paseo snapshots existing worktree paths before calling `create` so a manager
+cannot adopt a pre-existing directory as Paseo-owned, verifies Git worktree postconditions, records
+`worktreeManagerPluginId` in `paseo/worktree.json` and on the workspace record,
+and skips first-agent branch auto-rename. Removal saves `refs/paseo/kept-commits/<sha>` before
+calling the owning plugin's `remove`, and `create`, `remove`, and `restore` carry `untrusted` for fork
+change requests; `remove` and `restore` fall back to built-in Git when the plugin declines or is disabled. See the
+[worktree managers reference](../public-docs/plugins/reference.md#worktree-managers) and
+`plugin-examples/worktrunk`.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
@@ -571,8 +583,12 @@ daemon launch from `connect` and the per-session env and MCP servers from `sessi
 no provider reload input.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
-`@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
-whole provider event stream. The shim uses the resolved launch for every probe and session, overlaying
+`@getpaseo/plugin/server/acp`. The shim builds the standard row for each ACP tool `kind`
+(`acp-internal/tool-call-detail.ts`). Its transformer hooks cover narrow vendor differences; do not translate the
+whole provider event stream. A `toolCall` transformer sees the raw `input`, `output` and `content`, and a
+`detail` it sets replaces the standard row. Parse vendor display text defensively and return the call
+unchanged when the shape does not match, so an upstream format change falls back to the standard row
+(`plugins/hermes-provider/server/terminal-command.ts`). The shim uses the resolved launch for every probe and session, overlaying
 only the supplied per-session env for sessions. The direct and ACP examples live in
 `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.

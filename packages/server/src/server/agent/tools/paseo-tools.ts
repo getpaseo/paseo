@@ -18,7 +18,11 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  ActiveTurnBehaviorSchema,
+  AgentActiveTurnBehaviorSchema,
+  AgentProfileSchema,
+} from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
@@ -139,6 +143,10 @@ export interface PaseoToolHostDependencies {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot" | "invalidateWorktrees"
   >;
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  worktreeManagers?: ArchiveDependencies["worktreeManagers"];
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  assertWorkspaceAutomationAllowed?: ArchiveDependencies["assertWorkspaceAutomationAllowed"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
@@ -1283,15 +1291,15 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
-    ),
     agentId: z.string(),
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional().describe(
+      'Leave this out unless the message cannot wait. Default "queue": the message waits until the agent\'s running turn ends. "steer": the message joins the running turn; a provider that cannot steer interrupts the turn instead. "interrupt": the running turn stops and a new turn starts with the message. A steer or interrupt carries the messages you queued before it, in order.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1302,6 +1310,9 @@ function createToolCatalog(
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
+      'Default "interrupt": the running turn stops and a new turn starts with the prompt. "steer": the prompt joins the running turn; a provider that cannot steer interrupts the turn instead.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1971,13 +1982,16 @@ function createToolCatalog(
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient and waits for the current turn to end unless interrupt is requested. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        scope === "agent"
+          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them. A steer the recipient has not read is lost if its turn stops or is interrupted, along with the messages it carried. Completion reports include the target’s last response by default. Paseo supplies caller identity."
+          : "Send a prompt to an agent. A running turn is interrupted unless activeTurnBehavior is steer.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
         deliveryStatus: z.literal("queued").optional(),
         messageId: z.string().optional(),
+        activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
         status: AgentStatusEnum,
         guidance: z.string().optional(),
       },
@@ -1987,7 +2001,7 @@ function createToolCatalog(
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
-      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
+      activeTurnBehavior,
     }) => {
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
@@ -2046,15 +2060,17 @@ function createToolCatalog(
             success: true,
             deliveryStatus: receipt.status,
             messageId: receipt.messageId,
+            activeTurnBehavior: receipt.activeTurnBehavior,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
             guidance: notifying
-              ? `Queued for delivery after two quiet seconds and the current turn ends. ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
-              : "Queued for delivery after two quiet seconds and the current turn ends; provider dispatch has not occurred.",
+              ? `${receipt.guidance} ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
+              : receipt.guidance,
           },
         };
       }
 
       const dispatch = await sendPromptToAgent({
+        agentMessages: agentMessages(),
         agentManager,
         agentStorage,
         agentId,
@@ -2728,13 +2744,19 @@ function createToolCatalog(
 
   if (options.changeRequestWatches) {
     const watches = options.changeRequestWatches;
-    const inputSchema = { url: z.string().trim().min(1).describe("URL of a GitHub pull request.") };
+    const inputSchema = {
+      url: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("URL of a pull request or merge request on a supported forge."),
+    };
     registerTool(
       "subscribe_change_request",
       {
         title: "Watch change request",
         description:
-          "Watch a pull request for check failures, passing checks, new comments, reviews, and closure. Returns the current state and sends future updates after your current turn.",
+          "Watch a pull request or merge request for check failures, passing checks, new comments, reviews, approvals, and closure. Returns the current state and sends future updates after your current turn.",
         inputSchema,
         outputSchema: {
           url: z.string(),
@@ -3406,14 +3428,27 @@ function archiveWorktreeDependencies(
   if (!options.clearWorkspaceArchiving) {
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
+  if (!options.assertWorkspaceAutomationAllowed) {
+    throw new Error("Workspace automation gate is required to archive worktrees");
+  }
+  if (!options.isCheckoutUntrusted) {
+    throw new Error("Checkout trust lookup is required to archive worktrees");
+  }
   return {
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
+    worktreeManagers: options.worktreeManagers,
+    workspaceArchiveOperations: options.workspaceArchiveOperations,
+    assertWorkspaceAutomationAllowed: options.assertWorkspaceAutomationAllowed,
+    isCheckoutUntrusted: options.isCheckoutUntrusted,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+    ...(options.workspaceRegistry
+      ? { getWorkspace: (workspaceId: string) => options.workspaceRegistry!.get(workspaceId) }
+      : {}),
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,

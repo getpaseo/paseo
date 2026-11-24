@@ -9,7 +9,7 @@ import {
   formatResetTime,
 } from "./format";
 import { UsageMeter } from "./meter";
-import { UsageResetLine } from "./reset-line";
+import { UsageDatapointLine } from "./datapoint-line";
 import type { UsageBalance } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
 
@@ -77,9 +77,8 @@ export function UsageBalanceBar({
         </Text>
       </View>
       {usedPct != null ? <UsageMeter percent={usedPct} tone={tone} /> : null}
-      <UsageResetLine
-        countdown={resetLabel}
-        exactTime={resetTime}
+      <UsageDatapointLine
+        datapoints={[resetLabel, resetTime]}
         testID={`provider-usage-balance-${balance.id}-reset`}
       />
     </View>

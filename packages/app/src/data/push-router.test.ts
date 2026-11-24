@@ -8,8 +8,12 @@ import { checkoutDiffQueryKey } from "@/git/query-keys";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
-import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { providersSnapshotQuery, providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { replicaQueryOptions } from "@/data/query";
+import { createProviderSnapshotCache } from "@/data/provider-snapshot-cache";
+import { draftAgentCommandsQueryKey } from "@/agent-commands/cache";
 import {
+  applyProvidersSnapshotUpdate,
   checkoutDiffPushRoute,
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
@@ -594,6 +598,13 @@ describe("server data push router", () => {
     const serverId = "server-1";
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
     queryClient.setQueryData(pairingOfferKey, { relayEnabled: true, url: "https://pairing" });
+    const snapshotKey = providersSnapshotQueryKey(serverId);
+    queryClient.setQueryData(snapshotKey, { entries: [], generatedAt: "seed", requestId: "seed" });
+    const unsubscribeSnapshot = new QueryObserver(queryClient, {
+      queryKey: snapshotKey,
+      queryFn: async () => ({ entries: [], generatedAt: "seed", requestId: "seed" }),
+      staleTime: Infinity,
+    }).subscribe(() => undefined);
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
     fake.emit(providerUpdate("2026-01-01T00:00:00.000Z"));
@@ -622,6 +633,7 @@ describe("server data push router", () => {
         generatedAt: "2026-01-01T00:00:00.000Z",
         requestId: "providers_snapshot_update",
       });
+    unsubscribeSnapshot();
   });
 
   it.each(["base", "all"] as const)("routes %s diff snapshots and updates", (mode) => {
@@ -980,5 +992,160 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
+  });
+});
+
+describe("applyProvidersSnapshotUpdate by observation", () => {
+  const serverId = "observed-host";
+  const cwd = "/repo";
+
+  function createStorage() {
+    const values = new Map<string, string>();
+    return {
+      values,
+      async getItem(key: string) {
+        return values.get(key) ?? null;
+      },
+      async setItem(key: string, value: string) {
+        values.set(key, value);
+      },
+      async removeItem(key: string) {
+        values.delete(key);
+      },
+      async getAllKeys() {
+        return [...values.keys()];
+      },
+      async multiGet(keys: readonly string[]) {
+        return keys.map((key) => [key, values.get(key) ?? null] as const);
+      },
+      async multiRemove(keys: readonly string[]) {
+        for (const key of keys) values.delete(key);
+      },
+    };
+  }
+
+  function snapshotFor(label: string) {
+    return {
+      requestId: label,
+      cwd,
+      entries: [
+        {
+          provider: "codex",
+          status: "ready",
+          enabled: true,
+          label,
+          models: [{ provider: "codex", id: label, label, thinkingOptions: [] }],
+        },
+      ],
+      generatedAt: "2026-01-01T00:00:00.000Z",
+    } as never;
+  }
+
+  function setup() {
+    const storage = createStorage();
+    const cache = createProviderSnapshotCache(storage);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const calls: unknown[] = [];
+    let current = "v1";
+    const client = {
+      async getProvidersSnapshot(options?: unknown) {
+        calls.push(options);
+        return snapshotFor(current);
+      },
+    };
+    const observe = () =>
+      new QueryObserver(
+        queryClient,
+        replicaQueryOptions(
+          providersSnapshotQuery({ serverId, cwd, client: () => client, queryClient, cache }),
+        ),
+      );
+    const announce = () =>
+      applyProvidersSnapshotUpdate({
+        serverId,
+        queryClient,
+        cache,
+        client,
+        message: {
+          type: "providers_snapshot_update",
+          payload: {
+            cwd,
+            entries: [],
+            snapshotHash: "hash-v2",
+            generatedAt: "2026-01-01T00:00:01Z",
+          },
+        } as never,
+      });
+    return {
+      queryClient,
+      calls,
+      storage,
+      observe,
+      announce,
+      setCurrent: (value: string) => {
+        current = value;
+      },
+    };
+  }
+
+  it("does nothing for a directory this client never opened", async () => {
+    const { queryClient, calls, storage, announce } = setup();
+
+    await announce();
+
+    expect(calls).toEqual([]);
+    expect(
+      queryClient.getQueryCache().find({ queryKey: providersSnapshotQueryKey(serverId, cwd) }),
+    ).toBeUndefined();
+    expect(storage.values.size).toBe(0);
+    queryClient.clear();
+  });
+
+  it("marks an unobserved cached directory stale without downloading and refetches it on mount", async () => {
+    const { queryClient, calls, observe, announce, setCurrent } = setup();
+    const queryKey = providersSnapshotQueryKey(serverId, cwd);
+    const commandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    queryClient.setQueryData(queryKey, snapshotFor("v1"));
+    queryClient.setQueryData(commandsKey, [{ name: "review" }]);
+    setCurrent("v2");
+
+    await announce();
+
+    expect(calls).toEqual([]);
+    expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(commandsKey)?.isInvalidated).toBe(true);
+
+    const observer = observe();
+    const unsubscribe = observer.subscribe(() => {});
+    await queryClient.getQueryCache().find({ queryKey })?.promise;
+
+    expect(calls).toHaveLength(1);
+    expect(
+      (queryClient.getQueryData(queryKey) as { entries: Array<{ label: string }> }).entries[0]!
+        .label,
+    ).toBe("v2");
+    unsubscribe();
+    queryClient.clear();
+  });
+
+  it("keeps the reference-aware fetch for an observed directory", async () => {
+    const { queryClient, calls, observe, announce } = setup();
+    const queryKey = providersSnapshotQueryKey(serverId, cwd);
+    const observer = observe();
+    const unsubscribe = observer.subscribe(() => {});
+    await queryClient.getQueryCache().find({ queryKey })?.promise;
+    expect(calls).toHaveLength(1);
+
+    await announce();
+
+    // The announced hash is not resident, so exactly one content transfer is fetched and
+    // published to the observed query.
+    expect(calls).toHaveLength(2);
+    expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(false);
+    unsubscribe();
+    queryClient.clear();
   });
 });

@@ -64,4 +64,41 @@ describe("importSessionFromPersistence", () => {
       nativeHandle: SESSION_FILE,
     });
   });
+
+  it("keeps the stats the provider reports in its history", async () => {
+    const cwd = "/Users/dev/code/project";
+    const imported = await importSessionFromPersistence({
+      provider: "omp",
+      request: { providerHandleId: SESSION_FILE, cwd },
+      context: context(cwd),
+      resumeSession: async () =>
+        ({
+          async *streamHistory() {
+            yield { type: "timeline", provider: "omp", item: { type: "user_message", text: "Hi" } };
+            yield {
+              type: "timeline",
+              provider: "omp",
+              item: { type: "assistant_message", text: "Done" },
+            };
+            yield {
+              type: "turn_completed",
+              provider: "omp",
+              metrics: [{ label: "Elapsed", value: "1.2s" }],
+            };
+            yield {
+              type: "session_metrics_updated",
+              provider: "omp",
+              metrics: [{ label: "Cost", value: "$0.011" }],
+            };
+          },
+          describePersistence: () => null,
+        }) as unknown as AgentSession,
+    });
+
+    expect(imported.timeline.map((entry) => entry.turnMetrics ?? null)).toEqual([
+      null,
+      [{ label: "Elapsed", value: "1.2s" }],
+    ]);
+    expect(imported.sessionMetrics).toEqual([{ label: "Cost", value: "$0.011" }]);
+  });
 });

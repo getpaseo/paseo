@@ -12,6 +12,33 @@ const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 
+export async function openSidebarHostPicker(page: Page) {
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+}
+
+export function sidebarHostRowButton(page: Page) {
+  return page.getByTestId(`sidebar-host-row-${getServerId()}`);
+}
+
+export async function bindCommandCenterToEnter(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:keyboard-shortcut-overrides",
+      JSON.stringify({
+        "command-center-toggle-cmd-k-mac": "Enter",
+        "command-center-toggle-ctrl-k-non-mac": "Enter",
+      }),
+    );
+  });
+}
+
+export async function activateSidebarHostSettingsWithKeyboard(page: Page) {
+  const host = sidebarHostRowButton(page);
+  await expect(host).toBeVisible();
+  await expect(host).toBeFocused();
+  await page.keyboard.press("Enter");
+}
+
 interface SavedSettingsHostInput {
   serverId: string;
   label: string;
@@ -567,7 +594,9 @@ export async function expectProviderPageLoaded(page: Page, providerName: string)
   await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName, {
     timeout: 30_000,
   });
-  await expect(page.getByText("Provider status")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Diagnostic report" })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function expectProviderNotOnHost(page: Page): Promise<void> {

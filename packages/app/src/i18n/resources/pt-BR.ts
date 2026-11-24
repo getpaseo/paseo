@@ -353,6 +353,7 @@ export const ptBR: TranslationResources = {
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",
+      turnStats: "Estatísticas do turno",
       forkInNewTab: "Bifurcar em uma nova aba",
       forkInNewWorkspace: "Bifurcar em um novo workspace",
       forkUnavailable: "Atualize o host para usar isto.",
@@ -920,6 +921,8 @@ export const ptBR: TranslationResources = {
           pushBehind:
             "Push ainda não está disponível porque há alterações mais recentes para trazer primeiro",
           pushNothing: "Push não está disponível porque não há nada novo para enviar",
+          pushUpstreamGone:
+            "Push não está disponível porque a branch que esta branch acompanha não existe mais",
           pullAndPushNoRemote:
             "Pull e push não estão disponíveis aqui porque esta branch ainda não está conectada a um remoto",
           pullAndPushDirty:
@@ -2298,7 +2301,11 @@ export const ptBR: TranslationResources = {
     title: "Uso do plano",
     refresh: "Atualizar",
     reorderCard: "Reordenar {{source}}",
-    showCard: "Mostrar {{source}}",
+    sources: "Fontes",
+    sourcesCount: "{{shown}} de {{total}}",
+    providerInactive: "Provedor inativo",
+    allSourcesHidden: "Nenhuma fonte de uso exibida",
+    chooseSources: "Escolher fontes",
     refreshAll: "Atualizar tudo",
     refreshing: "Atualizando...",
     loading: "Carregando uso...",
@@ -2339,8 +2346,9 @@ export const ptBR: TranslationResources = {
       resetsIn: "redefine em {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "esgota agora",
-      runsOutIn: "esgota em {{duration}}",
+      limitReached: "Limite atingido",
+      mayHaveRunOut: "A cota pode ter se esgotado",
+      runsOutAt: "esgotamento previsto para {{time}}",
       justNow: "agora mesmo",
       daysAgo: "há {{value}} d",
       hoursAgo: "há {{value}} h",
@@ -2878,6 +2886,23 @@ export const ptBR: TranslationResources = {
         name: {
           label: "Nome",
         },
+        icon: {
+          label: "Ícone",
+          accessibilityLabel: "Ícone, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
+          options: {
+            server: "Servidor",
+            laptop: "Notebook",
+            desktop: "Desktop",
+            mini: "Mini",
+            workstation: "Estação de trabalho",
+            cloud: "Nuvem",
+            container: "Contêiner",
+            board: "PC de placa única",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Cor",
           accessibilityLabel: "Cor, {{value}}",
@@ -2914,6 +2939,14 @@ export const ptBR: TranslationResources = {
         local: "Local",
         remoteSsh: "SSH remoto",
       },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relay",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Direto",
+        routed: "Via",
+      },
       connections: {
         title: "Conexões",
         removeTitle: "Remover conexão",
@@ -2937,7 +2970,7 @@ export const ptBR: TranslationResources = {
         updateTitle: "Atualizar Paseo skills?",
         uninstallTitle: "Desinstalar Paseo skills?",
         uninstallMessage:
-          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
+          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config.",
         choose: "Escolher skills",
         chooseAll: "Todas as skills",
         chooseAllHint:
@@ -2946,7 +2979,7 @@ export const ptBR: TranslationResources = {
         chooseEmpty: "Esta versão não inclui skills.",
         removeTitle: "Remover as skills desmarcadas?",
         removeMessage:
-          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude, ~/.codex e ~/.gemini/config. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
         saveFailed: "Não foi possível salvar sua seleção de skills.",
         statusFailed: "Não foi possível verificar o status das skills de orquestração.",
         updateFailed: "Não foi possível atualizar as skills de orquestração.",
@@ -3161,6 +3194,7 @@ export const ptBR: TranslationResources = {
         status: "Status do provedor",
         checked: "Verificado {{time}}",
         diagnosticReport: "Relatório de diagnóstico",
+        docs: "Documentação",
         dangerZone: "Zona de perigo",
         removeHint: "Exclui este provedor do config.json",
       },
@@ -3206,7 +3240,7 @@ export const ptBR: TranslationResources = {
         noSearchMatches: "Nenhum modelo corresponde à sua busca",
         noneDetected: "Nenhum modelo detectado",
         noCustom: "Nenhum modelo personalizado",
-        discovered: "Descobertos",
+        title: "Modelos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
       },

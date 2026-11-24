@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ProviderInputSchema, type ProviderInput } from "./provider.js";
+import {
+  ProviderEventSchema,
+  ProviderInputSchema,
+  negotiateProviderCapabilities,
+  type ProviderEvent,
+  type ProviderInput,
+  type ProviderMetric,
+} from "./provider.js";
 
 type ReviewMode = "uncommitted" | "base" | "all";
 type Delivery = "auto" | "steer";
@@ -63,4 +70,58 @@ describe("Provider review attachments", () => {
       expect(ProviderInputSchema.parse(input)).toEqual(input);
     },
   );
+});
+
+describe("Provider metrics", () => {
+  const metrics: ProviderMetric[] = [
+    { label: "Model", value: "agent-large" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ];
+
+  it("publishes the session's metrics as one replaceable list", () => {
+    const event: ProviderEvent = { type: "session.metrics", sessionId: "session-1", metrics };
+    expect(ProviderEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("attaches metrics to the turn they describe when it completes", () => {
+    const event: ProviderEvent = {
+      type: "session.turn",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      state: "completed",
+      metrics,
+    };
+    expect(ProviderEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("keeps completing turns without metrics", () => {
+    const event: ProviderEvent = {
+      type: "session.turn",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      state: "completed",
+    };
+    expect(ProviderEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("tells a provider whether this Paseo shows session metrics", () => {
+    const supported = ["prompt.message", "session.metrics"] as const;
+    expect(
+      negotiateProviderCapabilities(["prompt.message", "session.metrics"], supported),
+    ).toContain("session.metrics");
+    // A Paseo from before session metrics never offers them.
+    expect(negotiateProviderCapabilities(["prompt.message"], supported)).toEqual([
+      "prompt.message",
+    ]);
+  });
+
+  it("refuses a metric whose value is not text Paseo can show as given", () => {
+    expect(
+      ProviderEventSchema.safeParse({
+        type: "session.metrics",
+        sessionId: "session-1",
+        metrics: [{ label: "Cost", value: 1.23 }],
+      }).success,
+    ).toBe(false);
+  });
 });

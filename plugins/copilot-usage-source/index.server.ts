@@ -7,6 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "copilot",
     label: "GitHub Copilot",
     icon: "icon.svg",
+    providers: ["copilot"],
     input: inputSchema,
     discover: (scope) => (scope.kind === "global" ? discover() : Promise.resolve([])),
     fetch: fetchUsage,

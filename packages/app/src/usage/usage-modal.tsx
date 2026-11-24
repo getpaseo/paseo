@@ -4,7 +4,6 @@ import { View } from "react-native";
 import { AdaptiveModalSheet, SheetHeaderSubtitle } from "@/components/adaptive-modal-sheet";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
 import { useHostUsageWithControls } from "./controls";
-import { useUsageDisplay } from "./display";
 import { getHostPickerLabel } from "@/components/hosts/host-picker";
 import { hasHostChoice, useUsageHostSelection } from "./hosts";
 import type { UsageHost } from "./model";
@@ -50,8 +49,7 @@ function HostUsageModal({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
-  const { display } = useUsageDisplay(view.kind === "ready" ? view.reports : []);
+  const { view, display, refresh, controls, openOptions } = useHostUsageWithControls(hostSelection);
   const hostLabel = hasHostChoice(hostSelection)
     ? getHostPickerLabel(hostSelection.hosts, hostSelection.serverId)
     : undefined;
@@ -61,7 +59,13 @@ function HostUsageModal({
         host's cards. The frame is not keyed: remounting it would dismiss a compact sheet, and Usage
         with it. */}
       <View key={serverId} testID={`usage-host-${serverId}`}>
-        <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
+        <UsageBody
+          serverId={serverId}
+          view={view}
+          display={display}
+          onRefresh={refresh}
+          onOpenSources={openOptions}
+        />
       </View>
     </UsageModalFrame>
   );

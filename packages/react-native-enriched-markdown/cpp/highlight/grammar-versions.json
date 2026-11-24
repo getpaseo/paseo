@@ -1,0 +1,159 @@
+{
+  "$comment": "Pins the tree-sitter runtime and every supported grammar for vendor-grammars.mjs. Grammars marked default:true form the curated set compiled unless a consumer overrides the language list. Each grammar package is a devDependency of react-native-enriched-markdown and is never shipped; only the copied .c/.h/.scm files are vendored. Versions must generate an ABI in [13,15] to match the runtime. Re-pin and re-run vendor-grammars.mjs to upgrade. The postinstall script downloads grammar sources from the npm registry using the 'package' and 'version' fields.",
+  "runtime": {
+    "$comment": "tree-sitter runtime C amalgamation. Fetched at install/prepack from the pinned GitHub release tarball (lib/src + lib/include) into the gitignored vendor/tree-sitter/; WASM is compiled out by leaving TREE_SITTER_FEATURE_WASM undefined (never strip wasm_store.c, it provides the no-op stubs parser.c/language.c call). To re-pin: bump ref, run `node vendor/vendor-grammars.mjs --force`, and paste the sha256 it prints on mismatch. tarball is optional; when absent it is derived from ref.",
+    "package": "tree-sitter",
+    "ref": "v0.26.3",
+    "tarball": "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.3.tar.gz",
+    "sha256": "7f4a7cf0a2cd217444063fe2a4d800bc9d21ed609badc2ac20c0841d67166550",
+    "abi": { "version": 15, "minCompatible": 13 }
+  },
+  "grammars": {
+    "json": {
+      "package": "tree-sitter-json",
+      "version": "0.24.8",
+      "scanner": false,
+      "default": true,
+      "size": "27 KB"
+    },
+    "html": {
+      "package": "tree-sitter-html",
+      "version": "0.23.2",
+      "scanner": true,
+      "default": true,
+      "size": "76 KB"
+    },
+    "css": {
+      "package": "tree-sitter-css",
+      "version": "0.23.2",
+      "scanner": true,
+      "default": true,
+      "size": "0.5 MB"
+    },
+    "markdown": {
+      "package": "@tree-sitter-grammars/tree-sitter-markdown",
+      "version": "0.3.2",
+      "subPath": "tree-sitter-markdown",
+      "scanner": true,
+      "default": true,
+      "size": "1.5 MB",
+      "$comment": "Multi-grammar package; the block grammar (tree-sitter-markdown/) is vendored. The inline sub-grammar is not linked."
+    },
+    "yaml": {
+      "package": "@tree-sitter-grammars/tree-sitter-yaml",
+      "version": "0.7.1",
+      "scanner": true,
+      "default": true,
+      "size": "1 MB"
+    },
+    "go": {
+      "package": "tree-sitter-go",
+      "version": "0.23.4",
+      "scanner": false,
+      "default": true,
+      "size": "1 MB"
+    },
+    "java": {
+      "package": "tree-sitter-java",
+      "version": "0.23.5",
+      "scanner": false,
+      "default": true,
+      "size": "2.5 MB"
+    },
+    "javascript": {
+      "package": "tree-sitter-javascript",
+      "version": "0.23.1",
+      "scanner": true,
+      "default": true,
+      "size": "2.8 MB"
+    },
+    "python": {
+      "package": "tree-sitter-python",
+      "version": "0.23.6",
+      "scanner": true,
+      "default": true,
+      "size": "3.4 MB"
+    },
+    "c": {
+      "package": "tree-sitter-c",
+      "version": "0.23.5",
+      "scanner": false,
+      "default": true,
+      "size": "3.8 MB"
+    },
+    "rust": {
+      "package": "tree-sitter-rust",
+      "version": "0.23.2",
+      "scanner": true,
+      "default": true,
+      "size": "6.3 MB"
+    },
+    "bash": {
+      "package": "tree-sitter-bash",
+      "version": "0.23.3",
+      "scanner": true,
+      "default": true,
+      "size": "9.7 MB"
+    },
+
+    "typescript": {
+      "package": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "subPath": "typescript",
+      "scanner": true,
+      "sharedSrc": ["../../common/scanner.h"],
+      "inherits": ["javascript"],
+      "default": true,
+      "size": "17 MB"
+    },
+    "tsx": {
+      "package": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "subPath": "tsx",
+      "scanner": true,
+      "sharedSrc": ["../../common/scanner.h"],
+      "inherits": ["javascript"],
+      "default": true,
+      "size": "17 MB"
+    },
+    "cpp": {
+      "package": "tree-sitter-cpp",
+      "version": "0.23.4",
+      "scanner": true,
+      "inherits": ["c"],
+      "default": false,
+      "size": "17 MB"
+    },
+    "swift": {
+      "package": "tree-sitter-swift",
+      "version": "0.7.0",
+      "scanner": true,
+      "default": false,
+      "size": "18 MB"
+    },
+    "php": {
+      "package": "tree-sitter-php",
+      "version": "0.24.2",
+      "subPath": "php",
+      "scanner": true,
+      "sharedSrc": ["../../common/scanner.h"],
+      "default": false,
+      "size": "14 MB"
+    },
+    "ruby": {
+      "package": "tree-sitter-ruby",
+      "version": "0.23.1",
+      "scanner": true,
+      "default": false,
+      "size": "15 MB"
+    },
+    "c-sharp": {
+      "package": "tree-sitter-c-sharp",
+      "version": "0.23.1",
+      "scanner": true,
+      "function": "tree_sitter_c_sharp",
+      "default": false,
+      "size": "29 MB"
+    }
+  }
+}

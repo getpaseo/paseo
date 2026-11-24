@@ -354,6 +354,7 @@ export const es: TranslationResources = {
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",
+      turnStats: "Estadísticas del turno",
       forkInNewTab: "Bifurcar en una pestaña nueva",
       forkInNewWorkspace: "Bifurcar en un espacio de trabajo nuevo",
       forkUnavailable: "Actualiza el host para usar esto.",
@@ -924,6 +925,8 @@ export const es: TranslationResources = {
           pushBehind:
             "Push aún no está disponible porque hay cambios más nuevos que implementar primero",
           pushNothing: "Push no está disponible porque no hay nada nuevo que enviar",
+          pushUpstreamGone:
+            "Push no está disponible porque la rama que sigue esta rama ya no existe",
           pullAndPushNoRemote:
             "Tirar y empujar no está disponible aquí porque esta rama aún no está conectada a un control remoto",
           pullAndPushDirty:
@@ -2313,7 +2316,11 @@ export const es: TranslationResources = {
     title: "Uso del plan",
     refresh: "Actualizar",
     reorderCard: "Reordenar {{source}}",
-    showCard: "Mostrar {{source}}",
+    sources: "Fuentes",
+    sourcesCount: "{{shown}} de {{total}}",
+    providerInactive: "Proveedor inactivo",
+    allSourcesHidden: "No hay fuentes de uso visibles",
+    chooseSources: "Elegir fuentes",
     refreshAll: "Actualizar todo",
     refreshing: "Actualizando...",
     loading: "Cargando uso...",
@@ -2354,8 +2361,9 @@ export const es: TranslationResources = {
       resetsIn: "se restablece en {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "se agota ahora",
-      runsOutIn: "se agota en {{duration}}",
+      limitReached: "Límite alcanzado",
+      mayHaveRunOut: "Puede que ya se haya agotado",
+      runsOutAt: "agotamiento previsto {{time}}",
       justNow: "ahora mismo",
       daysAgo: "hace {{value}} d",
       hoursAgo: "hace {{value}} h",
@@ -2897,6 +2905,23 @@ export const es: TranslationResources = {
         name: {
           label: "Nombre",
         },
+        icon: {
+          label: "Icono",
+          accessibilityLabel: "Icono, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
+          options: {
+            server: "Servidor",
+            laptop: "Portátil",
+            desktop: "Escritorio",
+            mini: "Mini",
+            workstation: "Estación de trabajo",
+            cloud: "Nube",
+            container: "Contenedor",
+            board: "PC de placa única",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Color",
           accessibilityLabel: "Color, {{value}}",
@@ -2933,6 +2958,14 @@ export const es: TranslationResources = {
         local: "Local",
         remoteSsh: "SSH remoto",
       },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relé",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Directo",
+        routed: "Vía",
+      },
       connections: {
         title: "Conexiones",
         removeTitle: "Quitar conexión",
@@ -2956,7 +2989,7 @@ export const es: TranslationResources = {
         updateTitle: "¿Actualizar las habilidades dePaseo?",
         uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
         uninstallMessage:
-          "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
+          "Elimina todas las habilidades de orquestación Paseo de ~/.agents, ~/.claude, ~/.codex y ~/.gemini/config.",
         choose: "Elegir habilidades",
         chooseAll: "Todas las habilidades",
         chooseAllHint:
@@ -2965,7 +2998,7 @@ export const es: TranslationResources = {
         chooseEmpty: "Esta versión no incluye habilidades.",
         removeTitle: "¿Eliminar las habilidades deseleccionadas?",
         removeMessage:
-          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
+          "{{skills}} se eliminarán de ~/.agents, ~/.claude, ~/.codex y ~/.gemini/config. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
         saveFailed: "No se pudo guardar tu selección de habilidades.",
         statusFailed: "No se puede comprobar el estado de las habilidades de orquestación.",
         updateFailed: "No se pueden actualizar las habilidades de orquestación.",
@@ -3180,6 +3213,7 @@ export const es: TranslationResources = {
         status: "Estado del proveedor",
         checked: "Comprobado {{time}}",
         diagnosticReport: "Informe de diagnóstico",
+        docs: "Documentación",
         dangerZone: "Zona de peligro",
         removeHint: "Elimina este proveedor de config.json",
       },
@@ -3225,7 +3259,7 @@ export const es: TranslationResources = {
         noSearchMatches: "Ningún modelo coincide con tu búsqueda",
         noneDetected: "No se detectaron modelos",
         noCustom: "No hay modelos personalizados",
-        discovered: "descubierto",
+        title: "Modelos",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",
       },

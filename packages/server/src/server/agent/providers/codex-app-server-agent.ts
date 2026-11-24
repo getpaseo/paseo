@@ -92,6 +92,7 @@ import {
   type CodexServiceTier,
 } from "./codex-feature-definitions.js";
 import {
+  CODEX_MCP_STARTUP_STATUS_METHOD,
   CodexAppServerClient,
   CodexAppServerRpcError,
   parseCodexThreadForkResponse,
@@ -2945,6 +2946,32 @@ function isCodexDeltaNotification(
   );
 }
 
+const CodexMcpStartupStatusSchema = z.object({
+  name: z.string(),
+  threadId: z.string().nullish(),
+  status: z.enum(["starting", "ready", "failed", "cancelled"]),
+  error: z.string().nullish(),
+  failureReason: z.string().nullish(),
+});
+
+function summarizeCodexMcpStartupError(
+  error: string | null | undefined,
+  failureReason: string | null | undefined,
+): string {
+  if (failureReason === "reauthenticationRequired") {
+    return "Reauthentication required";
+  }
+  // Codex includes the remote response body in this error. Keep only the HTTP status.
+  const httpStatus = error?.match(/\bunexpected server response: HTTP ([45]\d{2}):/)?.[1];
+  if (httpStatus) {
+    return `HTTP ${httpStatus}`;
+  }
+  if (error?.includes("handshaking with MCP server failed")) {
+    return "MCP handshake failed";
+  }
+  return "Startup error details omitted";
+}
+
 const CodexNotificationSchema = z.union([
   z
     .object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema })
@@ -4524,7 +4551,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async ensureThreadLoaded(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     // Paseo reads history only when it replays it; the resume response needs no turns.
-    const params: Record<string, unknown> = { threadId: this.currentThreadId, excludeTurns: true };
+    const params: Record<string, unknown> = {
+      threadId: this.currentThreadId,
+      cwd: this.config.cwd ?? null,
+      excludeTurns: true,
+    };
     if (this.deps.customCodexConfig) {
       // Resume otherwise prefers the provider stored on the thread, including
       // the unnamespaced key emitted by earlier Paseo versions.
@@ -6147,6 +6178,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async processNotification(method: string, params: unknown): Promise<void> {
+    if (method === CODEX_MCP_STARTUP_STATUS_METHOD) {
+      this.logMcpStartupStatus(params);
+      return;
+    }
     const notificationParams = toObjectRecord(params);
     if (method === "serverRequest/resolved" && typeof notificationParams?.requestId === "number") {
       const requestId = this.mcpElicitationPermissionIds.get(notificationParams.requestId);
@@ -7682,6 +7717,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     const item = clientMessageId ? { ...timelineItem, clientMessageId } : timelineItem;
     this.activeClientMessageId = null;
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+  }
+
+  private logMcpStartupStatus(params: unknown): void {
+    const parsed = CodexMcpStartupStatusSchema.safeParse(params);
+    if (!parsed.success) {
+      this.logger.trace("Invalid Codex MCP server startup status");
+      return;
+    }
+    const { name, threadId, status, error, failureReason } = parsed.data;
+    const context = {
+      agentId: this.agentId,
+      provider: CODEX_PROVIDER,
+      sessionId: threadId ?? this.currentThreadId,
+      serverName: name,
+      status,
+    };
+    if (status === "failed") {
+      this.logger.warn(
+        { ...context, error: summarizeCodexMcpStartupError(error, failureReason) },
+        "Codex MCP server startup failed",
+      );
+      return;
+    }
+    this.logger.debug(context, "Codex MCP server startup status updated");
   }
 
   private warnUnknownNotificationMethod(method: string, params: unknown): void {
