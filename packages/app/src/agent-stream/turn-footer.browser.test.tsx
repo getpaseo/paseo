@@ -1,6 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PortalProvider } from "@gorhom/portal";
+import type { AgentMetric } from "@getpaseo/protocol/agent-types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { i18n } from "@/i18n/i18next";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
@@ -90,5 +94,59 @@ it.each([
   expect(paintedLinesByLabel(host)).toEqual({
     [input.duration]: 1,
     "Friday 11:11 PM": 1,
+  });
+});
+
+const COMPLETED_TIMING: TurnTiming = { completedAt: FRIDAY_NIGHT, durationMs: 26_000 };
+
+describe("turn stats", () => {
+  const metrics: AgentMetric[] = [
+    { label: "Model", value: "opus" },
+    { label: "Cost", value: "$0.42", tone: "warning" },
+  ];
+
+  function renderFooterWithMetrics(turnMetrics?: AgentMetric[]): void {
+    act(() =>
+      root.render(
+        <PortalProvider>
+          <CompletedTurnFooterRow
+            strategy={createNativeStreamStrategy()}
+            items={[reply]}
+            timing={COMPLETED_TIMING}
+            startIndex={0}
+            supportsTimelineCursor={false}
+            turnMetrics={turnMetrics}
+          />
+          <FloatingPanelPortalHost />
+        </PortalProvider>,
+      ),
+    );
+  }
+
+  it("has no trigger when the provider reported nothing for the turn", () => {
+    renderFooterWithMetrics(undefined);
+
+    expect(page.getByRole("button", { name: "Turn stats" }).elements()).toHaveLength(0);
+  });
+
+  it("shows the turn's metrics while the pointer is on the trigger", async () => {
+    renderFooterWithMetrics(metrics);
+
+    await page.getByRole("button", { name: "Turn stats" }).hover();
+
+    const card = page.getByRole("dialog", { name: "Turn stats" });
+    await expect.element(card).toBeVisible();
+    await expect.element(card.getByText("Model")).toBeVisible();
+    await expect.element(card.getByText("opus")).toBeVisible();
+    await expect.element(card.getByText("$0.42")).toBeVisible();
+  });
+
+  it("keeps the footer's height when the trigger appears", () => {
+    renderFooterWithMetrics(undefined);
+    const without = host.getBoundingClientRect().height;
+
+    renderFooterWithMetrics(metrics);
+
+    expect(host.getBoundingClientRect().height).toBe(without);
   });
 });

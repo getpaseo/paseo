@@ -10,6 +10,7 @@ import {
   downloadUrls,
   appStoreUrl,
   playStoreUrl,
+  testFlightBetaUrl,
   thanksPageHref,
   webAppUrl,
   AppleIcon,
@@ -159,13 +160,15 @@ function Download() {
             </PillGroup>
           </PlatformRow>
 
-          {!onBeta && (
-            <PlatformRow icon={AppleIcon} label="iOS">
-              <PillGroup>
+          <PlatformRow icon={AppleIcon} label="iOS">
+            <PillGroup>
+              {onBeta ? (
+                <DownloadPill href={testFlightBetaUrl} label="TestFlight" external />
+              ) : (
                 <DownloadPill href={appStoreUrl} label="App Store" external />
-              </PillGroup>
-            </PlatformRow>
-          )}
+              )}
+            </PillGroup>
+          </PlatformRow>
         </div>
       </section>
 

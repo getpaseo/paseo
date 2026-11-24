@@ -12,9 +12,11 @@ describe("canonical CLI surface", () => {
     expect(send.opts().behavior).toBe("interrupt");
     await send.parseAsync(["target", "message", "--behavior", "steer"], { from: "user" });
     expect(send.opts().behavior).toBe("steer");
+    await send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" });
+    expect(send.opts().behavior).toBe("queue");
     send.exitOverride().configureOutput({ writeErr: () => {} });
     await expect(
-      send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" }),
+      send.parseAsync(["target", "message", "--behavior", "wait"], { from: "user" }),
     ).rejects.toThrow();
   });
 
