@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   hashAccountKey,
   unavailable,
   type UsageAccount,
@@ -42,7 +43,7 @@ export async function discover(paths = defaultStorePaths()): Promise<UsageAccoun
 
 export async function fetchUsage(
   input: Input,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   if (input.store === "file") {
     const key = await readFileKey(input.path);
