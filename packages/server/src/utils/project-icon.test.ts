@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "fs";
+import { mkdtempSync, symlinkSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -77,6 +77,19 @@ describe("findProjectIcon", () => {
     const result = await findProjectIcon(tempDir);
     expect(result).toBeNull();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "follows symlinked asset folders and skips broken icon links",
+    async () => {
+      const target = join(tempDir, "art");
+      mkdirSync(target);
+      writeFileSync(join(target, "image.png"), "icon content");
+      symlinkSync("missing", join(target, "favicon.svg"));
+      symlinkSync("image.png", join(target, "favicon.png"));
+      symlinkSync(target, join(tempDir, "public"));
+      expect(await findProjectIcon(tempDir)).toBe(join(tempDir, "public", "favicon.png"));
+    },
+  );
 
   it("finds favicon.ico in root directory", async () => {
     writeFileSync(join(tempDir, "favicon.ico"), "icon content");
