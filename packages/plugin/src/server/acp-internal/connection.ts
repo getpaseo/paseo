@@ -479,6 +479,7 @@ interface ActivePrompt {
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
 const SESSION_SCAN_LIMIT = 500;
+const EXTRA_SESSION_SCAN_BUDGET_MS = 2_000;
 // COMPAT(acpAutoAccept): added in v0.17.4, remove after 2027-05-23. The generic ACP adapter saves
 // its Auto Accept toggle as this setting on agents that later moved to a bundled ACP provider.
 const LEGACY_AUTO_ACCEPT_SETTING = "auto_accept";
@@ -998,18 +999,31 @@ class AcpRuntime {
 
   /** Selects the most recent sessions from a bounded scan of the provider's pages. */
   async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
+    const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;
+    let extraScanDeadline: number | undefined;
     // ACP does not guarantee that sessions arrive in recency order.
     for (let pages = 0; pages < SESSION_SCAN_LIMIT; pages += 1) {
-      const page = await this.call(this.connection.listSessions({ cwd, cursor }));
+      const remainingMs =
+        extraScanDeadline === undefined ? undefined : extraScanDeadline - performance.now();
+      if (remainingMs !== undefined && remainingMs <= 0) break;
+      const request = this.call(this.connection.listSessions({ cwd, cursor }));
+      const page =
+        remainingMs === undefined
+          ? await request
+          : await withTimeout(request, remainingMs, "ACP listing scan budget expired").catch(
+              () => undefined,
+            );
+      if (!page) break;
       sessions.push(...page.sessions.slice(0, SESSION_SCAN_LIMIT - sessions.length));
       cursor = page.nextCursor ?? undefined;
       if (!cursor || sessions.length === SESSION_SCAN_LIMIT) break;
+      // Once we have enough rows, further pages can improve the order but must not block the list.
+      if (sessions.length >= wanted)
+        extraScanDeadline ??= performance.now() + EXTRA_SESSION_SCAN_BUDGET_MS;
     }
-    return sessions
-      .sort((a, b) => sessionUpdatedAt(b) - sessionUpdatedAt(a))
-      .slice(0, limit ?? SESSION_SCAN_LIMIT);
+    return sessions.sort((a, b) => sessionUpdatedAt(b) - sessionUpdatedAt(a)).slice(0, wanted);
   }
 
   async drainNotifications(): Promise<void> {
