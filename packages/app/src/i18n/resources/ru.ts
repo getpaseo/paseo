@@ -1593,6 +1593,17 @@ export const ru: TranslationResources = {
         restartWarning:
           "При обновлении приложения работающие агенты будут остановлены, а сеансы терминала закрыты.",
       },
+      syncCallout: {
+        title: "Перезапустите Desktop для синхронизации UI",
+        behindDaemon:
+          "Paseo Desktop {{appVersion}} отстаёт от локального Daemon {{daemonVersion}}.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} старее пакета приложения {{diskVersion}} на диске.",
+        displacedBundle: "Paseo Desktop запущен из заменённого пакета приложения.",
+        agentsPreserved: "Перезапуск Desktop не прервёт работу запущенных агентов.",
+        relaunchAction: "Перезапустить Desktop",
+        relaunchingAction: "Перезапуск...",
+      },
     },
     settings: {
       loadFailed: "Не удалось загрузить настройки настольного приложения.",

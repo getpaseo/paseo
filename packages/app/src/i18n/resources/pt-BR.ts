@@ -1598,6 +1598,16 @@ export const ptBR: TranslationResources = {
         restartWarning:
           "Atualizar o app vai interromper agentes em execução e fechar sessões de terminal.",
       },
+      syncCallout: {
+        title: "Reiniciar Desktop para sincronizar a interface",
+        behindDaemon: "Paseo Desktop {{appVersion}} está atrás do Daemon local {{daemonVersion}}.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} é mais antigo que o pacote {{diskVersion}} em disco.",
+        displacedBundle: "Paseo Desktop está sendo executado a partir de um pacote substituído.",
+        agentsPreserved: "Reiniciar o Desktop não interromperá os agentes em execução.",
+        relaunchAction: "Reiniciar Desktop",
+        relaunchingAction: "Reiniciando...",
+      },
     },
     settings: {
       loadFailed: "Não foi possível carregar as configurações do desktop.",

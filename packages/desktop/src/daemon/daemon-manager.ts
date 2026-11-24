@@ -50,6 +50,7 @@ import {
 import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
+import { getDesktopBundleSyncInfo } from "../system/bundle-sync.js";
 import { describeSandbox } from "../diagnostics/sandbox.js";
 import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
 import { getDesktopUpdaterDiagnostics } from "../diagnostics/updater.js";
@@ -491,10 +492,31 @@ async function resolveRequestedReleaseChannel(
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
-    desktop_get_runtime_info: () => ({
-      appVersion: resolveDesktopAppVersion(),
-      runningUnderARM64Translation: isRunningUnderARM64Translation(),
-    }),
+    desktop_get_runtime_info: () => {
+      const appVersion = resolveDesktopAppVersion();
+      const bundleSync = getDesktopBundleSyncInfo();
+      return {
+        appVersion,
+        runningUnderARM64Translation: isRunningUnderARM64Translation(),
+        displacedBundle: bundleSync.displacedBundle,
+        onDiskAppVersion: bundleSync.onDiskAppVersion,
+      };
+    },
+    relaunch_desktop_app: () => {
+      const bundleSync = getDesktopBundleSyncInfo();
+      logDesktopDaemonLifecycle("relaunch requested", {
+        execPath: bundleSync.relaunchExecPath ?? process.execPath,
+        displacedBundle: bundleSync.displacedBundle,
+        onDiskAppVersion: bundleSync.onDiskAppVersion,
+      });
+      if (bundleSync.relaunchExecPath) {
+        app.relaunch({ execPath: bundleSync.relaunchExecPath });
+      } else {
+        app.relaunch();
+      }
+      app.quit();
+      return { relaunching: true };
+    },
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
     desktop_local_credential: async (args) => {
       const instance = await readDaemonInstance(getPaseoHome());

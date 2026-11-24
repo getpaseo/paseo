@@ -1554,6 +1554,15 @@ export const zhCN: TranslationResources = {
         newVersionReady: "新版本已准备好安装。",
         restartWarning: "升级 app 会停止正在运行的 agents，并关闭 terminal 会话。",
       },
+      syncCallout: {
+        title: "重启 Desktop 以同步界面",
+        behindDaemon: "Paseo Desktop {{appVersion}} 落后于本地 Daemon {{daemonVersion}}。",
+        behindOnDisk: "Paseo Desktop {{appVersion}} 落后于磁盘上的 {{diskVersion}} 应用包。",
+        displacedBundle: "Paseo Desktop 正在从已被替换的应用包中运行。",
+        agentsPreserved: "重启 Desktop 不会中断正在运行的 agents。",
+        relaunchAction: "重启 Desktop",
+        relaunchingAction: "正在重启...",
+      },
     },
     settings: {
       loadFailed: "无法加载桌面设置。",

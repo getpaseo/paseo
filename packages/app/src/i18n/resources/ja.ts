@@ -1584,6 +1584,17 @@ export const ja: TranslationResources = {
         restartWarning:
           "アプリを更新すると、実行中のエージェントが停止しターミナルセッションが閉じられます。",
       },
+      syncCallout: {
+        title: "UI を同期するために Desktop を再起動",
+        behindDaemon:
+          "Paseo Desktop {{appVersion}} はローカルの Daemon {{daemonVersion}} より古いバージョンです。",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} はディスク上の {{diskVersion}} バンドルより古いバージョンです。",
+        displacedBundle: "Paseo Desktop は置き換えられたアプリバンドルから実行されています。",
+        agentsPreserved: "Desktop を再起動しても実行中のエージェントは中断されません。",
+        relaunchAction: "Desktop を再起動",
+        relaunchingAction: "再起動中...",
+      },
     },
     settings: {
       loadFailed: "デスクトップ設定を読み込めません。",

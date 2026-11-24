@@ -33,12 +33,18 @@ const mocks = vi.hoisted(() => ({
   logError: vi.fn(),
   appLogPath: "",
   getElectronLogFile: vi.fn(),
+  getAppPath: vi.fn(() => "/Applications/Paseo.app/Contents/Resources/app.asar"),
+  relaunch: vi.fn(),
+  quit: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(() => mocks.paseoHome),
     getVersion: vi.fn(() => "1.2.3"),
+    getAppPath: mocks.getAppPath,
+    relaunch: mocks.relaunch,
+    quit: mocks.quit,
     isPackaged: true,
   },
   ipcMain: { handle: vi.fn() },
@@ -102,6 +108,10 @@ describe("daemon-manager commands", () => {
     mocks.logError.mockReset();
     mocks.getElectronLogFile.mockReset();
     mocks.getElectronLogFile.mockReturnValue({ path: mocks.appLogPath });
+    mocks.getAppPath.mockReset();
+    mocks.getAppPath.mockReturnValue("/Applications/Paseo.app/Contents/Resources/app.asar");
+    mocks.relaunch.mockReset();
+    mocks.quit.mockReset();
   });
 
   afterEach(() => {
@@ -130,6 +140,19 @@ describe("daemon-manager commands", () => {
       platform: process.platform,
       currentVersion: "1.2.3",
     });
+  });
+
+  it("exposes runtime info and relaunches via the desktop command boundary", () => {
+    const handlers = createDaemonCommandHandlers();
+    expect(handlers.desktop_get_runtime_info()).toMatchObject({
+      appVersion: "1.2.3",
+      runningUnderARM64Translation: expect.any(Boolean),
+      displacedBundle: expect.any(Boolean),
+    });
+
+    expect(handlers.relaunch_desktop_app()).toEqual({ relaunching: true });
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
+    expect(mocks.quit).toHaveBeenCalledTimes(1);
   });
 
   it("reports a stopped daemon without launching the CLI when no local daemon runs", async () => {

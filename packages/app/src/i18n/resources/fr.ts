@@ -1601,6 +1601,17 @@ export const fr: TranslationResources = {
         restartWarning:
           "La mise à jour de l’application arrêtera les agents en cours et fermera les sessions de terminal.",
       },
+      syncCallout: {
+        title: "Redémarrer Desktop pour synchroniser l’interface",
+        behindDaemon:
+          "Paseo Desktop {{appVersion}} est en retard sur le Daemon local {{daemonVersion}}.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} est plus ancien que le paquet {{diskVersion}} sur disque.",
+        displacedBundle: "Paseo Desktop s’exécute depuis un paquet d’application remplacé.",
+        agentsPreserved: "Le redémarrage de Desktop n’interrompra pas les agents en cours.",
+        relaunchAction: "Redémarrer Desktop",
+        relaunchingAction: "Redémarrage...",
+      },
     },
     settings: {
       loadFailed: "Impossible de charger les paramètres de l’application de bureau.",

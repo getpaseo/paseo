@@ -755,6 +755,8 @@ describe("translation resources", () => {
     expect(en.desktop.updates.callout.restartWarning).toBe(
       "Upgrading the app will stop running agents and close terminal sessions.",
     );
+    expect(en.desktop.updates.syncCallout.title).toBe("Restart Desktop to sync UI");
+    expect(en.desktop.updates.syncCallout.relaunchAction).toBe("Restart Desktop");
     expect(en.desktop.rosetta.title).toBe("Download the Apple Silicon build");
     expect(en.desktop.rosetta.runningIntel).toBe(
       "You're running the Intel build of Paseo under Rosetta on Apple Silicon.",

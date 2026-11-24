@@ -1608,6 +1608,18 @@ export const es: TranslationResources = {
         restartWarning:
           "La actualización de la aplicación dejará de ejecutar agentes y cerrará sesiones de terminal.",
       },
+      syncCallout: {
+        title: "Reiniciar Desktop para sincronizar la interfaz",
+        behindDaemon:
+          "Paseo Desktop {{appVersion}} está detrás del Daemon local {{daemonVersion}}.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} es anterior al paquete {{diskVersion}} en disco.",
+        displacedBundle:
+          "Paseo Desktop se está ejecutando desde un paquete de aplicación reemplazado.",
+        agentsPreserved: "Reiniciar Desktop no interrumpirá los agentes en ejecución.",
+        relaunchAction: "Reiniciar Desktop",
+        relaunchingAction: "Reiniciando...",
+      },
     },
     settings: {
       loadFailed: "No se puede cargar la configuración del escritorio.",

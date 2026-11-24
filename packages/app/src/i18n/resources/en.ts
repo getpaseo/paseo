@@ -1595,6 +1595,16 @@ export const en = {
         newVersionReady: "A new version is ready to install.",
         restartWarning: "Upgrading the app will stop running agents and close terminal sessions.",
       },
+      syncCallout: {
+        title: "Restart Desktop to sync UI",
+        behindDaemon: "Paseo Desktop {{appVersion}} is behind local Daemon {{daemonVersion}}.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} is older than the {{diskVersion}} app bundle on disk.",
+        displacedBundle: "Paseo Desktop is running from a replaced app bundle.",
+        agentsPreserved: "Relaunching Desktop will not interrupt running agents.",
+        relaunchAction: "Restart Desktop",
+        relaunchingAction: "Restarting...",
+      },
     },
     settings: {
       loadFailed: "Unable to load desktop settings.",

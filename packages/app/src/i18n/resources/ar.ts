@@ -1567,6 +1567,17 @@ export const ar: TranslationResources = {
         newVersionReady: "إصدار جديد جاهز للتثبيت.",
         restartWarning: "ستؤدي ترقية التطبيق إلى إيقاف تشغيل الوكلاء وإغلاق الجلسات الطرفية.",
       },
+      syncCallout: {
+        title: "أعد تشغيل تطبيق سطح المكتب لمزامنة الواجهة",
+        behindDaemon:
+          "إصدار Paseo Desktop {{appVersion}} متأخر عن Daemon المحلي {{daemonVersion}}.",
+        behindOnDisk:
+          "إصدار Paseo Desktop {{appVersion}} أقدم من حزمة التطبيق {{diskVersion}} على القرص.",
+        displacedBundle: "يعمل Paseo Desktop من حزمة تطبيق تم استبدالها.",
+        agentsPreserved: "لن تؤدي إعادة تشغيل تطبيق سطح المكتب إلى مقاطعة الوكلاء قيد التشغيل.",
+        relaunchAction: "إعادة تشغيل سطح المكتب",
+        relaunchingAction: "جارٍ إعادة التشغيل...",
+      },
     },
     settings: {
       loadFailed: "غير قادر على تحميل إعدادات سطح المكتب.",

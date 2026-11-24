@@ -101,6 +101,7 @@ import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowChrome } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { DesktopSyncCalloutSource } from "@/desktop/updates/desktop-sync-callout-source";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
@@ -563,6 +564,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <AppearanceStyleBoundary>
         <DownloadToast />
         <RosettaCalloutSource />
+        <DesktopSyncCalloutSource />
         <UpdateCalloutSource />
         <LegacyAgentSkillsMigration />
         <WorktreeSetupCalloutSource />

@@ -1576,6 +1576,17 @@ export const ko: TranslationResources = {
         newVersionReady: "새 버전 설치가 준비되었습니다.",
         restartWarning: "앱을 업그레이드하면 실행 중인 에이전트가 중지되고 터미널 세션이 닫힙니다.",
       },
+      syncCallout: {
+        title: "UI 동기화를 위해 Desktop 다시 시작",
+        behindDaemon:
+          "Paseo Desktop {{appVersion}} 버전이 로컬 Daemon {{daemonVersion}}보다 뒤처져 있습니다.",
+        behindOnDisk:
+          "Paseo Desktop {{appVersion}} 버전이 디스크의 {{diskVersion}} 앱 번들보다 오래되었습니다.",
+        displacedBundle: "Paseo Desktop이 교체된 앱 번들에서 실행 중입니다.",
+        agentsPreserved: "Desktop을 다시 시작해도 실행 중인 에이전트가 중단되지 않습니다.",
+        relaunchAction: "Desktop 다시 시작",
+        relaunchingAction: "다시 시작하는 중...",
+      },
     },
     settings: {
       loadFailed: "데스크톱 설정을 불러올 수 없습니다.",

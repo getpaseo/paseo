@@ -22,6 +22,8 @@ export interface DesktopAppUpdateInstallResult {
 export interface DesktopRuntimeInfo {
   appVersion: string | null;
   runningUnderARM64Translation: boolean;
+  displacedBundle: boolean;
+  onDiskAppVersion: string | null;
 }
 
 export type DesktopReleaseChannel = "stable" | "beta";
@@ -86,18 +88,26 @@ export function parseDesktopRuntimeInfo(raw: unknown): DesktopRuntimeInfo {
     return {
       appVersion: null,
       runningUnderARM64Translation: false,
+      displacedBundle: false,
+      onDiskAppVersion: null,
     };
   }
 
   return {
     appVersion: toStringOrNull(raw.appVersion),
     runningUnderARM64Translation: raw.runningUnderARM64Translation === true,
+    displacedBundle: raw.displacedBundle === true,
+    onDiskAppVersion: toStringOrNull(raw.onDiskAppVersion),
   };
 }
 
 export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
   const result = await invokeDesktopCommand<unknown>("desktop_get_runtime_info");
   return parseDesktopRuntimeInfo(result);
+}
+
+export async function relaunchDesktopApp(): Promise<void> {
+  await invokeDesktopCommand("relaunch_desktop_app");
 }
 
 export async function checkDesktopAppUpdate({
@@ -177,6 +187,78 @@ export function isVersionMismatch(
   }
 
   return app !== daemon;
+}
+
+interface ParsedSemver {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string | null;
+}
+
+function parseSemver(version: string | null | undefined): ParsedSemver | null {
+  const normalized = normalizeVersionForComparison(version);
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] ?? null,
+  };
+}
+
+function comparePrerelease(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+
+  const aParts = a.split(".");
+  const bParts = b.split(".");
+  const length = Math.max(aParts.length, bParts.length);
+
+  for (let i = 0; i < length; i++) {
+    const aPart = aParts[i];
+    const bPart = bParts[i];
+    if (aPart === undefined) return -1;
+    if (bPart === undefined) return 1;
+
+    const aNum = /^\d+$/.test(aPart) ? Number(aPart) : null;
+    const bNum = /^\d+$/.test(bPart) ? Number(bPart) : null;
+    if (aNum !== null && bNum !== null) {
+      if (aNum !== bNum) return aNum - bNum;
+    } else if (aNum !== null) {
+      return -1;
+    } else if (bNum !== null) {
+      return 1;
+    } else if (aPart !== bPart) {
+      return aPart < bPart ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+export function isVersionAhead(
+  candidateVersion: string | null | undefined,
+  currentVersion: string | null | undefined,
+): boolean {
+  const candidate = parseSemver(candidateVersion);
+  const current = parseSemver(currentVersion);
+  if (!candidate || !current) {
+    return false;
+  }
+
+  if (candidate.major !== current.major) return candidate.major > current.major;
+  if (candidate.minor !== current.minor) return candidate.minor > current.minor;
+  if (candidate.patch !== current.patch) return candidate.patch > current.patch;
+  return comparePrerelease(candidate.prerelease, current.prerelease) > 0;
 }
 
 export function formatVersionWithPrefix(version: string | null | undefined): string {

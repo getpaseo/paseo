@@ -100,15 +100,33 @@ describe("desktop-updates helpers", () => {
       parseDesktopRuntimeInfo({
         appVersion: " 0.1.64 ",
         runningUnderARM64Translation: true,
+        displacedBundle: true,
+        onDiskAppVersion: " 0.1.65 ",
       }),
     ).toEqual({
       appVersion: "0.1.64",
       runningUnderARM64Translation: true,
+      displacedBundle: true,
+      onDiskAppVersion: "0.1.65",
     });
     expect(parseDesktopRuntimeInfo(null)).toEqual({
       appVersion: null,
       runningUnderARM64Translation: false,
+      displacedBundle: false,
+      onDiskAppVersion: null,
     });
+  });
+
+  it("compares semantic versions to detect when daemon or disk bundle is ahead", async () => {
+    const { isVersionAhead } = await loadModuleForPlatform("web");
+
+    expect(isVersionAhead("0.17.4", "0.17.3")).toBe(true);
+    expect(isVersionAhead("v0.18.0", "0.17.4")).toBe(true);
+    expect(isVersionAhead("0.17.4", "0.17.4-beta.1")).toBe(true);
+    expect(isVersionAhead("0.17.4-beta.2", "0.17.4-beta.1")).toBe(true);
+    expect(isVersionAhead("0.17.3", "0.17.4")).toBe(false);
+    expect(isVersionAhead("0.17.4", "0.17.4")).toBe(false);
+    expect(isVersionAhead(null, "0.17.4")).toBe(false);
   });
 
   it("builds the direct Apple Silicon DMG URL from a version", async () => {
