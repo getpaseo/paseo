@@ -4,9 +4,8 @@ import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import type { DiffLine } from "@/utils/tool-call-parsers";
-import { diffLinePrefix } from "@/utils/diff-highlight";
+import { diffLinePrefix, mergeDiffTokensAndSegments } from "@/utils/diff-highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isWeb } from "@/constants/platform";
@@ -17,6 +16,31 @@ interface DiffViewerProps {
   diffLines: DiffLine[];
   emptyLabel?: string;
   fillAvailableHeight?: boolean;
+}
+
+function highlightStyleForLineType(lineType: DiffLine["type"]) {
+  if (lineType === "add") return styles.addHighlight;
+  if (lineType === "remove") return styles.removeHighlight;
+  return undefined;
+}
+
+function resolveRunStyle(
+  tokenStyle: ReturnType<typeof syntaxTokenStyleFor> | undefined,
+  highlightStyle: typeof styles.addHighlight | typeof styles.removeHighlight | undefined,
+  changed: boolean,
+) {
+  if (!changed || !highlightStyle) return tokenStyle;
+  if (!tokenStyle) return highlightStyle;
+  return [tokenStyle, highlightStyle];
+}
+
+function keySegments(segments: NonNullable<DiffLine["segments"]>) {
+  let offset = 0;
+  return segments.map((segment) => {
+    const key = `${offset}-${segment.changed ? "c" : "u"}:${segment.text}`;
+    offset += segment.text.length;
+    return { key, segment };
+  });
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
@@ -49,13 +73,17 @@ function DiffLineRow({ line }: { line: DiffLine }) {
     ],
     [line.type],
   );
+  const keyedSegments = React.useMemo(
+    () => (line.segments ? keySegments(line.segments) : null),
+    [line.segments],
+  );
 
   if (line.tokens) {
     return (
       <View style={lineContainerStyle}>
         <Text style={styles.lineText}>
           <Text style={prefixStyle}>{diffLinePrefix(line)}</Text>
-          <DiffTokens tokens={line.tokens} />
+          <DiffTokens tokens={line.tokens} segments={line.segments} lineType={line.type} />
         </Text>
       </View>
     );
@@ -63,17 +91,13 @@ function DiffLineRow({ line }: { line: DiffLine }) {
 
   return (
     <View style={lineContainerStyle}>
-      {line.segments ? (
+      {keyedSegments ? (
         <Text style={styles.lineText}>
           <Text style={line.type === "add" ? styles.addText : styles.removeText}>
             {line.content[0]}
           </Text>
-          {line.segments.map((segment) => (
-            <DiffSegment
-              key={`${segment.changed ? "c" : "u"}:${segment.text}`}
-              segment={segment}
-              lineType={line.type}
-            />
+          {keyedSegments.map(({ key, segment }) => (
+            <DiffSegment key={key} segment={segment} lineType={line.type} />
           ))}
         </Text>
       ) : (
@@ -83,18 +107,35 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   );
 }
 
-function DiffTokens({ tokens }: { tokens: NonNullable<DiffLine["tokens"]> }) {
-  const keyed = React.useMemo(
-    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
-    [tokens],
-  );
+function DiffTokens({
+  tokens,
+  segments,
+  lineType,
+}: {
+  tokens: NonNullable<DiffLine["tokens"]>;
+  segments?: DiffLine["segments"];
+  lineType: DiffLine["type"];
+}) {
+  const keyed = React.useMemo(() => {
+    let offset = 0;
+    return mergeDiffTokensAndSegments(tokens, segments).map((run) => {
+      const key = `${offset}-${run.changed ? "c" : "u"}-${run.text}`;
+      offset += run.text.length;
+      return { key, run };
+    });
+  }, [tokens, segments]);
+  const highlightStyle = highlightStyleForLineType(lineType);
+
   return (
     <>
-      {keyed.map(({ key, token }) => (
-        <Text key={key} style={token.style ? syntaxTokenStyleFor(token.style) : undefined}>
-          {token.text}
-        </Text>
-      ))}
+      {keyed.map(({ key, run }) => {
+        const tokenStyle = run.style ? syntaxTokenStyleFor(run.style) : undefined;
+        return (
+          <Text key={key} style={resolveRunStyle(tokenStyle, highlightStyle, run.changed)}>
+            {run.text}
+          </Text>
+        );
+      })}
     </>
   );
 }
@@ -122,24 +163,11 @@ export function DiffViewer({
   fillAvailableHeight = false,
 }: DiffViewerProps) {
   const { t } = useTranslation();
-  const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
   const resolvedEmptyLabel = emptyLabel ?? t("diffViewer.empty");
-  const handleInnerLayout = React.useCallback(
-    (e: { nativeEvent: { layout: { width: number } } }) =>
-      setScrollViewWidth(e.nativeEvent.layout.width),
-    [],
-  );
 
   const outerScrollStyle = React.useMemo(
     () => [styles.verticalScroll, fillAvailableHeight && styles.fillHeight],
     [fillAvailableHeight],
-  );
-  const linesContainerStyle = React.useMemo(
-    () => [
-      styles.linesContainer,
-      scrollViewWidth > 0 && inlineUnistylesStyle({ minWidth: scrollViewWidth }),
-    ],
-    [scrollViewWidth],
   );
   const keyedDiffLines = React.useMemo(
     () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
@@ -159,40 +187,26 @@ export function DiffViewer({
   }
 
   const lines = (
-    <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET}>
+    <View style={styles.linesContainer} dataSet={CODE_SURFACE_DATASET}>
       {keyedDiffLines.map(({ key, line }) => (
         <DiffLineRow key={key} line={line} />
       ))}
     </View>
   );
 
-  const horizontalScroll = (
-    <ScrollView
-      horizontal
-      nestedScrollEnabled
-      showsHorizontalScrollIndicator
-      contentContainerStyle={styles.horizontalContent}
-      onLayout={handleInnerLayout}
-    >
-      {lines}
-    </ScrollView>
-  );
-
   // Capped tool details own vertical scrolling outside the diff.
-  if (!fillAvailableHeight) return horizontalScroll;
+  if (!fillAvailableHeight) return lines;
 
-  const content = (
+  return (
     <ScrollView
       style={outerScrollStyle}
       contentContainerStyle={webVerticalContentStyle}
       nestedScrollEnabled
       showsVerticalScrollIndicator
     >
-      {horizontalScroll}
+      {lines}
     </ScrollView>
   );
-
-  return content;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -208,17 +222,16 @@ const styles = StyleSheet.create((theme) => {
       flexGrow: 1,
       paddingBottom: insets.extraBottom,
     },
-    horizontalContent: {
-      flexDirection: "column" as const,
-      paddingRight: insets.extraRight,
-    },
     linesContainer: {
-      alignSelf: "flex-start",
+      width: "100%",
       padding: insets.padding,
     },
     line: {
-      minWidth: "100%",
-      paddingHorizontal: 0,
+      width: "100%",
+      borderLeftWidth: 2,
+      borderLeftColor: "transparent",
+      paddingLeft: 4,
+      paddingRight: 4,
       paddingVertical: theme.spacing[1],
     },
     lineText: {
@@ -227,8 +240,8 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.foreground,
       ...(isWeb
         ? {
-            whiteSpace: "pre",
-            overflowWrap: "normal",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
           }
         : null),
     },
@@ -240,12 +253,14 @@ const styles = StyleSheet.create((theme) => {
     },
     addLine: {
       backgroundColor: "rgba(46, 160, 67, 0.15)",
+      borderLeftColor: "rgba(46, 160, 67, 0.75)",
     },
     addText: {
       color: theme.colors.foreground,
     },
     removeLine: {
       backgroundColor: "rgba(248, 81, 73, 0.1)",
+      borderLeftColor: "rgba(248, 81, 73, 0.75)",
     },
     removeText: {
       color: theme.colors.foreground,

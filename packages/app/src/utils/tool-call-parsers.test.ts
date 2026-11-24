@@ -83,13 +83,95 @@ describe("tool-call-parsers", () => {
     expect(parsed).toEqual([
       { type: "header", content: "diff --git a/alpha.txt b/alpha.txt" },
       { type: "header", content: "@@ -1 +1 @@" },
-      { type: "remove", content: "-color = blue" },
-      { type: "add", content: "+color = green" },
+      {
+        type: "remove",
+        content: "-color = blue",
+        segments: [
+          { text: "color = ", changed: false },
+          { text: "blue", changed: true },
+        ],
+      },
+      {
+        type: "add",
+        content: "+color = green",
+        segments: [
+          { text: "color = ", changed: false },
+          { text: "green", changed: true },
+        ],
+      },
       { type: "header", content: "diff --git a/beta.txt b/beta.txt" },
       { type: "header", content: "@@ -1 +1 @@" },
-      { type: "remove", content: "-size = small" },
-      { type: "add", content: "+size = large" },
+      {
+        type: "remove",
+        content: "-size = small",
+        segments: [
+          { text: "size = ", changed: false },
+          { text: "small", changed: true },
+        ],
+      },
+      {
+        type: "add",
+        content: "+size = large",
+        segments: [
+          { text: "size = ", changed: false },
+          { text: "large", changed: true },
+        ],
+      },
     ]);
+  });
+
+  it("pairs multi-line remove/add blocks for word-level highlights", () => {
+    const diff = buildLineDiff(
+      "const first = 1;\nconst second = 2;",
+      "const first = 10;\nconst second = 20;",
+    );
+
+    expect(diff.map((line) => line.segments)).toEqual([
+      [
+        { text: "const first = ", changed: false },
+        { text: "1", changed: true },
+        { text: ";", changed: false },
+      ],
+      [
+        { text: "const second = ", changed: false },
+        { text: "2", changed: true },
+        { text: ";", changed: false },
+      ],
+      [
+        { text: "const first = ", changed: false },
+        { text: "10", changed: true },
+        { text: ";", changed: false },
+      ],
+      [
+        { text: "const second = ", changed: false },
+        { text: "20", changed: true },
+        { text: ";", changed: false },
+      ],
+    ]);
+  });
+
+  it("highlights individual CJK characters and long lines", () => {
+    const prefix = "x".repeat(700);
+    const diff = buildLineDiff(
+      `${prefix} 把配置改成旧值 (M_i=352)`,
+      `${prefix} 把配置改成新值 (M_i=353)`,
+    );
+
+    const remove = diff.find((line) => line.type === "remove");
+    const add = diff.find((line) => line.type === "add");
+    expect(
+      remove?.segments?.filter((segment) => segment.changed).map((segment) => segment.text),
+    ).toEqual(["旧", "352"]);
+    expect(
+      add?.segments?.filter((segment) => segment.changed).map((segment) => segment.text),
+    ).toEqual(["新", "353"]);
+  });
+
+  it("skips noisy word highlights when a line is almost entirely rewritten", () => {
+    const diff = buildLineDiff("alpha beta gamma delta", "12345 67890 !@#$% ^&*()");
+
+    expect(diff.find((line) => line.type === "remove")?.segments).toBeUndefined();
+    expect(diff.find((line) => line.type === "add")?.segments).toBeUndefined();
   });
 
   it("extracts TodoWrite task entries", () => {

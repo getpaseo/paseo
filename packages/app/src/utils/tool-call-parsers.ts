@@ -24,61 +24,107 @@ function splitIntoLines(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split("\n");
 }
 
-function splitIntoWords(text: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inWord = false;
+const WORD_TOKEN_RE =
+  /[A-Za-z0-9_$]+|[\u3000-\u9fff\u3040-\u30ff\uac00-\ud7af]|\s+|[^A-Za-z0-9_$\s\u3000-\u9fff\u3040-\u30ff\uac00-\ud7af]/g;
 
-  for (const char of text) {
-    const isWordChar = /\w/.test(char);
-    if (isWordChar) {
-      if (!inWord && current) {
-        result.push(current);
-        current = "";
-      }
-      inWord = true;
-      current += char;
-    } else {
-      if (inWord && current) {
-        result.push(current);
-        current = "";
-      }
-      inWord = false;
-      current += char;
-    }
-  }
-  if (current) {
-    result.push(current);
-  }
-  return result;
+function splitIntoWords(text: string): string[] {
+  return text.match(WORD_TOKEN_RE) ?? [];
 }
 
 const MAX_EDIT_DISTANCE = 256;
 const FULL_CONTEXT_LINE_LIMIT = 128;
 const CONTEXT_LINES = 3;
 const REPLACEMENT_PREVIEW_LINES = 32;
+const MAX_WORD_DIFF_LINE_LENGTH = 2000;
+const MAX_WORD_DIFF_EDIT_DISTANCE = 128;
+const MAX_WORD_DIFF_CHANGE_RATIO = 0.75;
 const OMITTED_LINES: DiffLine = { type: "header", content: "…" };
 
+function stripDiffMarker(line: DiffLine): string {
+  if (line.type === "remove" && line.content.startsWith("-")) {
+    return line.content.slice(1);
+  }
+  if (line.type === "add" && line.content.startsWith("+")) {
+    return line.content.slice(1);
+  }
+  return line.content;
+}
+
+function computeLinePairSegments(
+  before: DiffLine,
+  after: DiffLine,
+): { beforeSegments: DiffSegment[]; afterSegments: DiffSegment[] } | null {
+  const oldText = stripDiffMarker(before);
+  const newText = stripDiffMarker(after);
+  if (oldText === newText) return null;
+  if (oldText.length > MAX_WORD_DIFF_LINE_LENGTH || newText.length > MAX_WORD_DIFF_LINE_LENGTH) {
+    return null;
+  }
+
+  const words = diffArrays(splitIntoWords(oldText), splitIntoWords(newText), {
+    maxEditLength: MAX_WORD_DIFF_EDIT_DISTANCE,
+  });
+  if (!words) return null;
+
+  const beforeSegments: DiffSegment[] = [];
+  const afterSegments: DiffSegment[] = [];
+  let changedBefore = 0;
+  let changedAfter = 0;
+
+  for (const part of words) {
+    const text = part.value.join("");
+    if (!text) continue;
+    if (!part.added) {
+      const changed = Boolean(part.removed);
+      if (changed) changedBefore += text.length;
+      beforeSegments.push({ text, changed });
+    }
+    if (!part.removed) {
+      const changed = Boolean(part.added);
+      if (changed) changedAfter += text.length;
+      afterSegments.push({ text, changed });
+    }
+  }
+
+  if (changedBefore === 0 && changedAfter === 0) return null;
+  if (
+    oldText.length > 0 &&
+    newText.length > 0 &&
+    changedBefore > oldText.length * MAX_WORD_DIFF_CHANGE_RATIO &&
+    changedAfter > newText.length * MAX_WORD_DIFF_CHANGE_RATIO
+  ) {
+    return null;
+  }
+
+  return { beforeSegments, afterSegments };
+}
+
 function addWordHighlights(diff: DiffLine[]): void {
-  for (let index = 0; index + 1 < diff.length; index++) {
-    const before = diff[index];
-    const after = diff[index + 1];
-    if (before.type !== "remove" || after.type !== "add") continue;
-    if (before.content.length + after.content.length > 1024) continue;
-
-    const words = diffArrays(
-      splitIntoWords(before.content.slice(1)),
-      splitIntoWords(after.content.slice(1)),
-      { maxEditLength: 64 },
-    );
-    if (!words) continue;
-
-    before.segments = words
-      .filter((part) => !part.added)
-      .map((part) => ({ text: part.value.join(""), changed: part.removed }));
-    after.segments = words
-      .filter((part) => !part.removed)
-      .map((part) => ({ text: part.value.join(""), changed: part.added }));
+  let index = 0;
+  while (index < diff.length) {
+    if (diff[index].type !== "remove") {
+      index += 1;
+      continue;
+    }
+    const removeStart = index;
+    while (index < diff.length && diff[index].type === "remove") {
+      index += 1;
+    }
+    const removeEnd = index;
+    const addStart = index;
+    while (index < diff.length && diff[index].type === "add") {
+      index += 1;
+    }
+    const addEnd = index;
+    const pairCount = Math.min(removeEnd - removeStart, addEnd - addStart);
+    for (let offset = 0; offset < pairCount; offset += 1) {
+      const before = diff[removeStart + offset];
+      const after = diff[addStart + offset];
+      const result = computeLinePairSegments(before, after);
+      if (!result) continue;
+      before.segments = result.beforeSegments;
+      after.segments = result.afterSegments;
+    }
   }
 }
 
@@ -206,6 +252,7 @@ export function parseUnifiedDiff(diffText?: string): DiffLine[] {
     diff.push({ type: "context", content: line });
   }
 
+  addWordHighlights(diff);
   return diff;
 }
 
