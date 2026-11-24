@@ -17,8 +17,9 @@ const changeRequestSnapshotSchema = changeRequestStatusSchema.extend({
   activity: z.array(
     z.object({
       id: z.string(),
-      kind: z.enum(["comment", "inline comment", "review"]),
+      kind: z.enum(["comment", "inline comment", "review", "approval"]),
       url: z.string(),
+      message: z.string().optional(),
     }),
   ),
 });

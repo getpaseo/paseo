@@ -16,6 +16,10 @@ import type {
   PluginHandlerContext,
   PluginServerContext,
   PluginServerContribution,
+  PluginWorktreeCreateInput,
+  PluginWorktreeRemoveRequest,
+  PluginWorktreeRestoreRequest,
+  WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
 import {
@@ -115,6 +119,8 @@ export function createPluginWorker(options: {
   const subscriptions = new PluginSubscriptionHandlers({ send, sendAndWait });
   const providers = new Map<string, ProviderRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
+  let worktreeManager: WorktreeManagerRegistration | null = null;
+  const worktreeRequests = new Map<string, AbortController>();
   const providerConnections = new Map<
     string,
     { connection: ProviderConnection; unsubscribe: () => void; closing?: Promise<void> }
@@ -201,6 +207,11 @@ export function createPluginWorker(options: {
     }
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
+    if (
+      provider.docsUrl !== undefined &&
+      (typeof provider.docsUrl !== "string" || !isHttpUrl(provider.docsUrl))
+    )
+      throw new Error(`Plugin provider ${id} docsUrl must be an http(s) URL`);
     validateProviderInstallation(id, provider.installation);
     if (
       provider.command !== undefined &&
@@ -220,12 +231,45 @@ export function createPluginWorker(options: {
       typeof source.fetch !== "function" ||
       typeof source.discover !== "function" ||
       !source.input ||
-      typeof source.input.parseAsync !== "function"
+      typeof source.input.parseAsync !== "function" ||
+      (source.providers !== undefined &&
+        (!Array.isArray(source.providers) ||
+          source.providers.some((provider) => typeof provider !== "string" || !provider.trim())))
     ) {
       throw new Error(`Invalid usage source: ${source.id}`);
     }
     if (usageSources.has(id)) throw new Error(`Duplicate usage source: ${id}`);
     usageSources.set(id, { ...source, id });
+  }
+
+  function worktreeManagerCapabilities() {
+    if (!worktreeManager) return null;
+    return {
+      hasRemove: worktreeManager.remove !== undefined,
+      hasRestore: worktreeManager.restore !== undefined,
+    };
+  }
+
+  function registerWorktreeManager(manager: WorktreeManagerRegistration): () => void {
+    if (!manager || typeof manager.create !== "function") {
+      throw new Error("Plugin worktree manager must implement create()");
+    }
+    if (manager.remove !== undefined && typeof manager.remove !== "function") {
+      throw new Error("Invalid remove callback for plugin worktree manager");
+    }
+    if (manager.restore !== undefined && typeof manager.restore !== "function") {
+      throw new Error("Invalid restore callback for plugin worktree manager");
+    }
+    if (worktreeManager !== null) {
+      throw new Error("Plugin already registered a worktree manager");
+    }
+    worktreeManager = manager;
+    send({ type: "worktree_manager.changed", worktreeManager: worktreeManagerCapabilities() });
+    return () => {
+      if (worktreeManager !== manager) return;
+      worktreeManager = null;
+      send({ type: "worktree_manager.changed", worktreeManager: null });
+    };
   }
 
   function providerMetadata(provider: ProviderRegistration) {
@@ -234,6 +278,7 @@ export function createPluginWorker(options: {
       label: provider.label,
       description: provider.description,
       iconPath: provider.icon,
+      docsUrl: provider.docsUrl,
       requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
@@ -433,6 +478,7 @@ export function createPluginWorker(options: {
       handle,
       registerProvider,
       registerUsageSource,
+      registerWorktreeManager,
       registerSettings,
       addHook: hooks.addHook,
       on: hooks.on,
@@ -448,6 +494,8 @@ export function createPluginWorker(options: {
         .map(async (source) => ({
           id: source.id,
           label: source.label,
+          provider: source.provider,
+          providers: source.providers ? [...source.providers] : undefined,
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,
@@ -458,6 +506,7 @@ export function createPluginWorker(options: {
       methods: [...handlers.keys()].sort(),
       subscriptions: subscriptions.catalog(),
       hooks: hooks.catalog(),
+      worktreeManager: worktreeManagerCapabilities(),
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
@@ -477,6 +526,8 @@ export function createPluginWorker(options: {
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
     for (const request of installationRequests.values())
       request.abort(new Error("Plugin is stopping"));
+    for (const request of worktreeRequests.values()) request.abort(new Error("Plugin is stopping"));
+    worktreeManager = null;
     const currentCleanup = cleanup;
     cleanup = null;
     try {
@@ -518,6 +569,9 @@ export function createPluginWorker(options: {
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover" ||
+      message.type === "worktree.create" ||
+      message.type === "worktree.remove" ||
+      message.type === "worktree.restore" ||
       message.type === "subscribe"
     ) {
       send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
@@ -703,6 +757,10 @@ export function createPluginWorker(options: {
       handleHookMessage(message);
       return;
     }
+    if (isWorktreeMessage(message)) {
+      handleWorktreeMessage(message);
+      return;
+    }
     if (message.type === "invoke") invoke(message);
     else handleSubscriptionMessage(message);
   }
@@ -767,6 +825,88 @@ export function createPluginWorker(options: {
     message: PluginProcessRequest,
   ): message is Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }> {
     return message.type === "hook" || message.type === "hook.cancel";
+  }
+
+  function isWorktreeMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "worktree.create" | "worktree.remove" | "worktree.restore" | "worktree.cancel" }
+  > {
+    return (
+      message.type === "worktree.create" ||
+      message.type === "worktree.remove" ||
+      message.type === "worktree.restore" ||
+      message.type === "worktree.cancel"
+    );
+  }
+
+  function handleWorktreeMessage(
+    message: Extract<
+      PluginProcessRequest,
+      { type: "worktree.create" | "worktree.remove" | "worktree.restore" | "worktree.cancel" }
+    >,
+  ): void {
+    if (message.type === "worktree.cancel") {
+      worktreeRequests.get(message.requestId)?.abort(new Error("Worktree request canceled"));
+      return;
+    }
+    if (!paseo) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        error: "Plugin Paseo API is unavailable",
+      });
+      return;
+    }
+    const manager = worktreeManager;
+    if (!manager) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        error: "Plugin has no registered worktree manager",
+      });
+      return;
+    }
+    const controller = new AbortController();
+    worktreeRequests.set(message.requestId, controller);
+    const context = { paseo, signal: controller.signal };
+    void (async () => {
+      if (message.type === "worktree.create") {
+        return (
+          (await manager.create(
+            structuredClone(message.request) as PluginWorktreeCreateInput,
+            context,
+          )) ?? null
+        );
+      }
+      if (message.type === "worktree.remove") {
+        if (!manager.remove) {
+          throw new Error("Plugin worktree manager does not implement remove");
+        }
+        return (
+          (await manager.remove(
+            structuredClone(message.request) as PluginWorktreeRemoveRequest,
+            context,
+          )) ?? null
+        );
+      }
+      if (!manager.restore) {
+        throw new Error("Plugin worktree manager does not implement restore");
+      }
+      return (
+        (await manager.restore(
+          structuredClone(message.request) as PluginWorktreeRestoreRequest,
+          context,
+        )) ?? null
+      );
+    })()
+      .then(
+        (output) => send({ type: "result", requestId: message.requestId, output }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      )
+      .finally(() => worktreeRequests.delete(message.requestId));
   }
   return { shutdown };
 }

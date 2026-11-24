@@ -24,7 +24,7 @@ import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-sou
 import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
-import { PluginRuntime } from "./runtime.js";
+import { PluginRuntime, type PluginWorktreeManagerRuntime } from "./runtime.js";
 import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type {
@@ -50,6 +50,10 @@ interface PluginRuntimePort {
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   wait?: PluginLifecycle["wait"];
+  hasWorktreeManager?: PluginWorktreeManagerRuntime["hasWorktreeManager"];
+  createWorktree?: PluginWorktreeManagerRuntime["createWorktree"];
+  removeWorktree?: PluginWorktreeManagerRuntime["removeWorktree"];
+  restoreWorktree?: PluginWorktreeManagerRuntime["restoreWorktree"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   startSubscription: PluginRuntime["startSubscription"];
@@ -190,6 +194,31 @@ export class PluginService {
       return this.runtime.before(name, request);
     }
     return request;
+  };
+
+  readonly hasWorktreeManager: PluginWorktreeManagerRuntime["hasWorktreeManager"] = (options) => {
+    return this.runtime.hasWorktreeManager?.(options) ?? false;
+  };
+
+  readonly createWorktree: PluginWorktreeManagerRuntime["createWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.createWorktree?.(request, options)) ?? null;
+  };
+
+  readonly removeWorktree: PluginWorktreeManagerRuntime["removeWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.removeWorktree?.(request, options)) ?? null;
+  };
+
+  readonly restoreWorktree: PluginWorktreeManagerRuntime["restoreWorktree"] = async (
+    request,
+    options,
+  ) => {
+    return (await this.runtime.restoreWorktree?.(request, options)) ?? null;
   };
 
   subscribeSettings(listener: (pluginId: string, settingsId: string) => void): () => void {
@@ -669,12 +698,40 @@ export class PluginService {
     const registered: string[] = [];
     try {
       for (const source of metadata) {
+        if (
+          source.provider &&
+          !this.runtime
+            .getProviderRegistrations?.(pluginId)
+            .some((provider) => provider.id === source.provider)
+        ) {
+          throw new Error(
+            `Usage source ${source.id} references a provider outside plugin ${pluginId}`,
+          );
+        }
         this.usageSources.register({
           id: source.id,
           label: source.label,
           icon: source.icon,
+          providers: source.providers ?? (source.provider ? [source.provider] : undefined),
           discover: async (scope) => {
-            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
+            const launch =
+              scope.kind === "global" && source.provider
+                ? await this.dependencies.usageAgents?.resolveLaunch?.(source.provider)
+                : undefined;
+            const scoped =
+              scope.kind === "session" && source.provider !== scope.provider
+                ? {
+                    kind: "session" as const,
+                    provider: scope.provider,
+                    model: scope.model,
+                    env: scope.env,
+                  }
+                : scope;
+            const result = await this.runtime.discoverUsage(
+              pluginId,
+              source.id,
+              scoped.kind === "global" && launch ? { ...scoped, launch } : scoped,
+            );
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
@@ -717,6 +774,7 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          docsUrl: provider.docsUrl,
           command: provider.command,
           requiresConfiguration: provider.requiresConfiguration,
           status: provider.hasStatus

@@ -8,26 +8,17 @@ category: Providers
 
 # Oh My Pi
 
-Run Oh My Pi (OMP) in Paseo with your existing `omp` installation and settings.
+Paseo runs Oh My Pi (OMP) through your installed `omp` CLI. It uses your existing credentials and settings.
 
 ## Getting started
 
-1. Install [Oh My Pi](https://github.com/can1357/oh-my-pi) on your daemon host and make sure that `omp` runs in a terminal.
+Oh My Pi is built into Paseo and off by default.
+
+1. Install [Oh My Pi](https://github.com/can1357/oh-my-pi) on your daemon host, and make sure that `omp` runs in a terminal.
 2. In Paseo, open **Settings → Hosts → your host → Providers** and turn on **Oh My Pi**.
+3. Choose **Oh My Pi** when you start an agent.
 
-Oh My Pi is off by default. You can also turn it on in `~/.paseo/config.json`:
-
-```json
-{
-  "agents": {
-    "providers": {
-      "omp": { "enabled": true }
-    }
-  }
-}
-```
-
-If `omp` is outside your daemon's PATH, use a [command override](/docs/custom-providers). To run a second OMP profile with its own settings, see [OMP profiles](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md#omp-profiles-and-pi-compatible-forks) on GitHub.
+If `omp` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary). You can also enable `omp` in `~/.paseo/config.json` under `agents.providers.omp`. To run a second OMP profile with its own settings, see [OMP profiles](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md#omp-profiles-and-pi-compatible-forks) on GitHub.
 
 ## Permission modes
 

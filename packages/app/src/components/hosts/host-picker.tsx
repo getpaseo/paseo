@@ -1,6 +1,5 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import type { GestureResponderEvent } from "react-native";
 import { Plus, Server, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDot } from "@/components/host-status-dot";
@@ -80,19 +79,15 @@ export function HostPickerOption({
       ? formatActiveConnectionLabel(activeConnection)
       : undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
-  const handleSettingsPress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onOpenHostSettings?.(serverId);
-    },
-    [onOpenHostSettings, serverId],
-  );
-  const trailingSlot = useMemo(() => {
+  const handleSettingsPress = useCallback(() => {
+    onOpenHostSettings?.(serverId);
+  }, [onOpenHostSettings, serverId]);
+  const trailingAction = useMemo(() => {
     if (!onOpenHostSettings) return undefined;
     return (
       <Pressable
         onPress={handleSettingsPress}
-        hitSlop={8}
+        style={styles.settingsAction}
         accessibilityRole="button"
         accessibilityLabel={`Open ${label} settings`}
       >
@@ -112,7 +107,7 @@ export function HostPickerOption({
       label={label}
       description={connectionLabel}
       leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
+      trailingAction={trailingAction}
       selected={selected}
       active={active}
       onPress={onPress}
@@ -319,6 +314,12 @@ export function HostPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  settingsAction: {
+    flex: 1,
+    justifyContent: "center",
+    paddingLeft: theme.spacing[1],
+    paddingRight: theme.spacing[3],
+  },
   statusDotSlot: {
     width: theme.iconSize.sm,
     height: theme.iconSize.sm,

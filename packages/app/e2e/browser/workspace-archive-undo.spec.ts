@@ -318,6 +318,37 @@ test.describe("Workspace archive undo", () => {
     }
   });
 
+  test("archives a restored workspace while its undo is queued", async ({ page }) => {
+    const teardown = createGatedTeardown();
+    const repo = await createTempGitRepo("archive-undo-archive-", {
+      paseoConfig: teardown.paseoConfig,
+    });
+
+    try {
+      await openProjectViaDaemon(client, repo.path);
+      const worktree = await createWorktreeViaDaemon(client, {
+        cwd: repo.path,
+        slug: "archive-undo-archive",
+      });
+      worktreeDirectories.add(worktree.workspaceDirectory);
+      await gotoAppShell(page);
+      await archiveFromRowButton(page, worktree.workspaceId);
+      await teardown.expectStarted();
+
+      await undoButton(page).click();
+      await workspaceRow(page, worktree.workspaceId).click();
+      await expect(page).toHaveURL(new RegExp(`/workspace/${worktree.workspaceId}$`));
+
+      await pressArchiveShortcut(page);
+      await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
+      teardown.release();
+      await expectDirectoryPresence(worktree.workspaceDirectory, false);
+    } finally {
+      teardown.release();
+      await repo.cleanup();
+    }
+  });
+
   test("Cmd/Ctrl+Z without an archive to undo leaves the sidebar alone", async ({ page }) => {
     const worktree = await seedWorktree(page, "archive-undo-none");
 

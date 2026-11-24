@@ -263,6 +263,7 @@ function unscopedWindows(resp: ClaudeUsageResponse): UsageWindow[] {
         shortLabel: spec.shortLabel,
         summary: spec.summary,
         utilizationPct: window.utilization,
+        durationSeconds: spec.field === "five_hour" ? 5 * 3600 : 7 * 86400,
         resetsAt: window.resets_at ?? null,
         tone: toneFromUsedPct(window.utilization),
       }),
@@ -283,6 +284,7 @@ function scopedWindows(limits: ScopedLimit[]): UsageWindow[] {
       label: `Weekly \u00b7 ${limit.name}`,
       shortLabel: `wk ${limit.name}`,
       utilizationPct: limit.usedPct,
+      durationSeconds: 7 * 86400,
       resetsAt: limit.resetsAt,
       tone: toneFromUsedPct(limit.usedPct),
     });
@@ -383,7 +385,8 @@ export async function discover(
     const harness = { pi: "Pi", omp: "OMP", claude: "Claude", keychain: "Claude" }[
       input.route.store
     ];
-    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, input };
+    const provider = input.route.store === "keychain" ? "claude" : input.route.store;
+    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, provider, input };
     if (credentials.expires !== undefined && credentials.expires <= (lookup.now ?? Date.now)()) {
       accounts.push(fallback);
       continue;
@@ -397,7 +400,7 @@ export async function discover(
       accounts.push(
         "status" in profile
           ? fallback
-          : { ...profile, harness, input: { ...input, accountKey: profile.key } },
+          : { ...profile, harness, provider, input: { ...input, accountKey: profile.key } },
       );
     } catch {
       // Keep the login visible; fetching usage reports the vendor failure.

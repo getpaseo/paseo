@@ -13,6 +13,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.archive",
   "session.configure",
   "session.list",
+  "session.metrics",
   "session.persistence",
   "session.revert.both",
   "session.revert.conversation",
@@ -39,6 +40,8 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** http(s) page that helps users set up and troubleshoot the provider. Paseo opens it. */
+  docsUrl?: string;
   /** How users install the provider's CLI and which version they run. Every member is optional. */
   installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
@@ -488,6 +491,7 @@ export interface ProviderCommand {
   name: string;
   description: string;
   argumentHint?: string;
+  kind?: "command" | "skill";
 }
 
 export interface ProviderError {
@@ -546,6 +550,17 @@ export interface ProviderUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+}
+
+/**
+ * One row of provider-owned detail about a session or a turn. Format `value` for
+ * reading: Paseo shows it as given.
+ */
+export interface ProviderMetric {
+  label: string;
+  value: string;
+  /** Colors the value. Omit it for an ordinary value. */
+  tone?: "default" | "ok" | "warning" | "danger";
 }
 
 interface ProviderTimelineIdentity {
@@ -723,8 +738,19 @@ export type ProviderEvent =
       turnId: string;
       state: "started" | "completed" | "failed" | "canceled";
       error?: ProviderError;
+      /** Shown on the turn's footer. Read when `state` is `"completed"`. */
+      metrics?: readonly ProviderMetric[];
     }
   | { type: "session.usage"; sessionId: string; turnId?: string; usage: ProviderUsage }
+  | {
+      type: "session.metrics";
+      sessionId: string;
+      /**
+       * Replaces the metrics shown for the session. An empty list clears them. Publish only when
+       * `session.metrics` was negotiated: a Paseo that does not offer it rejects this event.
+       */
+      metrics: readonly ProviderMetric[];
+    }
   | { type: "session.config"; sessionId: string; config: ProviderConfigState }
   | { type: "session.commands"; sessionId: string; commands: ProviderCommand[] }
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
@@ -1214,7 +1240,12 @@ const noticeSchema = z
   })
   .strip();
 const commandSchema = z
-  .object({ name: idSchema, description: z.string(), argumentHint: z.string().optional() })
+  .object({
+    name: idSchema,
+    description: z.string(),
+    argumentHint: z.string().optional(),
+    kind: z.enum(["command", "skill"]).optional(),
+  })
   .strip();
 const usageSchema = z
   .object({
@@ -1224,6 +1255,13 @@ const usageSchema = z
     totalCostUsd: z.number().optional(),
     contextWindowMaxTokens: z.number().optional(),
     contextWindowUsedTokens: z.number().optional(),
+  })
+  .strip();
+const metricSchema = z
+  .object({
+    label: z.string(),
+    value: z.string(),
+    tone: z.enum(["default", "ok", "warning", "danger"]).optional(),
   })
   .strip();
 const worktreeCommandSchema = z
@@ -1546,6 +1584,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       turnId: idSchema,
       state: z.enum(["started", "completed", "failed", "canceled"]),
       error: providerErrorSchema.optional(),
+      metrics: z.array(metricSchema).optional(),
     })
     .strip(),
   z
@@ -1554,6 +1593,13 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       sessionId: idSchema,
       turnId: idSchema.optional(),
       usage: usageSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.metrics"),
+      sessionId: idSchema,
+      metrics: z.array(metricSchema),
     })
     .strip(),
   z
