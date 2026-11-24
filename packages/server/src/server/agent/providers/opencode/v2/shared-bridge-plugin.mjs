@@ -1,5 +1,12 @@
 import { STRUCTURED_OUTPUT_TOOL } from "./structured-output-plugin.mjs";
 
+// A refused fetch proves the previous bridge stopped listening. Runtimes report
+// it differently: Node puts the code on `cause`, Bun puts it on the error.
+export function isRefused(error) {
+  const code = error?.code ?? error?.cause?.code;
+  return code === "ECONNREFUSED" || code === "ConnectionRefused";
+}
+
 // OpenCode owns this plugin for the lifetime of a location. Paseo supplies only
 // live, per-session bindings over the authenticated OpenCode RPC channel.
 export async function registerSharedBridge(context) {
@@ -16,8 +23,8 @@ export async function registerSharedBridge(context) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (allowMissing && response.status === 404) return null;
-    const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      const payload = await response.json().catch(() => null);
       const detail = formatErrorDetail(payload?.issues ?? payload?.details);
       const message = payload?.error ?? `Paseo tool bridge returned HTTP ${response.status}`;
       const error = new Error(detail ? `${message}: ${detail}` : message);
@@ -25,7 +32,7 @@ export async function registerSharedBridge(context) {
       if (detail) error.details = detail;
       throw error;
     }
-    return payload;
+    return await response.json();
   }
   async function find(sessionID) {
     const seen = new Set();
@@ -37,21 +44,56 @@ export async function registerSharedBridge(context) {
     }
     return null;
   }
+  async function readBoundContext(sessionID, binding, query = "") {
+    try {
+      return await request(
+        binding,
+        `/sessions/${encodeURIComponent(sessionID)}/context${query}`,
+        undefined,
+        true,
+      );
+    } catch (error) {
+      // A refusal or rejected credentials means this bridge no longer serves the binding.
+      if (error?.status !== 401 && !isRefused(error)) throw error;
+      return null;
+    }
+  }
   async function install(binding) {
-    const manifest = await request(binding, "/tools");
+    const manifest = await request(
+      binding,
+      `/tools?sessionID=${encodeURIComponent(binding.sessionID)}`,
+    );
+    const conflicts = manifest.tools.filter((tool) => {
+      const registered = definitions.get(tool.name);
+      return registered && JSON.stringify(registered) !== JSON.stringify(tool);
+    });
+    if (conflicts.length > 0) await retireUnusedDefinitions(conflicts);
     for (const definition of manifest.tools) await installDefinition(definition);
   }
-  async function installDefinition(definition) {
-    const signature = JSON.stringify(definition);
-    const known = definitions.get(definition.name);
-    if (known && JSON.stringify(known) !== signature)
-      throw new Error(`Conflicting Paseo tool definition: ${definition.name}`);
-    const old = registrations.get(definition.name);
-    if (old) {
-      if (old.signature !== signature)
-        throw new Error(`Conflicting Paseo tool definition: ${definition.name}`);
-      return;
+  async function retireUnusedDefinitions(conflicts) {
+    // A tool name is registered once per location. Another session can still
+    // use that definition, even when the session being rebound no longer does.
+    const contexts = await Promise.all(
+      [...bindings].map(async ([sessionID, binding]) => [
+        sessionID,
+        await readBoundContext(sessionID, binding, "?tools"),
+      ]),
+    );
+    const inUse = new Set(contexts.flatMap(([, scope]) => (scope ? scope.tools : [])));
+    for (const { name } of conflicts) {
+      if (inUse.has(name)) throw new Error(`Conflicting Paseo tool definition: ${name}`);
     }
+    for (const [sessionID, scope] of contexts) {
+      if (!scope) bindings.delete(sessionID);
+    }
+    for (const { name } of conflicts) {
+      await registrations.get(name)?.dispose();
+      registrations.delete(name);
+      definitions.delete(name);
+    }
+  }
+  async function installDefinition(definition) {
+    if (registrations.has(definition.name)) return;
     const registration = await context.tool.transform((editor) => {
       editor.add({
         name: `paseo_${definition.name}`,
@@ -75,14 +117,12 @@ export async function registerSharedBridge(context) {
         },
       });
     });
-    registrations.set(definition.name, { signature, registration });
+    registrations.set(definition.name, registration);
     definitions.set(definition.name, definition);
   }
   async function clearUnusedDefinitions() {
     if (bindings.size) return;
-    await Promise.all(
-      [...registrations.values()].map(({ registration }) => registration.dispose()),
-    );
+    await Promise.all([...registrations.values()].map((registration) => registration.dispose()));
     registrations.clear();
     definitions.clear();
   }
@@ -116,24 +156,7 @@ export async function registerSharedBridge(context) {
               previous &&
               (previous.baseUrl !== input.baseUrl || previous.token !== input.token)
             ) {
-              let active;
-              try {
-                active = await request(
-                  previous,
-                  `/sessions/${encodeURIComponent(input.sessionID)}/context`,
-                  undefined,
-                  true,
-                );
-              } catch (error) {
-                // Refusal or rejected credentials mean this endpoint no longer
-                // serves the previous binding. Other failures are inconclusive.
-                if (
-                  error?.status !== 401 &&
-                  error?.cause?.code !== "ECONNREFUSED" &&
-                  error?.code !== "ConnectionRefused"
-                )
-                  throw error;
-              }
+              const active = await readBoundContext(input.sessionID, previous);
               if (active)
                 return { error: "OpenCode session is already bound to another Paseo bridge" };
               bindings.delete(input.sessionID);
@@ -184,9 +207,7 @@ export async function registerSharedBridge(context) {
   return async () => {
     await filter.dispose();
     await rpc.dispose();
-    await Promise.all(
-      [...registrations.values()].map(({ registration }) => registration.dispose()),
-    );
+    await Promise.all([...registrations.values()].map((registration) => registration.dispose()));
   };
 }
 

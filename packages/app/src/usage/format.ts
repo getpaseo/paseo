@@ -1,8 +1,8 @@
 import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
-import { formatTimeOfDay } from "@/utils/time";
+import { formatTimeOfDay, localCalendarDaysBetween } from "@/utils/time";
 import type { UsageDisplayAs } from "./preferences";
-import type { UsageBalanceUnit } from "./types";
+import type { UsageBalanceUnit, UsageReportEntry } from "./types";
 
 const providerUsageLabels = {
   session: { label: "Session", key: "providerUsage.labels.session" },
@@ -12,6 +12,11 @@ const providerUsageLabels = {
   credits: { label: "Credits", key: "providerUsage.labels.credits" },
   monthly_credits: { label: "Monthly credits", key: "providerUsage.labels.monthlyCredits" },
 } as const;
+
+/** The source, with the account when the report names one: "Claude (work)". */
+export function formatUsageAccountName(entry: UsageReportEntry): string {
+  return entry.account.label ? `${entry.sourceLabel} (${entry.account.label})` : entry.sourceLabel;
+}
 
 export function formatProviderUsageLabel(id: string, label: string, t: TFunction = i18n.t): string {
   const reviewPrefix = "Code review · ";
@@ -74,6 +79,7 @@ function relativeDuration(iso: string, now: number): RelativeDuration | null {
   const days = Math.floor(diffMs / DAY_MS);
   const hours = Math.floor((diffMs % DAY_MS) / HOUR_MS);
   const minutes = Math.floor((diffMs % HOUR_MS) / MINUTE_MS);
+  if (days === 1 && hours === 0) return remaining({ unit: "hours", count: 24 });
   if (days > 0) return remaining({ unit: "days", count: days }, { unit: "hours", count: hours });
   if (hours > 0)
     return remaining({ unit: "hours", count: hours }, { unit: "minutes", count: minutes });
@@ -115,8 +121,8 @@ export function formatResetLabel(
 }
 
 /**
- * When a window resets on the clock: "3:00 PM" within a day, "Fri 3:00 PM" within a week,
- * "Oct 31, 3:00 PM" after that. Names follow the app language; 12/24h follows the device.
+ * A clock time today, a weekday for the next six calendar days, and a weekday plus date after that.
+ * Names follow the app language. The clock uses the device's 12/24h preference.
  * Nothing for a time that has passed, where the countdown already says so.
  */
 export function formatResetTime(
@@ -130,12 +136,13 @@ export function formatResetTime(
   if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
   const time = formatTimeOfDay(at);
   const locale = i18n.resolvedLanguage;
-  if (diffMs < DAY_MS) return time;
-  if (diffMs < 7 * DAY_MS) {
+  const dayDiff = localCalendarDaysBetween(new Date(now), at);
+  if (dayDiff === 0) return time;
+  if (dayDiff <= 6) {
     const weekday = at.toLocaleDateString(locale, { weekday: "short" });
     return t("providerUsage.timing.resetsAtWeekday", { weekday, time });
   }
-  const date = at.toLocaleDateString(locale, { month: "short", day: "numeric" });
+  const date = at.toLocaleDateString(locale, { weekday: "short", month: "short", day: "numeric" });
   return t("providerUsage.timing.resetsAtDate", { date, time });
 }
 
@@ -144,11 +151,8 @@ export function formatRunsOutLabel(
   now = Date.now(),
   t: TFunction = i18n.t,
 ): string | null {
-  if (!iso) return null;
-  const rel = relativeDuration(iso, now);
-  if (!rel) return null;
-  if (rel.kind === "now") return t("providerUsage.timing.runsOutNow");
-  return t("providerUsage.timing.runsOutIn", { duration: formatRelativeDuration(rel, t) });
+  const time = formatResetTime(iso, now, t);
+  return time ? t("providerUsage.timing.runsOutAt", { time }) : null;
 }
 
 export function formatAgo(

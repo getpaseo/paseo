@@ -13,14 +13,14 @@ Everything beyond the [supported providers](/docs/supported-providers) lives und
 - **Extend** a first-class provider to point at a different API (Z.AI, Alibaba/Qwen, a proxy, a self-hosted endpoint).
 - **Add profiles**, multiple entries against the same underlying provider with different credentials or curated model lists.
 - **Override the binary**, run a nightly build, a wrapper script, or a Docker image instead of the installed CLI.
-- **Add ACP agents**, Gemini CLI, Hermes, or any agent speaking the Agent Client Protocol over stdio.
+- **Add ACP agents**, Gemini CLI, Qwen Code, or any agent speaking the Agent Client Protocol over stdio.
 - **Disable** a provider you don't use.
 
 Run `paseo reload` after editing the file. Provider changes apply to future launches without restarting the daemon.
 
 Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`). A new custom provider needs `extends` (a first-class provider ID or `"acp"`) and a `label`.
 To override a bundled provider plugin, use its provider ID and omit `extends`. For
-[Muse Code](/docs/muse-code), set command or environment overrides under `agents.providers.muse`.
+[Muse Code](/docs/supported-providers/muse-code), set command or environment overrides under `agents.providers.muse`.
 
 The examples below are a quick tour. The full, up-to-date reference is on GitHub: [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 
@@ -166,11 +166,6 @@ Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be a
         "extends": "acp",
         "label": "Google Gemini",
         "command": ["gemini", "--acp"]
-      },
-      "hermes": {
-        "extends": "acp",
-        "label": "Hermes",
-        "command": ["hermes", "acp"]
       }
     }
   }

@@ -55,7 +55,9 @@ interface TestPaseoDaemonOptions {
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   pluginsEnabled?: PaseoDaemonConfig["pluginsEnabled"];
+  pluginRegistryUrl?: PaseoDaemonConfig["pluginRegistryUrl"];
   builtinPlugins?: BuiltinPluginLoader;
+  lazyTerminalWorker?: boolean;
   plugins?: PaseoDaemonConfig["plugins"];
 }
 
@@ -109,6 +111,7 @@ export async function createTestPaseoDaemon(
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
       builtinPlugins: options.builtinPlugins ?? new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: options.lazyTerminalWorker ?? true,
       serverFeatureOverrides: {
         daemonStatusRpc: options.daemonStatusRpcCapability,
         relayConfig: options.relayConfigCapability,
@@ -232,6 +235,7 @@ async function prepareTestDaemonConfig(
     resumePrompt: options.resumePrompt,
     pluginsEnabled: options.pluginsEnabled,
     plugins: options.plugins,
+    pluginRegistryUrl: options.pluginRegistryUrl,
   };
   return { config, paseoHomeRoot, paseoHome, staticDir, createdDirs };
 }

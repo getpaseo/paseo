@@ -6,7 +6,8 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -59,7 +60,17 @@ export async function getAvailableHostDaemonPort(): Promise<number> {
   return port;
 }
 
-async function waitForServer(port: number, child: ChildProcess): Promise<void> {
+/**
+ * Resolves once this daemon answers on its port. An open TCP port is not
+ * enough: the port is released before the daemon binds it, and whatever takes
+ * it in between also accepts connections while the daemon exits with
+ * EADDRINUSE. Only the daemon's own status reports its server id.
+ */
+async function waitForServer(
+  port: number,
+  child: ChildProcess,
+  identity: { serverId: string; paseoHome: string },
+): Promise<void> {
   const deadline = Date.now() + 90_000;
   let lastError: unknown = null;
 
@@ -70,22 +81,13 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
       );
     }
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(port, "127.0.0.1", () => {
-          socket.end();
-          resolve();
-        });
-        socket.setTimeout(1_000, () => {
-          socket.destroy();
-          reject(new Error(`Connection timed out to isolated daemon port ${port}`));
-        });
-        socket.on("error", reject);
-      });
-      return;
+      const serverId = await readServerId(port, identity.paseoHome);
+      if (serverId === identity.serverId) return;
+      lastError = new Error(`Port ${port} is served by ${serverId}, not ${identity.serverId}`);
     } catch (error) {
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   throw new Error(
@@ -93,6 +95,25 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
+}
+
+/**
+ * Reads the server id from the daemon's status route. The route needs a bearer
+ * on a password-protected daemon; the daemon accepts the local credential it
+ * writes into its home before listening, as the CLI does for local status.
+ */
+async function readServerId(port: number, paseoHome: string): Promise<string> {
+  const localCredential = await readFile(path.join(paseoHome, "local-credential"), "utf8").then(
+    (token) => token.trim(),
+    () => null,
+  );
+  const response = await fetch(`http://127.0.0.1:${port}/api/status`, {
+    headers: localCredential ? { authorization: `Bearer ${localCredential}` } : {},
+    signal: AbortSignal.timeout(1_000),
+  });
+  if (!response.ok) throw new Error(`Status request to port ${port} returned ${response.status}`);
+  const status = (await response.json()) as { serverId?: unknown };
+  return String(status.serverId);
 }
 
 function withMutableRelay(
@@ -121,7 +142,7 @@ export async function startIsolatedHostDaemon(
   serverId: string,
   options: IsolatedHostDaemonOptions = {},
 ): Promise<IsolatedHostDaemon> {
-  const port = await getAvailableHostDaemonPort();
+  let port = await getAvailableHostDaemonPort();
 
   const metroPort = process.env.E2E_METRO_PORT;
   if (!metroPort) throw new Error("E2E_METRO_PORT is required to start an isolated host daemon");
@@ -209,7 +230,11 @@ export async function startIsolatedHostDaemon(
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     };
-    const spawned = publishedPackageRoot
+    const builtSupervisor = path.join(serverDir, "dist/scripts/supervisor-entrypoint.js");
+    const useBuiltSupervisor = Boolean(
+      publishedPackageRoot || (process.env.CI && existsSync(builtSupervisor)),
+    );
+    const spawned = useBuiltSupervisor
       ? spawn(process.execPath, ["dist/scripts/supervisor-entrypoint.js"], spawnOptions)
       : spawnTsx("scripts/supervisor-entrypoint.ts", ["--dev"], spawnOptions);
 
@@ -221,7 +246,7 @@ export async function startIsolatedHostDaemon(
     });
 
     try {
-      await waitForServer(port, spawned);
+      await waitForServer(port, spawned, { serverId, paseoHome });
       return spawned;
     } catch (error) {
       throw new Error(
@@ -231,8 +256,25 @@ export async function startIsolatedHostDaemon(
     }
   };
 
+  // The reserved port is released before the daemon binds it, so another
+  // process can take it in between. Only the first start picks a new port:
+  // restart() keeps the endpoint the app already knows.
+  const startOnFreePort = async (): Promise<void> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await spawnDaemon();
+        return;
+      } catch (error) {
+        const lostPort = error instanceof Error && error.message.includes("EADDRINUSE");
+        if (!lostPort || attempt === 3) throw error;
+        await stopDaemon();
+        port = await getAvailableHostDaemonPort();
+      }
+    }
+  };
+
   try {
-    await spawnDaemon();
+    await startOnFreePort();
   } catch (error) {
     await stopDaemon();
     if (!options.preserveHome) {

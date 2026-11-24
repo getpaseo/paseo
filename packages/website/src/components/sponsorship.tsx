@@ -1,8 +1,8 @@
 import { ArrowRight, Check, ExternalLink, Heart } from "lucide-react";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { useLocalizePath } from "~/i18n";
 import { BuyMeACoffeeIcon, GitHubIcon, OpenCollectiveIcon } from "~/components/brand-icons";
+import { HairlineGrid, SectionOpener } from "~/components/page-frame";
 import {
   BUY_ME_A_COFFEE_URL,
   GITHUB_SPONSORS_URL,
@@ -14,6 +14,7 @@ import {
   openSpotCount,
   sponsorHref,
 } from "~/data/sponsors";
+import { useLocalizePath } from "~/i18n";
 
 function SectionHeading({
   as: Heading,
@@ -27,11 +28,13 @@ function SectionHeading({
   badge?: string;
 }) {
   return (
-    <div className="mb-12 space-y-2">
+    <div className="mb-10 space-y-2.5">
       <div className="flex items-center gap-3">
-        <Heading className="text-3xl font-medium tracking-tight">{title}</Heading>
+        <Heading className="font-display text-3xl font-semibold tracking-[-0.025em] md:text-[42px]">
+          {title}
+        </Heading>
         {badge ? (
-          <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
+          <span className="rounded-full border border-brand-green/40 bg-brand-green/20 px-2.5 py-0.5 text-xs text-accent-text">
             {badge}
           </span>
         ) : null}
@@ -55,7 +58,7 @@ const MAINTAINER_COMPONENTS = {
 };
 
 const MAINTAINER_SIGNATURE = (
-  <p className="text-white/50">
+  <p className="text-sm text-white/50">
     <Trans i18nKey="sponsor.maintainer" components={MAINTAINER_COMPONENTS} />
   </p>
 );
@@ -141,26 +144,28 @@ export function BackingOptions() {
     [localize, t],
   );
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <HairlineGrid columns="2">
       {options.map((option) => (
         <a
           key={option.href}
           href={option.href}
           {...(option.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
+          className="group flex items-center justify-between gap-4 bg-background px-5 py-4 transition-colors hover:bg-white/[0.03]"
         >
-          <option.icon className="h-6 w-6 shrink-0 text-white/60" />
-          <p className="flex items-center gap-1.5 font-medium text-white">
-            {option.name}
-            {option.external ? (
-              <ExternalLink className="h-3.5 w-3.5 text-white/40" />
-            ) : (
-              <ArrowRight className="h-3.5 w-3.5 text-white/40" />
-            )}
-          </p>
+          <span className="flex items-center gap-3.5">
+            <option.icon className="h-5 w-5 shrink-0 text-white/60 transition-colors group-hover:text-white/90" />
+            <span className="text-sm font-medium text-white/90 group-hover:text-white">
+              {option.name}
+            </span>
+          </span>
+          {option.external ? (
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/35 transition-colors group-hover:text-accent-text" />
+          ) : (
+            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-white/35 transition-colors group-hover:text-accent-text" />
+          )}
         </a>
       ))}
-    </div>
+    </HairlineGrid>
   );
 }
 
@@ -184,7 +189,7 @@ export function SponsorSpotSection() {
         <ul className="grid max-w-2xl gap-3 text-white/70">
           {SPOT_FEATURES.map((feature) => (
             <li key={feature} className="flex items-start gap-2.5">
-              <Check aria-hidden="true" className="mt-1 size-4 shrink-0 text-emerald-300" />
+              <Check aria-hidden="true" className="mt-1 size-4 shrink-0 text-accent-text" />
               <span>{t(`sponsor.company.${feature}`)}</span>
             </li>
           ))}
@@ -193,7 +198,7 @@ export function SponsorSpotSection() {
           {open > 0 ? (
             <a
               href={SPONSOR_SPOT_CHECKOUT_URL}
-              className="inline-flex items-center rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
+              className="inline-flex items-center rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90"
             >
               {t("sponsor.becomeSponsor")}
             </a>
@@ -224,15 +229,72 @@ export function SponsorPaseoSection() {
   );
 }
 
-/** Homepage: a short version of the note with the same links as /sponsor. */
+/** Standalone short sponsor note + backing options (used on /download/thanks). */
 export function SponsorSection() {
   const { t } = useTranslation();
   const hubLink = useHubLinkComponents();
   return (
     <section>
       <SectionHeading as="h2" title={t("sponsor.title")} />
-      <div className="space-y-10">
-        <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+      <div className="space-y-8">
+        <div className="max-w-2xl space-y-4 text-sm leading-relaxed text-white/70">
+          <p>{t("sponsor.note.independent")}</p>
+          <p>{t("sponsor.shortNote.maintained")}</p>
+          <p>
+            <Trans i18nKey="sponsor.shortNote.selfFunded" components={hubLink} />
+          </p>
+          {MAINTAINER_SIGNATURE}
+        </div>
+        <BackingOptions />
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Consolidated homepage Sponsors + Sponsor Paseo section.
+ * Keeps `aria-labelledby="sponsors-heading"` with heading text "Sponsors" so the Sponsors region
+ * contract stays intact while unifying the logo row, founder note, and backing options into one
+ * coherent chapter.
+ */
+export function HomepageSponsorsSection() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  const hubLink = useHubLinkComponents();
+  const open = openSpotCount();
+
+  return (
+    <section aria-labelledby="sponsors-heading">
+      <SectionOpener headingId="sponsors-heading" title={t("sponsor.sponsors")} className="mb-10" />
+
+      <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
+        {SPONSORS.map((sponsor) => (
+          <li key={sponsor.url}>
+            <a
+              href={sponsorHref(sponsor, "website")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block"
+            >
+              <img src={sponsor.logo.onDark} alt={sponsor.name} className="h-12 w-auto" />
+            </a>
+            <p className="mt-2 text-sm text-white/55">{sponsor.description}</p>
+          </li>
+        ))}
+        {open > 0 ? (
+          <li>
+            <a
+              href={localize("/sponsor#spot")}
+              className="inline-flex h-11 items-center rounded-lg border border-dashed border-white/15 px-4 text-sm text-white/50 transition-colors hover:border-white/30 hover:text-white/80"
+            >
+              {t("sponsor.becomeSponsor")}
+            </a>
+          </li>
+        ) : null}
+      </ul>
+
+      <div className="mt-10 grid gap-10 border-t border-white/[0.07] pt-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
+        <div className="space-y-4 text-sm leading-relaxed text-white/70">
           <p>{t("sponsor.note.independent")}</p>
           <p>{t("sponsor.shortNote.maintained")}</p>
           <p>
@@ -257,18 +319,19 @@ const SPONSORS_PLACEMENTS = {
     button: "h-12 px-5 text-sm",
   },
   footer: {
-    section: "space-y-5 border-t border-white/10 py-8",
-    heading: "gap-1.5 text-sm text-extra-muted-foreground",
+    section: "space-y-5 py-8",
+    heading:
+      "gap-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-extra-muted-foreground",
     heart: "size-3",
     link: "opacity-85 transition-opacity hover:opacity-100",
-    logo: "h-10",
+    logo: "h-9",
     description: "mt-1.5 text-xs text-white/45",
-    button: "h-9 px-3.5 text-sm",
+    button: "h-9 px-3.5 text-xs",
   },
 } as const;
 
 interface SponsorsSectionProps {
-  /** `page` is a homepage section; `footer` is the band above other pages' footers. */
+  /** `page` is a standalone section; `footer` is the band above other pages' footers. */
   placement: keyof typeof SPONSORS_PLACEMENTS;
 }
 
@@ -313,7 +376,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
           <li>
             <a
               href={localize("/sponsor#spot")}
-              className={`inline-flex items-center rounded-md border border-dashed border-white/15 text-white/45 transition-colors hover:border-white/30 hover:text-white/75 ${style.button}`}
+              className={`inline-flex items-center rounded-lg border border-dashed border-white/15 text-white/45 transition-colors hover:border-white/30 hover:text-white/75 ${style.button}`}
             >
               {t("sponsor.becomeSponsor")}
             </a>

@@ -224,6 +224,7 @@ const CATALOG_DATA = [
   },
   {
     id: "goose",
+    bundledProvider: { hostFeature: "gooseProvider" },
     title: "goose",
     description: "A local, extensible, open source AI agent that automates engineering tasks",
     version: "1.33.1",
@@ -243,6 +244,7 @@ const CATALOG_DATA = [
   },
   {
     id: "hermes",
+    bundledProvider: { hostFeature: "hermesProvider" },
     title: "Hermes",
     description: "Nous Research self-improving AI agent",
     version: "manual",

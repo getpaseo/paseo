@@ -50,7 +50,10 @@ export class CheckoutDiffManager {
     workspaceGitService: Pick<WorkspaceGitService, "requestWorkingTreeWatch">;
     workspaceRuntimeStore: WorkspaceRuntimeStore;
   }) {
-    this.streams = new DiffSubscriptions(options.workspaceGitService);
+    this.streams = new DiffSubscriptions(
+      options.workspaceGitService,
+      options.logger.child({ module: "checkout-diff" }),
+    );
     this.paseoHome = options.paseoHome;
   }
   readCommitFile(input: CommitFileRead) {
@@ -73,6 +76,7 @@ export class CheckoutDiffManager {
       resolveInitial = resolve;
     });
     let delivered = false;
+    let deliveredFingerprint = "";
     let pending: DiffBegin | null = null;
     let files = new Map<string, ParsedDiffFile>();
     let bodies = new Map<string, DiffBody>();
@@ -114,6 +118,11 @@ export class CheckoutDiffManager {
         payload = legacySnapshot(cwd, [...next.values()]);
       }
       pending = null;
+      // The engine commits a revision per observed input change, including ones that only move the
+      // resolved SHAs this snapshot omits. Old clients get a snapshot only when it differs.
+      const fingerprint = JSON.stringify(payload);
+      if (fingerprint === deliveredFingerprint) return;
+      deliveredFingerprint = fingerprint;
       if (delivered) listener(payload);
       else {
         delivered = true;
@@ -172,7 +181,7 @@ export class CheckoutDiffManager {
       checkoutDiffTargetCount: metrics.targets,
       checkoutDiffSubscriptionCount: metrics.subscriptions,
       checkoutDiffWatcherCount: metrics.metadataObservers,
-      checkoutDiffFallbackRefreshTargetCount: 0,
+      checkoutDiffFallbackRefreshTargetCount: metrics.fallbackTargets,
     };
   }
   async dispose(): Promise<void> {

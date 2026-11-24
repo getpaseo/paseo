@@ -1,6 +1,6 @@
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
-import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -203,8 +203,8 @@ export function createHostResolver(input: {
   local: HostOperations;
   hosts: () => ToolHosts;
   callerAgentId?: string;
-  /** The destination can't see the caller, so its background defaults resolve before routing. */
-  caller: () => BackgroundCaller | null;
+  /** The destination can't see the caller, so its background and mode defaults resolve before routing. */
+  caller: () => (BackgroundCaller & { provider: string; currentModeId: string | null }) | null;
   lockedCwd?: string;
 }) {
   return {
@@ -222,6 +222,11 @@ export function createHostResolver(input: {
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
+            const caller = input.caller();
+            // Same-provider children inherit the caller's mode, as they would on the same host.
+            const modeId =
+              parsed.settings?.modeId ??
+              (caller?.provider === provider ? (caller.currentModeId ?? undefined) : undefined);
             const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
             const labels = {
@@ -236,15 +241,13 @@ export function createHostResolver(input: {
                 model,
                 cwd: workspace.workspaceDirectory,
                 title: parsed.title,
-                modeId: parsed.settings?.modeId,
+                modeId,
                 thinkingOptionId: parsed.settings?.thinkingOptionId,
                 featureValues: parsed.settings?.features,
               },
               workspaceId: parsed.workspaceId,
               // Older hosts reject any background with a workspaceId, so a visible create omits it.
-              ...(inheritAgentBackground(parsed.background, input.caller())
-                ? { background: true }
-                : {}),
+              ...(inheritAgentBackground(parsed.background, caller) ? { background: true } : {}),
               labels,
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
@@ -281,9 +284,7 @@ export function createHostResolver(input: {
                   : undefined,
                 sourceAgentId: input.callerAgentId,
                 sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
-                activeTurnBehavior:
-                  (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
-                  (input.callerAgentId ? "steer" : "interrupt"),
+                activeTurnBehavior: args.activeTurnBehavior as AgentActiveTurnBehavior | undefined,
               })
               .catch((error) => {
                 if (isAmbiguousPromptFailure(error)) throw error;
@@ -295,7 +296,11 @@ export function createHostResolver(input: {
               status: agent.status,
               guidance:
                 receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                  ? `${
+                      // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after
+                      // 2027-05-22 once connected-host floor >= v0.17.2. Older hosts return no guidance.
+                      receipt.guidance ?? "Queued for delivery after the current turn ends."
+                    } You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false.`
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },
@@ -350,6 +355,10 @@ export function createHostResolver(input: {
           async createWorkspace(args) {
             const isolation = z.enum(["local", "worktree"]).parse(args.isolation);
             const path = z.string().min(1).parse(args.path);
+            if (args.mode === "branch-off" && args.prNumber !== undefined) {
+              // As on the local host: branching off a pull request is the app's, not this tool's.
+              throw new Error("branch, prNumber, and forge require a checkout mode");
+            }
             const response = await client.createWorkspace({
               source:
                 isolation === "local"
@@ -358,10 +367,12 @@ export function createHostResolver(input: {
                       kind: "worktree",
                       cwd: path,
                       projectId: args.projectId as string | undefined,
+                      // A pull request with no mode is checked out, as it was before a pull request could be branched off.
                       action:
-                        args.mode === "checkout-branch" || args.mode === "checkout-pr"
-                          ? "checkout"
-                          : "branch-off",
+                        args.mode === "branch-off" ||
+                        (args.mode === undefined && args.prNumber === undefined)
+                          ? "branch-off"
+                          : "checkout",
                       baseBranch: args.baseBranch as string | undefined,
                       branchName: args.branchName as string | undefined,
                       refName: args.branch as string | undefined,

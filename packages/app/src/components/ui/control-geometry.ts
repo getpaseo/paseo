@@ -132,9 +132,10 @@ export function iconSizeFor(size: IconSize): SizingValue {
 }
 
 /**
- * The glyph a toolbar control paints. Touch-sized every toolbar glyph matches the header icons:
- * 20pt at the app's 1.5px stroke, resting at `foreground`. Pointer-sized it is the `md` glyph at
- * the same stroke and rests muted until hovered.
+ * The glyph a toolbar control paints. Touch-sized every toolbar glyph is 20pt at the app's 1.5px
+ * stroke. An icon-only control's glyph matches the header icons and rests at `foreground`; a glyph
+ * paired with a label rests muted so the control reads as one quiet unit with its label.
+ * Pointer-sized it is the `md` glyph at the same stroke and rests muted until hovered.
  */
 export type ToolbarGlyphTone = "foreground" | "muted";
 
@@ -160,7 +161,7 @@ const POINTER_TOOLBAR_GLYPH: ToolbarGlyph = {
 const TOOLBAR_GLYPHS: Record<ControlSizing, ToolbarGlyphs> = {
   touch: {
     icon: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
-    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
+    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "muted" },
   },
   pointer: { icon: POINTER_TOOLBAR_GLYPH, label: POINTER_TOOLBAR_GLYPH },
 };
@@ -222,8 +223,11 @@ export interface SwitchGeometry {
   thumbSize: number;
   /** How far the thumb slides between off and on. */
   thumbTravel: number;
-  /** The control height the switch reserves, so its row lines up with one holding a button. */
-  reservedHeight: number;
+  /**
+   * The height of the area that takes the press: the control height of the switch's size. The
+   * switch itself is only as tall as its track, so it never makes a row taller.
+   */
+  hitHeight: number;
 }
 
 function switchSize(trackWidth: number, trackHeight: number, thumbSize: number) {
@@ -235,13 +239,22 @@ const SWITCH_POINTER = switchSize(34, 20, 16);
 const SWITCH_TOUCH = switchSize(44, 26, 22);
 
 /**
+ * The height of a default switch. Exported so a row can be as tall as one holding a switch whether
+ * or not it holds one. A breakpoint value, so it only works inside a Unistyles stylesheet.
+ */
+export const SWITCH_HEIGHT = bySizing({
+  touch: SWITCH_TOUCH.trackHeight,
+  pointer: SWITCH_POINTER.trackHeight,
+});
+
+/**
  * A switch follows the same two sizes as every other control. Its thumb travel feeds an
  * animation, so the size is resolved to plain numbers here instead of a stylesheet breakpoint.
  */
 export function switchGeometryForLayout(size: ControlSize, isCompact: boolean): SwitchGeometry {
   const touchSized = controlSizingForLayout(isCompact) === "touch";
   const track = size === "md" && touchSized ? SWITCH_TOUCH : SWITCH_POINTER;
-  return { ...track, reservedHeight: controlHeightForLayout(size, isCompact) };
+  return { ...track, hitHeight: controlHeightForLayout(size, isCompact) };
 }
 
 function fieldLineHeight(fontSize: number): number {
