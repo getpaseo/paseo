@@ -3063,31 +3063,34 @@ test("plugin provider import keeps the stats the plugin reported with its histor
   }
 });
 
-test("resumes a goose session saved by the generic ACP provider", async () => {
-  const logger = createTestLogger();
-  const harness = createProviderHarness();
-  const plugins = new PluginAgentClientRegistry(logger);
-  plugins.replace([{ ...harness.registration, id: "goose" }]);
-  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
-  const client = registry.goose.createClient(logger);
+test.each(["goose", "hermes"])(
+  "resumes a %s session saved by the generic ACP provider",
+  async (provider) => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([{ ...harness.registration, id: provider }]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const client = registry[provider].createClient(logger);
 
-  try {
-    const session = await client.resumeSession(
-      {
-        provider: "goose",
-        sessionId: "native-goose-session",
-        nativeHandle: "native-goose-session",
-      },
-      { provider: "goose", cwd: "/tmp" },
-    );
-    expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
-      persistence: { version: 1, data: { sessionId: "native-goose-session" } },
-    });
-    await session.close();
-  } finally {
-    await plugins.shutdown();
-  }
-});
+    try {
+      const session = await client.resumeSession(
+        {
+          provider,
+          sessionId: "native-session",
+          nativeHandle: "native-session",
+        },
+        { provider, cwd: "/tmp" },
+      );
+      expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+        persistence: { version: 1, data: { sessionId: "native-session" } },
+      });
+      await session.close();
+    } finally {
+      await plugins.shutdown();
+    }
+  },
+);
 
 test("preserves a deferred ACP background job on steer and cancels it on explicit Stop through AgentManager", async () => {
   const logger = createTestLogger();

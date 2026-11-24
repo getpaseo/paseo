@@ -23,6 +23,50 @@ function initializeRepo(root: string, name: string) {
   return { repo, remote };
 }
 
+it.each(["local", "symbolic"])(
+  "does not rewind a local branch through a %s upstream mapping",
+  async (mapping) => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-pr-upstream-"));
+    try {
+      const { repo, remote } = initializeRepo(root, "parent");
+      git(repo, "switch", "-c", "feature");
+      git(repo, "commit", "--allow-empty", "-m", "Approved");
+      if (mapping === "local") {
+        git(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*");
+      } else {
+        git(repo, "symbolic-ref", "refs/remotes/origin/feature", "refs/heads/feature");
+      }
+      const approved = await capturePrCheckoutState(repo, "main");
+      git(repo, "commit", "--allow-empty", "-m", "Newer local commit");
+      const localTip = git(repo, "rev-parse", "HEAD");
+      await createPullRequest(
+        repo,
+        {
+          title: "Approved",
+          head: approved.head,
+          base: approved.base,
+          approvedHeadSha: approved.headSha,
+          approvedPushUrls: approved.pushUrls,
+          approvedOriginConfig: approved.originConfig,
+        },
+        {
+          ...createGitHubService(),
+          createPullRequest: async () => ({ url: "https://example.com/pull/1", number: 1 }),
+        },
+      );
+      expect(git(repo, "rev-parse", "HEAD")).toBe(localTip);
+      expect(git(repo, "rev-parse", "refs/heads/feature")).toBe(localTip);
+      expect(git(root, "--git-dir", remote, "rev-parse", "refs/heads/feature")).toBe(
+        approved.headSha,
+      );
+      if (mapping === "symbolic")
+        expect(git(repo, "symbolic-ref", "refs/remotes/origin/feature")).toBe("refs/heads/feature");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 it("pushes unpublished submodule commits on demand while pinning the approved parent commit", async () => {
   const root = mkdtempSync(join(tmpdir(), "paseo-pr-submodules-"));
   try {

@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -23,6 +23,7 @@
   "workspaces": [
     "plugins",
     "packages/expo-two-way-audio",
+    "packages/react-native-enriched-markdown",
     "packages/highlight",
     "packages/plugin",
     "packages/protocol",

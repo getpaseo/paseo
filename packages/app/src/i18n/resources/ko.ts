@@ -914,6 +914,7 @@ export const ko: TranslationResources = {
             "이 브랜치가 아직 원격에 연결되어 있지 않아 여기서 푸시를 사용할 수 없습니다",
           pushBehind: "먼저 가져와야 할 최신 변경 사항이 있어 아직 푸시를 사용할 수 없습니다",
           pushNothing: "새로 보낼 항목이 없어 푸시를 사용할 수 없습니다",
+          pushUpstreamGone: "이 브랜치가 추적하는 브랜치가 더 이상 없어 푸시를 사용할 수 없습니다",
           pullAndPushNoRemote:
             "이 브랜치가 아직 원격에 연결되어 있지 않아 여기서 풀 후 푸시를 사용할 수 없습니다",
           pullAndPushDirty:
@@ -2819,6 +2820,23 @@ export const ko: TranslationResources = {
         name: {
           label: "이름",
         },
+        icon: {
+          label: "아이콘",
+          accessibilityLabel: "아이콘, {{value}}",
+          auto: "자동",
+          autoDetected: "자동 ({{icon}})",
+          options: {
+            server: "서버",
+            laptop: "노트북",
+            desktop: "데스크톱",
+            mini: "미니",
+            workstation: "워크스테이션",
+            cloud: "클라우드",
+            container: "컨테이너",
+            board: "싱글보드 PC",
+            terminal: "터미널",
+          },
+        },
         color: {
           label: "색상",
           accessibilityLabel: "색상, {{value}}",
@@ -2854,6 +2872,14 @@ export const ko: TranslationResources = {
         relay: "릴레이",
         local: "로컬",
         remoteSsh: "원격 SSH",
+      },
+      connectionKinds: {
+        local: "로컬",
+        relay: "릴레이",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "직접 연결",
+        routed: "경유",
       },
       connections: {
         title: "연결",

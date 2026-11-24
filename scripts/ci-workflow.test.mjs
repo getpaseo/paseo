@@ -247,7 +247,11 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/app/*config.{cjs,js,ts}",
       "packages/app/package.json",
     ],
-    app: ["packages/app/**", "packages/expo-two-way-audio/**"],
+    app: [
+      "packages/app/**",
+      "packages/expo-two-way-audio/**",
+      "packages/react-native-enriched-markdown/**",
+    ],
     sdk: [
       "packages/plugin/**",
       "plugin-examples/**",
@@ -277,6 +281,7 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/app/index.ts",
       "packages/app/*config.{cjs,js,ts}",
       "packages/app/package.json",
+      "packages/react-native-enriched-markdown/**",
     ],
     relay: ["packages/relay/**"],
     cli: ["packages/cli/**"],
@@ -356,6 +361,7 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     "packages/app/index.ts",
     "packages/app/*config.{cjs,js,ts}",
     "packages/app/package.json",
+    "packages/react-native-enriched-markdown/**",
   ]);
 });
 
@@ -562,7 +568,7 @@ test("Windows units and integration run independently with complete routed cover
   assert.doesNotMatch(invocations[0], / -t /);
   assert.equal(
     invocations[1],
-    'vitest run --fileParallelism --maxWorkers=3 src/server/agent/providers/omp/history.e2e.test.ts src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts|password-protected daemon refuses|replays selected OMP history"',
+    'vitest run --fileParallelism --maxWorkers=3 src/server/agent/providers/omp/history.e2e.test.ts src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts src/server/agent/agent-mcp.e2e.test.ts -t "agent MCP protocol negotiation|merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts|password-protected daemon refuses|replays selected OMP history"',
   );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers:\s*1\b/);

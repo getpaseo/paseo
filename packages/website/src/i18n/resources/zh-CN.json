@@ -498,7 +498,6 @@
         "addProject": "添加 project",
         "addHost": "添加主机",
         "hosts": "主机",
-        "agentCount": "{{count}} 个 Agent",
         "hostLinks": {
           "local": "本地",
           "relay": "中继",

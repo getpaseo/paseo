@@ -74,6 +74,19 @@ describe("findExecutable", () => {
 
       await expect(findExecutable("foo")).resolves.toBe(executable);
     });
+
+    test("ignores relative PATH entries when resolving a bare command name", async () => {
+      const dir = makeTempDir();
+      const previousCwd = process.cwd();
+      writeExecutable(path.join(dir, "rel-only-cmd"), "#!/bin/sh\necho 0.1\n");
+      process.chdir(dir);
+      try {
+        process.env.PATH = [".", originalEnv.PATH].filter(Boolean).join(path.delimiter);
+        await expect(findExecutable("rel-only-cmd")).resolves.toBeNull();
+      } finally {
+        process.chdir(previousCwd);
+      }
+    });
   });
 
   describe.runIf(isPlatform("win32"))("Windows", () => {
@@ -140,6 +153,21 @@ describe("findExecutable", () => {
         expectWindowsPathsEqual(await findExecutable("claude"), claude);
       } finally {
         process.env.LOCALAPPDATA = originalLocalAppData;
+      }
+    });
+
+    test("ignores commands in the current working directory when not explicitly on PATH", async () => {
+      const repoDir = makeTempDir();
+      const emptyPathDir = makeTempDir();
+      const previousCwd = process.cwd();
+      process.env.PATHEXT = [".EXE", ".CMD"].join(path.delimiter);
+      writeExecutable(path.join(repoDir, "cwd-only-cmd.cmd"), "@echo off\r\necho 0.1\r\n");
+      process.chdir(repoDir);
+      try {
+        process.env.PATH = emptyPathDir;
+        await expect(findExecutable("cwd-only-cmd")).resolves.toBeNull();
+      } finally {
+        process.chdir(previousCwd);
       }
     });
   });

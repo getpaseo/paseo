@@ -132,7 +132,10 @@ export async function waitForConnectedHost(
 ): Promise<void> {
   await page.getByTestId("sidebar-hosts-trigger").click();
   const host = page.getByTestId(`sidebar-host-row-${input.serverId}`);
-  await expect(host).toContainText(input.endpoint, { timeout: 30_000 });
+  const escapedEndpoint = input.endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Local daemons render "Local" without repeating localhost:<port>; remote hosts render the endpoint.
+  await expect(host).toContainText(new RegExp(`${escapedEndpoint}|Local`), { timeout: 30_000 });
+  await expect(host).toContainText(/\d+(?:\.\d+)?(?:µs|ms|s)/, { timeout: 30_000 });
   await page.keyboard.press("Escape");
   await expect(host).not.toBeVisible();
 }
@@ -193,6 +196,12 @@ export async function chooseHostColor(page: Page, colorName: string): Promise<vo
   await page.getByRole("button", { name: /^Color, / }).click();
   await page.getByRole("menuitem", { name: colorName, exact: true }).click();
   await expect(page.getByRole("button", { name: `Color, ${colorName}` })).toBeVisible();
+}
+
+export async function chooseHostIcon(page: Page, iconName: string): Promise<void> {
+  await page.getByTestId("host-appearance-icon").click();
+  await page.getByRole("menuitem", { name: iconName, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Icon, ${iconName}` })).toBeVisible();
 }
 
 export async function chooseHostBadgeDisplay(
