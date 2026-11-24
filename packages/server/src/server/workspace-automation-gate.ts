@@ -1,4 +1,5 @@
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { setPaseoWorktreeUntrustedSource } from "../utils/worktree-metadata.js";
 import type { WorkspaceRegistry } from "./workspace-registry.js";
 
 export interface UntrustedWorkspaceSource {
@@ -73,6 +74,9 @@ export async function clearWorkspaceAutomationBlock(
       const { untrustedSource: _removed, ...trusted } = record;
       return { ...trusted, updatedAt: timestamp };
     });
+  }
+  if (await setPaseoWorktreeUntrustedSource(checkoutPath, null).catch(() => false)) {
+    cleared = true;
   }
   return cleared;
 }

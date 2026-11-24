@@ -7,7 +7,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { getPaseoWorktreeMetadataPath } from "../utils/worktree-metadata.js";
+import {
+  getPaseoWorktreeMetadataPath,
+  setPaseoWorktreeUntrustedSource,
+} from "../utils/worktree-metadata.js";
 import { archiveCommand } from "./worktree/commands.js";
 import { createWorktree, listPaseoWorktrees, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
@@ -582,6 +585,59 @@ describe("archiveByScope", () => {
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
     expect(readFileSync(marker, "utf8")).toBe("ran");
+  });
+
+  test("workspace scope skips teardown when retained checkout metadata carries untrustedSource", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const markerName = "retained-metadata-teardown.log";
+    const marker = path.join(repoDir, markerName);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retained metadata"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "retained-metadata");
+    await setPaseoWorktreeUntrustedSource(worktree.worktreePath, {
+      kind: "change_request",
+      forge: "github",
+      number: 88,
+      headRepository: "contributor/paseo",
+    });
+    const workspaceId = "ws-reopened-on-retained";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-retained-metadata",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+    expect(result.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("workspace scope skips teardown when an active sibling on the same checkout is blocked", async () => {

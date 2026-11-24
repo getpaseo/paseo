@@ -275,12 +275,10 @@ export function createWorkspaceProvisioningService(deps: {
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
       const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
-      const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-      const inheritedUntrustedSource = (await workspaceRegistry.listAll()).find(
-        (candidate) =>
-          Boolean(candidate.untrustedSource) &&
-          matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
-      )?.untrustedSource;
+      const inheritedUntrustedSource = await resolveDirectoryUntrustedSource(
+        checkoutRoot,
+        baseMetadata?.untrustedSource,
+      );
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
@@ -429,13 +427,35 @@ export function createWorkspaceProvisioningService(deps: {
     ).workspaceId;
   }
 
+  async function resolveDirectoryUntrustedSource(
+    checkoutRoot: string,
+    metadataUntrustedSource: UntrustedWorkspaceSource | undefined,
+  ): Promise<UntrustedWorkspaceSource | undefined> {
+    if (metadataUntrustedSource) {
+      return metadataUntrustedSource;
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+    return (await workspaceRegistry.listAll()).find(
+      (candidate) =>
+        Boolean(candidate.untrustedSource) &&
+        matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    )?.untrustedSource;
+  }
+
   async function inheritActiveCheckoutUntrustedSource(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
     if (workspace.untrustedSource) {
       return workspace;
     }
-    const matchesCheckout = createRealpathAwarePathMatcher(workspace.worktreeRoot ?? workspace.cwd);
+    const checkoutRoot = workspace.worktreeRoot ?? workspace.cwd;
+    const metadataUntrustedSource = (
+      await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null)
+    )?.untrustedSource;
+    if (metadataUntrustedSource) {
+      return { ...workspace, untrustedSource: metadataUntrustedSource };
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
     const active = await workspaceRegistry.listActive();
     const inheritedUntrustedSource = active.find(
       (candidate) =>

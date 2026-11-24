@@ -21,6 +21,7 @@ import type {
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import type { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
@@ -547,10 +548,14 @@ async function maybeRemoveDirectory(
     archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
   );
 
+  const checkoutMetadataUntrusted = Boolean(
+    (await readPaseoWorktreeMetadata(backing.path).catch(() => null))?.untrustedSource,
+  );
+  const checkoutUntrusted = backing.untrusted || checkoutMetadataUntrusted;
   let untrustedBacking =
-    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted(backing.path));
+    checkoutUntrusted || Boolean(await dependencies.isCheckoutUntrusted(backing.path));
   try {
-    const allowedTeardownTargets = backing.untrusted
+    const allowedTeardownTargets = checkoutUntrusted
       ? []
       : await filterAllowedTeardownTargets(
           dependencies,

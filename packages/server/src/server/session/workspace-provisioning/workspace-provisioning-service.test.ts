@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
@@ -1256,4 +1257,53 @@ test("unarchiving an approved workspace ignores archived unapproved records on t
 
   expect(restored.archivedAt).toBeNull();
   expect(restored.untrustedSource).toBeUndefined();
+});
+
+test("unarchiving an approved workspace onto a retained unapproved checkout inherits untrustedSource from checkout metadata", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-retained-metadata");
+  mkdirSync(sourceCwd, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: sourceCwd, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: sourceCwd,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: sourceCwd, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init"], {
+    cwd: sourceCwd,
+    stdio: "pipe",
+  });
+  const worktreePath = path.join(tmpDir, "worktree-retained-metadata");
+  execFileSync("git", ["worktree", "add", "-b", "retained-pr", worktreePath, "main"], {
+    cwd: sourceCwd,
+    stdio: "pipe",
+  });
+  const untrustedSource = {
+    kind: "change_request" as const,
+    forge: "github",
+    number: 57,
+    headRepository: "contributor/repo",
+  };
+  await writePaseoWorktreeMetadata(worktreePath, {
+    baseRefName: "main",
+    untrustedSource,
+  });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const approved = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "feature/approved",
+    baseBranch: "main",
+    title: null,
+  });
+  await workspaceRegistry.archive(approved.workspaceId, ARCHIVED_AT);
+  const archivedApproved = (await workspaceRegistry.get(approved.workspaceId))!;
+
+  const restored = await provisioning.ensureWorkspaceRecordUnarchived(archivedApproved);
+
+  expect(restored.archivedAt).toBeNull();
+  expect(restored.untrustedSource).toEqual(untrustedSource);
 });
