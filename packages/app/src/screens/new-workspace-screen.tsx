@@ -1494,6 +1494,14 @@ export function NewWorkspaceScreen({
             ensureWorkspace: async (request) =>
               (await ensureWorkspace(request, creationDraftId)).workspace,
             serverId: selectedServerId,
+            retireWorkspace: async (workspaceId) => {
+              await draftCreations.retireWorkspace({
+                serverId: selectedServerId,
+                draftId: creationDraftId,
+                workspaceId,
+                retire: clearConsumedDraft,
+              });
+            },
             navigate: (targetServerId, workspaceId) => {
               if (!isStillOnCreateScreen()) {
                 return;
@@ -1503,7 +1511,6 @@ export function NewWorkspaceScreen({
               navigateToWorkspace({ serverId: targetServerId, workspaceId });
             },
           });
-          clearConsumedDraft();
           await flushDraftPersistStorage();
           setCreationResult({ workspace: null });
           setCreationIdentity({ worktreeSlug: createNameId() });

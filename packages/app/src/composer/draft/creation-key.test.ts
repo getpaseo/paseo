@@ -380,6 +380,19 @@ describe("draft creation retry admission", () => {
         request: { ...workspaceRequest, agent: { ...request, initialPrompt: "Smaller prompt" } },
       }),
     ).toEqual({ kind: "reuse", workspace });
+    let retirements = 0;
+    const retirement = {
+      ...scope,
+      workspaceId: workspace.id,
+      retire: () => {
+        retirements += 1;
+      },
+    };
+    expect(
+      await restored.retireWorkspace({ ...retirement, workspaceId: "another-workspace" }),
+    ).toBe(false);
+    expect(await restored.retireWorkspace(retirement)).toBe(true);
+    expect(retirements).toBe(1);
     expect(
       await restored.submit({
         ...scope,
@@ -388,6 +401,8 @@ describe("draft creation retry admission", () => {
         send: async () => "created-in-retained-workspace",
       }),
     ).toBe("created-in-retained-workspace");
+    expect(await restored.retireWorkspace(retirement)).toBe(false);
+    expect(retirements).toBe(1);
   });
 
   it("does not send when admission cannot be persisted", async () => {
