@@ -1,3 +1,4 @@
+import { withPhase } from "../utils/checkout-phase.js";
 import type { ChangeRequestSource } from "./change-request-source.js";
 import {
   GITHUB_POLL_CHECK_CONTEXT_FIELDS,
@@ -1380,7 +1381,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     try {
-      const result = await deps.runner(args, effectiveOptions);
+      const result = await withPhase({
+        name: "forge_runner",
+        run: () => deps.runner(args, effectiveOptions),
+      });
       return result.stdout.trim();
     } catch (error) {
       throw githubCliRunner.normalizeError(error, {

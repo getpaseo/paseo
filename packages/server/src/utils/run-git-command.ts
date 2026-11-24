@@ -1,3 +1,4 @@
+import { bindCheckoutPhase, phase } from "./checkout-phase.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
@@ -309,7 +310,15 @@ function executeGitCommand<Output>(
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
+  const endQueue = phase({
+    name: "git_queue",
+    fields: {
+      active: gitProcessScheduler.activeCount,
+      pending: gitProcessScheduler.pendingCount,
+    },
+  });
   const spawnCommand = (launch: GitLaunch) => {
+    const endSpawn = phase({ name: "git_spawn" });
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -575,17 +584,22 @@ function executeGitCommand<Output>(
         settle(() => resolve(result));
       });
     });
+    void resultPromise.then(
+      () => endSpawn(),
+      () => endSpawn("error"),
+    );
     return { result: resultPromise, exited };
   };
   // The process slot stays held through the launch lookup because `exited`
   // settles only after the spawned process exits. `resolveGitLaunch` never rejects.
-  const startCommand = () => {
+  const startCommand = bindCheckoutPhase(() => {
+    endQueue();
     const spawned = resolveGitLaunch(options, repositoryRootGitDir).then(spawnCommand);
     return {
       result: spawned.then((scheduled) => scheduled.result),
       exited: spawned.then((scheduled) => scheduled.exited),
     };
-  };
+  });
   const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,

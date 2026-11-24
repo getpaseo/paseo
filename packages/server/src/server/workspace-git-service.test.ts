@@ -1,3 +1,12 @@
+import {
+  traceCheckoutRequest,
+  phase,
+  newRefresh,
+  joinRefresh,
+  runRefresh,
+  closeRefresh,
+  type CheckoutPhaseRow,
+} from "../utils/checkout-phase.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync } from "node:fs";
@@ -268,6 +277,7 @@ interface CreateServiceTestOptions {
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
   github?: ForgeService;
+  forgeOverrides?: Record<string, ForgeService>;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
@@ -528,6 +538,489 @@ function createStallingWatchSetup(watchPath: string) {
     },
   };
 }
+
+describe("checkout phase diagnostics", () => {
+  const services: WorkspaceGitServiceImpl[] = [];
+  const releaseGates: Array<() => void> = [];
+  function trackService(options: CreateServiceTestOptions) {
+    const service = createService(options);
+    services.push(service);
+    return service;
+  }
+  afterEach(async () => {
+    releaseGates.splice(0).forEach((release) => release());
+    vi.useRealTimers();
+    await Promise.all(services.splice(0).map((service) => service.dispose()));
+  });
+
+  test("links overlapping slow requests to held shared work without leaking inputs", async () => {
+    vi.useFakeTimers();
+    const gate = createDeferred<CheckoutSnapshotFacts>();
+    const statusStarted = createDeferred<void>();
+    const statusGate = createDeferred<PullRequestStatusResult>();
+    const getPullRequestStatus = vi.fn(async () => {
+      statusStarted.resolve();
+      return statusGate.promise;
+    });
+    releaseGates.push(() => gate.resolve(createCheckoutSnapshotFacts(REPO_CWD)));
+    releaseGates.push(() => statusGate.resolve(createPullRequestStatusResult()));
+    const started = createDeferred<void>();
+    const service = trackService({
+      getPullRequestStatus,
+      getCheckoutSnapshotFacts: async () => {
+        started.resolve();
+        return gate.promise;
+      },
+    });
+    const rows: CheckoutPhaseRow[] = [];
+    const sink = (row: CheckoutPhaseRow) => rows.push(row);
+    const first = traceCheckoutRequest({
+      id: "secret-request",
+      sink,
+      run: () => service.getSnapshot("/tmp/secret-path"),
+    });
+    await started.promise;
+    const firstResult = first.then((snapshot) => snapshot);
+    const secondObservedAt = Date.now();
+    const second = traceCheckoutRequest({
+      id: "other-secret",
+      sink,
+      run: () => service.getSnapshot("/tmp/secret-path"),
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    const requestIdsInOrder = rows
+      .filter((row) => row.phase === "request")
+      .map((row) => row.requestId);
+    const [firstId, secondId] = requestIdsInOrder;
+    expect(firstId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(secondId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(firstId).not.toBe(secondId);
+    const joins = rows.filter((row) => row.phase === "refresh_join");
+    expect(joins).toHaveLength(2);
+    expect(joins.every((row) => row.refreshId === joins[0]?.refreshId)).toBe(true);
+    expect(joins[0]?.refreshId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(joins.every((row) => row.cycleId === joins[0]?.cycleId)).toBe(true);
+    expect(joins[0]?.cycleId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    const lateStart = rows.find(
+      (row) => row.requestId === secondId && row.phase === "facts" && row.outcome === "start",
+    );
+    expect(lateStart).toMatchObject({ alreadyActive: true });
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "facts", outcome: "start" }),
+        expect.objectContaining({ phase: "refresh_join", outcome: "joined" }),
+      ]),
+    );
+    const requestIds = new Set(rows.map((row) => row.requestId));
+    expect(requestIds.size).toBe(2);
+    expect(JSON.stringify(rows)).not.toContain("secret");
+    gate.resolve(createCheckoutSnapshotFacts(REPO_CWD));
+    await statusStarted.promise;
+    statusGate.resolve(createPullRequestStatusResult());
+    const [firstSnapshot, secondSnapshot] = await Promise.all([firstResult, second]);
+    expect(firstSnapshot).toEqual(secondSnapshot);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+    for (const requestId of [firstId, secondId]) {
+      const requestRows = rows.filter((row) => row.requestId === requestId);
+      expect(requestRows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: "facts",
+            outcome: "start",
+            refreshId: joins[0]?.refreshId,
+            cycleId: joins[0]?.cycleId,
+          }),
+          expect.objectContaining({
+            phase: "facts",
+            outcome: "ok",
+            refreshId: joins[0]?.refreshId,
+            cycleId: joins[0]?.cycleId,
+          }),
+          expect.objectContaining({ phase: "request", outcome: "start" }),
+          expect.objectContaining({ phase: "request", outcome: "ok" }),
+        ]),
+      );
+    }
+    const lateEnd = rows.find(
+      (row) => row.requestId === secondId && row.phase === "facts" && row.outcome === "ok",
+    );
+    expect(lateEnd).toMatchObject({ durationMs: expect.any(Number) });
+    expect(lateEnd?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(lateEnd?.durationMs).toBeLessThanOrEqual(Date.now() - secondObservedAt);
+    expect(vi.getTimerCount()).toBe(0);
+    const settledRows = [...rows];
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(rows).toEqual(settledRows);
+  });
+
+  test.each(["success", "auth-error", "pr-error"] as const)(
+    "attributes real Forge auth and PR boundaries on %s without leaking inputs",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const cwd = "/tmp/forge-cwd-sentinel";
+      const rawError = new Error("forge-raw-error-sentinel");
+      const gate = createDeferred<void>();
+      const started = createDeferred<void>();
+      releaseGates.push(() => gate.resolve());
+      const forge = createGitHubServiceStub();
+      forge.isAuthenticated = vi.fn(async () => {
+        started.resolve();
+        await gate.promise;
+        if (outcome === "auth-error") throw rawError;
+        return true;
+      });
+      const result = createPullRequestStatusResult();
+      const getPullRequestStatus = vi.fn(async () => {
+        if (outcome === "pr-error") throw rawError;
+        return result;
+      });
+      const service = trackService({ forgeOverrides: { github: forge }, getPullRequestStatus });
+      const rows: CheckoutPhaseRow[] = [];
+      const requestId = "44444444-4444-4444-8444-444444444444";
+      const task = traceCheckoutRequest({
+        id: requestId,
+        sink: (row) => rows.push(row),
+        run: () => service.getSnapshot(cwd),
+      });
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(500);
+      gate.resolve();
+      const snapshot = await task;
+      expect(forge.isAuthenticated).toHaveBeenCalledWith({ cwd });
+      const refreshJoin = rows.find((row) => row.phase === "refresh_join");
+      expect(refreshJoin).toMatchObject({
+        requestId,
+        refreshId: expect.any(String),
+        cycleId: expect.any(String),
+      });
+      const correlation = {
+        requestId,
+        refreshId: refreshJoin?.refreshId,
+        cycleId: refreshJoin?.cycleId,
+      };
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ ...correlation, phase: "forge_auth", outcome: "start" }),
+          expect.objectContaining({
+            ...correlation,
+            phase: "forge_auth",
+            outcome: outcome === "auth-error" ? "error" : "ok",
+          }),
+        ]),
+      );
+      if (outcome === "auth-error") {
+        expect(getPullRequestStatus).not.toHaveBeenCalled();
+        expect(rows.some((row) => row.phase === "forge_pr")).toBe(false);
+        expect(snapshot.forge).toMatchObject({
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+        });
+      } else {
+        expect(getPullRequestStatus).toHaveBeenCalledWith(
+          cwd,
+          forge,
+          expect.any(Object),
+          expect.any(Object),
+        );
+        expect(rows).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ ...correlation, phase: "forge_pr", outcome: "start" }),
+            expect.objectContaining({
+              ...correlation,
+              phase: "forge_pr",
+              outcome: outcome === "pr-error" ? "error" : "ok",
+            }),
+          ]),
+        );
+        if (outcome === "pr-error") {
+          expect(snapshot.forge).toMatchObject({
+            featuresEnabled: true,
+            authState: "authenticated",
+            pullRequest: null,
+            error: { message: rawError.message },
+          });
+        } else {
+          expect(snapshot.forge).toMatchObject({
+            authState: result.authState,
+            pullRequest: result.status,
+            error: null,
+          });
+        }
+      }
+      for (const sentinel of [cwd, rawError.message])
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  test("closes refresh links and active spans before observing requests settle", async () => {
+    vi.useFakeTimers();
+    const refresh = newRefresh();
+    const gate = createDeferred<void>();
+    releaseGates.push(() => gate.resolve());
+    const rows: CheckoutPhaseRow[] = [];
+    const task = traceCheckoutRequest({
+      id: "private",
+      sink: (row) => rows.push(row),
+      run: () => {
+        joinRefresh({ refresh, alreadyActive: false });
+        return gate.promise;
+      },
+    });
+    const subscribers = [...refresh.subscribers];
+    expect(subscribers).toHaveLength(1);
+    const end = runRefresh(refresh, () => phase({ name: "facts" }));
+    expect(refresh.active.size).toBe(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(vi.getTimerCount()).toBe(2);
+    closeRefresh(refresh);
+    expect(refresh.subscribers.size).toBe(0);
+    expect(refresh.active.size).toBe(0);
+    expect(subscribers[0]?.refreshes.size).toBe(0);
+    expect(subscribers[0]?.closed).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+    const settledRows = [...rows];
+    end();
+    expect(rows).toEqual(settledRows);
+    gate.resolve();
+    await task;
+    expect(subscribers[0]?.observed.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("expires a refresh for every live subscriber before their request deadlines", async () => {
+    vi.useFakeTimers();
+    const refresh = newRefresh();
+    const end = runRefresh(refresh, () => phase({ name: "facts" }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    const gate = createDeferred<void>();
+    releaseGates.push(() => gate.resolve());
+    const rows: CheckoutPhaseRow[] = [];
+    const ids = ["55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"];
+    const tasks = ids.map((id) =>
+      traceCheckoutRequest({
+        id,
+        sink: (row) => rows.push(row),
+        run: () => {
+          joinRefresh({ refresh, alreadyActive: true });
+          return gate.promise;
+        },
+      }),
+    );
+    const subscribers = [...refresh.subscribers];
+    expect(subscribers).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(34_000);
+    expect(rows.filter((row) => row.outcome === "deadline")).toEqual(
+      ids.map((requestId) =>
+        expect.objectContaining({
+          requestId,
+          phase: "limit",
+          outcome: "deadline",
+          refreshId: refresh.id,
+          cycleId: refresh.cycleId,
+        }),
+      ),
+    );
+    expect(refresh.closed).toBe(true);
+    expect(refresh.subscribers.size).toBe(0);
+    expect(refresh.active.size).toBe(0);
+    for (const subscriber of subscribers) {
+      expect(subscriber.closed).toBe(false);
+      expect(subscriber.refreshes.size).toBe(0);
+    }
+    expect(vi.getTimerCount()).toBe(2);
+    const expiredRows = [...rows];
+    end();
+    expect(rows).toEqual(expiredRows);
+    gate.resolve();
+    await Promise.all(tasks);
+    expect(
+      rows
+        .slice(expiredRows.length)
+        .every((row) => row.phase === "request" && row.outcome === "ok"),
+    ).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("retains request context while refreshes wait for p-limit admission", async () => {
+    vi.useFakeTimers();
+    const cwds = Array.from({ length: WORKSPACE_GIT_REFRESH_CONCURRENCY + 1 }, (_, index) =>
+      join(REPO_CWD, `admission-${index}`),
+    );
+    const gates = new Map(cwds.map((cwd) => [cwd, createDeferred<CheckoutSnapshotFacts>()]));
+    const starts = cwds.map(() => createDeferred<void>());
+    const getCheckoutSnapshotFacts = vi.fn((cwd: string) => {
+      const index = cwds.indexOf(cwd);
+      starts[index]?.resolve();
+      const gate = gates.get(cwd);
+      if (!gate) throw new Error("Unexpected checkout path");
+      return gate.promise;
+    });
+    for (const [cwd, gate] of gates)
+      releaseGates.push(() => gate.resolve(createCheckoutSnapshotFacts(cwd)));
+    const service = trackService({
+      getCheckoutSnapshotFacts,
+      workspaceFolderExists: async () => true,
+    });
+    const ids = cwds.map(
+      (_, index) => `33333333-3333-4333-8333-${String(index + 1).padStart(12, "0")}`,
+    );
+    const rows: CheckoutPhaseRow[][] = cwds.map(() => []);
+    const requests = cwds.map((cwd, index) => {
+      const requestId = ids[index];
+      if (!requestId) throw new Error("Missing checkout request ID");
+      return traceCheckoutRequest({
+        id: requestId,
+        sink: (row) => rows[index]?.push(row),
+        run: () => service.getSnapshot(cwd),
+      });
+    });
+    try {
+      await Promise.all(
+        starts.slice(0, WORKSPACE_GIT_REFRESH_CONCURRENCY).map((start) => start.promise),
+      );
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(WORKSPACE_GIT_REFRESH_CONCURRENCY);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(rows.at(-1)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ requestId: ids.at(-1), phase: "admission", outcome: "start" }),
+        ]),
+      );
+      expect(getCheckoutSnapshotFacts).not.toHaveBeenCalledWith(cwds.at(-1));
+      const firstCwd = cwds[0];
+      if (firstCwd) gates.get(firstCwd)?.resolve(createCheckoutSnapshotFacts(firstCwd));
+      await requests[0];
+      await starts.at(-1)?.promise;
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(WORKSPACE_GIT_REFRESH_CONCURRENCY + 1);
+      expect(rows.at(-1)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ requestId: ids.at(-1), phase: "admission", outcome: "ok" }),
+          expect.objectContaining({ requestId: ids.at(-1), phase: "facts", outcome: "start" }),
+        ]),
+      );
+      for (const [cwd, gate] of gates) gate.resolve(createCheckoutSnapshotFacts(cwd));
+      await Promise.all(requests);
+      expect(rows.at(-1)?.every((row) => row.requestId === ids.at(-1))).toBe(true);
+    } finally {
+      for (const [cwd, gate] of gates) gate.resolve(createCheckoutSnapshotFacts(cwd));
+      await Promise.allSettled(requests);
+    }
+  });
+
+  test("links a request joining background work without inventing its start", async () => {
+    vi.useFakeTimers();
+    const gate = createDeferred<CheckoutSnapshotFacts>();
+    releaseGates.push(() => gate.resolve(createCheckoutSnapshotFacts(REPO_CWD)));
+    const started = createDeferred<void>();
+    const service = trackService({
+      getCheckoutSnapshotFacts: async () => {
+        started.resolve();
+        return gate.promise;
+      },
+    });
+    const background = service.getSnapshot(REPO_CWD);
+    await started.promise;
+    const rows: CheckoutPhaseRow[] = [];
+    const request = traceCheckoutRequest({
+      id: "private",
+      sink: (row) => rows.push(row),
+      run: () => service.getSnapshot(REPO_CWD),
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "facts", outcome: "start", alreadyActive: true }),
+      ]),
+    );
+    gate.resolve(createCheckoutSnapshotFacts(REPO_CWD));
+    await Promise.all([background, request]);
+  });
+
+  test("bounds slow traces and isolates a failing sink", async () => {
+    vi.useFakeTimers();
+    const rows: CheckoutPhaseRow[] = [];
+    const gate = createDeferred<void>();
+    releaseGates.push(() => gate.resolve());
+    const task = traceCheckoutRequest({
+      id: "private",
+      sink: (row) => {
+        rows.push(row);
+        throw new Error("private");
+      },
+      run: async () => {
+        for (let i = 0; i < 300; i++) phase({ name: "facts" })();
+        await gate.promise;
+        return 42;
+      },
+    });
+    expect(rows).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toHaveLength(256);
+    expect(rows[255]).toMatchObject({ phase: "limit", outcome: "truncated" });
+    gate.resolve();
+    expect(await task).toBe(42);
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(rows).toHaveLength(256);
+  });
+
+  test("reports the deadline for unfinished work and keeps fast requests silent", async () => {
+    vi.useFakeTimers();
+    const rows: CheckoutPhaseRow[] = [];
+    const sink = (row: CheckoutPhaseRow) => rows.push(row);
+    expect(await traceCheckoutRequest({ id: "private", sink, run: async () => 1 })).toBe(1);
+    expect(rows).toHaveLength(0);
+    const gate = createDeferred<void>();
+    releaseGates.push(() => gate.resolve());
+    const attach = createDeferred<void>();
+    releaseGates.push(() => attach.resolve());
+    const holder: Array<ReturnType<typeof newRefresh>> = [];
+    const task = traceCheckoutRequest({
+      id: "private",
+      sink,
+      run: async () => {
+        await attach.promise;
+        const refresh = newRefresh();
+        holder.push(refresh);
+        joinRefresh({ refresh, alreadyActive: false });
+        return gate.promise;
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    attach.resolve();
+    await flushPromises();
+    const [refresh] = holder;
+    if (!refresh) throw new Error("Missing refresh");
+    const subscribers = [...refresh.subscribers];
+    await vi.advanceTimersByTimeAsync(34_000);
+    expect(rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ phase: "limit", outcome: "deadline" })]),
+    );
+    const deadlines = rows.filter((row) => row.outcome === "deadline");
+    expect(deadlines).toHaveLength(1);
+    expect(deadlines[0]?.refreshId).toBeUndefined();
+    expect(refresh.subscribers.size).toBe(0);
+    expect(subscribers[0]?.closed).toBe(true);
+    expect(subscribers[0]?.refreshes.size).toBe(0);
+    expect(subscribers[0]?.observed.size).toBe(0);
+    expect(refresh.closed).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+    closeRefresh(refresh);
+    expect(vi.getTimerCount()).toBe(0);
+    const count = rows.length;
+    gate.resolve();
+    await task;
+    expect(rows).toHaveLength(count);
+  });
+});
 
 describe("WorkspaceGitServiceImpl", () => {
   beforeEach(() => {
