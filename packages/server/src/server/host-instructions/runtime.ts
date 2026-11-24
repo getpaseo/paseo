@@ -25,7 +25,11 @@ import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { admitSecuredRelaySocket } from "../websocket/secure-relay-ingress.js";
 import { HostInstructionInbox, HostInstructionSchema, type InboxRequest } from "./inbox.js";
 import { HostInstructionOutbox, HostInstructionReceiptSchema } from "./outbox.js";
-import { InstructionFileWriter, readInstructionFile } from "./storage.js";
+import {
+  InstructionFileWriter,
+  InstructionPersistenceError,
+  readInstructionFile,
+} from "./storage.js";
 
 const Registration = z.object({
   destinationId: z.string(),
@@ -427,7 +431,10 @@ export class HostInstructionsRuntime {
                     await secured.send(JSON.stringify(reply));
                     return secured.close();
                   },
-                  () => secured.close(1008, "Invalid instruction"),
+                  (error: unknown) =>
+                    error instanceof InstructionPersistenceError
+                      ? secured.close(1011, "Instruction storage unavailable")
+                      : secured.close(1008, "Invalid instruction"),
                 )
                 .catch(() => secured.terminate());
             });
@@ -472,7 +479,9 @@ export class HostInstructionsRuntime {
         return (await this.resolveConversation(target.agentId))?.workspaceId === target.workspaceId;
       });
       return { ok: true, receipt: await this.inbox.status(principal, request.instruction.id) };
-    } catch {
+    } catch (error) {
+      // The previous state can still be on disk. Close without issuing a terminal receipt.
+      if (error instanceof InstructionPersistenceError) throw error;
       return { ok: false, state: "failed" };
     }
   }

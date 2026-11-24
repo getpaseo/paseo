@@ -29,7 +29,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
+import { AgentManager } from "../agent/agent-manager.js";
 import { HostInstructionInbox } from "../host-instructions/inbox.js";
+import * as privateFiles from "../private-files.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
@@ -770,6 +772,141 @@ async function waitForCapturedLog(
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();
+      }
+    },
+  );
+
+  test(
+    "connected hosts retry an unpersisted cancellation after the receiver restarts",
+    { timeout: 60000 },
+    async () => {
+      const homeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-cancel-instructions-"));
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const sent = vi.fn();
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destinationOptions = {
+          paseoHomeRoot: homeRoot,
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({ onStartTurn: sent }),
+        };
+        const destination = await createTestPaseoDaemon({ ...destinationOptions, cleanup: false });
+        cleanup.push(
+          () => rm(destination.staticDir, { recursive: true, force: true }),
+          () => destination.close(),
+        );
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        cleanup.push(() => destinationClient.close());
+        await destinationClient.connect();
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+        });
+        // Keep this conversation busy on both sides of the receiver restart.
+        const hasInFlightRun = AgentManager.prototype.hasInFlightRun;
+        vi.spyOn(AgentManager.prototype, "hasInFlightRun").mockImplementation(
+          function (this: AgentManager, agentId) {
+            return agentId === agent.id || hasInFlightRun.call(this, agentId);
+          },
+        );
+
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(() => sourceClient.close());
+        await sourceClient.connect();
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId: sourceClient.getLastServerInfoMessage()!.serverId,
+          policy: "unattended",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+        const mcp = new McpClient({ name: "cancelling-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, workspaceId: workspace.id, prompt: "Queued" },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        const status = async () =>
+          (await mcp.callTool({ name: "get_host_instruction_status", arguments: { id } }))
+            .structuredContent;
+        await expect.poll(status, { timeout: 15000 }).toMatchObject({ id, state: "queued" });
+
+        const authenticate = vi.spyOn(HostInstructionInbox.prototype, "authenticate");
+        const originalWrite = privateFiles.writePrivateFileAtomic;
+        const inboxFile = path.join(destination.paseoHome, "host-instructions", "inbox.json");
+        const failedWrite = vi.fn();
+        const persist = vi
+          .spyOn(privateFiles, "writePrivateFileAtomic")
+          .mockImplementation(async (file, data) => {
+            if (file === inboxFile) {
+              failedWrite();
+              throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
+            }
+            return originalWrite(file, data);
+          });
+        await mcp.callTool({ name: "cancel_host_instruction", arguments: { id } });
+        await expect.poll(() => failedWrite.mock.calls.length, { timeout: 15000 }).toBe(1);
+        // An additional authenticated exchange proves the outbox retried after the write failed.
+        authenticate.mockClear();
+        await expect
+          .poll(() => authenticate.mock.calls.length, { timeout: 8000 })
+          .toBeGreaterThan(0);
+        expect(await status()).toMatchObject({ id, state: "queued", cancellationPending: true });
+        expect(await (await HostInstructionInbox.open(destination.paseoHome)).list()).toEqual([
+          expect.objectContaining({
+            instruction: expect.objectContaining({ id }),
+            state: "queued",
+          }),
+        ]);
+
+        persist.mockRestore();
+        await destinationClient.close();
+        await destination.close();
+        const restarted = await createTestPaseoDaemon(destinationOptions);
+        cleanup.push(() => restarted.close());
+        await expect.poll(status, { timeout: 15000 }).toMatchObject({
+          id,
+          state: "cancelled",
+          cancellationPending: false,
+        });
+        expect(await (await HostInstructionInbox.open(restarted.paseoHome)).list()).toEqual([
+          expect.objectContaining({
+            instruction: expect.objectContaining({ id }),
+            state: "cancelled",
+          }),
+        ]);
+        expect(sent).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+        await rm(homeRoot, { recursive: true, force: true });
       }
     },
   );

@@ -16,6 +16,12 @@ export async function readInstructionFile<T>(
   return parse(JSON.parse(raw));
 }
 
+export class InstructionPersistenceError extends Error {
+  constructor(cause: unknown) {
+    super("Could not persist host instructions", { cause });
+  }
+}
+
 /** Serialize snapshots in admission order. After a failed write, restart from disk. */
 export class InstructionFileWriter {
   private tail = Promise.resolve();
@@ -28,7 +34,11 @@ export class InstructionFileWriter {
 
   persist(value: unknown): Promise<void> {
     const snapshot = JSON.stringify(value);
-    this.tail = this.tail.then(() => writePrivateFileAtomic(this.file, snapshot));
+    this.tail = this.tail.then(() =>
+      writePrivateFileAtomic(this.file, snapshot).catch((error: unknown) => {
+        throw new InstructionPersistenceError(error);
+      }),
+    );
     return this.tail;
   }
 }
