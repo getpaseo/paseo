@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
@@ -301,6 +301,21 @@ function ProjectSettingsBody({
     [openEditSheet, t],
   );
 
+  const projectLinks = (
+    <SettingsGroup
+      title={t("settings.projectLinks.entry.sectionTitle")}
+      testID="project-links-group"
+    >
+      <ProjectLinksEntry
+        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
+      />
+    </SettingsGroup>
+  );
+
   return (
     <View role="main" style={styles.body}>
       <SettingsDetailHeader
@@ -336,21 +351,8 @@ function ProjectSettingsBody({
         isHostGone,
         onBackToProjects,
         showBackToProjects,
+        projectLinks,
       })}
-
-      <SettingsGroup
-        title={t("settings.projectLinks.entry.sectionTitle")}
-        testID="project-links-group"
-        style={styles.projectLinksGroup}
-      >
-        <ProjectLinksEntry
-          key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
-          serverId={selectedHost.serverId}
-          projectId={selectedHost.projectId}
-          placements={projectLinkPlacements}
-          suggestions={projectLinkSuggestions}
-        />
-      </SettingsGroup>
     </View>
   );
 }
@@ -368,6 +370,7 @@ interface RenderContentInput {
   isHostGone: boolean;
   onBackToProjects: () => void;
   showBackToProjects: boolean;
+  projectLinks: ReactNode;
 }
 
 function renderContent({
@@ -383,37 +386,49 @@ function renderContent({
   isHostGone,
   onBackToProjects,
   showBackToProjects,
+  projectLinks,
 }: RenderContentInput) {
+  const withProjectLinks = (status: ReactNode) => (
+    <>
+      {status}
+      {projectLinks}
+    </>
+  );
+
   if (readQuery.isLoading) {
-    return (
+    return withProjectLinks(
       <View style={styles.centered}>
         <LoadingSpinner color={ResolveSpinnerColor()} />
-      </View>
+      </View>,
     );
   }
 
   if (readQuery.isError) {
-    return <ReadFailureCallout kind="transport" error={readQuery.error} onReload={onReload} />;
+    return withProjectLinks(
+      <ReadFailureCallout kind="transport" error={readQuery.error} onReload={onReload} />,
+    );
   }
 
   if (readError) {
-    return <ReadFailureCallout kind={readError.code} error={null} onReload={onReload} />;
+    return withProjectLinks(
+      <ReadFailureCallout kind={readError.code} error={null} onReload={onReload} />,
+    );
   }
 
   if (isHostGone) {
-    return (
+    return withProjectLinks(
       <NoEditableTarget
         onBackToProjects={onBackToProjects}
         showBackToProjects={showBackToProjects}
-      />
+      />,
     );
   }
 
   if (!loadedConfig) {
-    return (
+    return withProjectLinks(
       <View style={styles.centered}>
         <LoadingSpinner color={ResolveSpinnerColor()} />
-      </View>
+      </View>,
     );
   }
 
@@ -428,7 +443,9 @@ function renderContent({
       queryKey={queryKey}
       client={client}
       onReload={onReload}
-    />
+    >
+      {projectLinks}
+    </ProjectConfigForm>
   );
 }
 
@@ -502,6 +519,7 @@ function errorToDetail(error: unknown): string | null {
 }
 
 interface ProjectConfigFormProps {
+  children: ReactNode;
   baseConfig: PaseoConfigRaw;
   revision: PaseoConfigRevision | null;
   hasUncommittedWorktreeSetupChanges: boolean;
@@ -512,6 +530,7 @@ interface ProjectConfigFormProps {
 }
 
 function ProjectConfigForm({
+  children,
   baseConfig,
   revision,
   hasUncommittedWorktreeSetupChanges,
@@ -786,6 +805,8 @@ function ProjectConfigForm({
           )}
         </View>
       </SettingsGroup>
+
+      {children}
 
       <SettingsGroup
         title={t("settings.project.metadata.title")}
@@ -1143,9 +1164,6 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     padding: theme.spacing[4],
     gap: theme.spacing[2],
-  },
-  projectLinksGroup: {
-    marginTop: theme.spacing[6],
   },
   editButton: {
     padding: theme.spacing[1],

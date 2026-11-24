@@ -217,6 +217,18 @@ test.describe("Projects settings", () => {
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
       const linksGroup = page.getByTestId("project-links-group");
       await expect(linksGroup.getByText("Projects across hosts", { exact: true })).toBeVisible();
+      expect(
+        await page
+          .getByRole("main")
+          .locator(
+            '[data-testid="scripts-group"], [data-testid="project-links-group"], [data-testid="metadata-group"], [data-testid="save-button"]',
+          )
+          .evaluateAll((elements) => {
+            const ids = [];
+            for (const element of elements) ids.push(element.getAttribute("data-testid"));
+            return ids;
+          }),
+      ).toEqual(["scripts-group", "project-links-group", "metadata-group", "save-button"]);
       await linksGroup.getByRole("button", { name: "Link projects", exact: true }).click();
       await expect(page.getByTestId("project-links-no-matches")).toBeVisible();
       await page.getByTestId("project-links-close").click();
@@ -401,6 +413,7 @@ test.describe("Projects settings — error UX", () => {
 
     await expectProjectSettingsError(page, "invalid");
     await expectProjectSettingsFormHidden(page);
+    await expect(page.getByRole("button", { name: "Link projects", exact: true })).toBeVisible();
 
     // Restore a valid config so the reload succeeds.
     await restorePaseoConfig(editableProject.path, initialPaseoConfig);
