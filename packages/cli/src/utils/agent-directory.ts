@@ -40,7 +40,7 @@ export async function fetchAllAgents(
 }
 
 /**
- * Resolve an agent by ID, prefix, or name from the directory, falling back to
+ * Resolve full IDs directly. Resolve prefixes and names from the directory, falling back to
  * `fetch_agent` for agents omitted from `fetch_agents` (for example after their
  * workspace or project was deleted).
  */
@@ -53,6 +53,15 @@ export async function resolveAgentEntry(
     return null;
   }
 
+  // COMPAT(fullAgentIdExact): daemons before v0.16.0 resolve a full agent ID
+  // that matches no agent to an agent titled with it, so archive, detach and
+  // reload accept their answer only when it is that ID. Remove after 2027-05-15.
+  if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
+    const agentId = trimmed.toLowerCase();
+    const fetchResult = await client.fetchAgent({ agentId });
+    return fetchResult?.agent.id === agentId ? fetchResult.agent : null;
+  }
+
   const agents = await fetchAllAgents(client, { filter: { includeArchived: true } });
   const listedId = resolveAgentId(agentIdArg, agents);
   if (listedId) {
@@ -62,14 +71,6 @@ export async function resolveAgentEntry(
     }
   }
 
-  // COMPAT(fullAgentIdExact): daemons before v0.16.0 resolve a full agent ID
-  // that matches no agent to an agent titled with it, so archive, detach and
-  // reload accept their answer only when it is that ID. Remove after 2027-05-15.
-  if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
-    const agentId = trimmed.toLowerCase();
-    const fetchResult = await client.fetchAgent({ agentId });
-    return fetchResult?.agent.id === agentId ? fetchResult.agent : null;
-  }
   const fetchResult = await client.fetchAgent({ agentId: trimmed });
   return fetchResult?.agent ?? null;
 }
