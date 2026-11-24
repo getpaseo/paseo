@@ -2594,14 +2594,20 @@ it.each([false, true])(
         ...nodeTerminalCommand(`
       process.stdin.setRawMode(true);
       let row = 0;
-      function print(count) {
-        for(let i=0;i<count;i++,row++) process.stdout.write("\\x1b[31mrow-" + String(row).padStart(5,"0") + " 界é🙂 " + "log ".repeat(20) + "\\x1b[0m\\r\\n");
+      function nextRow() {
+        return "\\x1b[31mrow-" + String(row++).padStart(5,"0") + " 界é🙂 " + "log ".repeat(20) + "\\x1b[0m\\r\\n";
       }
-      print(12050);
+      // Fill the initial history in batches to avoid a TTY write for every row.
+      for (let start = 0; start < 12050; start += 256) {
+        const count = Math.min(256, 12050 - start);
+        process.stdout.write(Array.from({ length: count }, nextRow).join(""));
+      }
       process.stdout.write("READY\\r\\n");
       process.stdin.on("data", data => {
-        if(data.toString().includes("BURST")) { print(4000); process.stdout.write("BURST-DONE\\r\\n"); }
-        else process.stdout.write("ECHO:" + data.toString() + "\\r\\n");
+        if(data.toString().includes("BURST")) {
+          for (let i = 0; i < 4000; i++) process.stdout.write(nextRow());
+          process.stdout.write("BURST-DONE\\r\\n");
+        } else process.stdout.write("ECHO:" + data.toString() + "\\r\\n");
       });
       setInterval(()=>{},1000);
     `),

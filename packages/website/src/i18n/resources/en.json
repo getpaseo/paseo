@@ -498,7 +498,6 @@
         "addProject": "Add project",
         "addHost": "Add host",
         "hosts": "Hosts",
-        "agentCount": "{{count}} agents",
         "hostLinks": {
           "local": "Local",
           "relay": "Relay",
