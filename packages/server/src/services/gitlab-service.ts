@@ -97,6 +97,7 @@ export class GlabCommandError extends ForgeCommandError {
 export interface GlabCommandRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface GlabCommandResult {
@@ -938,7 +939,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       throw new GlabCliMissingError();
     }
     try {
-      return await runner(args, runOptions);
+      return await runner(args, { ...runOptions, executablePath: glabPath });
     } catch (error) {
       throw glabCliRunner.normalizeError(error, { args, cwd: runOptions.cwd });
     }
@@ -1191,7 +1192,10 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         return false;
       }
       try {
-        await runner(["auth", "status", "--hostname", host], { cwd: input.cwd });
+        await runner(["auth", "status", "--hostname", host], {
+          cwd: input.cwd,
+          executablePath: glabPath,
+        });
         return true;
       } catch {
         return false;

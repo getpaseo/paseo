@@ -23,6 +23,7 @@ import { execCommand } from "../utils/spawn.js";
 import { resolveSshHostname } from "../utils/ssh-hostname.js";
 import {
   CLI_AUTH_PROBE_TIMEOUT_MS,
+  createCachedCliPathResolver,
   createForgeCliRunner,
   ForgeAuthenticationError,
   ForgeCliMissingError,
@@ -991,6 +992,7 @@ interface GitHubServiceDependencies {
 export interface GitHubCommandRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface GitHubCommandResult {
@@ -1148,7 +1150,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const ttlMs = options.ttlMs ?? DEFAULT_GITHUB_CACHE_TTL_MS;
   const deps: GitHubServiceDependencies = {
     runner: options.runner ?? runGhCommand,
-    resolveGhPath: options.resolveGhPath ?? resolveGhPath,
+    resolveGhPath: createCachedCliPathResolver(options.resolveGhPath ?? resolveGhPath),
     now: options.now ?? Date.now,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
     resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
@@ -1377,8 +1379,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     // safe even for auto-routing subcommands because it matches the repo's host.
     const host = explicitHost ?? (await resolveRepoHostCached(runOptions.cwd));
     const effectiveOptions: GitHubCommandRunnerOptions = host
-      ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
-      : runOptions;
+      ? {
+          ...runOptions,
+          executablePath: ghPath,
+          envOverlay: { ...runOptions.envOverlay, GH_HOST: host },
+        }
+      : { ...runOptions, executablePath: ghPath };
     try {
       const result = await deps.runner(args, effectiveOptions);
       return result.stdout.trim();

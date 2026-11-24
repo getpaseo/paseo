@@ -1654,4 +1654,20 @@ describe("createGitLabService", () => {
       GlabCommandError,
     );
   });
+
+  it("forwards the resolved glab executablePath to the command runner", async () => {
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGitLabService({
+      resolveGlabPath: async () => "/opt/gitlab-cli/bin/glab",
+      resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        return ok("[]");
+      },
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "release", kinds: ["github-pr"] });
+    expect(seenExecutablePaths).toEqual(["/opt/gitlab-cli/bin/glab", "/opt/gitlab-cli/bin/glab"]);
+  });
 });

@@ -5341,3 +5341,18 @@ it("skips pagination after the last exact observer releases its PR", async () =>
     vi.useRealTimers();
   }
 });
+
+it("forwards the resolved gh executablePath to the command runner", async () => {
+  const seenExecutablePaths: Array<string | undefined> = [];
+  const service = createGitHubService({
+    resolveGhPath: async () => "/opt/github-cli/bin/gh",
+    resolveRepoHost: async () => null,
+    runner: async (_args, options) => {
+      seenExecutablePaths.push(options.executablePath);
+      return { stdout: "[]", stderr: "" };
+    },
+  });
+
+  await service.searchIssuesAndPrs({ cwd: "/repo", query: "test", kinds: ["github-issue"] });
+  expect(seenExecutablePaths).toEqual(["/opt/github-cli/bin/gh"]);
+});

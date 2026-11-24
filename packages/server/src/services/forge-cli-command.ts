@@ -59,6 +59,7 @@ interface ProbeHostViaCliAuthStatusOptions {
 export interface ForgeCliRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface ForgeCliRunnerResult {
@@ -85,6 +86,7 @@ export interface CreateForgeCliRunnerOptions {
   timeoutMs: number;
   isAuthFailureText: (text: string) => boolean;
   errorClasses: ForgeCliRunnerErrorClasses;
+  resolveExecutablePath?: () => Promise<string | null>;
 }
 
 export interface ForgeCliRunnerFactory {
@@ -95,6 +97,10 @@ export interface ForgeCliRunnerFactory {
   ) => Error;
 }
 
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || value.includes("\\");
+}
+
 /**
  * Shared shape behind the gh/glab/tea CLI adapters: an exec wrapper (10MB
  * maxBuffer, per-call env overlay merged over the binary's defaults, a
@@ -102,13 +108,32 @@ export interface ForgeCliRunnerFactory {
  * trio. The three adapters differ only in the params passed here.
  */
 export function createForgeCliRunner(options: CreateForgeCliRunnerOptions): ForgeCliRunnerFactory {
-  const run: ForgeCliRunner = (args, runOptions) =>
-    execCommand(options.binary, args, {
+  const resolveBinaryPath = createCachedCliPathResolver(
+    options.resolveExecutablePath ?? (() => findExecutable(options.binary)),
+  );
+
+  async function resolveCommandPath(requestedPath: string | undefined): Promise<string> {
+    const candidate = requestedPath ?? options.binary;
+    if (hasPathSeparator(candidate)) {
+      return candidate;
+    }
+    const resolved =
+      candidate === options.binary ? await resolveBinaryPath() : await findExecutable(candidate);
+    if (!resolved) {
+      throw options.errorClasses.createMissingError();
+    }
+    return resolved;
+  }
+
+  const run: ForgeCliRunner = async (args, runOptions) => {
+    const command = await resolveCommandPath(runOptions.executablePath);
+    return execCommand(command, args, {
       cwd: runOptions.cwd,
       envOverlay: { ...options.envOverlay, ...runOptions.envOverlay },
       maxBuffer: 10 * 1024 * 1024,
       timeout: options.timeoutMs,
     });
+  };
 
   function normalizeError(
     error: unknown,
@@ -304,7 +329,7 @@ export async function probeHostViaCliAuthStatus(
     return false;
   }
   try {
-    await execCommand(options.cli, ["auth", "status", "--hostname", options.host], {
+    await execCommand(cliPath, ["auth", "status", "--hostname", options.host], {
       envOverlay: options.envOverlay,
       timeout: CLI_AUTH_PROBE_TIMEOUT_MS,
     });

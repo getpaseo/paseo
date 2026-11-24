@@ -137,6 +137,7 @@ export class TeaCommandError extends ForgeCommandError {
 export interface TeaCommandRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface TeaCommandResult {
@@ -1030,7 +1031,7 @@ export async function probeGiteaHost(host: string): Promise<boolean> {
     return false;
   }
   try {
-    const { stdout } = await execCommand("tea", ["login", "list", "-o", "json"], {
+    const { stdout } = await execCommand(teaPath, ["login", "list", "-o", "json"], {
       envOverlay: TEA_ENV,
       timeout: CLI_AUTH_PROBE_TIMEOUT_MS,
     });
@@ -1061,12 +1062,19 @@ export interface DetectGiteaFamilyOptions {
   runTea?: TeaApiRunner;
 }
 
-async function defaultRunTea(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const { stdout, stderr } = await execCommand("tea", args, {
-    envOverlay: TEA_ENV,
-    timeout: GITEA_SOFTWARE_PROBE_TIMEOUT_MS,
-  });
-  return { stdout, stderr };
+function createDefaultRunTea(): TeaApiRunner {
+  const resolveTea = createCachedCliPathResolver(resolveTeaPath);
+  return async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
+    const teaPath = await resolveTea();
+    if (!teaPath) {
+      throw new TeaCliMissingError();
+    }
+    const { stdout, stderr } = await execCommand(teaPath, args, {
+      envOverlay: TEA_ENV,
+      timeout: GITEA_SOFTWARE_PROBE_TIMEOUT_MS,
+    });
+    return { stdout, stderr };
+  };
 }
 
 const HTTP_STATUS_LINE = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/m;
@@ -1129,7 +1137,7 @@ export async function detectGiteaFamilySoftware(
   host: string,
   options: DetectGiteaFamilyOptions = {},
 ): Promise<GiteaFamilySoftware> {
-  const runTea = options.runTea ?? defaultRunTea;
+  const runTea = options.runTea ?? createDefaultRunTea();
 
   const viaTea = await probeForgejoNamespaceByTea(host, runTea);
   if (viaTea !== null) {
@@ -1213,7 +1221,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       throw new TeaCliMissingError();
     }
     try {
-      return await runner(args, runOptions);
+      return await runner(args, { ...runOptions, executablePath: teaPath });
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });
     }
