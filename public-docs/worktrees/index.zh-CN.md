@@ -214,6 +214,18 @@ teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修�
 
 范围包含两端。项目的 `servicePorts` 块会替换全局块。服务上显式设置的 `port` 总是优先于这两种设置。
 
+设置 `blockSize` 后，同一工作区内的脚本和服务可共用一段连续端口。启动配置也会获得端口段，未指定大小时使用 100 个端口。这样，现有的 Compose 封装脚本或主机上的开发脚本可以自行选择端口，无需把每个进程都声明为 Paseo 服务。
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  }
+}
+```
+
+未设置 `blockSize` 时，Paseo 仍按服务分配端口，也不会以 `@workspace` 调用 `portScript`。端口段在 daemon 的运行期间保持有效，供同一工作区内使用端口段的命令共用。单独声明的服务仍按原有方式分配 `$PASEO_PORT`，显式设置的服务端口不包含在工作区端口段内。
+
 如果使用外部分配器，请改为配置 `portScript`：
 
 ```json
@@ -225,6 +237,63 @@ teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修�
 ```
 
 Paseo 在工作区目录中运行该可执行文件，并传入四个参数：服务名、工作区 ID、分支名和 worktree 路径。由于脚本是直接执行的、不经过 shell，`portScript` 必须指向一个真正的可执行文件（例如编译后的二进制文件，或带有正确 shebang 行如 `#!/bin/bash` 的脚本），而不是内联的 shell 命令或管道。如果需要 shell 求值或管道，请把它们包装在一个小的可执行脚本中。没有分支时会传入空字符串。相同的值也可以通过 `PASEO_SCRIPTNAME`、`PASEO_WORKSPACE_ID`、`PASEO_BRANCH_NAME` 和 `PASEO_WORKTREE_PATH` 获取。它必须向 stdout 输出一个有效的 TCP 端口。同一块中 `portScript` 优先于 `range`。Paseo 信任外部分配器，因此返回的端口可能已经被占用，例如被 Paseo 将要连接的某个服务占用。
+
+当脚本或服务配置了 `blockSize`，或有启动配置运行时，Paseo 会以服务名 `@workspace` 调用外部分配器一次，并通过 `PASEO_PORT_COUNT` 传入所需的端口数量。请输出端口段的第一个端口。
+
+### 工作区启动配置 {#workspace-launches}
+
+如果已有命令能启动整套开发环境（例如同时运行 Docker Compose 和主机进程的脚本），请使用 `launches`。脚本、服务和启动配置都在同一个 **运行** 菜单中。请按命令的用途选择：
+
+| 类型     | 用途                                           |
+| -------- | ---------------------------------------------- |
+| 脚本     | 按需执行一次的命令，例如测试或迁移。           |
+| 服务     | 长期运行的单个服务，分配一个 HTTP 端口。       |
+| 启动配置 | 现有的开发入口，可查看终端输出并发现多个端口。 |
+
+启动配置沿用项目已有的编排方式：
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  },
+  "launches": {
+    "dev": { "command": "./bin/dev" },
+    "full": { "command": "./bin/dev --full" }
+  }
+}
+```
+
+命令以所选工作区为工作目录。请勿将这类命令配置为 `scripts` 下的服务：服务只获得一个 `$PASEO_PORT`，而启动配置可使用从 `$PASEO_PORT_BASE` 到 `$PASEO_PORT_END` 的共享端口段。项目的启动配置优先于 worktree 中的同名脚本。Paseo 会隐藏旧脚本，并在运行启动配置前停止它。
+
+每个工作区同时只能运行一个启动配置。选择 **切换** 会停止当前命令，再运行所选命令。选择 **输出** 可打开终端标签页，查看 stdout 和 stderr。列表会显示运行、停止或最近的退出码。即使显示运行中，子服务也可能尚未就绪。
+
+Paseo 会探测端口段内正在监听的 TCP 端口。HTTP 监听端口可通过现有的反向代理路由访问，其余 TCP 端口可直接从本地访问。此机制适用于主机监听端口和 Docker 发布的端口。
+
+Docker、依赖项和重启策略由你的命令负责。Unix 上使用 Bash，Windows 上使用 PowerShell，与交互式 shell 的设置无关。命令退出后，启动配置也会停止。请让命令在前台运行，这样 Paseo 才能停止它。单独运行 `docker compose up -d` 会立即退出，不适合作为启动命令。
+
+```bash
+paseo launch ls
+paseo launch start dev
+paseo launch stop dev
+```
+
+要在临时的 Node.js 项目中试用切换功能，可以在 `paseo.json` 中将 `launches` 设置为：
+
+```json
+{
+  "launches": {
+    "dev": {
+      "command": "node -e \"require('node:http').createServer((req, res) => res.end('dev')).listen(Number(process.env.PASEO_PORT_BASE), '127.0.0.1')\""
+    },
+    "full": {
+      "command": "node -e \"require('node:http').createServer((req, res) => res.end('full')).listen(Number(process.env.PASEO_PORT_BASE), '127.0.0.1')\""
+    }
+  }
+}
+```
+
+在 **运行** 菜单中启动 `dev`，打开检测到的 HTTP 链接。切换到 `full` 后打开它的链接。响应会从 `dev` 变成 `full`，端口段保持不变。
 
 ### 反向代理 {#reverse-proxy}
 
