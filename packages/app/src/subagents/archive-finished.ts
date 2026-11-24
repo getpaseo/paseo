@@ -38,11 +38,15 @@ export interface ArchiveFinishedSubagents {
   archiveFinished(): Promise<ArchiveFinishedOutcome>;
 }
 
+// A closed agent has no live runtime (finished, or released by idle cleanup), so it is
+// finished for archiving purposes just like idle and error.
+function isArchivableManagedStatus(status: ManagedSubagentSnapshot["status"]): boolean {
+  return status === "idle" || status === "error" || status === "closed";
+}
+
 export function isFinishedSubagent(row: SubagentRow): boolean {
   if (row.kind === "paseo")
-    return (
-      (row.status === "idle" || row.status === "error") && (row.backgroundWork?.count ?? 0) === 0
-    );
+    return isArchivableManagedStatus(row.status) && (row.backgroundWork?.count ?? 0) === 0;
   return row.status === "completed" || row.status === "failed" || row.status === "canceled";
 }
 
@@ -55,7 +59,7 @@ function canArchiveManagedSubagent(
     !agent.archivedAt &&
     agent.parentAgentId === parentAgentId &&
     (agent.backgroundWork?.count ?? 0) === 0 &&
-    (agent.status === "idle" || agent.status === "error"),
+    isArchivableManagedStatus(agent.status),
   );
 }
 

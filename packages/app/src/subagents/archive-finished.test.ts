@@ -432,6 +432,75 @@ describe("createArchiveFinishedSubagents", () => {
   });
 });
 
+describe("closed managed subagents", () => {
+  it("counts a closed child as finished", () => {
+    const archive = createArchiveFinishedSubagents([paseo("closed-child", "closed")], {
+      parentAgentId: "parent",
+      getManagedSubagent: () => undefined,
+      archiveManagedSubagent: async () => undefined,
+      dismissProviderSubagents: () => undefined,
+    });
+
+    expect(archive.getState().eligibleCount).toBe(1);
+  });
+
+  it("archives a closed child instead of skipping it", async () => {
+    const current = new Map([
+      ["closed-child", managed("closed-child", "closed")],
+      ["idle-child", managed("idle-child")],
+    ]);
+    const archived: string[] = [];
+    const archive = createArchiveFinishedSubagents(
+      [paseo("closed-child", "closed"), paseo("idle-child")],
+      {
+        parentAgentId: "parent",
+        getManagedSubagent: ({ agentId }) => current.get(agentId),
+        archiveManagedSubagent: async ({ agentId }) => {
+          archived.push(agentId);
+        },
+        dismissProviderSubagents: () => undefined,
+      },
+    );
+
+    await expect(archive.archiveFinished()).resolves.toEqual({
+      archivedPaseoIds: ["closed-child", "idle-child"],
+      dismissedProviderIds: [],
+      skippedPaseoIds: [],
+      failures: [],
+    });
+    expect(archived).toEqual(["closed-child", "idle-child"]);
+  });
+
+  it("still skips a closed child that was resumed and is running by archive time", async () => {
+    const current = new Map([["closed-child", managed("closed-child", "running")]]);
+    const archive = createArchiveFinishedSubagents([paseo("closed-child", "closed")], {
+      parentAgentId: "parent",
+      getManagedSubagent: ({ agentId }) => current.get(agentId),
+      archiveManagedSubagent: async () => undefined,
+      dismissProviderSubagents: () => undefined,
+    });
+
+    await expect(archive.archiveFinished()).resolves.toEqual({
+      archivedPaseoIds: [],
+      dismissedProviderIds: [],
+      skippedPaseoIds: ["closed-child"],
+      failures: [],
+    });
+  });
+
+  it("still skips a closed child that has live background work", async () => {
+    const active = { ...paseo("closed-child", "closed"), backgroundWork: { count: 1 } };
+    const archive = createArchiveFinishedSubagents([active], {
+      parentAgentId: "parent",
+      getManagedSubagent: () => undefined,
+      archiveManagedSubagent: async () => undefined,
+      dismissProviderSubagents: () => undefined,
+    });
+
+    expect(archive.getState().eligibleCount).toBe(0);
+  });
+});
+
 it("excludes live background work and rechecks it before each archive", async () => {
   const first = deferred<void>();
   const active = { ...paseo("active"), backgroundWork: { count: 1 } };
