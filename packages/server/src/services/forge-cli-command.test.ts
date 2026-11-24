@@ -318,6 +318,49 @@ describe.skipIf(isPlatform("win32"))("createForgeCliRunner", () => {
       process.env.PATH = originalPath;
     }
   });
+
+  it("re-resolves and retries once when the cached executable loses execute permission", async () => {
+    const originalPath = process.env.PATH;
+    const firstDir = join(tempDir, "first-perm-bin");
+    const secondDir = join(tempDir, "second-perm-bin");
+    mkdirSync(firstDir);
+    mkdirSync(secondDir);
+
+    const firstCli = join(firstDir, "forge-cli-perm");
+    writeFileSync(firstCli, "#!/bin/sh\necho from-first\n");
+    chmodSync(firstCli, 0o755);
+
+    const secondCli = join(secondDir, "forge-cli-perm");
+    writeFileSync(secondCli, "#!/bin/sh\necho from-second\n");
+    chmodSync(secondCli, 0o755);
+
+    const runner = createForgeCliRunner({
+      binary: "forge-cli-perm",
+      envOverlay: {},
+      timeoutMs: 2_000,
+      isAuthFailureText: () => false,
+      errorClasses: {
+        isAlreadyClassified: () => false,
+        isCommandError: (error): error is FakeCommandError => error instanceof FakeCommandError,
+        createAuthError: (stderr) => new Error(`auth: ${stderr}`),
+        createMissingError: () => new Error("missing"),
+        createCommandError: (params) => new FakeCommandError(params),
+      },
+    });
+
+    process.env.PATH = [firstDir, secondDir, originalPath].filter(Boolean).join(delimiter);
+    try {
+      await expect(runner.run(["status"], { cwd: tempDir })).resolves.toMatchObject({
+        stdout: "from-first\n",
+      });
+      chmodSync(firstCli, 0o644);
+      await expect(runner.run(["status"], { cwd: tempDir })).resolves.toMatchObject({
+        stdout: "from-second\n",
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
 
 describe.runIf(isPlatform("win32"))("createForgeCliRunner (Windows)", () => {

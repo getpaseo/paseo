@@ -102,6 +102,13 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
+const UNLAUNCHABLE_EXECUTABLE_ERROR_CODES = new Set<unknown>([
+  "ENOENT",
+  "EACCES",
+  "ENOEXEC",
+  "UNKNOWN",
+]);
+
 function isWindowsBatchScript(executablePath: string): boolean {
   if (process.platform !== "win32") {
     return false;
@@ -110,7 +117,7 @@ function isWindowsBatchScript(executablePath: string): boolean {
   return lower.endsWith(".cmd") || lower.endsWith(".bat");
 }
 
-async function isDisappearedExecutableError(
+async function isUnlaunchableExecutableError(
   error: unknown,
   executablePath: string,
 ): Promise<boolean> {
@@ -118,7 +125,7 @@ async function isDisappearedExecutableError(
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
+    UNLAUNCHABLE_EXECUTABLE_ERROR_CODES.has((error as { code?: unknown }).code)
   ) {
     return true;
   }
@@ -314,7 +321,7 @@ export async function runWithResolvedCliPath<T>(options: {
   try {
     return await options.run(executablePath);
   } catch (error) {
-    if (!(await isDisappearedExecutableError(error, executablePath))) {
+    if (!(await isUnlaunchableExecutableError(error, executablePath))) {
       throw error;
     }
     options.resolvePath.invalidate(executablePath);
