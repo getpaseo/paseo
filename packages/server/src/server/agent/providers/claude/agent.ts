@@ -6788,6 +6788,7 @@ async function readClaudeReplayParentFacts(
         outcomes.set(block.tool_use_id, {
           status: block.is_error === true ? "failed" : "completed",
         });
+      if (!toolCalls.has(block.tool_use_id)) continue;
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {

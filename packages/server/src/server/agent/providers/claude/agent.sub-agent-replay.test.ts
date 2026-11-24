@@ -788,6 +788,35 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "running" });
     });
 
+    test("restores a stopped child after a Bash result echoes its launch log", async () => {
+      const bashToolUseId = "toolu_bash";
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          parentEntry([{ type: "tool_use", id: bashToolUseId, name: "Bash", input: {} }]),
+          JSON.stringify({
+            type: "user",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: bashToolUseId,
+                  content: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                },
+              ],
+            },
+          }),
+          taskNotification({ status: "stopped", includeToolUseId: false }),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "canceled",
+      });
+    });
+
     test("prefers a stopped notification over the child's end_turn", async () => {
       writeSession({
         parentLines: [...backgroundLaunch(), taskNotification({ status: "stopped" })],
