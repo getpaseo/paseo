@@ -7,7 +7,12 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import { AgentStorage } from "./agent-storage.js";
-import { AgentDirectory, candidateSnapshot, type BackgroundVisibility } from "./directory.js";
+import {
+  AgentDirectory,
+  candidateSnapshot,
+  candidateStatusPriority,
+  type BackgroundVisibility,
+} from "./directory.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 
 const NOW = "2026-03-01T12:00:00.000Z";
@@ -82,6 +87,34 @@ test("paging candidates only project the selected stored row, once per request",
   const row = rows.find((candidate) => "stored" in candidate && candidate.stored.id === "visible")!;
   expect(candidateSnapshot(row)).toBe(candidateSnapshot(row));
   expect(projected).toEqual(["visible"]);
+});
+
+test("archived status priorities match projected rows without projecting the archive", async () => {
+  const record = (await storage.get("visible"))!;
+  for (const [lastStatus, attentionReason] of [
+    ["idle", "permission"],
+    ["error", "error"],
+    ["running", null],
+    ["initializing", null],
+    ["closed", null],
+  ] as const) {
+    const stored = {
+      ...record,
+      archivedAt: NOW,
+      lastStatus,
+      attentionReason,
+      requiresAttention: attentionReason !== null,
+    };
+    const full = buildStoredAgentPayload(stored, ["codex"], (_, own) => own ?? {});
+    expect(
+      candidateStatusPriority({
+        stored,
+        snapshot() {
+          throw Error("unexpected snapshot");
+        },
+      }),
+    ).toBe(candidateStatusPriority(full));
+  }
 });
 
 test("default lists hide agents that are background or live in a background workspace", async () => {

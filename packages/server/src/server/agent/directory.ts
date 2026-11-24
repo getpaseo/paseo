@@ -1,3 +1,4 @@
+import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "../messages.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
@@ -35,6 +36,26 @@ export type AgentDirectoryCandidate =
 
 export function candidateSnapshot(candidate: AgentDirectoryCandidate): AgentSnapshotPayload {
   return "stored" in candidate ? candidate.snapshot() : candidate;
+}
+
+export function candidateStatusPriority(candidate: AgentDirectoryCandidate): number {
+  if ("stored" in candidate && candidate.stored.archivedAt) {
+    // Archived snapshots have no pending permissions or live background work.
+    const record = candidate.stored;
+    return getAgentStatusPriority({
+      status: record.lastStatus,
+      requiresAttention: record.requiresAttention,
+      attentionReason: record.attentionReason,
+    });
+  }
+  const agent = candidateSnapshot(candidate);
+  return getAgentStatusPriority({
+    status: agent.status,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason,
+    pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+    backgroundWork: agent.backgroundWork,
+  });
 }
 
 interface DiscoverableAgent {

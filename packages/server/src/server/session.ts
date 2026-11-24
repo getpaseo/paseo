@@ -4,6 +4,7 @@ import type { AgentMessageBehavior, AgentMessageDelivery } from "./agent/agent-m
 import {
   AgentDirectory,
   candidateSnapshot,
+  candidateStatusPriority,
   type AgentDirectoryCandidate,
   type BackgroundVisibility,
 } from "./agent/directory.js";
@@ -108,7 +109,6 @@ import {
 import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
-import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
@@ -6215,16 +6215,8 @@ export class Session {
     getSortValue: (candidate, key): number | string => {
       const row = "stored" in candidate ? candidate.stored : candidate;
       switch (key) {
-        case "status_priority": {
-          const agent = candidateSnapshot(candidate);
-          return getAgentStatusPriority({
-            status: agent.status,
-            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-            requiresAttention: agent.requiresAttention,
-            attentionReason: agent.attentionReason ?? null,
-            backgroundWork: agent.backgroundWork,
-          });
-        }
+        case "status_priority":
+          return candidateStatusPriority(candidate);
         case "created_at":
           return Date.parse(row.createdAt);
         case "updated_at":
