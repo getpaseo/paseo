@@ -6,7 +6,11 @@ import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
 } from "../../utils/timeline.js";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  DaemonClient,
+  FetchAgentTimelineCursor,
+  FetchAgentTimelinePayload,
+} from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import { curateAgentActivity } from "@getpaseo/server/agent-activity";
 
@@ -55,6 +59,76 @@ export async function fetchAgentTimelineItems(
     timeoutMs: options?.timeoutMs,
     sinceTimestampMs: options?.sinceTimestampMs,
   });
+}
+
+function validateTimelinePage(
+  page: FetchAgentTimelinePayload,
+  cursor?: FetchAgentTimelineCursor,
+): void {
+  const start = page.startCursor;
+  if (
+    (page.hasOlder && !start) ||
+    (start &&
+      (start.epoch !== page.epoch ||
+        !Number.isSafeInteger(start.seq) ||
+        start.seq <= 0 ||
+        (page.entries[0] !== undefined && start.seq > page.entries[0].seqStart) ||
+        (cursor && start.seq >= cursor.seq)))
+  ) {
+    throw new Error("Invalid timeline cursor while reading history.");
+  }
+}
+
+export async function fetchOneShotTimelineItems(
+  client: Pick<DaemonClient, "fetchAgentTimeline">,
+  agentId: string,
+  sinceTimestampMs: number | undefined,
+  tailCount: number | undefined,
+): Promise<AgentTimelineItem[]> {
+  if (tailCount === 0) return [];
+  const pages: AgentTimelineItem[][] = [];
+  let cursor: FetchAgentTimelineCursor | undefined;
+  let epoch: string | undefined;
+  let count = 0;
+  let pageLimit = 200;
+  for (;;) {
+    const limit = Math.min(pageLimit, tailCount === undefined ? pageLimit : tailCount - count);
+    let page: FetchAgentTimelinePayload;
+    try {
+      page = await client.fetchAgentTimeline(agentId, {
+        direction: cursor ? "before" : "tail",
+        ...(cursor ? { cursor } : {}),
+        limit,
+        projection: "projected",
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "Logical message too large") throw error;
+      if (limit === 1)
+        throw new Error("A timeline page exceeds the transport size limit even at limit 1.", {
+          cause: error,
+        });
+      pageLimit = Math.max(1, Math.floor(limit / 2));
+      continue;
+    }
+    if (
+      page.reset ||
+      page.staleCursor ||
+      page.gap ||
+      (epoch !== undefined && page.epoch !== epoch)
+    ) {
+      throw new Error("Timeline changed while reading history; retry the command.");
+    }
+    epoch = page.epoch;
+    validateTimelinePage(page, cursor);
+    const entries = page.entries.filter(
+      (entry) => sinceTimestampMs === undefined || Date.parse(entry.timestamp) >= sinceTimestampMs,
+    );
+    pages.push(entries.map((entry) => entry.item));
+    count += entries.length;
+    if (!page.hasOlder || (tailCount !== undefined && count >= tailCount)) break;
+    cursor = page.startCursor ?? undefined;
+  }
+  return pages.toReversed().flat();
 }
 
 export function formatAgentActivityTranscript(
@@ -330,22 +404,31 @@ export async function runLogsCommand(
       return;
     }
 
-    // Fetch timeline directly via cursor RPC.
-    let timelineItems = await fetchAgentTimelineItems(client, resolvedId, {
-      sinceTimestampMs,
-    });
-
-    // Apply filter
-    if (options.filter) {
-      timelineItems = timelineItems.filter((item) => matchesFilter(item, options.filter));
-    }
-
     const tailCount = parseTailCount(options.tail);
     if (options.tail !== undefined && tailCount === undefined) {
       console.error(`Error: Invalid --tail value: ${options.tail}`);
       console.error("Usage: --tail <n> (where n is >= 0)");
       await client.close().catch(() => {});
       process.exit(1);
+    }
+
+    // Filtered output must inspect every page: timestamps can be non-monotonic,
+    // and text curation can merge entries after applying a filter.
+    let fetchTailCount = tailCount;
+    if (
+      tailCount !== 0 &&
+      (!usesJsonOutput(options) || options.filter || sinceTimestampMs !== undefined)
+    ) {
+      fetchTailCount = undefined;
+    }
+    let timelineItems = await fetchOneShotTimelineItems(
+      client,
+      resolvedId,
+      sinceTimestampMs,
+      fetchTailCount,
+    );
+    if (options.filter) {
+      timelineItems = timelineItems.filter((item) => matchesFilter(item, options.filter));
     }
 
     await client.close();
