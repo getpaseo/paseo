@@ -1094,6 +1094,45 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test.each([
+    { claudeCodeVersion: "2.1.326", expected: "initialize" },
+    { claudeCodeVersion: "2.2.0", expected: "initialize" },
+    { claudeCodeVersion: "2.1.325", expected: "argv" },
+    { claudeCodeVersion: undefined, expected: "argv" },
+  ])(
+    "delivers MCP servers by $expected for Claude Code $claudeCodeVersion",
+    async ({ claudeCodeVersion, expected }) => {
+      const { queryFactory } = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => {
+          if (claudeCodeVersion === undefined) {
+            throw new Error("Unable to parse Claude Code version from --version output");
+          }
+          return claudeCodeVersion;
+        },
+      });
+      const session = await client.createSession({
+        provider: "claude",
+        cwd: process.cwd(),
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer secret-token" },
+          },
+        },
+      });
+
+      await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+
+      expect(queryFactory.mock.calls[0]?.[0].options.mcpServersDelivery).toBe(expected);
+      await session.close();
+    },
+  );
+
   test("passes extra Claude Code CLI arguments to the SDK", async () => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({

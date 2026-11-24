@@ -54,6 +54,7 @@ import {
   claudeManifestModelSupportsUltracode,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  supportsClaudeMcpServersViaInitialize,
   supportsIndependentClaudeUltracode,
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
@@ -513,8 +514,11 @@ interface ClaudeAgentSessionOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   independentUltracode: boolean;
+  mcpServersDelivery: ClaudeMcpServersDelivery;
   rewindSdk?: ClaudeRewindSdk;
 }
+
+type ClaudeMcpServersDelivery = NonNullable<ClaudeOptions["mcpServersDelivery"]>;
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 type ClaudeThinkingOption =
@@ -1647,6 +1651,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private version: Promise<string | undefined> | undefined;
+  private warnedMcpServersOnArgv = false;
   private readonly lookupLatestRelease: LatestReleaseLookup;
   private readonly rewindSdk: ClaudeRewindSdk;
   private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
@@ -1699,6 +1704,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
+      mcpServersDelivery: await this.resolveMcpServersDelivery(),
       rewindSdk: this.rewindSdk,
     });
   }
@@ -1729,6 +1735,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
+      mcpServersDelivery: await this.resolveMcpServersDelivery(),
       rewindSdk: this.rewindSdk,
     });
     await session.ensureHistoryReady();
@@ -1824,6 +1831,23 @@ export class ClaudeAgentClient implements AgentClient {
   private async supportsIndependentUltracode(): Promise<boolean> {
     this.version ??= this.resolveVersion().catch(() => undefined);
     return supportsIndependentClaudeUltracode(await this.version);
+  }
+
+  private async resolveMcpServersDelivery(): Promise<ClaudeMcpServersDelivery> {
+    this.version ??= this.resolveVersion().catch(() => undefined);
+    const version = await this.version;
+    if (supportsClaudeMcpServersViaInitialize(version)) {
+      return "initialize";
+    }
+    if (this.warnedMcpServersOnArgv) {
+      return "argv";
+    }
+    this.warnedMcpServersOnArgv = true;
+    this.logger.warn(
+      { claudeCodeVersion: version ?? null },
+      "Claude Code is too old or reports no version; MCP server headers go on its command line",
+    );
+    return "argv";
   }
 
   async listImportableSessions(
@@ -2424,6 +2448,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly independentUltracode: boolean;
+  private readonly mcpServersDelivery: ClaudeMcpServersDelivery;
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
   private readonly backgroundStops = new Map<string, (outcome: string) => void>();
@@ -2563,6 +2588,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.independentUltracode = options.independentUltracode;
+    this.mcpServersDelivery = options.mcpServersDelivery;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       getClaudeContextWindowMaxTokens(this.config.model),
@@ -4048,6 +4074,9 @@ class ClaudeAgentSession implements AgentSession {
 
     if (this.config.mcpServers) {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
+      // Off argv, so the Paseo MCP bearer token and any user server headers or env are not
+      // readable by other local accounts through ps or /proc/<pid>/cmdline.
+      base.mcpServersDelivery = this.mcpServersDelivery;
     }
 
     if (this.config.model) {
