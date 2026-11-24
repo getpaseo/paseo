@@ -1704,7 +1704,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      mcpServersDelivery: await this.resolveMcpServersDelivery(),
+      mcpServersDelivery: await this.resolveMcpServersDelivery(claudeConfig.mcpServers),
       rewindSdk: this.rewindSdk,
     });
   }
@@ -1735,7 +1735,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      mcpServersDelivery: await this.resolveMcpServersDelivery(),
+      mcpServersDelivery: await this.resolveMcpServersDelivery(claudeConfig.mcpServers),
       rewindSdk: this.rewindSdk,
     });
     await session.ensureHistoryReady();
@@ -1833,13 +1833,15 @@ export class ClaudeAgentClient implements AgentClient {
     return supportsIndependentClaudeUltracode(await this.version);
   }
 
-  private async resolveMcpServersDelivery(): Promise<ClaudeMcpServersDelivery> {
+  private async resolveMcpServersDelivery(
+    mcpServers: ClaudeAgentConfig["mcpServers"],
+  ): Promise<ClaudeMcpServersDelivery> {
     this.version ??= this.resolveVersion().catch(() => undefined);
     const version = await this.version;
     if (supportsClaudeMcpServersViaInitialize(version)) {
       return "initialize";
     }
-    if (this.warnedMcpServersOnArgv) {
+    if (!mcpServers || Object.keys(mcpServers).length === 0 || this.warnedMcpServersOnArgv) {
       return "argv";
     }
     this.warnedMcpServersOnArgv = true;

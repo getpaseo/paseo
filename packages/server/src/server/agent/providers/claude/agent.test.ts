@@ -1133,6 +1133,30 @@ describe("ClaudeAgentSession features", () => {
     },
   );
 
+  test("warns about argv delivery only after a session configures MCP servers", async () => {
+    const messages: string[] = [];
+    const client = new ClaudeAgentClient({
+      logger: pino({}, { write: (message: string) => messages.push(JSON.parse(message).msg) }),
+      resolveVersion: async () => "2.1.325",
+    });
+    const warnings = () => messages.filter((message) => message.includes("MCP server headers"));
+    const config = { provider: "claude", cwd: process.cwd() } as const;
+
+    await (await client.createSession(config)).close();
+    await (await client.createSession({ ...config, mcpServers: {} })).close();
+    expect(warnings()).toEqual([]);
+
+    const withMcp = {
+      ...config,
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    await (await client.createSession(withMcp)).close();
+    await (await client.createSession(withMcp)).close();
+    expect(warnings()).toEqual([
+      "Claude Code is too old or reports no version; MCP server headers go on its command line",
+    ]);
+  });
+
   test("passes extra Claude Code CLI arguments to the SDK", async () => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
