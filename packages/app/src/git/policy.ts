@@ -96,7 +96,41 @@ export function readUpstreamState(
   return status.isPaseoOwnedWorktree ? "none" : "unknown";
 }
 
-export interface BuildGitActionsInput {
+export interface SyncRemotes {
+  /** Pull has a remote to fetch the branch from. Not limited to origin. */
+  hasPullRemote: boolean;
+  /** Push has a remote to send the branch to. Not limited to origin. */
+  hasPushRemote: boolean;
+}
+
+export function readSyncRemotes(
+  status: Pick<
+    CheckoutStatusPayload,
+    | "pullRemote"
+    | "pushRemote"
+    | "hasRemote"
+    | "firstPushRemote"
+    | "upstreamState"
+    | "aheadOfOrigin"
+    | "isPaseoOwnedWorktree"
+  >,
+): SyncRemotes {
+  if (status.pullRemote !== undefined && status.pushRemote !== undefined) {
+    return { hasPullRemote: status.pullRemote !== null, hasPushRemote: status.pushRemote !== null };
+  }
+  // COMPAT(checkoutSyncRemotes): added in v0.17.5, remove after 2027-05-24 once the daemon floor
+  // reports pullRemote and pushRemote. Older daemons pull and push only in checkouts that have
+  // origin. They make a first push from a Paseo worktree, and from a regular checkout only where
+  // they report firstPushRemote.
+  const isFirstPush = readUpstreamState(status) === "none";
+  const canFirstPush = status.isPaseoOwnedWorktree || (status.firstPushRemote ?? null) !== null;
+  return {
+    hasPullRemote: status.hasRemote,
+    hasPushRemote: status.hasRemote && (!isFirstPush || canFirstPush),
+  };
+}
+
+export interface BuildGitActionsInput extends SyncRemotes {
   isGit: boolean;
   githubFeaturesEnabled: boolean;
   /** Forge brand label (e.g. "GitHub", "GitLab") for forge-neutral unavailable copy. */
@@ -111,9 +145,6 @@ export interface BuildGitActionsInput {
   pullRequestIsMerged: boolean;
   pullRequestMergeable: PullRequestMergeable;
   mergeCapability: MergeCapability | null;
-  hasRemote: boolean;
-  /** The daemon confirmed where a first push publishes the branch. */
-  hasFirstPushRemote: boolean;
   upstream: GitUpstreamState;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
@@ -572,11 +603,11 @@ function getEnablePullRequestAutoMergeActionLabel(id: PullRequestAutoMergeEnable
 }
 
 function canPull(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && !input.hasUncommittedChanges && (input.behindOfOrigin ?? 0) > 0;
+  return input.hasPullRemote && !input.hasUncommittedChanges && (input.behindOfOrigin ?? 0) > 0;
 }
 
 function canPush(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
+  return input.hasPushRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
 }
 
 function hasPushableCommits(input: BuildGitActionsInput): boolean {
@@ -585,9 +616,7 @@ function hasPushableCommits(input: BuildGitActionsInput): boolean {
       return (input.aheadOfOrigin ?? 0) > 0;
     case "none":
       // A first push, which sets the upstream. The commits to send are the ones ahead of the base.
-      // Paseo worktrees always publish to origin. A regular checkout publishes only where the
-      // daemon confirmed Git would push the branch too, so a fork setup is not sent to origin.
-      return input.aheadCount > 0 && (input.isPaseoOwnedWorktree || input.hasFirstPushRemote);
+      return input.aheadCount > 0;
     case "gone":
     case "unknown":
       // The branch has an upstream that is deleted or unreadable, so nothing counts the commits
@@ -678,7 +707,7 @@ function hasEnabledPrAutoMerge(input: BuildGitActionsInput): boolean {
 }
 
 function getPullUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote) {
+  if (!input.hasPullRemote) {
     return i18n.t("workspace.git.actions.unavailable.pullNoRemote");
   }
   if (input.hasUncommittedChanges) {
@@ -694,7 +723,7 @@ function getPullUnavailableMessage(input: BuildGitActionsInput): string | undefi
 }
 
 function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote) {
+  if (!input.hasPushRemote) {
     return i18n.t("workspace.git.actions.unavailable.pushNoRemote");
   }
   if ((input.behindOfOrigin ?? 0) > 0) {
@@ -706,14 +735,11 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
   if (input.upstream === "gone") {
     return i18n.t("workspace.git.actions.unavailable.pushUpstreamGone");
   }
-  if (input.upstream === "none" && input.aheadCount > 0) {
-    return i18n.t("workspace.git.actions.unavailable.pushNoRemote");
-  }
   return i18n.t("workspace.git.actions.unavailable.pushNothing");
 }
 
 function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
-  if (!input.hasRemote) {
+  if (!input.hasPullRemote || !input.hasPushRemote) {
     return i18n.t("workspace.git.actions.unavailable.pullAndPushNoRemote");
   }
   if (input.hasUncommittedChanges) {
