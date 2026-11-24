@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Clipboard from "expo-clipboard";
 import { MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import type {
@@ -31,7 +32,12 @@ import { SettingsGroup } from "@/components/settings/headings/settings-group";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import type { PageTitleParent } from "@/components/page-layout";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { SettingsDetailHeader } from "@/components/settings";
+import {
+  SettingsCard,
+  SettingsDetailHeader,
+  SettingsDetailRow,
+  SettingsRow,
+} from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
@@ -40,7 +46,11 @@ import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
+import { forgeFromRemoteUrl } from "@/git/forge";
+import { buildForgeRepositoryUrl } from "@/git/forge-url";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   applyDraftToConfig,
   configToDraft,
@@ -293,6 +303,8 @@ function ProjectSettingsBody({
         trailing={editButton}
       />
 
+      <ProjectDetailsSection selectedHost={selectedHost} />
+
       <ProjectEditSheet
         // A new instance per open seeds the form from the project as it stands now.
         key={`${selectedHost.serverId}:${selectedHost.projectId}:${editSessionId}`}
@@ -320,6 +332,61 @@ function ProjectSettingsBody({
         onBackToProjects,
       })}
     </View>
+  );
+}
+
+function ProjectDetailsSection({ selectedHost }: { selectedHost: ProjectHostEntry }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { serverId, serverName, repoRoot } = selectedHost;
+  const { status } = useCheckoutStatusQuery({ serverId, cwd: repoRoot });
+  const repositoryUrl = status?.isGit
+    ? buildForgeRepositoryUrl(forgeFromRemoteUrl(status.remoteUrl), status)
+    : null;
+
+  const copySourceDirectory = useCallback(async () => {
+    try {
+      if (await Clipboard.setStringAsync(repoRoot)) {
+        toast.copied(t("common.states.copied"));
+        return;
+      }
+    } catch {
+      // Some platforms throw on clipboard failure, others return false.
+    }
+    toast.error(t("common.errors.unableToCopy"));
+  }, [repoRoot, t, toast]);
+
+  const openRepository = useCallback(() => {
+    if (repositoryUrl) {
+      void openExternalUrl(repositoryUrl).catch(() =>
+        toast.error(t("settings.project.details.openRepositoryFailed")),
+      );
+    }
+  }, [repositoryUrl, t, toast]);
+
+  return (
+    <SettingsSection title={t("settings.project.details.title")} testID="project-details-section">
+      <SettingsCard>
+        <SettingsRow label={t("settings.groups.host")} hint={serverName} />
+        <SettingsRow label={t("settings.project.details.sourceDirectory")} hint={repoRoot}>
+          <Button
+            variant="outline"
+            accessibilityLabel={t("settings.project.details.copySourceDirectory")}
+            onPress={copySourceDirectory}
+          >
+            {t("common.actions.copy")}
+          </Button>
+        </SettingsRow>
+        {repositoryUrl ? (
+          <SettingsDetailRow
+            label={t("settings.project.details.repository")}
+            hint={repositoryUrl}
+            external
+            onPress={openRepository}
+          />
+        ) : null}
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 

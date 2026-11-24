@@ -58,6 +58,7 @@ import {
   buildSettingsRoute,
 } from "@/utils/host-routes";
 import { getServerId } from "../support/helpers/server-id";
+import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
 
 const updatedSetup = ["npm install", "npm run build"];
 
@@ -165,6 +166,15 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
   return readFile(path.join(project.path, "paseo.json"), "utf8");
 }
 
+function blockClipboardWrites(): void {
+  navigator.clipboard.writeText = () =>
+    Promise.reject(new DOMException("Denied", "NotAllowedError"));
+  // Expo falls back to the legacy copy command when the Clipboard API is denied.
+  document.execCommand = () => {
+    throw new DOMException("Denied", "NotAllowedError");
+  };
+}
+
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
   await openAddProjectFlow(page);
   await chooseAddProjectMethod(page, "directory-search");
@@ -202,7 +212,9 @@ test.describe("Projects settings", () => {
   test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
     page,
   }) => {
-    const repo = await createTempGitRepo("projects-settings-empty-");
+    const repo = await createTempGitRepo("projects-settings-empty-", {
+      originUrl: "https://gitlab.com/acme/empty-project.git",
+    });
     const client = await connectSeedClient();
     let projectViewKey: string | null = null;
 
@@ -213,6 +225,9 @@ test.describe("Projects settings", () => {
       await openProjectSettingsFromSidebar(page, projectViewKey);
 
       await expectProjectSettingsFormVisible(page);
+      const details = page.getByTestId("project-details-section");
+      await expect(details.getByText(repo.path, { exact: true })).toBeVisible();
+      await expect(details.getByRole("link", { name: "Repository" })).toBeVisible();
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
     } finally {
       if (projectViewKey) {
@@ -236,6 +251,10 @@ test.describe("Projects settings", () => {
   }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
+    const details = page.getByTestId("project-details-section");
+    await expect(details.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
+    await expect(details.getByText(editableProject.path, { exact: true })).toBeVisible();
+    await expect(details.getByRole("link", { name: "Repository" })).toHaveCount(0);
     await expectNoUncommittedSetupWarning(page);
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
@@ -264,16 +283,37 @@ test.describe("Projects settings", () => {
     });
   });
 
-  test("user edits worktree setup on a non-GitHub remote project", async ({
+  test("opens the GitLab repository, copies the source directory, and edits worktree setup", async ({
     page,
+    context,
     gitlabRemoteProject,
   }) => {
     expect(gitlabRemoteProject.name).toBe(path.basename(gitlabRemoteProject.path));
     await openProjects(page);
     await openProjectSettings(page, gitlabRemoteProject.name);
+
+    const details = page.getByTestId("project-details-section");
+    const repositoryUrl = "https://gitlab.com/acme/app";
+    await expect(details.getByText(repositoryUrl, { exact: true })).toBeVisible();
+    await context.route(repositoryUrl, (route) => route.fulfill({ body: "GitLab repository" }));
+    const popupPromise = page.waitForEvent("popup");
+    await details.getByRole("link", { name: "Repository" }).click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(repositoryUrl);
+    await popup.close();
+
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await details.getByRole("button", { name: "Copy source directory" }).click();
+    const readClipboard = () => page.evaluate(() => navigator.clipboard.readText());
+    await expect.poll(readClipboard).toBe(gitlabRemoteProject.path);
+
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
     await expectProjectConfigSaved(gitlabRemoteProject);
+
+    await page.evaluate(blockClipboardWrites);
+    await details.getByRole("button", { name: "Copy source directory" }).click();
+    await expect(page.getByText("Unable to copy", { exact: true })).toBeVisible();
   });
 
   test("renames a project, reopens the saved edit sheet, and adds an icon", async ({
@@ -347,6 +387,9 @@ test.describe("Projects settings — compact navigation", () => {
     await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
 
     await openProjectSettings(page, editableProject.name);
+    const details = page.getByTestId("project-details-section");
+    await expect(details.getByText(editableProject.path, { exact: true })).toBeVisible();
+    await expect(details.getByRole("button", { name: "Copy source directory" })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Back to projects", exact: true })).toHaveCount(
       0,

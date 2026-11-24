@@ -3203,6 +3203,13 @@ export const ja: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "プロジェクトの詳細",
+        sourceDirectory: "ソースディレクトリ",
+        copySourceDirectory: "ソースディレクトリをコピー",
+        repository: "リポジトリ",
+        openRepositoryFailed: "リポジトリを開けませんでした。",
+      },
       noEditableTarget: "このホストではこのプロジェクトを編集できません。",
       backToProjects: "プロジェクトに戻る",
       edit: {

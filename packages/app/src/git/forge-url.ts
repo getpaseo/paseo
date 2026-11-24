@@ -89,7 +89,7 @@ function isValidRepoPath(path: string): boolean {
  * the full remote path.
  */
 function resolveForgeWebLocation(
-  forge: string,
+  forge: string | null,
   remoteUrl: string | null | undefined,
   forgeWeb: ForgeWeb | null | undefined,
 ): ForgeWebLocation | null {
@@ -101,8 +101,8 @@ function resolveForgeWebLocation(
     return null;
   }
   // COMPAT(forgeWeb): added in v0.16.0, remove the remote-derived host after 2027-06-01 once daemon floor >= v0.16.0.
-  const webHost = forgeWeb?.host ?? forgeWebHost(forge, location.host);
-  const isCloudHost = isForgeCloudHost(forge, location.host);
+  const webHost = forgeWeb?.host ?? (forge ? forgeWebHost(forge, location.host) : location.host);
+  const isCloudHost = forge !== null && isForgeCloudHost(forge, location.host);
   // Carry a non-default port only for a self-hosted http(s) origin (e.g.
   // `:60443`): the web UI shares that origin. An SSH/scp remote's port is not the
   // web port, and a canonicalized cloud host always serves on the default port.
@@ -114,14 +114,28 @@ function resolveForgeWebLocation(
   return { scheme, host: webHost, port, repo: location.path };
 }
 
-function encodeBranch(branch: string): string {
-  return branch.split("/").map(encodeURIComponent).join("/");
+function encodePathSegments(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 /** Scheme and host, plus `:port` when the remote pins a non-default port. */
 function forgeOrigin(location: ForgeWebLocation): string {
   const authority = location.port ? `${location.host}:${location.port}` : location.host;
   return `${location.scheme}://${authority}`;
+}
+
+export function buildForgeRepositoryUrl(
+  forge: string | null,
+  input: Pick<ForgeBranchTreeUrlInput, "remoteUrl" | "forgeWeb">,
+): string | null {
+  if (!forge && !input.forgeWeb) {
+    return null;
+  }
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
+  if (!location || location.repo.split("/").includes(".")) {
+    return null;
+  }
+  return `${forgeOrigin(location)}/${encodePathSegments(location.repo)}`;
 }
 
 function normalizeBlobPath(path: string | null | undefined): string | null {
@@ -156,7 +170,7 @@ export function buildForgeBranchTreeUrl(
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
   }
-  return `${forgeOrigin(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
+  return `${forgeOrigin(location)}/${location.repo}${grammar.treeInfix}${encodePathSegments(branch)}`;
 }
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
@@ -167,8 +181,8 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
   if (!grammar || !location || !branch || branch === "HEAD" || !filePath) {
     return null;
   }
-  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-  let url = `${forgeOrigin(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
+  const encodedPath = encodePathSegments(filePath);
+  let url = `${forgeOrigin(location)}/${location.repo}${grammar.blobInfix}${encodePathSegments(branch)}/${encodedPath}`;
   if (input.lineStart && input.lineStart > 0) {
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }

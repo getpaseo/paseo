@@ -3216,6 +3216,13 @@ export const ptBR: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "Detalhes do projeto",
+        sourceDirectory: "Diretório de origem",
+        copySourceDirectory: "Copiar diretório de origem",
+        repository: "Repositório",
+        openRepositoryFailed: "Não foi possível abrir o repositório.",
+      },
       noEditableTarget: "Este projeto não pode ser editado neste host.",
       backToProjects: "Voltar para projetos",
       edit: {
