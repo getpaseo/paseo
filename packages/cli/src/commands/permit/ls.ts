@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { fetchAllAgents, type AgentDirectoryClient } from "../../utils/agent-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
 /** Permission list item for display */
@@ -56,6 +57,23 @@ export function listPendingPermissions(agents: AgentSnapshotPayload[]): PermitLs
   };
 }
 
+export interface PermitAgentsClient extends AgentDirectoryClient {
+  supportsBackgroundWorkspaces(): boolean;
+}
+
+/**
+ * Read every agent that can hold a pending permission: all pages, and background agents too,
+ * since unattended workers are the ones most likely to be waiting on a prompt.
+ */
+export function fetchPermitAgents(client: PermitAgentsClient): Promise<AgentSnapshotPayload[]> {
+  return fetchAllAgents(client, {
+    filter: {
+      includeArchived: true,
+      ...(client.supportsBackgroundWorkspaces() ? { includeBackground: true } : {}),
+    },
+  });
+}
+
 export interface PermitLsOptions extends CommandOptions {
   host?: string;
 }
@@ -67,8 +85,7 @@ export async function runLsCommand(
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
-    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
+    const agents = await fetchPermitAgents(client);
     await client.close();
 
     return listPendingPermissions(agents);
