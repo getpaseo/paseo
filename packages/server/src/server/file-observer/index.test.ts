@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
+import { createWatcherLivenessCanary } from "../watcher-liveness-canary.js";
 import {
   createFileObserver,
   type FileChange,
@@ -10,6 +11,8 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
 } from "./index.js";
+import { createObserverPaths } from "./internal/paths.js";
+import { FileObserverService } from "./internal/service.js";
 
 const roots = new Set<string>();
 const observers = new Set<FileObserver>();
@@ -46,6 +49,34 @@ test("observes nested files while pruning excluded directories", async () => {
   expect(events.map((event) => event.path)).not.toContain(join(ignored, "ignored.txt"));
   await subscription.unsubscribe();
 });
+
+// macOS FSEvents can replay writes made just before the stream starts, so the
+// startup contract is only exact on the Linux backend.
+test.skipIf(process.platform !== "linux")(
+  "subscribing to a populated tree reports only later changes",
+  async () => {
+    const root = await createRoot();
+    for (const directory of ["src", join("src", "nested"), "docs"]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          writeFile(join(root, directory, `existing-${index}.txt`), `${index}`),
+        ),
+      );
+    }
+    const events: FileChange[] = [];
+    const subscription = await subscribeToFileChanges(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    const laterPath = join(root, "src", "nested", "later.txt");
+    await writeFile(laterPath, "later");
+    await expect.poll(() => events.map((event) => event.path)).toContain(laterPath);
+    expect(new Set(events.map((event) => event.path))).toEqual(new Set([laterPath]));
+    await subscription.unsubscribe();
+  },
+);
 
 test("covers files populated immediately inside a newly created directory", async () => {
   const root = await createRoot();
@@ -137,11 +168,16 @@ test("survives atomic replacement and remains observable", async () => {
   const root = await createRoot();
   const target = join(root, "target.txt");
   await writeFile(target, "before");
+  const canary = createWatcherLivenessCanary(root);
   const events: FileChange[] = [];
   const subscription = await subscribeToFileChanges(root, (error, batch) => {
     expect(error).toBeNull();
-    events.push(...batch);
+    events.push(...canary.filterEvents(batch));
   });
+
+  // macOS starts delivering native events asynchronously after subscription.
+  await canary.verify();
+  events.length = 0;
 
   const replacement = join(root, "replacement.txt");
   await writeFile(replacement, "after");
@@ -165,7 +201,12 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
+  // macOS FSEvents can replay the write above as a create after the subscription starts,
+  // so the delete is the latest event for the path, not the first. Native recursive delivery
+  // can also be coalesced before the backend's deletion audit, hence the longer timeout.
+  await expect
+    .poll(() => events.findLast((event) => event.path === target)?.type, { timeout: 10_000 })
+    .toBe("delete");
   await subscription.unsubscribe();
 });
 
@@ -294,6 +335,99 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(callback).toHaveBeenCalledTimes(callsAtClose);
 }, 20_000);
+
+test("aborting a pending subscription stops its startup scan and rejects", async () => {
+  const root = await createRoot();
+  // More directories than the Linux backend watches: a scan that keeps walking after the abort
+  // fails on the directory limit instead of rejecting with the abort reason.
+  await Promise.all(
+    Array.from({ length: 80 }, (_, outer) =>
+      Promise.all(
+        Array.from({ length: 70 }, (__, inner) =>
+          mkdir(join(root, `dir-${outer}`, `nested-${inner}`), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const observer = createObserver();
+  const controller = new AbortController();
+  const reason = new Error("setup deadline passed");
+  const callback = vi.fn();
+
+  const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort(reason);
+
+  await expect(subscription).rejects.toBe(reason);
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    pendingReconciliationWorkCount: 0,
+  });
+  await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(callback).not.toHaveBeenCalled();
+}, 20_000);
+
+test.each([false, true])(
+  "closing waits for a starting backend to release its watcher (aborted: %s)",
+  async (abortBeforeClose) => {
+    const root = await createRoot();
+    const started = Promise.withResolvers<void>();
+    const finishStartup = Promise.withResolvers<void>();
+    let watcherOpen = false;
+    const observer = new FileObserverService(
+      () => ({
+        start() {
+          watcherOpen = true;
+          started.resolve();
+          return finishStartup.promise;
+        },
+        async close() {
+          await finishStartup.promise;
+          watcherOpen = false;
+        },
+        async updateIgnore() {},
+        getDiagnostics: () => ({
+          nativeHandleCount: Number(watcherOpen),
+          nativeTrackedFileCount: 0,
+          pendingReconciliationWorkCount: 0,
+          pendingClassificationCount: 0,
+          reconciliationInFlight: false,
+        }),
+      }),
+      createObserverPaths(process.platform),
+    );
+    const controller = new AbortController();
+    const reason = new Error("startup canceled");
+    const subscription = observer.subscribe(root, () => {}, { signal: controller.signal });
+    const outcome = subscription.catch((error: Error) => error);
+
+    await started.promise;
+    if (abortBeforeClose) controller.abort(reason);
+    const watcherOpenAfterClose = observer.close().then(() => watcherOpen);
+
+    // Give close a turn to run while the backend is still draining startup.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishStartup.resolve();
+
+    const subscriptionResult = await outcome;
+    expect(await watcherOpenAfterClose).toBe(false);
+    expect(subscriptionResult).toEqual(
+      abortBeforeClose ? reason : new Error("File observer is closed"),
+    );
+  },
+);
+
+test("a failed root lookup releases the observation", async () => {
+  const root = await createRoot();
+  const observer = createObserver();
+
+  await expect(observer.subscribe(join(root, "missing"), () => {})).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(observer.getDiagnostics().activeObservationCount).toBe(0);
+});
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();

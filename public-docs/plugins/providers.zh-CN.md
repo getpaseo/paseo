@@ -19,7 +19,7 @@ Provider 插件把一个编程 Agent 接入 Paseo，而无需把它加入 Paseo 
 
 示例有：
 
-- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct)：会话、设置、提示词、持久化、子会话，以及一个由 Provider 拥有的时间线渲染器；
+- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct)：会话、选项控件、提示词、持久化、子会话，以及一个由 Provider 拥有的时间线渲染器；
 - [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer)：一个 ACP 命令模板，带有一个用 Zod 校验的厂商编辑转换器。加载之前，请把 `example-acp --stdio` 替换为一个已安装的 ACP Agent；
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking)：一个只包含渲染器、不实现 Provider 的插件。
 
@@ -125,7 +125,7 @@ if (input.type === "catalog") {
 
 ## 打开会话 {#open-a-session}
 
-`session.open` 包含完整的启动配置：工作目录、环境变量、系统提示词、MCP 服务器、工具策略、模型、模式、设置、不透明的 Provider 选项以及持久化偏好。
+`session.open` 包含完整的启动配置：工作目录、环境变量、系统提示词、MCP 服务器、工具策略、模型、模式、`providerOptions` 以及持久化偏好。
 
 对于持久化的、作用于主机的插件设置，请使用 `server.registerSettings()` 返回的句柄。在目录和会话回调中读取它；当 Provider 在内存中保留配置时，订阅它。`read()` 和 `subscribe()` 的契约见[设置](./reference.md#persisted-values)。
 
@@ -160,7 +160,8 @@ emit({
     models,
     modes,
     thinkingOptions,
-    settings: [],
+    controls: [],
+    providerOptions: {},
   },
 });
 emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
@@ -207,9 +208,11 @@ emit({ type: "session.turn", sessionId, turnId, state: "completed" });
 
 到这一步，Provider 已经可用：用户可以选择模型、打开会话、发送消息并看到回复。
 
-## 添加会话专属的 Composer 控件 {#add-session-specific-composer-controls}
+## 为 Provider 选项添加 Composer 控件 {#add-composer-controls-for-provider-options}
 
-只有当原生 Agent 有用户在打开会话后需要修改的设置时，才添加 `session.configure`。在 `session.config` 中以开关或选择控件的形式发布它们：
+`providerOptions` 是 Provider 自己的配置：一个由 JSON 值组成的记录，Paseo 按 Agent 保存它，并在 `session.open` 中交给你。它包含用户在 `config.json` 中为你的 Provider 设置的默认值。请校验你读取的每个键。
+
+只有当用户需要在 Composer 中查看并修改其中一部分选项时，才添加 `controls`。一个控件把 `providerOptions` 的一个顶层键绘制为开关或选择器。控件本身不保存值：Paseo 从 `providerOptions` 读取值。在 `session.config` 中发布控件，以及你正在使用的值：
 
 ```ts
 emit({
@@ -220,31 +223,32 @@ emit({
     models: [{ id: "agent-large", label: "Agent Large" }],
     modes: [],
     thinkingOptions: [],
-    settings: [
-      {
-        type: "toggle",
-        id: "fast",
-        label: "Fast mode",
-        value: nativeSession.fast,
-      },
+    controls: [
+      { type: "toggle", key: "fast", label: "Fast mode", icon: "Zap", defaultValue: false },
       {
         type: "select",
-        id: "approval",
+        key: "approval",
         label: "Approvals",
-        value: nativeSession.approval,
-        options: [
-          { label: "Ask", value: "ask" },
-          { label: "Auto accept", value: "auto" },
+        icon: "Shield",
+        defaultValue: "ask",
+        choices: [
+          { value: "ask", label: "Ask" },
+          { value: "auto", label: "Auto accept" },
         ],
       },
     ],
+    providerOptions: { fast: nativeSession.fast, approval: nativeSession.approval },
   },
 });
 ```
 
-Paseo 会在 Composer 中渲染这些控件。用户的修改会以 `session.configure` 的形式到达；应用它，并在 `request.completed` 之前发布已确定的 `session.config`。Provider 可以在运行时改变可用的控件，包括在模型变化之后。
+`icon` 是 Lucide 图标名称。`defaultValue` 是控件在键没有值时显示的值。会话打开或应用修改时，你报告的每个值（包括处于默认值的值和无人设置过的值）Paseo 都会保存。相同的控件会出现在“新建工作区”界面、草稿标签页和运行中的 Agent 上。只为你能在运行中的会话里修改的键提供控件。Provider 可以在运行时改变控件，包括在模型变化之后。
 
-`settings` 是面向用户的控件。`providerOptions` 是在创建会话时提供的不透明 JSON，用于 Paseo 不会渲染的 Provider 专属配置。Provider 专属的 token 预算应放在这两处之一；它不是一个专门的提示词字段。
+修改会以 `session.configure` 的形式到达，`changes.providerOptions` 只包含发生变化的键，无论这些键是否有控件。应用每一个键，并在 `request.completed` 之前发布已确定的 `session.config`。如果无法应用其中某个键（例如只在会话打开时读取的键），用 `request.failed` 使请求失败，并让每个键保持原样。值为 `null` 表示把该键恢复为 Provider 的默认值。请发布会话最终实际使用的值，而不是请求的副本：Paseo 会保存你发布的值，使保存的选项与实际运行的一致。
+
+如果 Provider 自行改变了某个选项（例如切换模型后关闭了 Fast），请发布带有新值的 `session.config`。Paseo 会保存它们，不会把旧值设置回去。
+
+并非每个选项都需要控件。例如 Provider 专属的 token 预算应放在 `providerOptions` 中，它不是一个专门的提示词字段。它会在 `session.open` 中交付，调用方可以在运行中的 Agent 上修改它，由你的 `session.configure` 处理程序决定能否实时应用。请在 `providerOptions` 中报告它，使 Paseo 保存实际运行的值。
 
 ## 添加持久化与重放 {#add-persistence-and-replay}
 
@@ -347,6 +351,170 @@ export default function contribute(client: PluginClientContext) {
 
 同一个渲染器可以显示由 Provider、客户端时间线转换器或 daemon 时间线追加发出的条目。渲染器并不需要 Provider 实现。
 
+## 报告指标 {#report-metrics}
+
+把 Provider 测量到的数据以 `label` 和 `value` 的形式报告。Paseo 会原样显示每个值，所以请把它格式化成便于阅读的形式：写 `12.4s`，不要写 `12431`。哪些指标适合你的 Agent，由你决定。
+
+在 `completed` 轮次事件中添加 `metrics`。Paseo 会在该轮次的页脚显示它们：
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+对于覆盖整个会话的总计，发布 `session.metrics`。Paseo 会在上下文窗口详情中显示它们。每个事件都会替换之前的列表，空列表会清除它。把 `session.metrics` 加入你支持的能力，并且只在协商成功时发布该事件：
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+不支持会话指标的旧版 Paseo 不会提供这项能力，并且会关闭发送该事件的连接。它会忽略轮次上的 `metrics`，所以轮次指标不需要检查。
+
+把 `tone` 设为 `"ok"`、`"warning"` 或 `"danger"`，可以给值着色。如果已完成的轮次没有 `Model` 指标，Paseo 会添加会话的模型。
+
+当 `history` 为 `"replay"` 时，请在每个旧轮次的条目之后发布该轮次的 `completed` 事件。Paseo 会把指标放回该轮次的页脚。
+
+## 报告安装与更新 {#report-installation-and-updates}
+
+在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：
+
+| 成员              | 用户看到的内容                                   | 何时声明                                |
+| ----------------- | ------------------------------------------------ | --------------------------------------- |
+| `installUrl`      | **安装说明**，未安装时还有 **安装**              | 用户需要安装 CLI                        |
+| `updateUrl`       | 已安装且未声明 `update` 时显示 **更新说明**      | 你的文档说明了如何更新                  |
+| `inspect`         | **版本**，或 **未安装**                          | CLI 会报告自己的版本                    |
+| `checkForUpdates` | **已是最新**、**有可用更新** 或 **无法检查更新** | 你能询问 CLI 自带更新程序所用的发布来源 |
+| `update`          | 已安装时显示 **更新**，随后显示更新程序的输出    | CLI 能用一条命令更新自己                |
+
+这个 `example-agent` 会打印自己的版本，用 `self-update --check --json` 查询其更新程序会安装的发布，并用 `self-update` 更新：
+
+```ts
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import type {
+  ProviderInstallation,
+  ProviderInstallationLaunch,
+} from "@getpaseo/plugin/server/provider";
+
+async function run(launch: ProviderInstallationLaunch, args: string[], signal: AbortSignal) {
+  const { stdout } = await execCommand(launch.command, [...launch.args, ...args], {
+    env: launch.env,
+    timeout: 20_000,
+    signal,
+  });
+  return stdout.trim();
+}
+
+export const installation: ProviderInstallation = {
+  installUrl: "https://example.com/docs/install",
+  updateUrl: "https://example.com/docs/update",
+
+  async inspect({ launch, signal }) {
+    if (!launch?.resolved) return { status: "not_installed" };
+    // `example-agent --version` prints `1.4.2`.
+    return { status: "installed", version: await run(launch, ["--version"], signal) };
+  },
+
+  async checkForUpdates({ launch, installedVersion, signal }) {
+    if (!launch) return { status: "unknown" };
+    // Prints `{"latest":"1.5.0"}`; `self-update` installs any release that differs.
+    const { latest } = JSON.parse(
+      await run(launch, ["self-update", "--check", "--json"], signal),
+    ) as { latest: string };
+    return latest === installedVersion
+      ? { status: "current" }
+      : { status: "available", versions: [latest] };
+  },
+
+  async update({ launch, signal, report }) {
+    if (!launch?.resolved) return { status: "failed", message: "example-agent is not installed" };
+    const child = spawnProcess(launch.command, [...launch.args, "self-update"], {
+      env: launch.env,
+      stdio: "pipe",
+    });
+    child.stdin.end();
+    child.stdout.on("data", (chunk: Buffer) => report({ type: "stdout", text: chunk.toString() }));
+    child.stderr.on("data", (chunk: Buffer) => report({ type: "stderr", text: chunk.toString() }));
+    const stop = () => void terminateProcess(child);
+    signal.addEventListener("abort", stop, { once: true });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => signal.removeEventListener("abort", stop));
+    if (code !== 0) return { status: "failed", message: `self-update exited with code ${code}` };
+    return { status: "succeeded", message: "New sessions use the new version." };
+  },
+};
+```
+
+把它添加到注册中 `command` 的旁边：
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    installation,
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+每个回调都会收到会话将使用的启动配置。当 `launch.resolved` 为 `false` 时，Paseo 没有找到可执行文件，`command` 是配置中写的名称，因此直接报告 `not_installed`，不要运行它。注册没有声明 `command` 时，`launch` 不存在。`checkForUpdates` 只在 `inspect` 报告 CLI 已安装后运行，并通过 `installedVersion` 收到 `inspect` 报告的 `version`，所以请比较它，不要再次读取版本。对于 ACP Provider，把 `runAcpProvider()` 展开到注册中，并在旁边添加 `installation`。版本和更新探测使用会话子命令之前的启动参数，例如对运行 `hoplite acp` 的 Provider 使用 `hoplite --version`。
+
+Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从不解析它们，因此由你的检查决定什么算更新。询问 CLI 自带更新程序所询问的来源；做不到时就不要声明 `checkForUpdates`。返回 `unknown`、抛出异常或超过期限的检查会显示 **无法检查更新** 和你的消息，绝不会显示 **已是最新**。
+
+`update` 只在用户选择 **更新** 时运行，并且每个 Provider 同一时间只运行一个更新。把更新程序的输出原样传给 `report`；Paseo 保留最后 65,536 个字符。Paseo 不会额外做任何校验，所以更新的效果与在终端中运行你的命令相同。返回 `succeeded` 并用消息说明新版本何时生效，或返回 `failed` 并说明原因。失败的更新会一直显示，直到用户刷新该 Provider。没有 `update` 时，**更新说明** 会打开 `updateUrl`。
+
+只要 `inspect` 报告 CLI 已安装，就会显示 **更新** 或 **更新说明**。检查只在旁边说明它知道的情况，所以即使无法检查，也要声明 `update`。
+
+Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。只要 `inspect` 报告的版本不变，它就把 `checkForUpdates` 的 `current` 或 `available` 结果保留一小时，所以在 Paseo 之外更新的 CLI 会在 `inspect` 的结果过期后重新检查。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
+
+## 帮助用户解决问题 {#help-users-fix-problems}
+
+用户得到错误结果时，会先打开 Provider 的设置，然后才去寻求帮助。请在这个页面提供他们需要的内容：声明 `docsUrl`，并从 `status` 返回能解释错误结果的事实。
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**文档** 会打开 `docsUrl`。**诊断报告** 会显示命令、可执行文件的路径和 Paseo 找到的版本，然后是你的 `Profile` 行。请报告 CLI 从环境中读取的内容，例如账号、profile 或正在使用的配置文件。这些内容在 daemon 和用户的终端之间可能不同，用户在应用中也看不到。Paseo 写入的各行以及 `status` 的规则见[故障排查参考](/docs/plugins/reference#provider-troubleshooting)。
+
 ## 适配 ACP Agent {#adapt-an-acp-agent}
 
 当 Agent 已经支持 ACP 时，使用 ACP 适配层：
@@ -370,7 +538,12 @@ export default function contribute(server: PluginServerContext) {
 
 适配层负责 ACP 进程、能力映射、会话生命周期、提示词、权限和时间线转换。不要把这些机制复制到插件中。
 
-只在 ACP 无法描述厂商差异时使用 `transformers`。用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
+使用 `transformers` 处理 ACP 无法描述的厂商差异。
+[goose 模型转换器](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+使用 `context.request` 读取 Agent 的模型列表，并使用 `config` 为会话的模型 ID 添加当前 Provider 前缀。
+参见 [ACP 适配器参考](/docs/plugins/reference#providers)。
+
+用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
 
 ```ts
 import type { AcpTransformer } from "@getpaseo/plugin/server/acp";
@@ -400,12 +573,20 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
+Paseo 根据每个调用的 ACP `kind` 生成标准工具卡片：`execute` 显示为 Shell，`read` 显示为 Read，`edit` 和 `delete` 显示为 Edit，`search` 显示为 Search，`fetch` 显示为 Fetch。卡片读取调用的 `input`（ACP `rawInput`）、`output`（`rawOutput`）、`content` 和 `locations`。其他类型的调用显示原始输入和输出；如果 Agent 两者都没有发送，则显示文本内容。
+
+在返回的工具调用上设置 `detail` 可以替换标准卡片。例如，Agent 可能把新建文件报告为 ACP 编辑，而插件返回带有文件路径和内容的 `write` detail。返回 `{ type: "unknown", input, output }` 可以显示原始值。
+
+`toolCall` 会在调用的每次更新时运行，参数是到目前为止合并后的调用。按照 ACP 的定义，发送了 `content` 的更新会替换之前的内容。如果 Agent 只在较早的更新中发送某个值，请从 `context.previous` 读取，它是 Paseo 上一次展示的调用。[Hermes 终端转换器](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)就是这样保留 Hermes 第一次更新中的命令。
+
+如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
+
 ## 测试与发布 {#test-and-publish}
 
 用真实的 Agent 测试 Provider，而不只是模拟的数据帧：
 
 1. 以目录来源安装插件；
-2. 确认它的 SVG、模型、模式和设置都会显示；
+2. 确认它的 SVG、模型、模式和选项控件都会显示；
 3. 创建会话并完成一段真实的提示词；
 4. 在支持的情况下，试用权限、引导、取消、持久化和重放；
 5. 在桌面和移动端宽度的布局中渲染每一种自定义时间线条目；

@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { ComposerFullscreenBody, ComposerFullscreenFooter } from "@/composer/dock";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { isWeb } from "@/constants/platform";
-import { ICON_SIZE } from "@/styles/theme";
+import {
+  iconSizeFor,
+  TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_CONTROL_SIZES,
+  type ControlSizing,
+} from "@/components/ui/control-geometry";
 import { StyleSheet } from "react-native-unistyles";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
-
-const CONTROL_SIZE = 28;
-const FULLSCREEN_GLYPH_SIZE = ICON_SIZE.md;
 
 function keepEditorFocused(event: import("react-native").PointerEvent) {
   if (isWeb) event.preventDefault();
@@ -21,13 +23,13 @@ function keepEditorFocused(event: import("react-native").PointerEvent) {
 /**
  * One tree for both layout modes. The editing surface keeps its position so the
  * mounted editor, its native buffer, selection, and focus survive every toggle;
- * only the chrome around it changes. Fullscreen shows exit top right and Send
- * bottom right, both on the rail the inline Send button uses; a send error sits
+ * only the chrome around it changes. Fullscreen keeps the exit glyph on the text
+ * rail and Send at the bottom right; a send error sits
  * in the same footer as Send.
  */
 export function ComposerInputPresentation({
   fullscreen,
-  sendIconSize,
+  controlSizing,
   surface,
   toolbar,
   send,
@@ -42,7 +44,8 @@ export function ComposerInputPresentation({
   overlay,
 }: {
   fullscreen: boolean;
-  sendIconSize: number;
+  /** The sizing the toolbar's stylesheet resolves to; see `resolveControlSizing`. */
+  controlSizing: ControlSizing;
   surface: ReactNode;
   toolbar: ReactNode;
   send: ReactNode;
@@ -61,21 +64,21 @@ export function ComposerInputPresentation({
   // action (Escape, hardware back) belongs only to the pane the user is in.
   const { isActiveComposer } = useComposerKeyboardScope();
   const exitScopeRef = useComposerFullscreenExit(fullscreen && isActiveComposer, onExit);
+  const glyphSize = iconSizeFor("md")[controlSizing];
   const railOffset = resolveGlyphRailOffset({
-    controlSize: CONTROL_SIZE,
-    sendIconSize,
-    glyphIconSize: FULLSCREEN_GLYPH_SIZE,
+    controlSize: TOOLBAR_CONTROL_SIZES[controlSizing],
+    glyphIconSize: glyphSize,
   });
   const maximizeIcon = useCallback(
-    (color: string) => <Maximize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
-    [],
+    (color: string) => <Maximize2 color={color} size={glyphSize} />,
+    [glyphSize],
   );
   const minimizeIcon = useCallback(
-    (color: string) => <Minimize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
-    [],
+    (color: string) => <Minimize2 color={color} size={glyphSize} />,
+    [glyphSize],
   );
-  // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
-  const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
+  // Fullscreen controls share the text rail; the toolbar disc owns its separate corner inset.
+  const enterStyle = useMemo(() => [styles.enterButton, { right: railOffset }], [railOffset]);
   const exitStyle = useMemo(() => [styles.iconButton, { marginRight: railOffset }], [railOffset]);
   return (
     <View
@@ -87,7 +90,7 @@ export function ComposerInputPresentation({
         <View style={styles.exitRow}>
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             accessibilityLabel={t("composer.input.exitFullscreen")}
             onPointerDown={keepEditorFocused}
             onPress={onExit}
@@ -111,7 +114,7 @@ export function ComposerInputPresentation({
             {showFullscreenButton && !fullscreen ? (
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 accessibilityLabel={t("composer.input.fullscreen")}
                 leftIcon={maximizeIcon}
                 onPointerDown={keepEditorFocused}
@@ -123,7 +126,8 @@ export function ComposerInputPresentation({
               </Button>
             ) : null}
           </View>
-          {fullscreen ? null : toolbar}
+          {/* Keep the agent controls mounted for composer commands in fullscreen. */}
+          {toolbar}
         </View>
       </ComposerFullscreenBody>
       {fullscreen ? (
@@ -141,8 +145,8 @@ const styles = StyleSheet.create((theme) => ({
   inline: { flexShrink: 1, position: "relative" },
   inlineTextSurface: { flexShrink: 1, position: "relative" },
   iconButton: {
-    width: CONTROL_SIZE,
-    height: CONTROL_SIZE,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,
@@ -150,8 +154,8 @@ const styles = StyleSheet.create((theme) => ({
   enterButton: {
     position: "absolute",
     top: 0,
-    width: CONTROL_SIZE,
-    height: CONTROL_SIZE,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,

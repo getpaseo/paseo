@@ -5,9 +5,11 @@ import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   pinRelayProtectedSecurityInProfiles,
+  readHostRegistry,
   relayConnectionFromOffer,
   resolveActiveHostServerId,
   upsertHostConnectionInProfiles,
+  writeHostRegistry,
   type HostConnection,
   type HostProfile,
 } from "./host-connection";
@@ -87,6 +89,25 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
 
+  it("drops a connection kind this build doesn't know and keeps the host", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_mixed",
+      password: "secret",
+      connections: [
+        { id: "future:1", type: "futureKind", address: "future.example.com" },
+        { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767", futureField: true },
+        { id: "direct:remote:6767", type: "directTcp", endpoint: "remote:6767" },
+      ],
+      preferredConnectionId: "direct:remote:6767",
+    });
+
+    expect(profile?.password).toBe("secret");
+    expect(profile?.connections).toEqual([
+      { id: "direct:remote:6767", type: "directTcp", endpoint: "remote:6767", useTls: false },
+    ]);
+    expect(profile?.preferredConnectionId).toBe("direct:remote:6767");
+  });
+
   it("preserves legacy relay ids when TLS is absent", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_relay",
@@ -131,7 +152,7 @@ describe("normalizeStoredHostProfile", () => {
     });
   });
 
-  it("gives a host stored before appearance existed the default appearance", () => {
+  it("gives a host stored before appearance existed the default appearance without an icon key", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_old",
       connections: [
@@ -140,18 +161,35 @@ describe("normalizeStoredHostProfile", () => {
     });
 
     expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect(profile && "icon" in profile.appearance).toBe(false);
   });
 
   it("loads a stored appearance the user chose", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_new",
-      appearance: { color: "teal", badgeDisplay: "icon" },
+      appearance: { color: "teal", icon: "laptop", badgeDisplay: "icon" },
       connections: [
         { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    expect(profile?.appearance).toEqual({ color: "teal", icon: "laptop", badgeDisplay: "icon" });
+  });
+
+  it("preserves an unknown stored icon intact without dropping the saved host", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_future_icon",
+      appearance: { color: "violet", icon: "future-device", badgeDisplay: "name" },
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({
+      color: "violet",
+      icon: "future-device",
+      badgeDisplay: "name",
+    });
   });
 
   it("normalizes stored Remote SSH connection parameters", () => {
@@ -174,6 +212,59 @@ describe("normalizeStoredHostProfile", () => {
       sshPort: 2222,
       daemonPort: 7777,
     });
+  });
+});
+
+describe("readHostRegistry and writeHostRegistry", () => {
+  const direct: HostConnection = {
+    id: "direct:lan:6767",
+    type: "directTcp",
+    endpoint: "lan:6767",
+    useTls: false,
+  };
+  const future = { id: "future:1", type: "futureKind", address: "future.example.com" };
+
+  it("writes back every entry it could not read", () => {
+    const unreadableHost = { serverId: "srv_future", connections: [future] };
+    const hostWithFutureField = { serverId: "srv_field", connections: [direct], futureField: 1 };
+    const stored = [
+      { ...makeHost("srv_a"), connections: [direct, future] },
+      unreadableHost,
+      hostWithFutureField,
+      "not a host",
+    ];
+
+    const { hosts, unreadable } = readHostRegistry(stored);
+    expect(hosts.map((host) => host.serverId)).toEqual(["srv_a"]);
+    expect(hosts[0]?.connections).toEqual([direct]);
+
+    expect(writeHostRegistry(hosts, unreadable)).toEqual([
+      { ...hosts[0], connections: [direct, future] },
+      unreadableHost,
+      hostWithFutureField,
+      "not a host",
+    ]);
+  });
+
+  it("writes a host saved again by this build in place of the entry it could not read", () => {
+    const { hosts, unreadable } = readHostRegistry([{ serverId: "srv_a", connections: [future] }]);
+    expect(hosts).toEqual([]);
+
+    const saved = { ...makeHost("srv_a"), connections: [direct] };
+    expect(writeHostRegistry([saved], unreadable)).toEqual([saved]);
+  });
+
+  it("moves a stored direct TCP password to its host next to a connection it can't read", () => {
+    const registry = readHostRegistry([
+      {
+        serverId: "srv_legacy",
+        connections: [future, { type: "directTcp", endpoint: "lan:6767", password: "old-secret" }],
+      },
+    ]);
+
+    expect(registry.movedConnectionPassword).toBe(true);
+    expect(registry.hosts[0]?.password).toBe("old-secret");
+    expect(registry.hosts[0]?.connections).toEqual([direct]);
   });
 });
 
@@ -266,12 +357,13 @@ describe("upsertHostConnectionInProfiles", () => {
     });
 
     expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect("icon" in profile.appearance).toBe(false);
   });
 
   it("keeps the appearance the user chose when the host reconnects", () => {
     const existing: HostProfile = {
       ...makeHost("srv_known"),
-      appearance: { color: "amber", badgeDisplay: "hidden" },
+      appearance: { color: "amber", icon: "workstation", badgeDisplay: "hidden" },
       connections: [],
     };
 
@@ -281,7 +373,11 @@ describe("upsertHostConnectionInProfiles", () => {
       connection,
     });
 
-    expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
+    expect(profile.appearance).toEqual({
+      color: "amber",
+      icon: "workstation",
+      badgeDisplay: "hidden",
+    });
   });
 
   it("replaces a direct connection when its settings change", () => {

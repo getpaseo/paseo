@@ -1,2 +1,0 @@
-{"t_ms": 0, "stream": "capture", "data": {"argv": ["<HOME>/.local/opt/agy/1.2.13/agy", "--version"], "cwd": "<WORKSPACE>", "home": "<HOME>", "settings": null, "env": {}}}
-{"t_ms": 284, "stream": "capture", "data": {"exit_code": 0}}

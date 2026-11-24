@@ -4,7 +4,12 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Pencil } from "lucide-react-native";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { WorkspaceMetaRow } from "@/components/sidebar/workspace-meta-row";
@@ -13,12 +18,18 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import {
   HOST_BADGE_DISPLAYS,
   HOST_COLORS,
+  HOST_ICONS,
+  normalizeDetectedHostIcon,
   resolveHostBadgeDisplay,
+  resolveHostIcon,
   type HostBadgeDisplay,
   type HostColor,
+  type HostIcon,
 } from "@/hosts/appearance";
+import { HostIconGlyph } from "@/hosts/host-icon-glyph";
 import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHostMutations } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { identityColor } from "@/styles/identity-colors";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -76,8 +87,110 @@ function colorLabel(t: TFunction, color: HostColor): string {
   return t(`settings.host.appearance.color.options.${color}`);
 }
 
+function iconLabel(t: TFunction, icon: HostIcon): string {
+  return t(`settings.host.appearance.icon.options.${icon}`);
+}
+
+function autoIconLabel(t: TFunction, detectedIcon: HostIcon | null): string {
+  if (detectedIcon) {
+    return t("settings.host.appearance.icon.autoDetected", {
+      icon: iconLabel(t, detectedIcon),
+    });
+  }
+  return t("settings.host.appearance.icon.auto");
+}
+
 function badgeDisplayLabel(t: TFunction, display: HostBadgeDisplay): string {
   return t(`settings.host.appearance.badge.options.${display}`);
+}
+
+function IconMenuItem({
+  icon,
+  color,
+  selected,
+  onChange,
+}: {
+  icon: HostIcon;
+  color: HostColor;
+  selected: boolean;
+  onChange: (icon: HostIcon | null) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(icon), [icon, onChange]);
+  const leading = useMemo(
+    () => <HostIconGlyph icon={icon} color={color} size={ICON_SIZE.sm} />,
+    [color, icon],
+  );
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
+      {iconLabel(t, icon)}
+    </DropdownMenuItem>
+  );
+}
+
+function IconRow({
+  icon,
+  detectedIcon,
+  resolvedIcon,
+  color,
+  onChange,
+}: {
+  icon: HostIcon | null;
+  detectedIcon: HostIcon | null;
+  resolvedIcon: HostIcon;
+  color: HostColor;
+  onChange: (icon: HostIcon | null) => void;
+}) {
+  const { t } = useTranslation();
+  const autoLabel = autoIconLabel(t, detectedIcon);
+  const selectedLabel = icon ? iconLabel(t, icon) : autoLabel;
+  const handleSelectAuto = useCallback(() => onChange(null), [onChange]);
+  const triggerLeading = useMemo(
+    () => <HostIconGlyph icon={resolvedIcon} color={color} size={ICON_SIZE.sm} />,
+    [color, resolvedIcon],
+  );
+  const autoLeading = useMemo(
+    () => <HostIconGlyph icon={detectedIcon ?? "server"} color={color} size={ICON_SIZE.sm} />,
+    [color, detectedIcon],
+  );
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.icon.label")}</Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          testID="host-appearance-icon"
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.host.appearance.icon.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+          leading={triggerLeading}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={220}>
+          <DropdownMenuItem
+            selected={icon === null}
+            onSelect={handleSelectAuto}
+            leading={autoLeading}
+          >
+            {autoLabel}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {HOST_ICONS.map((option) => (
+            <IconMenuItem
+              key={option}
+              icon={option}
+              color={color}
+              selected={option === icon}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
 }
 
 function ColorSwatch({ color }: { color: HostColor }) {
@@ -205,9 +318,11 @@ function BadgeDisplayMenuItem({
  */
 function BadgePreview({
   host,
+  resolvedIcon,
   badgeDisplay,
 }: {
   host: HostProfile;
+  resolvedIcon: HostIcon;
   badgeDisplay: HostBadgeDisplay;
 }) {
   const { t } = useTranslation();
@@ -219,9 +334,10 @@ function BadgePreview({
             serverId: host.serverId,
             label: host.label,
             color: host.appearance.color,
+            icon: resolvedIcon,
             showLabel: badgeDisplay === "name",
           },
-    [badgeDisplay, host.serverId, host.label, host.appearance.color],
+    [badgeDisplay, host.serverId, host.label, host.appearance.color, resolvedIcon],
   );
   // The real sidebar row, so the preview can't drift from what the setting actually does.
   return (
@@ -230,6 +346,7 @@ function BadgePreview({
         {t("settings.host.appearance.preview.workspaceName")}
       </Text>
       <WorkspaceMetaRow
+        backdrop="surfaceSidebar"
         currentBranch={null}
         projectName={null}
         hostBadge={hostBadge}
@@ -243,8 +360,14 @@ function BadgePreview({
 export function HostAppearanceSection({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const { setHostColor, setHostBadgeDisplay } = useHostMutations();
+  const { setHostColor, setHostIcon, setHostBadgeDisplay } = useHostMutations();
   const localDaemon = useLocalDaemonServerIdState();
+  const detectedMachineKind = useSessionStore(
+    (state) => state.sessions[host.serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const detectedIcon = normalizeDetectedHostIcon(detectedMachineKind);
+  const selectedIcon = normalizeDetectedHostIcon(host.appearance.icon);
+  const resolvedIcon = resolveHostIcon({ appearance: host.appearance, detectedMachineKind });
   const isLocalHost = localDaemon.status === "resolved" && localDaemon.serverId === host.serverId;
   const badgeDisplay = resolveHostBadgeDisplay({
     appearance: host.appearance,
@@ -261,6 +384,16 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
       }
     },
     [host.serverId, setHostColor, t, toast],
+  );
+  const handleIconChange = useCallback(
+    async (icon: HostIcon | null) => {
+      try {
+        await setHostIcon(host.serverId, icon);
+      } catch {
+        toast.error(t("errors.unableToSave"));
+      }
+    },
+    [host.serverId, setHostIcon, t, toast],
   );
   const handleBadgeDisplayChange = useCallback(
     async (next: HostBadgeDisplay) => {
@@ -287,11 +420,18 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
             <HostRenameButton host={host} />
           </View>
         </View>
+        <IconRow
+          icon={selectedIcon}
+          detectedIcon={detectedIcon}
+          resolvedIcon={resolvedIcon}
+          color={host.appearance.color}
+          onChange={handleIconChange}
+        />
         <ColorRow color={host.appearance.color} onChange={handleColorChange} />
         {badgeDisplay === null ? null : (
           <>
             <BadgeDisplayRow badgeDisplay={badgeDisplay} onChange={handleBadgeDisplayChange} />
-            <BadgePreview host={host} badgeDisplay={badgeDisplay} />
+            <BadgePreview host={host} resolvedIcon={resolvedIcon} badgeDisplay={badgeDisplay} />
           </>
         )}
       </View>

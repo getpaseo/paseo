@@ -9,6 +9,7 @@ import {
   defaultResolveRemoteUrl,
   parseCliJsonOutput,
   probeHostViaCliAuthStatus,
+  runWithResolvedCliPath,
   ForgeCommandError,
   type ForgeCommandFailureParams,
 } from "./forge-cli-command.js";
@@ -16,6 +17,7 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
@@ -59,6 +61,7 @@ import {
   CHECK_TRAIT_WARNING,
 } from "@getpaseo/protocol/check-traits";
 import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
+import { createGitLabChangeRequestSource } from "./gitlab-change-requests.js";
 import { isGitLabStatusFacts, type GitLabStatusFacts } from "./gitlab-facts.js";
 
 const GLAB_ENV = {
@@ -95,6 +98,7 @@ export class GlabCommandError extends ForgeCommandError {
 export interface GlabCommandRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface GlabCommandResult {
@@ -111,6 +115,9 @@ export interface CreateGitLabServiceOptions {
   runner?: GlabCommandRunner;
   resolveGlabPath?: () => Promise<string | null>;
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
+  now?: () => number;
+  watchPollMs?: number;
+  watchInitialDelayMs?: number;
 }
 
 const GitLabPipelineSchema = z
@@ -246,6 +253,17 @@ const GitLabApprovalsSchema = z
     approvals_required: z.number().nullable().optional(),
     approvals_left: z.number().nullable().optional(),
     approved_by: z.array(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+const GitLabProjectSchema = z
+  .object({
+    path_with_namespace: z.string(),
+    default_branch: z.string().nullish(),
+    forked_from_project: z
+      .object({ path_with_namespace: z.string().optional() })
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -728,6 +746,7 @@ function toCurrentPullRequestStatus(
     state: mapMergeRequestState(mr.state),
     baseRefName: mr.target_branch,
     headRefName: mr.source_branch,
+    ...(mr.sha ? { headSha: mr.sha } : {}),
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
@@ -912,18 +931,36 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
   const resolveGlab = createCachedCliPathResolver(options.resolveGlabPath ?? resolveGlabPath);
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
 
-  async function run(args: string[], runOptions: GlabCommandRunnerOptions): Promise<string> {
-    const glabPath = await resolveGlab();
-    if (!glabPath) {
-      throw new GlabCliMissingError();
-    }
+  async function runRaw(
+    args: string[],
+    runOptions: GlabCommandRunnerOptions,
+  ): Promise<GlabCommandResult> {
     try {
-      const result = await runner(args, runOptions);
-      return result.stdout.trim();
+      return await runWithResolvedCliPath({
+        resolvePath: resolveGlab,
+        createMissingError: () => new GlabCliMissingError(),
+        run: (glabPath) => runner(args, { ...runOptions, executablePath: glabPath }),
+      });
     } catch (error) {
       throw glabCliRunner.normalizeError(error, { args, cwd: runOptions.cwd });
     }
   }
+
+  async function run(args: string[], runOptions: GlabCommandRunnerOptions): Promise<string> {
+    const result = await runRaw(args, runOptions);
+    return result.stdout.trim();
+  }
+
+  const changeRequests = createGitLabChangeRequestSource({
+    runCommand: runRaw,
+    isAuthError: (error) => error instanceof GlabAuthenticationError,
+    isCommandError: (error): error is GlabCommandError => error instanceof GlabCommandError,
+    createAuthError: (stderr) => new GlabAuthenticationError({ stderr }),
+    createCommandError: (params) => new GlabCommandError(params),
+    now: options.now,
+    pollIntervalMs: options.watchPollMs,
+    initialDelayMs: options.watchInitialDelayMs,
+  });
 
   // Centralize parse + validate so a malformed or empty glab payload surfaces as
   // a classified GlabCommandError (with args + cwd) instead of a raw
@@ -987,6 +1024,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         (mr) =>
           mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
       ) ??
+      candidates[0] ??
       null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
   }
@@ -1130,6 +1168,19 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     return issues.map(toIssueSummary);
   }
 
+  async function readOriginProject(cwd: string) {
+    const remoteUrl = await resolveRemoteUrl(cwd);
+    const projectPath = remoteUrl ? parseGitRemoteLocation(remoteUrl)?.path : null;
+    if (!projectPath) {
+      return null;
+    }
+    return runJson(
+      ["api", `projects/${encodeURIComponent(projectPath)}`],
+      { cwd: cwd },
+      GitLabProjectSchema,
+    );
+  }
+
   return {
     async isAuthenticated(input: { cwd: string } & ForgeReadOptions): Promise<boolean> {
       const glabPath = await resolveGlab();
@@ -1142,11 +1193,24 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         return false;
       }
       try {
-        await runner(["auth", "status", "--hostname", host], { cwd: input.cwd });
+        await runWithResolvedCliPath({
+          resolvePath: resolveGlab,
+          createMissingError: () => new GlabCliMissingError(),
+          run: (resolvedPath) =>
+            runner(["auth", "status", "--hostname", host], {
+              cwd: input.cwd,
+              executablePath: resolvedPath,
+            }),
+        });
         return true;
       } catch {
         return false;
       }
+    },
+
+    async getReferenceRepository(input): Promise<string | null> {
+      const project = await readOriginProject(input.cwd);
+      return project?.forked_from_project?.path_with_namespace ?? null;
     },
 
     async getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
@@ -1154,6 +1218,12 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         const mr = await resolveCurrentMergeRequest(input.cwd, input.headRef, input.headSha);
         if (!mr) {
           return null;
+        }
+        if (mapMergeRequestState(mr.state) !== "open") {
+          const project = await readOriginProject(input.cwd).catch(() => null);
+          if (isOnDefaultBranch(input, project?.default_branch)) {
+            return null;
+          }
         }
         const [approvals, pipelineChecks] = await Promise.all([
           fetchApprovals(input.cwd, mr),
@@ -1448,6 +1518,12 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       return { success: true };
     },
 
+    changeRequests,
+
     invalidate(_input: { cwd: string }): void {},
+
+    dispose(): void {
+      changeRequests.dispose();
+    },
   };
 }

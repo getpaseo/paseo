@@ -7,6 +7,8 @@ class PaseoTerminalModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PaseoTerminal")
 
+    OnCreate { TerminalInputKeyboard.install() }
+
     View(PaseoTerminalView::class) {
       Events("onCellMetrics")
 

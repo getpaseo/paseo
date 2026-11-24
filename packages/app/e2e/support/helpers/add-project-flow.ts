@@ -117,3 +117,25 @@ export async function expectAddProjectResultVisible(page: Page, text: string): P
 export async function chooseAddHostFromProjectFlow(page: Page): Promise<void> {
   await page.getByRole("button", { name: /Add host.*No connected hosts/ }).click();
 }
+
+export async function navigateAndDismissAddProject(page: Page): Promise<void> {
+  // Keep both keys in one task so Escape closes with a selection update still queued.
+  await page.evaluate(() => {
+    for (const key of ["ArrowDown", "Escape"]) {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }),
+      );
+    }
+  });
+}
+
+export function watchAddProjectRenderWarnings(page: Page): string[] {
+  const warnings: string[] = [];
+  page.on("console", (message) => {
+    const text = message.text();
+    if (text.includes("Cannot update a component") && text.includes("AddProjectFlow")) {
+      warnings.push(text);
+    }
+  });
+  return warnings;
+}

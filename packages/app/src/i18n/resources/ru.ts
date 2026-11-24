@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  pluginCombobox: {
+    searching: "Поиск…",
+    empty: "Нет результатов",
+    failed: "Не удалось выполнить поиск: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
@@ -86,14 +91,23 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",
+      placeholder: "Поиск рабочих пространств, файлов и действий...",
+      placeholderWithoutFiles: "Поиск рабочих пространств и действий...",
       filePlaceholder: "Поиск файлов...",
+      workspacePlaceholder: "Поиск рабочих пространств...",
+      actionPlaceholder: "Поиск действий...",
       searchingFiles: "Поиск файлов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
       files: "Файлы",
       workspaces: "Рабочие пространства",
-      agents: "Агенты",
+      recentWorkspaces: "Недавние рабочие пространства",
+      tabs: {
+        all: "Все",
+        workspaces: "Рабочие пространства",
+        files: "Файлы",
+        actions: "Действия",
+      },
       newAgent: "Новый агент",
       open: "Открыть {{name}}",
       openInSidePane: "Открыть {{name}} в боковой панели",
@@ -102,6 +116,7 @@ export const ru: TranslationResources = {
       home: "Главная",
       groupByProject: "Группировать по проекту",
       groupByStatus: "Группировать по статусу",
+      copyBrowserHostName: "Скопировать имя хоста браузера",
       modelGroupLabel: "Модель",
       modelSearchKeywords: "Сменить, изменить, выбрать или установить модель",
       thinkingGroupLabel: "Мышление",
@@ -258,7 +273,7 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
-      reconnecting: "Повторное подключение к хосту",
+      reconnecting: "Повторное подключение",
       updating: "Обновление сообщений",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
@@ -338,6 +353,7 @@ export const ru: TranslationResources = {
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",
       forkMenu: "Форкнуть чат отсюда",
+      turnStats: "Статистика ответа",
       forkInNewTab: "Создать форк в новой вкладке",
       forkInNewWorkspace: "Создать форк в новом рабочем пространстве",
       forkUnavailable: "Обновите хост, чтобы использовать эту функцию.",
@@ -367,6 +383,11 @@ export const ru: TranslationResources = {
       details: "Подробности",
     },
     dictation: {
+      insecureContext: "Чтобы использовать микрофон, откройте Paseo по HTTPS или на localhost.",
+      unsupported: "Диктовка недоступна в этом браузере.",
+      noMicrophone: "Подключите микрофон и попробуйте снова.",
+      permissionDenied: "Разрешите доступ к микрофону и попробуйте снова.",
+      startFailed: "Не удалось начать диктовку. Попробуйте снова.",
       paused: "Микрофон прерван. Ожидание возобновления…",
       start: "Начать диктовку голосом",
       cancel: "Отменить диктовку",
@@ -382,6 +403,25 @@ export const ru: TranslationResources = {
       next: "Далее",
       answerPlaceholder: "Введите ответ...",
       otherPlaceholder: "Другой ответ...",
+    },
+    backgroundWork: {
+      heartbeat: "Периодический сигнал",
+      pillOne: "1 фоновая задача",
+      pillMany: "Фоновые задачи: {{count}}",
+      notRunning: "Больше не выполняется",
+      dismiss: "Закрыть",
+      stop: "Остановить",
+      stopping: "Остановка…",
+      stopError: "Не удалось подтвердить остановку.",
+      label: "В фоне",
+      title: "Фоновые задачи",
+      waiting: "Ожидание сведений о задачах",
+      error: "Не удалось загрузить фоновые задачи",
+      retry: "Повторить",
+      running: "Фоновые задачи выполняются",
+      shell: "Оболочка",
+      monitor: "Монитор",
+      other: "Другая задача",
     },
     todo: {
       title: "Задачи",
@@ -457,7 +497,7 @@ export const ru: TranslationResources = {
         restoreDescription:
           "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Worktree будет использовать ветку {{branch}}.",
         restoreWithoutBranchDescription:
-          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Новая ветка будет создана от сохранённой базовой или ветки репозитория по умолчанию.",
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам.",
         unarchiveDescription:
           "Рабочее пространство «{{workspaceName}}» находится в архиве. Разархивируйте его, чтобы снова открыть.",
         restoreAction: "Восстановить",
@@ -884,6 +924,8 @@ export const ru: TranslationResources = {
             "Отправка изменений недоступна: эта ветка ещё не связана с удалённым репозиторием.",
           pushBehind: "Отправка изменений пока недоступна: сначала получите более новые изменения.",
           pushNothing: "Отправка изменений недоступна: нет новых изменений для отправки.",
+          pushUpstreamGone:
+            "Отправка изменений недоступна: ветка, которую отслеживает эта ветка, больше не существует.",
           pullAndPushNoRemote:
             "Получение и отправка изменений недоступны: эта ветка ещё не связана с удалённым репозиторием.",
           pullAndPushDirty:
@@ -947,6 +989,9 @@ export const ru: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Базовая ветка",
+        },
         openChangesTab: "Открыть вкладку «Изменения»",
         openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
@@ -1168,6 +1213,8 @@ export const ru: TranslationResources = {
     title: "Что нового",
     installed: "Установлена",
     showMore: "Показать ещё",
+    showAllChanges: "Показать все изменения",
+    hideAllChanges: "Скрыть все изменения",
     openWebsite: "Полный список изменений",
     error: {
       title: "Не удалось загрузить список изменений",
@@ -1175,6 +1222,14 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Не удалось загрузить вид боковой панели.",
+      useDefault: "Использовать стандартный вид",
+      readFailed: "Не удалось загрузить настройку вида боковой панели.",
+      agentUnavailable: "Агент больше недоступен",
+      terminalUnavailable: "Терминал больше недоступен",
+      projectUnavailable: "Проект больше недоступен",
+    },
     statusGroupAccessibility: "Группа «{{label}}»",
     statusBucket: {
       needsInput: "Ожидает ввода",
@@ -1251,6 +1306,7 @@ export const ru: TranslationResources = {
       hosts: "Хосты",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
+      moreActions: "Дополнительные действия",
     },
     footer: {
       usage: "Использование",
@@ -1355,6 +1411,9 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+        archived: "Рабочее пространство архивировано",
+        undoArchive: "Отменить",
+        undoArchiveFailed: "Не удалось отменить архивацию",
       },
     },
   },
@@ -1362,8 +1421,9 @@ export const ru: TranslationResources = {
     title: "Новое рабочее пространство",
     create: "Создать",
     isolation: {
-      local: "Локально",
+      local: "Папка проекта",
       worktree: "Новый worktree",
+      existing: "Существующий worktree",
       label: "Изоляция",
     },
     fields: {
@@ -1378,12 +1438,17 @@ export const ru: TranslationResources = {
       createWorktreeFailed: "Не удалось создать worktree.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",
+      branchInProjectDirectory:
+        "Ветка {{branch}} уже открыта в папке проекта. Выберите «Папка проекта», чтобы работать в ней, или создайте от неё новую ветку.",
+      branchInWorktree:
+        "Ветка {{branch}} уже открыта в {{path}}. Выберите этот worktree в «Существующий worktree» или создайте от неё новую ветку.",
     },
     tooltips: {
       project: "Выберите проект",
       host: "Выберите хост",
       isolation: "Выберите уровень изоляции",
       startingRef: "Выберите, с чего начать",
+      worktree: "Выберите worktree для работы",
       launch: "Выберите, что запустить",
     },
     refPicker: {
@@ -1391,8 +1456,31 @@ export const ru: TranslationResources = {
       intoBase: "в ветку {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих веток или PR.",
-      searchPlaceholder: "Поиск веток и PR",
+      searchBranches: "Поиск веток",
+      searchPullRequests: "Поиск PR",
+      searchPullRequests_mr: "Поиск MR",
+      branches: "Ветки",
+      pullRequests: "Pull requests",
+      pullRequests_mr: "Merge requests",
+      pullRequestsShort: "PR",
+      pullRequestsShort_mr: "MR",
+      branchOff: "Новая ветка",
+      checkout: "Переключиться",
+      branchOffHint: "Создать от неё новую ветку",
+      checkoutHint: "Работать прямо в ней",
+      base: "База",
+      from: "от",
+      branch: "Ветка",
+      pullRequest: "Pull request",
+      pullRequest_mr: "Merge request",
+      inProjectDirectory: "В папке проекта",
+      inWorktree: "В worktree",
       title: "Начать с",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Поиск worktree",
+      empty: "Нет подходящих worktree.",
     },
     launch: {
       title: "Что запустить",
@@ -1568,6 +1656,9 @@ export const ru: TranslationResources = {
       cli: {
         statusFailed: "Не удалось проверить состояние установки CLI.",
         installFailed: "Не удалось установить Paseo CLI.",
+        uninstallFailed: "Не удалось удалить Paseo CLI.",
+        keptForeign:
+          "Команда paseo, установленная не Paseo, оставлена. Чтобы удалить её, сделайте это вручную.",
       },
     },
   },
@@ -1619,6 +1710,7 @@ export const ru: TranslationResources = {
     openPath: "Открыть путь",
   },
   branchSwitcher: {
+    failedToLoad: "Не удалось загрузить ветки. Откройте список заново, чтобы повторить попытку.",
     triggerTooltip: "Переключить ветку рабочего пространства",
     currentBranch: "Текущая ветка: {{branchName}}. Нажмите, чтобы переключить ветку.",
     placeholder: "Сменить ветку...",
@@ -1643,7 +1735,11 @@ export const ru: TranslationResources = {
     loadingCommands: "Загрузка команд...",
     noFiles: "Файлы и каталоги не найдены",
     noCommands: "Команды не найдены",
-    failedToLoad: "Не удалось загрузить",
+    loadingProviderCommands: "Загрузка команд {{provider}}...",
+    commandsFailed: "Не удалось загрузить команды",
+    providerCommandsFailed: "Не удалось загрузить команды {{provider}}",
+    filesFailed: "Не удалось найти файлы",
+    skillTag: "Навык",
     chooseProjectForCommands: "Выберите проект, чтобы увидеть команды",
     chooseModelForCommands: "Выберите модель, чтобы увидеть команды",
   },
@@ -1670,6 +1766,61 @@ export const ru: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "Шаг {{current}} из {{total}}",
+      skip: "Пропустить настройку",
+      continue: "Продолжить",
+      finish: "Готово",
+      steps: {
+        appearance: {
+          label: "Оформление",
+          title: "Добро пожаловать в Paseo",
+          description: "Начнём с выбора оформления",
+        },
+        providers: {
+          label: "Провайдеры",
+          title: "Ваши провайдеры",
+          description: "Paseo использует CLI агентов, уже установленные на этом компьютере",
+        },
+        projects: {
+          label: "Проекты",
+          title: "Добавьте проекты",
+          description: "Где будут работать ваши агенты",
+          addProject: "Добавить проект",
+          added: "Добавлено",
+          suggestions: {
+            loading: "Ищем папки, в которых вы работали",
+            empty: "Недавних проектов не найдено",
+            lastUsed: "Последнее использование {{time}}",
+            addSelected_one: "Добавить {{count}} проект",
+            addSelected_other: "Добавить проекты: {{count}}",
+            adding: "Добавляем…",
+            addFailed: "Не удалось добавить эту папку",
+          },
+        },
+        orchestration: {
+          label: "Оркестрация",
+          title: "Дайте агентам доступ к Paseo",
+          description:
+            "Разрешите агентам создавать рабочие пространства и общаться с другими агентами",
+        },
+        phone: {
+          label: "Мобильный",
+          title: "Агенты всегда под рукой",
+          description:
+            "Полнофункциональное нативное мобильное приложение позволяет управлять любым компьютером с Paseo с телефона",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "Выберите способ подключения",
+          connectDocs: "Документация",
+          openConnectDocs: "Открыть документацию по подключению",
+          recommended: "Рекомендуется",
+          relay: { title: "Ретранслятор", hint: "Сквозное шифрование, отсканируйте QR-код" },
+          tailscale: { title: "Tailscale", hint: "Требует небольшой настройки" },
+        },
+      },
+    },
     title: "Добро пожаловать в Paseo",
     subtitle: "Подключите компьютер, чтобы начать",
     actions: {
@@ -1891,6 +2042,8 @@ export const ru: TranslationResources = {
       notNow: "Не сейчас",
       directConnectionHint:
         "Без ретранслятора подключайтесь напрямую через TCP, Tailscale или другую VPN. QR-код создаваться не будет.",
+      tailscaleDocs: "Настроить Tailscale",
+      tailscaleDocsAccessibility: "Узнать, как подключиться через Tailscale",
       updateRequired: "Обновите хост, чтобы включить ретранслятор из Paseo Desktop.",
       unavailable: "Данные для сопряжения недоступны.",
       hint: "Отсканируйте этот QR-код с помощью Paseo на телефоне или скопируйте ссылку ниже.",
@@ -1937,6 +2090,7 @@ export const ru: TranslationResources = {
     hostUnavailable: "Хост загрузки недоступен.",
     cancelled: "Загрузка отменена.",
     failed: "Не удалось загрузить файл.",
+    httpFailed: "Не удалось загрузить файл (HTTP {{status}}).",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
   },
@@ -2131,6 +2285,7 @@ export const ru: TranslationResources = {
     turnOn: "Включить",
 
     options: "Настройки",
+    host: "Хост",
     refreshFailed: "Не удалось обновить использование",
     noHosts: "Нет подключённых хостов",
     agentError: "Не удалось загрузить использование: {{reason}}",
@@ -2147,6 +2302,12 @@ export const ru: TranslationResources = {
     loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
     title: "Использование плана",
     refresh: "Обновить",
+    reorderCard: "Переместить {{source}}",
+    sources: "Источники",
+    sourcesCount: "{{shown}} из {{total}}",
+    providerInactive: "Провайдер неактивен",
+    allSourcesHidden: "Источники использования скрыты",
+    chooseSources: "Выбрать источники",
     refreshAll: "Обновить всё",
     refreshing: "Обновление...",
     loading: "Загрузка данных об использовании...",
@@ -2187,8 +2348,9 @@ export const ru: TranslationResources = {
       resetsIn: "сброс через {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "закончится сейчас",
-      runsOutIn: "закончится через {{duration}}",
+      limitReached: "Лимит исчерпан",
+      mayHaveRunOut: "Лимит мог уже исчерпаться",
+      runsOutAt: "закончится {{time}}",
       justNow: "только что",
       daysAgo: "{{value}} дн. назад",
       hoursAgo: "{{value}} ч назад",
@@ -2357,6 +2519,11 @@ export const ru: TranslationResources = {
     general: {
       title: "Основные",
       sending: "Отправка",
+      setup: {
+        label: "Первоначальная настройка",
+        description: "Снова пройти оформление, провайдеры, проекты и привязку телефона",
+        action: "Показать настройку снова",
+      },
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
@@ -2520,6 +2687,12 @@ export const ru: TranslationResources = {
         description: "Показывать оглавление для перехода между запросами",
       },
       sidebar: {
+        view: {
+          title: "Вид боковой панели",
+          label: "Вид",
+          default: "Стандартный вид",
+          unavailable: "Выбранный вид недоступен или отключён. Показан стандартный вид.",
+        },
         header: {
           title: "Верх",
           description:
@@ -2557,10 +2730,11 @@ export const ru: TranslationResources = {
       layout: {
         title: "Макет",
         contentWidth: "Ширина содержимого",
-        contentWidthHint: "Максимальная ширина чата и файлов Markdown на широких экранах",
-        contentWidthAccessibility: "Ширина содержимого в пикселях",
-        reset: "Сбросить",
-        resetAccessibility: "Сбросить ширину содержимого",
+        contentWidthHint: "Ширина чата, поля ввода и предпросмотра Markdown",
+        contentWidthDefault: "По умолчанию",
+        contentWidthWide: "Широкий",
+        contentWidthFull: "На всю ширину",
+        contentWidthCustom: "Своя ширина · {{width}} пкс",
       },
       syntax: {
         title: "Синтаксис",
@@ -2631,6 +2805,8 @@ export const ru: TranslationResources = {
         toggleFocusMode: "Переключить режим фокусировки",
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
+        toggleModelPicker: "Открыть или закрыть выбор модели",
+        cycleEffort: "Переключить уровень усилий",
         cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать/остановить диктовку",
@@ -2653,11 +2829,7 @@ export const ru: TranslationResources = {
       commandLine: {
         title: "Командная строка",
         description: "Управляйте агентами и автоматизируйте их работу из терминала",
-      },
-      actions: {
-        install: "Установить",
-        installing: "Установка...",
-        installed: "Установлено",
+        accessibilityLabel: "Установить Paseo CLI",
       },
     },
     permissions: {
@@ -2681,6 +2853,23 @@ export const ru: TranslationResources = {
         title: "Оформление",
         name: {
           label: "Имя",
+        },
+        icon: {
+          label: "Значок",
+          accessibilityLabel: "Значок, {{value}}",
+          auto: "Авто",
+          autoDetected: "Авто ({{icon}})",
+          options: {
+            server: "Сервер",
+            laptop: "Ноутбук",
+            desktop: "Компьютер",
+            mini: "Мини-ПК",
+            workstation: "Рабочая станция",
+            cloud: "Облако",
+            container: "Контейнер",
+            board: "Одноплатный ПК",
+            terminal: "Терминал",
+          },
         },
         color: {
           label: "Цвет",
@@ -2718,6 +2907,14 @@ export const ru: TranslationResources = {
         local: "Локальный",
         remoteSsh: "Удалённый SSH",
       },
+      connectionKinds: {
+        local: "Локальный",
+        relay: "Ретранслятор",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Прямой",
+        routed: "Через",
+      },
       connections: {
         title: "Подключения",
         removeTitle: "Удалить подключение",
@@ -2736,17 +2933,16 @@ export const ru: TranslationResources = {
       skills: {
         sectionTitle: "Навыки оркестрации",
         title: "Навыки оркестрации",
-        description: "Научите агентов координировать работу через CLI",
+        description: "Научите агентов пользоваться инструментами Paseo",
         docs: "Навыки",
         openDocs: "Открыть документацию по навыкам",
         unavailable: "Подключитесь к этому хосту, чтобы управлять навыками оркестрации",
         unsupported: "Обновите этот хост, чтобы управлять навыками оркестрации",
         updateAvailable: "Доступно обновление",
         updateTitle: "Обновить навыки Paseo?",
-        updateFallback: "Встроенные навыки будут синхронизированы с этим хостом.",
         uninstallTitle: "Удалить навыки Paseo?",
         uninstallMessage:
-          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude и ~/.codex на этом хосте.",
+          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude, ~/.codex и ~/.gemini/config на этом хосте.",
         choose: "Выбрать навыки",
         chooseAll: "Все навыки",
         chooseAllHint: "Устанавливать все встроенные навыки, включая добавленные позже.",
@@ -2754,16 +2950,13 @@ export const ru: TranslationResources = {
         chooseEmpty: "На этом хосте нет встроенных навыков.",
         removeTitle: "Удалить снятые навыки?",
         removeMessage:
-          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex на этом хосте. Всё, что вы добавили в эти папки навыков, тоже будет удалено.",
+          "{{skills}} будут удалены из ~/.agents, ~/.claude, ~/.codex и ~/.gemini/config на этом хосте. Всё, что вы добавили в эти папки навыков, тоже будет удалено.",
         saveFailed: "Не удалось сохранить выбор навыков.",
         statusFailed: "Не удалось проверить состояние навыков оркестрации.",
         updateFailed: "Не удалось обновить навыки оркестрации.",
         uninstallFailed: "Не удалось удалить навыки оркестрации.",
         saveSelectionFailed: "Не удалось сохранить выбор навыков оркестрации.",
         actions: {
-          install: "Установить",
-          installing: "Установка...",
-          installed: "Установлено",
           update: "Обновить",
           working: "Выполняется...",
           remove: "Удалить",
@@ -2785,6 +2978,7 @@ export const ru: TranslationResources = {
           title: "Включить инструменты Paseo",
           hint: "Агенты смогут управлять worktree, агентами и расписаниями.",
           accessibilityLabel: "Добавить инструменты Paseo",
+          updateFailed: "Не удалось обновить инструменты Paseo.",
         },
         systemPrompt: {
           title: "Системный промпт",
@@ -2958,6 +3152,23 @@ export const ru: TranslationResources = {
     providers: {
       title: "Провайдеры",
       addProvider: "Добавить провайдера",
+      list: {
+        add: "Провайдер",
+        updatingTo: "Обновление до {{version}}...",
+      },
+      detail: {
+        backToProviders: "Назад к провайдерам",
+        notOnHost: "Этого провайдера нет на этом хосте",
+        enabled: "Включён",
+        unavailableTitle: "{{name}} недоступен",
+        troubleshooting: "Диагностика",
+        status: "Состояние провайдера",
+        checked: "Проверено {{time}}",
+        diagnosticReport: "Диагностический отчёт",
+        docs: "Документация",
+        dangerZone: "Опасная зона",
+        removeHint: "Удаляет этого провайдера из config.json",
+      },
       providerDetails: "Сведения о провайдере {{name}}",
       enableProvider: "Включить {{name}}",
       unavailable: "Подключитесь к этому хосту, чтобы увидеть провайдеров",
@@ -3000,9 +3211,30 @@ export const ru: TranslationResources = {
         retrying: "Повторная попытка...",
         noSearchMatches: "Ни одна модель не соответствует вашему запросу",
         noneDetected: "Модели не обнаружены",
-        discovered: "Обнаруженные модели",
+        noCustom: "Нет пользовательских моделей",
+        title: "Модели",
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",
+      },
+      installation: {
+        title: "Установка",
+        version: "Версия",
+        installed: "Установлено",
+        notInstalled: "Не установлено",
+        install: "Установить",
+        checking: "Проверка...",
+        failed: "Не удалось проверить установку",
+        updates: "Обновления",
+        upToDate: "Актуальная версия",
+        updateAvailable: "Доступно обновление",
+        updateInstructions: "Инструкции по обновлению",
+        update: "Обновить",
+        updating: "Обновление...",
+        updated: "Обновлено",
+        updateFailed: "Не удалось обновить",
+        outputTruncated: "Более ранний вывод был отброшен.",
+        updatesFailed: "Не удалось проверить обновления",
+        installInstructions: "Инструкции по установке",
       },
       diagnostic: {
         title: "Диагностика",

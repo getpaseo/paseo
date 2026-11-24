@@ -49,7 +49,8 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { ProvidersSection } from "@/screens/settings/providers-section";
+import { ProviderList } from "@/provider-settings";
+import { openProviderSettings } from "@/navigation/settings-navigation";
 import { HostUsageSection } from "@/usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
@@ -65,6 +66,7 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { useProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
+import { PaseoToolsCard } from "./paseo-tools-card";
 import { RestartRecoveryCard } from "./restart-recovery-card";
 import { IdleRuntimeCleanupCard } from "./idle-runtime-cleanup-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
@@ -290,7 +292,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
     <View>
       {isConnected ? (
         <SettingsSection title={t("settings.hostSections.agents")}>
-          <InjectPaseoToolsCard serverId={serverId} />
+          <PaseoToolsCard serverId={serverId} />
           <BrowserToolsOptInCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
           <RestartRecoveryCard serverId={serverId} />
@@ -333,6 +335,10 @@ export function HostWorkspacesPage({ serverId }: { serverId: string }) {
 
 export function HostProvidersPage({ serverId }: { serverId: string }) {
   const host = useHostProfile(serverId);
+  const openProvider = useCallback(
+    (providerId: string) => openProviderSettings(serverId, providerId),
+    [serverId],
+  );
 
   if (!host) {
     return <HostNotFound />;
@@ -340,7 +346,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <ProvidersSection serverId={serverId} />
+      <ProviderList serverId={serverId} onOpenProvider={openProvider} />
     </View>
   );
 }
@@ -473,7 +479,6 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
           <View style={styles.confirmActions}>
             <Button
               variant="secondary"
-              size="sm"
               style={FLEX_1_STYLE}
               onPress={handleCancelConfirm}
               disabled={isRemovingConnection}
@@ -482,7 +487,6 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
             </Button>
             <Button
               variant="destructive"
-              size="sm"
               style={FLEX_1_STYLE}
               onPress={handleConfirmRemove}
               disabled={isRemovingConnection}
@@ -549,12 +553,7 @@ function ConnectionRow({
         </Text>
       </View>
       <Text style={latencyTextStyle}>{latencyText}</Text>
-      <Button
-        variant="ghost"
-        size="sm"
-        textStyle={destructiveTextStyle}
-        onPress={handlePressRemove}
-      >
+      <Button variant="ghost" textStyle={destructiveTextStyle} onPress={handlePressRemove}>
         {t("settings.host.connections.removeAction")}
       </Button>
     </View>
@@ -672,7 +671,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         </View>
         <Button
           variant="outline"
-          size="sm"
           leftIcon={restartIcon}
           onPress={handleRestart}
           disabled={isRestarting || !daemonClient || !isConnected}
@@ -692,7 +690,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
           </View>
           <Button
             variant="outline"
-            size="sm"
             onPress={handleRestartAndCloseTerminals}
             disabled={isRestarting || !daemonClient || !isConnected}
             testID="host-page-restart-close-terminals-button"
@@ -876,7 +873,6 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
         </View>
         <Button
           variant="outline"
-          size="sm"
           leftIcon={updateIcon}
           onPress={handleUpdate}
           disabled={desktopManaged || isUpdating || !daemonClient || !isConnected}
@@ -906,45 +902,6 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
           />
         </View>
       ) : null}
-    </View>
-  );
-}
-
-function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const { config, patchConfig } = useDaemonConfig(serverId);
-
-  const handleValueChange = useCallback(
-    (next: boolean) => {
-      void patchConfig({
-        mcp: {
-          injectIntoAgents: next,
-        },
-      });
-    },
-    [patchConfig],
-  );
-
-  if (!isConnected) return null;
-
-  return (
-    <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
-      <View style={settingsStyles.row}>
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>
-            {t("settings.host.orchestration.enableTools.title")}
-          </Text>
-          <Text style={settingsStyles.rowHint}>
-            {t("settings.host.orchestration.enableTools.hint")}
-          </Text>
-        </View>
-        <Switch
-          value={config?.mcp.injectIntoAgents !== false}
-          onValueChange={handleValueChange}
-          accessibilityLabel={t("settings.host.orchestration.enableTools.accessibilityLabel")}
-        />
-      </View>
     </View>
   );
 }
@@ -1091,7 +1048,6 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
           </View>
           <Button
             variant="outline"
-            size="sm"
             onPress={handleOpen}
             testID="host-page-append-system-prompt-edit"
           >
@@ -1118,7 +1074,6 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
           <View style={styles.appendPromptActions}>
             <Button
               variant="ghost"
-              size="sm"
               onPress={handleReset}
               disabled={!hasChanges || isSaving}
               testID="host-page-append-system-prompt-reset"
@@ -1127,7 +1082,6 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
             </Button>
             <Button
               variant="default"
-              size="sm"
               onPress={handleSave}
               disabled={!hasChanges || isSaving}
               testID="host-page-append-system-prompt-save"
@@ -1308,7 +1262,6 @@ function RemoveHostSection({
           </View>
           <Button
             variant="outline"
-            size="sm"
             leftIcon={removeIcon}
             textStyle={destructiveTextStyle}
             onPress={handleOpenConfirm}
@@ -1334,7 +1287,6 @@ function RemoveHostSection({
           <View style={styles.confirmActions}>
             <Button
               variant="secondary"
-              size="sm"
               style={FLEX_1_STYLE}
               onPress={handleCancel}
               disabled={isRemoving}
@@ -1343,7 +1295,6 @@ function RemoveHostSection({
             </Button>
             <Button
               variant="destructive"
-              size="sm"
               style={FLEX_1_STYLE}
               onPress={handleConfirmRemove}
               disabled={isRemoving}
@@ -1439,7 +1390,6 @@ function TerminalProfileRow({
       <View style={terminalProfileStyles.rowActions}>
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={moveUpIcon}
           onPress={handleMoveUp}
           disabled={isFirst}
@@ -1448,7 +1398,6 @@ function TerminalProfileRow({
         />
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={moveDownIcon}
           onPress={handleMoveDown}
           disabled={isLast}
@@ -1457,7 +1406,6 @@ function TerminalProfileRow({
         />
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={editProfileIcon}
           onPress={handleEdit}
           accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
@@ -1465,7 +1413,6 @@ function TerminalProfileRow({
         />
         <Button
           variant="ghost"
-          size="sm"
           leftIcon={removeProfileIcon}
           onPress={handleRemove}
           accessibilityLabel={t("settings.host.terminalProfiles.remove")}
@@ -1631,7 +1578,6 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     () => (
       <Button
         variant="ghost"
-        size="sm"
         leftIcon={addProfileIcon}
         onPress={handleAddOpen}
         disabled={!isConnected || !profiles}

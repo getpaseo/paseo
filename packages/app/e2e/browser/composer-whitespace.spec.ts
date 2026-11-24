@@ -18,6 +18,7 @@ import {
   expectComposerFullscreenControls,
   sendComposerWithButton,
   queueComposerWithButton,
+  fillComposerDraft,
   configureComposerQueueSend,
   activateRetainedComposerTab,
   switchComposerTabWithKeyboard,
@@ -37,7 +38,7 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
-  swipeOpenMobileAgentSidebar,
+  openMobileAgentSidebarWithKeyboard,
 } from "../support/helpers/sidebar";
 
 async function composerHeight(page: Page): Promise<number> {
@@ -450,6 +451,32 @@ test("fullscreen Send keeps the configured queue behavior while an agent runs", 
   }
 });
 
+test("editing a queued draft restores its original height with the focus hint visible", async ({
+  page,
+}) => {
+  await configureComposerQueueSend(page);
+  await resizeComposerViewport(page, "portrait");
+  const agent = await startRunningMockAgent(page, {
+    prefix: "composer-queued-draft-height-",
+    model: "one-minute-stream",
+    prompt: "Stay running while a draft is queued.",
+  });
+  try {
+    const draft = "Please review the latest changes.\nPlease review the latest changes.";
+    await fillComposerDraft(page, draft);
+    const originalHeight = await composerHeight(page);
+    await queueComposerWithButton(page);
+    await expect(composerLocator(page)).toHaveValue("");
+    await composerLocator(page).blur();
+    await expect(page.getByText(/ to focus$/)).toBeVisible();
+    await page.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await expectComposerHeight(page, originalHeight);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("image paste stays attached to the active editor across fullscreen entry and exit", async ({
   page,
 }) => {
@@ -541,8 +568,8 @@ test("the compact sidebar over a fullscreen editor leaves the exit action alone"
     await writeCompactDraft(page, draft);
     await enterComposerFullscreen(page);
     await expectWorkspaceHeaderHidden(page);
-    // Fullscreen hides the header's menu button; the edge swipe still opens the list over it.
-    await swipeOpenMobileAgentSidebar(page);
+    // Fullscreen hides the header's menu button; the keyboard shortcut opens the list over it.
+    await openMobileAgentSidebarWithKeyboard(page);
     await expectMobileAgentSidebarVisible(page);
     // The list covers the pane, so the editor's exit action is not armed.
     await page.keyboard.press("Escape");

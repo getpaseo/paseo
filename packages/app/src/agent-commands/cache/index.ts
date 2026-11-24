@@ -5,7 +5,7 @@ import equal from "fast-deep-equal";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const AGENT_COMMANDS_QUERY_ROOT = "agentCommands";
-export const sessionCommandQueryPolicy = {
+export const agentCommandQueryPolicy = {
   staleTime: 600_000,
   gcTime: 1_800_000,
   refetchOnMount: true,
@@ -18,7 +18,7 @@ export interface AgentCommandsDraftConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
+  providerOptions?: Record<string, unknown>;
 }
 
 export function normalizeAgentCommandsCwd(cwd: string): string {
@@ -27,6 +27,25 @@ export function normalizeAgentCommandsCwd(cwd: string): string {
 
 export function agentCommandsQueryRoot(serverId: string) {
   return [AGENT_COMMANDS_QUERY_ROOT, serverId] as const;
+}
+
+function queryCommandsCwd(query: { queryKey: readonly unknown[]; meta?: Record<string, unknown> }) {
+  const isDraft = query.queryKey[2] === "draft";
+  const cwd = query.meta?.agentCommandCwd ?? (isDraft ? query.queryKey[4] : undefined);
+  return typeof cwd === "string" ? normalizeAgentCommandsCwd(cwd) : undefined;
+}
+
+/** Marks every catalog for a directory stale. Only observed catalogs refetch; the rest refetch
+ * when next mounted. Used when a provider change is announced without its new snapshot. */
+export function invalidateCommandsForDirectory(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  cwd: string | null;
+}): Promise<void> {
+  return input.queryClient.invalidateQueries({
+    queryKey: agentCommandsQueryRoot(input.serverId),
+    predicate: (query) => !input.cwd || queryCommandsCwd(query) === input.cwd,
+  });
 }
 
 /** Snapshot announcements contain provider metadata, not command catalogs. Ignore initial
@@ -98,18 +117,16 @@ export function draftAgentCommandsQueryKey(input: {
     "thinking",
     draftConfig.thinkingOptionId ?? null,
     "features",
-    draftConfig.featureValues ?? null,
+    draftConfig.providerOptions ?? null,
   ] as const;
 }
 
-// Draft commands include project skills read from the checkout. When the checkout moves to
-// another branch the cached list describes files that are gone, so it is dropped rather than
-// shown while a refetch runs.
-export function resetDraftAgentCommandsForCheckout(
+// Refresh checkout skills after branch changes while keeping the previous catalog usable.
+export function invalidateDraftAgentCommandsForCheckout(
   queryClient: QueryClient,
   input: { serverId: string; cwd: string },
 ): Promise<void> {
-  return queryClient.resetQueries({ queryKey: draftAgentCommandsCheckoutScope(input) });
+  return queryClient.invalidateQueries({ queryKey: draftAgentCommandsCheckoutScope(input) });
 }
 
 export function agentCommandsQueryKey(input: {

@@ -29,6 +29,7 @@ test("agent tool schemas survive the process boundary and catalog round trip", (
     }),
   ).toEqual({
     ...metadata.inputSchema,
+    $schema: "https://json-schema.org/draft/2020-12/schema",
     additionalProperties: {},
     properties: {
       ...metadata.inputSchema.properties,

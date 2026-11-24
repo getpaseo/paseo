@@ -45,6 +45,7 @@ function createHarness(
   } = {},
 ) {
   const handlers: Record<string, Handler> = {
+    "thread/backgroundTerminals/list": () => ({ data: [], nextCursor: null }),
     "turn/interrupt": () => {
       const completeTurn = () =>
         appServer.completeTurn({ threadId: THREAD, status: "interrupted" });
@@ -169,7 +170,11 @@ describe("an interrupted Codex turn's commands end before the next turn", () => 
     expect(
       harness.appServer
         .requests()
-        .filter((message) => String(message.method).startsWith("thread/backgroundTerminals/"))
+        .filter(
+          (message) =>
+            String(message.method).startsWith("thread/backgroundTerminals/") &&
+            message.method !== "thread/backgroundTerminals/list",
+        )
         .map((message) => message.method),
     ).toEqual([TERMINATE, TERMINATE]);
     harness.appServer.assertNoErrors();
@@ -371,4 +376,329 @@ describe("an interrupted Codex turn's commands end before the next turn", () => 
     expect(harness.requests("turn/start")).toHaveLength(3);
     expect(harness.terminated()).toEqual(["201", "202"]);
   }, 15_000);
+});
+
+test("publishes every page of the current thread's live background terminals", async () => {
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": (params) => {
+      const cursor = paramsOf(params).cursor;
+      return cursor
+        ? { data: [{ itemId: "item-2", processId: "2", command: "sleep 2" }], nextCursor: null }
+        : { data: [{ itemId: "item-1", processId: "1", command: "sleep 1" }], nextCursor: "next" };
+    },
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", modeId: "auto", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [
+        { kind: "shell", description: null, command: "sleep 1" },
+        { kind: "shell", description: null, command: "sleep 2" },
+      ],
+    }),
+  );
+});
+
+test("discards a terminal list overtaken by a command event", async () => {
+  const first = deferred<unknown>();
+  let lists = 0;
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () =>
+      ++lists === 1 ? first.promise : { data: [], nextCursor: null },
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", modeId: "auto", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await vi.waitFor(() => expect(lists).toBe(1));
+  const shown = waitForTimelineToolCall(session, "item-new");
+  appServer.startsTerminalCommand({
+    threadId: THREAD,
+    turnId: "turn",
+    itemId: "item-new",
+    processId: "new",
+    command: "sleep 1",
+  });
+  await shown;
+  first.resolve({
+    data: [{ itemId: "old", processId: "old", command: "sleep 2" }],
+    nextCursor: null,
+  });
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [],
+    }),
+  );
+  expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
+    expect.objectContaining({ items: [expect.objectContaining({ command: "sleep 2" })] }),
+  );
+});
+
+test("does not publish a terminal response from a lost runtime", async () => {
+  const first = deferred<unknown>();
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => first.promise,
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", modeId: "auto", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await appServer.waitForRequest("thread/backgroundTerminals/list");
+  appServer.disconnect();
+  first.resolve({
+    data: [{ itemId: "old", processId: "old", command: "sleep 2" }],
+    nextCursor: null,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
+    expect.objectContaining({ items: [expect.objectContaining({ command: "sleep 2" })] }),
+  );
+});
+
+test("accepts a slow terminal snapshot after the polling interval", async () => {
+  const pending = deferred<unknown>();
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => pending.promise,
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await appServer.waitForRequest("thread/backgroundTerminals/list");
+  await new Promise((resolve) => setTimeout(resolve, 5200));
+  expect(
+    appServer.requests().filter((message) => message.method === "thread/backgroundTerminals/list"),
+  ).toHaveLength(1);
+  pending.resolve({ data: [{ processId: "slow", command: "sleep 120" }], nextCursor: null });
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ command: "sleep 120" }],
+    }),
+  );
+  expect(
+    appServer.requests().filter((message) => message.method === "thread/backgroundTerminals/list"),
+  ).toHaveLength(1);
+}, 12000);
+
+test("does not retry an unsupported inventory on later command events", async () => {
+  let calls = 0;
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => {
+      calls++;
+      return { __jsonRpcError: { code: -32601, message: "Method not found" } };
+    },
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  await session.connect();
+  await vi.waitFor(() => expect(calls).toBe(1));
+  const shown = waitForTimelineToolCall(session, "unsupported-item");
+  appServer.startsTerminalCommand({
+    threadId: THREAD,
+    turnId: "turn",
+    itemId: "unsupported-item",
+    processId: "1",
+    command: "sleep 1",
+  });
+  await shown;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(calls).toBe(1);
+});
+
+test("retries transient inventory failures and cancels retries on stop", async () => {
+  vi.useFakeTimers();
+  try {
+    const { CodexBackgroundInventory } = await import("./codex/background-inventory.js");
+    let calls = 0;
+    let fail = true;
+    const inventory = new CodexBackgroundInventory(() => {});
+    inventory.start({
+      client: {
+        request: async () => {
+          calls++;
+          if (fail) throw new Error("temporary");
+          return { data: [{ processId: "live", command: "sleep 120" }], nextCursor: null };
+        },
+      },
+      thread: THREAD,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inventory.snapshot()).toBeNull();
+    inventory.changed(THREAD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(inventory.snapshot()?.items).toMatchObject([{ command: "sleep 120" }]);
+    fail = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(inventory.snapshot()?.items).toMatchObject([{ command: "sleep 120" }]);
+    inventory.stop();
+    const stoppedCalls = calls;
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(calls).toBe(stoppedCalls);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("does not retry a failure from a stopped inventory generation", async () => {
+  vi.useFakeTimers();
+  try {
+    const { CodexBackgroundInventory } = await import("./codex/background-inventory.js");
+    let reject!: (error: Error) => void;
+    let calls = 0;
+    const response = new Promise<unknown>((_, fail) => {
+      reject = fail;
+    });
+    const inventory = new CodexBackgroundInventory(() => {});
+    inventory.start({
+      client: {
+        request: () => {
+          calls++;
+          return response;
+        },
+      },
+      thread: THREAD,
+    });
+    inventory.stop();
+    reject(new Error("late failure"));
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(calls).toBe(1);
+    expect(inventory.snapshot()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stops only the selected live background terminal and confirms the roster", async () => {
+  const live = new Set(["1", "2"]);
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => ({
+      data: [...live].map((processId) => ({ processId, command: `sleep ${processId}` })),
+      nextCursor: null,
+    }),
+    "thread/backgroundTerminals/terminate": (params) => ({
+      terminated: live.delete(String(paramsOf(params).processId)),
+    }),
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ command: "sleep 1" }, { command: "sleep 2" }],
+    }),
+  );
+  const item = events
+    .findLast((event) => event.type === "background_work")
+    ?.items?.find((entry) => entry.command === "sleep 1");
+  expect(item).toBeDefined();
+  await session.stopBackgroundWork(item!.id);
+  expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+    items: [{ command: "sleep 2" }],
+  });
+  await expect(session.stopBackgroundWork(item!.id)).rejects.toThrow();
+});
+
+test("reports a rejected background stop and keeps the item available", async () => {
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => ({
+      data: [{ processId: "1", command: "sleep 1" }],
+      nextCursor: null,
+    }),
+    "thread/backgroundTerminals/terminate": () => ({ terminated: false }),
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ command: "sleep 1" }],
+    }),
+  );
+  const item = events.findLast((event) => event.type === "background_work")?.items?.[0];
+  expect(item).toBeDefined();
+  await expect(session.stopBackgroundWork(item!.id)).rejects.toThrow("not terminated");
+  expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+    items: [{ command: "sleep 1" }],
+  });
+});
+
+test("does not confirm a stop after the provider connection is lost", async () => {
+  const response = deferred<unknown>();
+  const appServer = createFakeCodexAppServer({
+    "thread/backgroundTerminals/list": () => ({
+      data: [{ processId: "1", command: "sleep 1" }],
+      nextCursor: null,
+    }),
+    "thread/backgroundTerminals/terminate": () => response.promise,
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", model: "gpt-5.4" },
+    { sessionId: THREAD },
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  sessions.push(session);
+  const events: import("../agent-sdk-types.js").AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.connect();
+  await vi.waitFor(() =>
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ command: "sleep 1" }],
+    }),
+  );
+  const item = events.findLast((event) => event.type === "background_work")?.items?.[0];
+  expect(item).toBeDefined();
+  const pending = session.stopBackgroundWork(item!.id);
+  await appServer.waitForRequest("thread/backgroundTerminals/terminate");
+  appServer.disconnect();
+  response.resolve({ terminated: true });
+  await expect(pending).rejects.toThrow();
 });

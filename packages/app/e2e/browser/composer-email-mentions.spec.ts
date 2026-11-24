@@ -10,6 +10,7 @@ import {
   selectComposerDraftRange,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { expectVisibleAgentSurfacesIdle } from "../support/helpers/agent-stream";
 
 // The popover has no semantic role; its rows are React Native Pressables.
 function fileSuggestions(page: Page) {
@@ -32,31 +33,33 @@ async function sendEmailIntact(page: Page, email: string): Promise<void> {
   await expect(page.getByText(email, { exact: true })).toBeVisible();
 }
 
-for (const email of [
-  "user <12345+user@noreply.example.com>",
-  "alice@example.com",
-  "noreply+@example.com",
-]) {
-  test(`Enter sends ${email} intact and still completes file mentions`, async ({ page }) => {
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "composer-email-",
-      title: "Email mention regression",
-      repo: { files: [{ path: "example.com", content: "A file matching the email domain.\n" }] },
-    });
-    try {
-      await openAgentRoute(page, agent);
-      await expectComposerVisible(page);
-      await test.step("complete a workspace file mention with Enter", async () => {
-        await selectReadmeMention(page);
-      });
-      await test.step("send an email without offering or inserting workspace files", async () => {
-        await sendEmailIntact(page, email);
-      });
-    } finally {
-      await agent.cleanup();
-    }
+test("Enter sends email formats intact and still completes file mentions", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-email-",
+    title: "Email mention regression",
+    repo: { files: [{ path: "example.com", content: "A file matching the email domain.\n" }] },
   });
-}
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    for (const email of [
+      "user <12345+user@noreply.example.com>",
+      "alice@example.com",
+      "noreply+@example.com",
+    ]) {
+      await test.step(`complete a file mention, then send ${email} intact`, async () => {
+        await selectReadmeMention(page);
+        await sendEmailIntact(page, email);
+        // Start the next draft only after the daemon and visible agent have settled.
+        const reply = await agent.client.waitForFinish(agent.agentId, 15_000);
+        expect(reply.status).toBe("idle");
+        await expectVisibleAgentSurfacesIdle(page);
+      });
+    }
+  } finally {
+    await agent.cleanup();
+  }
+});
 
 test("fullscreen mention keys edit the draft while inline keys still complete files", async ({
   page,

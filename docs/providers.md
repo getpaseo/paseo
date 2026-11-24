@@ -19,8 +19,8 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 | Provider    | Transport                                  | Setup and limitations                                            |
 | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
-| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
+| Antigravity | ACP over the installed `agy acp` CLI       | [Antigravity](../public-docs/supported-providers/antigravity.md) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/supported-providers/muse-code.md)     |
 
 ## Provider-native session options
 
@@ -29,6 +29,71 @@ The provider owns validation and application of the opaque record in
 at session startup. See [provider configuration](custom-providers.md#provider-options)
 for defaults and merge rules, and the [SDK guide](../public-docs/sdk/provider-options.md)
 for native keys and examples.
+
+### Options flow
+
+`options` on the agent snapshot is the only option state. Controls describe how to draw an
+option and read `options`; they hold no value of their own. Any option can be read and set with
+or without a control.
+
+- **Create and resume.** The provider opens with the options it is given and emits nothing about
+  them while opening. `openOptionsPatch` carries every option the session ended up with that
+  differs from what it was given, including a setting nobody asked for (a native default such as
+  Cursor opening with Fast on). It is set before `createSession`/`resumeSession` resolves and the
+  daemon stores it before the agent is published. A reopened agent resumes that state, so a
+  native default the provider later changes does not follow. `options` on the snapshot is what
+  the session opened with, and afterwards it moves only through an apply or an `options_changed`.
+  Editing a provider default in `config.json` affects agents the next time they open.
+- **Live apply.** `applyOptions` receives the keys the patch touches, resolved against the
+  `config.json` defaults. A removal arrives as the default the key falls back to, or `null` when
+  there is none; the provider returns the setting to its own default if it can, or throws to
+  reject. A key the running session cannot apply (one the provider reads only when it opens) is
+  rejected too, so a stored option always describes what runs. Claude reads most options when it
+  starts its query, and replacing a started query would end its background work, so after the
+  first prompt only Fast and Ultracode can change. Codex fixes its approval policy and sandbox
+  when the thread starts, so it applies only `service_tier` and `plan_mode` live. A session with no
+  `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
+  it ended up with when they differ from the request. The daemon stores the patch and that
+  result in one step after the call resolves. Throwing rejects the whole patch and none of it is
+  stored. Emit nothing from inside the call. If the provider's own state moved before it refused,
+  it reports the moved values once as `options_changed` after the call has ended, because the
+  stored options must match what runs.
+- **One change at a time per agent.** `AgentManager` runs every option, model, thinking and mode
+  change inside the agent's lifecycle lane, the same queue that opens, reopens, closes and
+  archives it. `applyOptions`, `setModel`, `setThinkingOption` and `setMode` are never in flight
+  together on one session, and none of them overlaps an open or reopen. Providers do no
+  sequencing of their own: no queues, no "apply over the options as they are now" handling. A
+  change that arrives while another runs waits for it and then reads the agent's stored options
+  as that one left them.
+- **Old data converts in the agent manager.** Codex used to take `fast_mode`; it takes
+  `service_tier` now. `AgentManager` runs `convertLegacyOptions` (`option-controls.ts`) on an
+  agent's own options when it creates, resumes, imports, reloads or applies to it, and on draft
+  controls, before defaults merge and before anything is stored (`true` is `"fast"`, `false` is
+  `"default"`, and a `service_tier` in the same input wins). The manager converts for the adapter
+  behind the provider id, following `derivedFromProviderId`, so a custom provider with
+  `extends: "codex"` is converted too. Configured defaults convert in the provider registry. A
+  stored record keeps `fast_mode` until the agent is next opened or applied to, and is stored
+  converted from then on. Nothing past the manager sees `fast_mode` for Codex. Codex resolves
+  `"fast"` to the model's Fast tier and reports the id it runs through `openOptionsPatch` or the
+  `applyOptions` result like any other value. The `featureValues` to `options` fold is separate
+  and provider-agnostic; it stays at the protocol and legacy edges.
+- **Clients draw from the daemon's answer.** The app reads `controls` and `options` from the
+  agent snapshot for a running or closed agent. A draft and a profile form send everything they
+  would create with (seed, the provider's last-used control values once the provider has said it
+  still draws them, and the user's edits) in `provider.controls.list.request` and draw only what
+  comes back, so an alias such as a legacy Fast profile's `service_tier: "fast"` is resolved once,
+  by the daemon. A toggle shows over the last answer until its own answer arrives. The draft's
+  layers live in a plain model (`agent-controls/draft-options-model.ts`): applying a profile
+  replaces provider and options in one step, while choosing a provider by hand starts over. A
+  profile saves its stored options plus the form's edits, so options no control draws survive an
+  edit. A daemon without `server_info.features.providerOptionControls` sends `features` and
+  `featureValues`; `packages/client/src/compat/legacy-provider-options.ts` is the one place that
+  turns those into `controls` and `options` and back, so nothing in the app branches on it. A
+  create that carries options first lists the controls for its own provider, model, mode and
+  thinking level, since which options are controls differs by model, and sends those as
+  `featureValues`; callers do not prime anything.
+- **Provider-initiated changes.** A setting the provider changes on its own is an
+  `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 
 Exact MCP preapproval is a separate daemon-owned contract. A new provider must fail
 closed for Hub unattended execution until it can approve one exact injected MCP
@@ -85,6 +150,15 @@ Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does
 
 OMP is a first-class built-in provider, disabled by default. Its launch contract, typed runtime, agent/session behavior, history, permissions, imports, and test fake live under `providers/omp/`; only the provider-neutral JSONL child-process transport is shared with Pi. It launches `omp --mode rpc-ui`, uses OMP's `get_available_commands` RPC for slash-command discovery, bridges OMP `rpc-ui` approval dialogs into Paseo permissions, and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled.
 
+OMP rewind is a branch, not an edit: `branch` writes a new session file whose header names the
+previous file as `parentSession` and leaves that previous file untouched. A rewind chain therefore
+adds one file to `~/.omp/agent/sessions` per step, and `omp --resume` lists all of them. The
+previous file also keeps whatever head it had recorded, which can be an older branch than the one
+the user last saw. Treat the provider session file selected by OMP as the authority; do not assume
+the newest file or the newest message wins. Import listings hand back a file path, so persist the
+resumed session's own identity (`sessionId`) with that path as `nativeHandle`, not the listed
+handle as both.
+
 OMP supports native Paseo host tools. The adapter registers the full caller-scoped Paseo tool catalog directly with OMP, matching providers such as Claude that expose the full catalog through MCP. Serialize every OMP host definition with `loadMode: "essential"` so `create_agent`, `send_agent_prompt`, `wait_for_agent`, and related tools remain direct calls; omitting the field makes OMP mount non-built-in names under `xd://` instead. OMP's provider-managed task subagents are surfaced as Paseo subagents through `child_session` imports; the parent keeps the subagents track while the child runtime stays owned by OMP. Custom OMP profiles should extend `omp`; other Pi-compatible forks can still extend `pi`, override `command`, and set `params.sessionDir` to their JSONL session directory.
 
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
@@ -95,7 +169,7 @@ Use OpenCode v2 execution events to trigger turn completion, with active-state a
 
 V2.0.4 also removed the activation endpoint that gated a cold location, and a cold location registers its config-derived commands, skills, and providers asynchronously. Wait until `plugin.list` returns a populated inventory before reading the catalog or commands; an empty inventory means the location is still warming. Fail when the readiness deadline expires, including when an inventory request stalls.
 
-Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
+Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. V2 discovers definitions from each bound session's catalog: plugin-contributed tools can be absent from the global manifest, and an allowlist cannot register a missing definition. Registration is location-wide, so session filtering and caller-scoped execution must remain in place. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
 
 An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
 
@@ -115,7 +189,7 @@ Submitted user-message wire items carry the same Paseo ID in `messageId` and `cl
 
 Provider adapters must terminalize every transient timeline row before emitting the turn's terminal event. Codex may omit the completed `contextCompaction` item when a turn ends during compaction, so its adapter closes any pending root compaction before forwarding `turn_completed`, `turn_failed`, or `turn_canceled`. A terminal turn must never leave the client showing an operation as still loading.
 
-Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session feature listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listFeatures` implementation may return features from an incomplete, model-less draft and owns which features are valid in that state.
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listControls` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session control listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listControls` implementation may return controls from an incomplete, model-less draft and owns which features are valid in that state. It returns `{ controls, options }`: the options a session opened from the draft would run with, so a value the provider resolves natively (an ACP select nobody set) shows in the draft the same way it would on the agent.
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
 
@@ -147,11 +221,32 @@ Plugin callbacks follow the same contract; see [plugin providers](plugins.md#con
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager
-aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+aborts the shared refresh signal at the deadline, and when it stops. Shutdown waits for running
+probes to settle before it shuts down provider clients, so a probe cannot start provider work,
+such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 
-Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
+Providers change their model lists on the server without a CLI update, so the daemon refreshes
+each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
+`30 min / enabled providers` apart, and each tick starts at most one refresh: the provider refreshed
+longest ago, if that was a full interval ago. Ticks do not wait for refreshes, so a provider that
+probes many workspace targets does not delay the others, and provider CLIs never start in a burst.
+Any forced refresh, configuration change, or newly enabled provider counts as a refresh and pushes
+that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with these differences:
+
+- It joins discovery already in flight.
+- It passes `force: false`, because providers treat `force` as a requested hard refresh. OpenCode
+  rotates its shared server on it.
+- An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
+  no update.
+- A result that is not ready, or a catalogue the provider marks `incomplete`, keeps a ready
+  catalogue. Plugin status probes report a failed startup as unavailable, so that counts as
+  transient. Set `ProviderCatalog.incomplete` when discovery fails and you fall back to a partial
+  list, as Claude does when model discovery times out. A manual refresh still publishes all three.
+
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 
@@ -188,6 +283,53 @@ identity, so unchanged registrations and builtins keep their results. Await the 
 promise for completion: equal results, including equal discovery timestamps, emit no transition.
 
 ---
+
+## Installation and updates
+
+The provider list and the **Installation** section of a provider's page read `AgentClient.installation`. Built-ins set
+it on the client; plugins set `ProviderRegistration.installation`, which the plugin bridge maps to
+the same interface. `ProviderInstallations` in `packages/server/src/server/agent/provider-installation/`
+owns deadlines, caching and the one running update per provider, so a provider only answers.
+
+Declare only what the vendor offers:
+
+- `installUrl` and `updateUrl` link the vendor's own install and update docs.
+- `inspect` reports the version the CLI prints. Versions are opaque: Paseo shows them as written
+  and never parses them.
+- `checkForUpdates` receives the version `inspect` reported as `installedVersion` and asks the
+  source the CLI's own updater reads, such as the vendor's release endpoint or the CLI's
+  `update --check`. Do not read the version again. Leave it out when that source is inside the binary or
+  depends on how the CLI was installed, which is why Copilot and OpenCode have no check. Do not
+  build a release lookup of your own.
+- `update` runs the CLI's own update command and passes its output through, using
+  `runUpdateCommand`. Paseo adds no verification, signature check or rollback, so the update does
+  exactly what the same command does in a terminal.
+
+The three calls are separate because they cost differently. `inspect` runs for every provider
+whenever the provider list shows, because each row states its version; a provider's page shares the
+row's request. It has a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
+network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
+answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
+checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
+aborted only when the daemon stops. A failed update stays on the provider until the next refresh
+of its installation, which tells every client observing the provider's updates that it is gone; a
+running one is never dropped.
+
+The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
+for a provider that declares `update`, or **Update instructions** for one that declares only
+`updateUrl`, whatever the check answers and whether the provider has one. The check's answer shows
+beside the action when it has one. Copilot and OpenCode have no check, so they show **Update** alone.
+
+Write the success message for the provider's process model. A CLI that Paseo starts once per agent
+uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,
+so its message asks the user to restart the daemon.
+
+`createCliInstallation()` covers a CLI that prints `--version` and updates with a subcommand. It
+resolves the configured command, so a profile that extends a built-in reports and updates the CLI
+that profile launches. Clients for `extends: "acp"` providers declare no installation.
+
+Test with fake executables, as `providers/provider-update-checks.test.ts` does. Running a real
+updater during development replaces the CLI on your machine.
 
 ## Usage sources
 
@@ -478,7 +620,7 @@ interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
-  readonly features?: AgentFeature[];
+  readonly controls?: AgentOptionControl[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
@@ -500,7 +642,7 @@ interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
-  setFeature?(featureId: string, value: unknown): Promise<void>;
+  applyOptions?(options: ProviderOptions): Promise<void>;
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;

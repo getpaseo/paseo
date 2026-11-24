@@ -500,7 +500,7 @@ describe("workspace registries", () => {
       workspace: archived,
     });
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
-    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(await workspaceRegistry.listAll()).toEqual([]);
   });
 
   test("preserves the first workspace archive and reports whether a queued archive applied", async () => {

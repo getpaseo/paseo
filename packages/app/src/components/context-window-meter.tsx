@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View, useWindowDimensions } from "react-native";
+import {
+  Pressable,
+  type PressableStateCallbackType,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -7,10 +13,12 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
+import type { AgentMetric } from "@getpaseo/protocol/agent-types";
 import { useHostReportsUsage } from "@/usage";
 import type { Theme } from "@/styles/theme";
+import { TOOLBAR_DISC_SIZE, type ToolbarRing } from "@/components/ui/control-geometry";
 import { ContextWindowDetails } from "./context-window-details";
-import { ContextWindowSheet } from "./context-window-sheet";
+import { DetailsSheet } from "./details-sheet";
 import { formatContextPercentage } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -19,11 +27,14 @@ interface ContextWindowMeterProps {
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
+  /** What the provider reports about the session, shown in the details. */
+  sessionMetrics?: AgentMetric[];
   showPercentage?: boolean;
-  /** Optional glyph envelope for icon-toolbar alignment. */
-  glyphSize?: number;
+  /** The ring's box and stroke when it sits in an icon toolbar. */
+  toolbarRing?: ToolbarRing;
 }
 
+const EMPTY_METRICS: AgentMetric[] = [];
 const SVG_SIZE = 14;
 const USAGE_POPOVER_WIDTH = 300;
 const COMPACT_SVG_SIZE = 12;
@@ -70,7 +81,7 @@ function getProgressColor(percentage: number, theme: Theme): string {
   return theme.colors.foregroundMuted;
 }
 
-function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
+function getMeterGeometry(showPercentage: boolean, ring?: ToolbarRing) {
   if (showPercentage) {
     return {
       svgSize: COMPACT_SVG_SIZE,
@@ -79,8 +90,8 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
       containerStyle: styles.containerWithLabel,
     };
   }
-  const resolvedSize = glyphSize ?? SVG_SIZE;
-  const resolvedStrokeWidth = glyphSize ? 2 : STROKE_WIDTH;
+  const resolvedSize = ring?.size ?? SVG_SIZE;
+  const resolvedStrokeWidth = ring?.strokeWidth ?? STROKE_WIDTH;
   return {
     svgSize: resolvedSize,
     radius: (resolvedSize - resolvedStrokeWidth) / 2,
@@ -149,13 +160,16 @@ export function ContextWindowMeter({
   maxTokens,
   usedTokens,
   totalCostUsd,
+  sessionMetrics = EMPTY_METRICS,
   showPercentage = false,
-  glyphSize,
+  toolbarRing,
 }: ContextWindowMeterProps) {
   const { t, i18n } = useTranslation();
   const { width } = useWindowDimensions();
-  // Usage cards need a wider popover; without them it keeps the plain tooltip shape.
+  // Usage cards and session metrics need a wider popover; without them it keeps the plain tooltip
+  // shape.
   const showsUsage = useHostReportsUsage(serverId);
+  const isWide = showsUsage || sessionMetrics.length > 0;
   const popoverWidth = Math.min(USAGE_POPOVER_WIDTH, width - 24);
   // Compact screens open the details in a sheet, which can hold a pressable Refresh.
   const isCompact = useIsCompactFormFactor();
@@ -164,7 +178,7 @@ export function ContextWindowMeter({
   const closeSheet = useCallback(() => setIsSheetOpen(false), []);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
-  const geometry = getMeterGeometry(showPercentage, glyphSize);
+  const geometry = getMeterGeometry(showPercentage, toolbarRing);
 
   const context = useMemo(
     () =>
@@ -183,6 +197,10 @@ export function ContextWindowMeter({
   const formattedSessionCost =
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
   const containerStyle = geometry.containerStyle;
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [containerStyle, pressed && styles.pressed],
+    [containerStyle],
+  );
   const ring = (
     <ContextWindowRing
       size={geometry.svgSize}
@@ -206,7 +224,7 @@ export function ContextWindowMeter({
     return (
       <>
         <Pressable
-          style={containerStyle}
+          style={pressableStyle}
           testID="context-window-meter"
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
@@ -215,21 +233,22 @@ export function ContextWindowMeter({
           {ring}
           {percentageLabel}
         </Pressable>
-        <ContextWindowSheet open={isSheetOpen} onClose={closeSheet}>
+        <DetailsSheet open={isSheetOpen} onClose={closeSheet} title={t("contextWindow.title")}>
           <ContextWindowDetails
             serverId={serverId}
             agentId={agentId}
             context={context}
             sessionCost={formattedSessionCost}
+            sessionMetrics={sessionMetrics}
             showTitle={false}
             refreshable
           />
-        </ContextWindowSheet>
+        </DetailsSheet>
       </>
     );
   }
 
-  const popoverStyle = showsUsage
+  const popoverStyle = isWide
     ? [styles.usagePopover, { width: popoverWidth }]
     : styles.plainPopover;
 
@@ -240,7 +259,7 @@ export function ContextWindowMeter({
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
         <TooltipTrigger asChild triggerRefProp="ref">
           <Pressable
-            style={containerStyle}
+            style={pressableStyle}
             testID="context-window-meter"
             accessibilityRole="image"
             accessibilityLabel={accessibilityLabel}
@@ -253,7 +272,7 @@ export function ContextWindowMeter({
           side="top"
           align="center"
           offset={8}
-          maxWidth={showsUsage ? popoverWidth : undefined}
+          maxWidth={isWide ? popoverWidth : undefined}
           style={popoverStyle}
           testID="context-window-meter-tooltip"
         >
@@ -262,6 +281,7 @@ export function ContextWindowMeter({
             agentId={agentId}
             context={context}
             sessionCost={formattedSessionCost}
+            sessionMetrics={sessionMetrics}
             showTitle
             refreshable={false}
           />
@@ -296,6 +316,7 @@ export function ContextWindowMeter({
           agentId={agentId}
           context={context}
           sessionCost={formattedSessionCost}
+          sessionMetrics={sessionMetrics}
           showTitle
           refreshable
         />
@@ -306,19 +327,22 @@ export function ContextWindowMeter({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    width: 28,
-    height: 28,
+    width: TOOLBAR_DISC_SIZE,
+    height: TOOLBAR_DISC_SIZE,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   containerWithLabel: {
-    height: 28,
+    height: TOOLBAR_DISC_SIZE,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
+  },
+  pressed: {
+    backgroundColor: theme.colors.surface2,
   },
   percentageLabel: {
     color: theme.colors.foregroundMuted,

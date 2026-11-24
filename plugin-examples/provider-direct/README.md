@@ -1,8 +1,9 @@
 # Direct provider example
 
 This plugin implements `ProviderRegistration` directly. It demonstrates connection negotiation,
-catalog and session listing, session creation, prompt and command disposition, settings,
-persistence and replay, archive actions, and an ordinary child session.
+catalog and session listing, session creation, prompt and command disposition, option controls
+with icons (`controls` and `providerOptions`),
+persistence and replay, archive actions, turn and session metrics, and an ordinary child session.
 
 The provider emits versioned `provider-result` timeline items for its root and child sessions.
 `index.client.tsx` registers the Zod schema and React Native renderer for those items. The server

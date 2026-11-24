@@ -93,6 +93,7 @@ function SessionsScreenContent() {
   } = useAgentHistory({
     serverId: historyServerId,
     search,
+    refreshOnMount: true,
   });
   const isSearching = isSearchSupported && search.length > 0;
 

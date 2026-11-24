@@ -6,6 +6,7 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
+  type ArchiveDependencies,
   killTerminalsForWorkspace,
 } from "../workspace-archive-service.js";
 import type {
@@ -16,10 +17,16 @@ import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import type { WorkspaceArchiveContext } from "../workspace-registry.js";
+import type { PluginWorktreeManagerRuntime } from "../plugins/runtime.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
   paseoWorktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  getWorkspace?: ArchiveDependencies["getWorkspace"];
+  assertWorkspaceAutomationAllowed: ArchiveDependencies["assertWorkspaceAutomationAllowed"];
+  isCheckoutUntrusted: ArchiveDependencies["isCheckoutUntrusted"];
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: ForgeService;
@@ -29,7 +36,11 @@ export interface AutoArchiveArchiveOptions {
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
-  archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    context?: WorkspaceArchiveContext,
+    archivedAt?: string,
+  ) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -59,13 +70,21 @@ export async function archiveIfSafe(input: {
   const cwd = snapshot.cwd;
   const pullRequest = snapshot.forge.pullRequest;
 
-  if (!pullRequest?.isMerged) {
+  if (
+    !pullRequest?.isMerged ||
+    !snapshot.git.headSha ||
+    snapshot.git.headSha !== pullRequest.headSha ||
+    snapshot.forge.error
+  ) {
     return;
   }
-  if (snapshot.git.isDirty === true) {
+  if (snapshot.git.isDirty !== false) {
     return;
   }
-  if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+  if (
+    (snapshot.git.aheadOfOrigin !== null && snapshot.git.aheadOfOrigin !== 0) ||
+    (snapshot.git.behindOfOrigin !== null && snapshot.git.behindOfOrigin !== 0)
+  ) {
     return;
   }
 
@@ -87,16 +106,25 @@ export async function archiveIfSafe(input: {
       {
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
+        worktreeManagers: options.worktreeManagers,
+        workspaceArchiveOperations: options.workspaceArchiveOperations,
         github: options.github,
         workspaceGitService: options.workspaceGitService,
         agentManager: options.agentManager,
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+        getWorkspace: options.getWorkspace,
+        assertWorkspaceAutomationAllowed: options.assertWorkspaceAutomationAllowed,
+        isCheckoutUntrusted: options.isCheckoutUntrusted,
         listActiveWorkspaces: options.listActiveWorkspaces,
-        archiveWorkspaceRecord: (workspaceIdToArchive) =>
-          options.archiveWorkspaceRecord(workspaceIdToArchive, {
-            autoArchivedChangeRequestUrl: pullRequest.url,
-          }),
+        archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
+          options.archiveWorkspaceRecord(
+            workspaceIdToArchive,
+            {
+              autoArchivedChangeRequestUrl: pullRequest.url,
+            },
+            archivedAt,
+          ),
         emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: options.markWorkspaceArchiving,
         clearWorkspaceArchiving: options.clearWorkspaceArchiving,

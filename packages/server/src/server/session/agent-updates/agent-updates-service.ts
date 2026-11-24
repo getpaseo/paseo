@@ -7,6 +7,7 @@ import type {
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
+import type { BackgroundVisibility } from "../../agent/directory.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
@@ -19,6 +20,7 @@ interface AgentUpdatesSubscriptionState {
   emit: (message: SessionOutboundMessage) => void;
   syncEnabled: boolean;
   filter?: AgentUpdatesFilter;
+  backgroundVisibility: BackgroundVisibility;
   isProviderVisible: (provider: string) => boolean;
   isBootstrapping: boolean;
   pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
@@ -31,6 +33,7 @@ export interface AgentUpdatesService {
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    backgroundVisibility?: BackgroundVisibility;
     syncEnabled?: boolean;
   }): void;
   flushBootstrapped(
@@ -41,13 +44,17 @@ export interface AgentUpdatesService {
   hasSubscription(): boolean;
   includesLiveAgent(agent: ManagedAgent, subscriptionIds?: ReadonlySet<string>): Promise<boolean>;
   forwardLiveAgent(agent: ManagedAgent): Promise<void>;
+  forwardStoredAgent(record: StoredAgentRecord): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
   dispose(): void;
 }
 
 export interface AgentUpdatesServiceDeps {
-  includesWorkspace?(agent: AgentSnapshotPayload, includeBackground?: boolean): Promise<boolean>;
+  includesWorkspace?(
+    agent: AgentSnapshotPayload,
+    backgroundVisibility: BackgroundVisibility,
+  ): Promise<boolean>;
   emit(message: SessionOutboundMessage): void;
   enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload>;
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
@@ -60,7 +67,7 @@ export interface AgentUpdatesServiceDeps {
     project: ProjectPlacementPayload | null,
     agentId: string,
     includeSequence: boolean,
-    includeBackground?: boolean,
+    backgroundVisibility: BackgroundVisibility,
   ): T;
   logger: pino.Logger;
 }
@@ -173,7 +180,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       project,
       agentId,
       sub.syncEnabled === true,
-      sub.filter?.includeBackground,
+      sub.backgroundVisibility,
     );
 
   function bufferOrEmit(sub: AgentUpdatesSubscriptionState, payload: AgentUpdatePayload): void {
@@ -194,10 +201,12 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    backgroundVisibility?: BackgroundVisibility;
     syncEnabled?: boolean;
   }): void {
     subscriptions.set(input.subscriptionId, {
       ...input,
+      backgroundVisibility: input.backgroundVisibility ?? false,
       emit: input.emit ?? deps.emit,
       syncEnabled: input.syncEnabled ?? false,
       isProviderVisible: input.isProviderVisible ?? deps.isProviderVisibleToClient,
@@ -249,9 +258,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
     const backgroundVisible = await Promise.all(
-      observers.map(
-        (sub) => deps.includesWorkspace?.(payload, sub.filter?.includeBackground) ?? true,
-      ),
+      observers.map((sub) => deps.includesWorkspace?.(payload, sub.backgroundVisibility) ?? true),
     );
     return (
       project !== null &&
@@ -273,7 +280,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     for (const sub of observers) {
       const matches =
         project &&
-        ((await deps.includesWorkspace?.(payload, sub.filter?.includeBackground)) ?? true) &&
+        ((await deps.includesWorkspace?.(payload, sub.backgroundVisibility)) ?? true) &&
         matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter });
       bufferOrEmit(
         sub,
@@ -296,10 +303,13 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return payload;
   }
 
-  async function emitLiveAgentUpdate(payload: AgentSnapshotPayload): Promise<void> {
+  async function emitAgentUpdate(
+    workspaceId: string | undefined,
+    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>,
+  ): Promise<void> {
     try {
-      if (hasSubscription()) await publishPayload(await deps.enrichAgentPayload(payload));
-      if (payload.workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
+      if (projectPayload && hasSubscription()) await publishPayload(await projectPayload());
+      if (workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
     }
@@ -324,17 +334,20 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     if (!hasSubscription()) {
       const workspaceId = agent.workspaceId;
       return workspaceId
-        ? enqueueAgentUpdate(agent.id, async () => {
-            try {
-              await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
-            } catch (error) {
-              deps.logger.error({ err: error }, "Failed to emit workspace update");
-            }
-          })
+        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(workspaceId))
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
-    return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
+    return enqueueAgentUpdate(payload.id, () =>
+      emitAgentUpdate(payload.workspaceId, () => deps.enrichAgentPayload(payload)),
+    );
+  }
+
+  function forwardStoredAgent(record: StoredAgentRecord): Promise<void> {
+    if (!hasSubscription() && !record.workspaceId) return Promise.resolve();
+    return enqueueAgentUpdate(record.id, () =>
+      emitAgentUpdate(record.workspaceId, () => deps.buildStoredAgentPayload(record)),
+    );
   }
 
   function removeAgent(agentId: string): Promise<void> {
@@ -356,6 +369,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     hasSubscription,
     includesLiveAgent,
     forwardLiveAgent,
+    forwardStoredAgent,
     emitStoredRecord,
     removeAgent,
     dispose,

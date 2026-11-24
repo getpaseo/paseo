@@ -60,6 +60,7 @@ test.each(["existing", "new"])(
       await Promise.all(removed.map((path) => rm(path)));
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       for (const path of removed) notifications.emit("change", "change", path);
+      // The file-only event uses the eight-second optional audit debounce.
       await vi.advanceTimersByTimeAsync(8_000);
       vi.useRealTimers();
       await expect
@@ -309,79 +310,98 @@ test("a classification shed onto the scoped audit still recovers the file", asyn
 // re-link `directory` itself back into its parent -- walkSubtree only
 // descends through that link, so without the re-link a later ancestor
 // removal can no longer reach anything below the reconciled directory.
-test("a recursive-scope reconcile re-links its directory so an ancestor removal still finds nested files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-relink-"));
-  const paths = createObserverPaths(process.platform);
-  const deepDirectory = join(root, "a", "b", "c");
-  const deepFile = join(deepDirectory, "deep.txt");
-  await mkdir(deepDirectory, { recursive: true });
-  await writeFile(deepFile, "content");
-  const events: FileChange[] = [];
-  const notifications = new EventEmitter();
-  const observer = createFileObserver();
-  let active = true;
-  const backend = createNativeRecursiveBackend(
-    {
-      root,
-      metrics: observer.getDiagnostics(),
-      isActive: () => active,
-      isIgnored: () => false,
-      isPathInside: paths.isInside,
-      queueEvent: (type, path) => events.push({ type, path }),
-      fail: (error) => {
-        throw error;
-      },
-    },
-    paths,
-    (_root, listener) => {
-      notifications.on("change", listener);
-      return {
-        close: () => notifications.removeAllListeners(),
-        on: (event, onError) => notifications.on(event, onError),
-      };
-    },
-  );
-  const settled = () =>
-    expect
-      .poll(
-        () => {
-          const diagnostics = backend.getDiagnostics();
-          return (
-            diagnostics.pendingReconciliationWorkCount === 0 && !diagnostics.reconciliationInFlight
-          );
+test.each([
+  { notification: "ancestor", deletedPath: ["a"] },
+  { notification: "file", deletedPath: ["a", "b", "c", "deep.txt"] },
+])(
+  "a recursive-scope reconcile preserves nested deletions announced by $notification",
+  async ({ deletedPath }) => {
+    const root = await mkdtemp(join(tmpdir(), "native-relink-"));
+    const paths = createObserverPaths(process.platform);
+    const deepDirectory = join(root, "a", "b", "c");
+    const deepFile = join(deepDirectory, "deep.txt");
+    await mkdir(deepDirectory, { recursive: true });
+    await writeFile(deepFile, "content");
+    const events: FileChange[] = [];
+    const notifications = new EventEmitter();
+    const observer = createFileObserver();
+    let active = true;
+    const backend = createNativeRecursiveBackend(
+      {
+        root,
+        metrics: observer.getDiagnostics(),
+        isActive: () => active,
+        isIgnored: () => false,
+        isPathInside: paths.isInside,
+        queueEvent: (type, path) => events.push({ type, path }),
+        fail: (error) => {
+          throw error;
         },
-        { timeout: 10_000 },
-      )
-      .toBe(true);
-  try {
-    await backend.start(); // Tracks a, a/b, a/b/c, and deep.txt.
-
-    // A rename event landing on the already-known directory a/b produces a
-    // local scope on its parent "a" (rebuilding a's DirectoryEntry from a
-    // fresh shallow scan) and, once classify()'s real stat() confirms a/b is
-    // still a directory, a recursive scope on a/b itself -- the same "known
-    // directory changes in place" shape the directory-churn benchmark
-    // exercises via atomic replace.
-    notifications.emit("change", "rename", join(root, "a", "b"));
-    await settled();
-
-    // Remove the ancestor while the native event names only a deleted file.
-    // The scoped scan must report its missing directory as well as that file.
-    await rm(join(root, "a"), { recursive: true, force: true });
-    notifications.emit("change", "rename", deepFile);
-    await settled();
-
-    expect(events.filter((event) => event.type === "delete").map((event) => event.path)).toContain(
-      deepFile,
+      },
+      paths,
+      (_root, listener) => {
+        notifications.on("change", listener);
+        return {
+          close: () => notifications.removeAllListeners(),
+          on: (event, onError) => notifications.on(event, onError),
+        };
+      },
     );
-    expect(events).toContainEqual({ type: "delete", path: deepDirectory });
-  } finally {
-    active = false;
-    await backend.close();
-    await observer.close();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 15_000);
+    const settled = async () => {
+      // Classification uses real filesystem I/O and can request another audit.
+      // Drain it before advancing the debounce clock so no later classification
+      // leaves a fresh timer behind.
+      await expect
+        .poll(() => backend.getDiagnostics().pendingClassificationCount, { timeout: 10_000 })
+        .toBe(0);
+      // The file-only event uses the eight-second optional audit debounce.
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect
+        .poll(
+          () => {
+            const diagnostics = backend.getDiagnostics();
+            return (
+              diagnostics.pendingReconciliationWorkCount === 0 &&
+              !diagnostics.reconciliationInFlight
+            );
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+    };
+    try {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      await backend.start(); // Tracks a, a/b, a/b/c, and deep.txt.
+
+      // A rename event landing on the already-known directory a/b produces a
+      // local scope on its parent "a" (rebuilding a's DirectoryEntry from a
+      // fresh shallow scan) and, once classify()'s real stat() confirms a/b is
+      // still a directory, a recursive scope on a/b itself -- the same "known
+      // directory changes in place" shape the directory-churn benchmark
+      // exercises via atomic replace.
+      notifications.emit("change", "rename", join(root, "a", "b"));
+      await settled();
+
+      // An ancestor notification must walk the re-linked subtree. A file-only
+      // notification must also recover the missing directory from its scoped scan.
+      await rm(join(root, "a"), { recursive: true, force: true });
+      notifications.emit("change", "rename", join(root, ...deletedPath));
+      await settled();
+
+      expect(
+        events.filter((event) => event.type === "delete").map((event) => event.path),
+      ).toContain(deepFile);
+      expect(events).toContainEqual({ type: "delete", path: deepDirectory });
+    } finally {
+      vi.useRealTimers();
+      active = false;
+      await backend.close();
+      await observer.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
 
 test("a full native inventory audit reports a removed directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "native-full-audit-"));

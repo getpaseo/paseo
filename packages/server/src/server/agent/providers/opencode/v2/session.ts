@@ -1,3 +1,8 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../../provider-options.js";
+import { OpenCodeProviderOptionsSchema } from "../options.js";
+import { OpenCodeBackgroundInventory } from "./background-inventory.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -31,11 +36,13 @@ import { type V2Connection } from "./runtime.js";
 import { modelRef, modesFromV2 } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
-import { features } from "./configuration.js";
+import { controls } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
 import { SessionUsage } from "./usage.js";
+import { createSessionMetricsReporter } from "../../metrics.js";
+import { replayedTurnMetrics, sessionMetrics } from "./metrics.js";
 
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
@@ -57,7 +64,12 @@ export class OpenCodeV2Session implements AgentSession {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private history: SessionMessageInfo[] = [];
+  private readonly background: OpenCodeBackgroundInventory;
   private modes: AgentMode[] = [];
+  // Reconciliation runs after nearly every event; report only what changed.
+  private readonly reportSessionMetrics = createSessionMetricsReporter((metrics) =>
+    this.emit({ type: "session_metrics_updated", provider: "opencode", metrics }),
+  );
   constructor(
     private connection: V2Connection,
     private info: SessionInfo,
@@ -69,7 +81,18 @@ export class OpenCodeV2Session implements AgentSession {
     bindChild?: (id: string) => void,
     private readonly acquire?: () => Promise<V2Connection>,
     private readonly moved?: (connection: V2Connection) => void,
+    private readonly historyOnly = false,
   ) {
+    this.background = new OpenCodeBackgroundInventory({
+      id: info.id,
+      cwd: config.cwd,
+      emit: (event) => this.emit(event),
+      report: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode background inventory failed",
+        ),
+    });
     this.permissions = new SessionPermissions(
       () => this.client,
       info.id,
@@ -122,8 +145,8 @@ export class OpenCodeV2Session implements AgentSession {
   get id() {
     return this.info.id;
   }
-  get features() {
-    return features(this.config);
+  get controls() {
+    return controls;
   }
   private get client() {
     return this.connection.client;
@@ -143,6 +166,7 @@ export class OpenCodeV2Session implements AgentSession {
     void connection.exited.then((error) => {
       if (this.closed || this.connection !== connection) return undefined;
       this.exited = true;
+      this.background.disconnect(true);
       this.streamAbort.abort(error);
       this.turns.fail(error);
       return undefined;
@@ -176,16 +200,24 @@ export class OpenCodeV2Session implements AgentSession {
       });
       await this.awaitMcp(server);
     }
+    if (this.historyOnly) return;
     const system = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
-    if (system)
+    if (system) {
       await this.client.session.instructions.entry.put({
         sessionID: this.id,
         key: "paseo",
         value: system,
       });
+    } else {
+      const entries = await this.client.session.instructions.entry.list({ sessionID: this.id });
+      if (entries.some((entry) => entry.key === "paseo")) {
+        await this.client.session.instructions.entry.remove({ sessionID: this.id, key: "paseo" });
+      }
+    }
   }
   private async startStream() {
     let ready!: () => void;
@@ -242,6 +274,12 @@ export class OpenCodeV2Session implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void) {
     this.listeners.add(callback);
+    const background = this.background.snapshot();
+    if (background) callback(background);
+    // Reopening can adopt an execution during initialization, before its caller
+    // can subscribe. Deliver that live turn so it remains visible and interruptible.
+    if (this.turns.id)
+      callback({ type: "turn_started", provider: "opencode", turnId: this.turns.id });
     return () => {
       this.listeners.delete(callback);
     };
@@ -272,9 +310,29 @@ export class OpenCodeV2Session implements AgentSession {
     await this.reconnectIfExited();
     const history = new V2Timeline(false);
     const events: AgentStreamEvent[] = [];
-    await history.messages(await messages(this.client, this.id), (event) => {
-      events.push(event);
-    });
+    const [info, list] = await Promise.all([
+      // Session totals are extra; history replays without them.
+      this.client.session.get({ sessionID: this.id }).catch((error: unknown) => {
+        this.logger.debug({ err: error }, "OpenCode session info unavailable for history");
+        return null;
+      }),
+      messages(this.client, this.id),
+    ]);
+    const turnMetrics = replayedTurnMetrics(list);
+    await history.messages(
+      list,
+      (event) => {
+        events.push(event);
+      },
+      (message) => {
+        const metrics = turnMetrics.get(message.id);
+        if (metrics) events.push({ type: "turn_completed", provider: "opencode", metrics });
+      },
+    );
+    const metrics = info ? sessionMetrics(info, list) : [];
+    if (metrics.length > 0) {
+      events.push({ type: "session_metrics_updated", provider: "opencode", metrics });
+    }
     yield* events;
   }
   async getRuntimeInfo() {
@@ -348,6 +406,7 @@ export class OpenCodeV2Session implements AgentSession {
         thinkingOptionId: variant ?? null,
       },
     });
+    return { model: `${selected.providerID}/${selected.id}` };
   }
 
   async setThinkingOption(variant: string | null) {
@@ -362,14 +421,33 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = await this.client.session.get({ sessionID: this.id });
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
-  async setFeature(id: string, value: unknown) {
-    if (id !== "auto_accept" || typeof value !== "boolean")
-      throw new Error("Unknown OpenCode feature");
-    this.config.featureValues = { ...this.config.featureValues, [id]: value };
-    if (value && !this.config.toolPolicy)
-      for (const request of this.permissions.list())
-        if (request.kind !== "question")
-          await this.respondToPermission(request.id, { behavior: "allow" });
+  /** The agent manager sends one apply at a time, so a failed one restores exactly what it changed. */
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    assertChangesAreLive({
+      provider: "opencode",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["auto_accept"],
+    });
+    const next = validateProviderOptions(
+      "opencode",
+      OpenCodeProviderOptionsSchema,
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+    );
+    if (!("auto_accept" in options)) return;
+    const value = next?.auto_accept === true;
+    const previous = this.config.providerOptions;
+    this.config.providerOptions = { ...previous, auto_accept: value };
+    try {
+      if (value && !this.config.toolPolicy)
+        for (const request of this.permissions.list())
+          if (request.kind !== "question")
+            await this.respondToPermission(request.id, { behavior: "allow" });
+    } catch (error) {
+      // A rejected apply stores nothing, so the running session keeps asking as it did.
+      this.config.providerOptions = previous;
+      throw error;
+    }
   }
   async listCommands() {
     await this.reconnectIfExited();
@@ -402,6 +480,9 @@ export class OpenCodeV2Session implements AgentSession {
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
     return this.turns.steerActiveTurn(prompt, options);
   }
+  stopBackgroundWork(id: string) {
+    return this.background.stopItem(id);
+  }
   interrupt() {
     return this.turns.interrupt();
   }
@@ -433,6 +514,7 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = info;
     this.history = history;
     await this.timeline.messages(history, (event) => this.emitTimeline(event));
+    this.reportSessionMetrics(sessionMetrics(this.info, this.history));
     await this.permissions.reconcile(this.id);
   }
   private async reconcile() {
@@ -511,9 +593,12 @@ export class OpenCodeV2Session implements AgentSession {
           if (event.type === "server.connected") {
             this.timeline.resetStreams();
             await this.reconcileConnection();
+            signal.throwIfAborted();
+            this.background.start(this.client);
             connected = true;
             ready();
           }
+          this.background.observe(event);
           await this.children.observe(event);
           this.observeOwnEvent(event);
         }
@@ -529,6 +614,7 @@ export class OpenCodeV2Session implements AgentSession {
           "OpenCode event stream interrupted; reconciling on reconnect",
         );
       }
+      this.background.disconnect();
       await delay(100, undefined, { signal }).catch(() => undefined);
     }
   }
@@ -569,6 +655,7 @@ export class OpenCodeV2Session implements AgentSession {
     this.turns.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.background.disconnect();
     await this.stream;
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);

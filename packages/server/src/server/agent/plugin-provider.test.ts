@@ -6,6 +6,7 @@ import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { runAcpProvider, type AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type {
   ProviderConnection,
   ProviderLaunch,
@@ -13,6 +14,7 @@ import type {
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { sendPreparedPromptToAgent } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -56,6 +58,32 @@ interface ProviderHarnessOptions {
   closeAcknowledgementOnly?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
+}
+
+interface ModelThinking {
+  id: string;
+  thinkingOptions?: readonly { id: string }[];
+  defaultThinkingOptionId?: string;
+}
+
+function modelThinking(model: ModelThinking) {
+  return {
+    id: model.id,
+    thinkingOptions: model.thinkingOptions?.map(optionId),
+    defaultThinkingOptionId: model.defaultThinkingOptionId,
+  };
+}
+
+function optionId(option: { id: string }): string {
+  return option.id;
+}
+
+function controlKey(control: { key: string }): string {
+  return control.key;
+}
+
+function lastConfigure(inputs: ProviderInput[]): ProviderInput | undefined {
+  return inputs.findLast((input) => input.type === "session.configure");
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -247,6 +275,38 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
 function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]) {
   return events.filter((event) => event.type === type);
 }
+
+test("preserves skills in a plugin session's command list", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+  });
+  try {
+    const open = harness.inputs.find((input) => input.type === "session.open")!;
+    harness.emit({
+      type: "session.commands",
+      sessionId: open.sessionId,
+      commands: [
+        { name: "compact", description: "Compact the conversation" },
+        { name: "diagnose", description: "Diagnose a bug", kind: "skill" },
+      ],
+    });
+    await expect(session.listCommands!()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact the conversation",
+        argumentHint: "",
+        kind: "command",
+      },
+      { name: "diagnose", description: "Diagnose a bug", argumentHint: "", kind: "skill" },
+    ]);
+  } finally {
+    await session.close();
+  }
+});
 
 function createRewindProviderHarness(
   options: {
@@ -488,12 +548,202 @@ async function pluginMessages(session: Awaited<ReturnType<AgentClient["createSes
   );
 }
 
+test("plugin rewind discards child outcomes from the withdrawn branch", async () => {
+  await withPluginRewindSession(
+    {
+      async handleInput(input, emit) {
+        if (input.type !== "session.open" || input.history !== "replay") return false;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: CAPABILITIES,
+          restoration: "core",
+          persistence: input.persistence,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.opened",
+          sessionId: "rewound-child",
+          parentSessionId: input.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: input.config.cwd,
+        });
+        emit({ type: "session.closed", sessionId: "rewound-child" });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      harness.emit({
+        type: "session.opened",
+        sessionId: "rewound-child",
+        parentSessionId: open.sessionId,
+        capabilities: [],
+        restoration: "parent",
+        cwd: tmpdir(),
+      });
+      harness.emit({
+        type: "session.turn",
+        sessionId: "rewound-child",
+        turnId: "withdrawn-turn",
+        state: "failed",
+      });
+      await session.revertConversation!({ messageId: "user-B" });
+      const history = await Array.fromAsync(session.streamHistory());
+      expect(history.findLast((event) => event.type === "provider_subagent")).toMatchObject({
+        event: { type: "upsert", id: "rewound-child", status: "completed" },
+      });
+    },
+  );
+});
+
 test("combined plugin rewind replays the retained native branch", async () => {
   await withPluginRewindSession({}, async (session) => {
     await session.revertBoth!({ messageId: "user-B" });
     expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
     await session.revertConversation!({ messageId: "user-A" });
     expect(await pluginMessages(session)).toEqual([]);
+  });
+});
+
+test("a rewind reopens with the options as they stand, a reset included", async () => {
+  const options: Record<string, boolean> = {};
+  const report = (emit: (event: ProviderEvent) => void, sessionId: string) =>
+    emit({
+      type: "session.config",
+      sessionId,
+      config: {
+        model: "plugin-model",
+        mode: "build",
+        models: [{ id: "plugin-model", label: "Plugin model" }],
+        modes: [{ id: "build", label: "Build" }],
+        thinkingOptions: [],
+        controls: [{ type: "toggle", key: "concise", label: "Concise" }],
+        providerOptions: { ...options },
+      },
+    });
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        options.concise = true;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        report(emit, input.sessionId);
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        // A plugin that represents the default by leaving the key out.
+        delete options.concise;
+        report(emit, input.sessionId);
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { concise: true },
+  });
+  await session.run("A");
+  await session.applyOptions?.({ concise: null });
+
+  await session.revertConversation!({ messageId: "user-A" });
+
+  const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+  expect(reopened?.config.providerOptions).toEqual({});
+  await session.close();
+  await registry.shutdown();
+});
+
+// A plugin may report no options at all while it runs the ones it was given.
+async function withUnreportedOptionSession(
+  run: (
+    session: Awaited<ReturnType<AgentClient["createSession"]>>,
+    harness: ReturnType<typeof createRewindProviderHarness>,
+  ) => Promise<void>,
+) {
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            model: "plugin-model",
+            mode: "build",
+            models: [{ id: "plugin-model", label: "Plugin model" }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions: [],
+            controls: [],
+            providerOptions: {},
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { token_budget: 1000 },
+  });
+  try {
+    await run(session, harness);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+}
+
+test("applying an option the plugin never reports leaves the stored option alone", async () => {
+  await withUnreportedOptionSession(async (session) => {
+    // The same value as a whole-profile patch carries it, then a new one.
+    expect(await session.applyOptions?.({ token_budget: 1000 })).toEqual({});
+    expect(await session.applyOptions?.({ token_budget: 2000 })).toEqual({});
+  });
+});
+
+test("a rewind reopens with the value the plugin accepted for an option it never reports", async () => {
+  await withUnreportedOptionSession(async (session, harness) => {
+    await session.run("A");
+    await session.applyOptions?.({ token_budget: 2000 });
+
+    await session.revertConversation!({ messageId: "user-A" });
+
+    const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+    expect(reopened?.config.providerOptions).toEqual({ token_budget: 2000 });
   });
 });
 
@@ -970,7 +1220,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("stores only agent options while the plugin receives merged defaults", async () => {
+  test("stores the agent options and the settings the plugin opened with, not the merged config defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
     const plugins = new PluginAgentClientRegistry(logger);
@@ -992,11 +1242,321 @@ describe("PluginAgentClientRegistry", () => {
       undefined,
       { workspaceId: undefined },
     );
-    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual(own);
+    // `nested.base` comes from `config.json` and is not stored; `voice` is the plugin's own opening state.
+    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual({ ...own, voice: "direct" });
     expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
       config: { providerOptions: { nested: { base: true, replace: "agent" } } },
     });
     await agent.session?.close();
+  });
+
+  // The same contract holds for a plugin that reports `controls` and `providerOptions` and for one
+  // still reporting `settings`.
+  describe.each(["controls", "settings"] as const)("options of a plugin reporting %s", (shape) => {
+    // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
+    async function openStubbornVoiceSession(
+      given: Record<string, boolean | string>,
+      { refuseAfterChanging = false }: { refuseAfterChanging?: boolean } = {},
+    ) {
+      const state: { voice: string; loud: boolean; tokenBudget?: number } = {
+        voice: "direct",
+        loud: false,
+      };
+      let openedSessionId = "";
+      const reported = () =>
+        shape === "controls"
+          ? {
+              controls: [
+                {
+                  type: "select" as const,
+                  key: "voice",
+                  label: "Voice",
+                  icon: "Mic",
+                  defaultValue: "direct",
+                  choices: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                {
+                  type: "toggle" as const,
+                  key: "loud",
+                  label: "Loud",
+                  icon: "Volume2",
+                  defaultValue: false,
+                },
+              ],
+              providerOptions: {
+                voice: state.voice,
+                loud: state.loud,
+                ...(state.tokenBudget === undefined ? {} : { token_budget: state.tokenBudget }),
+              },
+            }
+          : {
+              settings: [
+                {
+                  type: "select" as const,
+                  id: "voice",
+                  label: "Voice",
+                  value: state.voice,
+                  options: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                { type: "toggle" as const, id: "loud", label: "Loud", value: state.loud },
+              ],
+            };
+      const emitConfig = (emit: (event: ProviderEvent) => void, sessionId: string) =>
+        emit({
+          type: "session.config",
+          sessionId,
+          config: {
+            model: "plugin-model",
+            mode: "build",
+            models: [{ id: "plugin-model", label: "Plugin model" }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions: [],
+            ...reported(),
+          },
+        });
+      const harness = createProviderHarness({
+        async handleInput(input, emit) {
+          if (input.type === "session.open") {
+            openedSessionId = input.sessionId;
+            emit({
+              type: "session.opened",
+              requestId: input.requestId,
+              sessionId: input.sessionId,
+              capabilities: CAPABILITIES,
+              restoration: "core",
+              persistence: { version: 1, data: { token: "root" } },
+              cwd: input.config.cwd,
+            });
+            emitConfig(emit, input.sessionId);
+            emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+            return true;
+          }
+          if (input.type === "session.configure") {
+            const patch =
+              shape === "settings" ? input.changes.settings : input.changes.providerOptions;
+            const { loud, token_budget: tokenBudget } = patch ?? {};
+            // A plugin that takes `token_budget` live refuses the whole request on a bad value.
+            if (tokenBudget !== undefined && typeof tokenBudget !== "number") {
+              emit({
+                type: "request.failed",
+                requestId: input.requestId,
+                error: { message: "bad budget" },
+              });
+              return true;
+            }
+            if (typeof loud === "boolean") state.loud = loud;
+            if (typeof tokenBudget === "number") state.tokenBudget = tokenBudget;
+            // Going loud returns an unrequested token budget to its default, by leaving it out.
+            if (loud === true && tokenBudget === undefined) state.tokenBudget = undefined;
+            emitConfig(emit, input.sessionId);
+            emit(
+              refuseAfterChanging
+                ? { type: "request.failed", requestId: input.requestId, error: { message: "no" } }
+                : { type: "request.completed", requestId: input.requestId },
+            );
+            return true;
+          }
+          return false;
+        },
+      });
+      const plugins = new PluginAgentClientRegistry(createTestLogger());
+      plugins.replace([harness.registration]);
+      const session = await plugins.clients()["plugin-direct"]!.createSession({
+        provider: "plugin-direct",
+        cwd: tmpdir(),
+        providerOptions: given,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const changeOnItsOwn = (change: Partial<typeof state>) => {
+        Object.assign(state, change);
+        emitConfig(harness.emit, openedSessionId);
+      };
+      return { harness, session, events, changeOnItsOwn };
+    }
+
+    test("forwards a setting the plugin changes on its own", async () => {
+      const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+
+      changeOnItsOwn({ loud: true });
+
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
+      await session.close();
+    });
+
+    test.runIf(shape === "controls")(
+      "reports an option the plugin stops reporting as removed, alone or with another change",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        changeOnItsOwn({ tokenBudget: undefined });
+        changeOnItsOwn({ tokenBudget: 700 });
+        changeOnItsOwn({ tokenBudget: undefined, loud: true });
+
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: null } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 700 } },
+          {
+            type: "options_changed",
+            provider: "plugin-direct",
+            patch: { token_budget: null, loud: true },
+          },
+        ]);
+        await session.close();
+      },
+    );
+
+    test.runIf(shape === "controls")(
+      "an apply returns the option the plugin reset along the way as removed",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        const ended = await session.applyOptions?.({ loud: true });
+
+        expect(ended).toEqual({ token_budget: null });
+        // The apply reports it; the plugin's later identical report is not a second change.
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
+        ]);
+        await session.close();
+      },
+    );
+
+    test("a rejected apply reports what the plugin moved before refusing, since nothing is stored", async () => {
+      const { session, events } = await openStubbornVoiceSession({}, { refuseAfterChanging: true });
+
+      await expect(session.applyOptions?.({ loud: true })).rejects.toThrow("no");
+
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
+      await session.close();
+    });
+
+    test("a setting the plugin opened differently is the session's open patch, not an event", async () => {
+      const { session, events } = await openStubbornVoiceSession({ voice: "other", loud: false });
+
+      expect(session.openOptionsPatch).toEqual({ voice: "direct" });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
+
+    test("options the plugin opened with that nobody set are in the open patch, defaults included", async () => {
+      const { session, events } = await openStubbornVoiceSession({});
+
+      expect(session.openOptionsPatch).toEqual({ voice: "direct", loud: false });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
+
+    test("applying options configures only the settings it is given", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      await session.applyOptions?.({ loud: true });
+
+      const configure = lastConfigure(harness.inputs);
+      // Only a plugin that reports `settings` is also sent them.
+      expect((configure as { changes: object }).changes).toEqual(
+        shape === "settings"
+          ? { providerOptions: { loud: true }, settings: { loud: true } }
+          : { providerOptions: { loud: true } },
+      );
+      await session.close();
+    });
+
+    test("a removal reaches the plugin as null", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      const ended = await session.applyOptions?.({ loud: null });
+
+      expect(lastConfigure(harness.inputs)).toMatchObject({
+        changes: { providerOptions: { loud: null } },
+      });
+      // It went back to its default, and what it ended up with is reported like any provider's.
+      expect(ended).toEqual({ loud: false });
+      await session.close();
+    });
+
+    test("draws a control from what the plugin reports", async () => {
+      const { session } = await openStubbornVoiceSession({});
+
+      expect((session.controls ?? []).map(controlKey)).toEqual(["voice", "loud"]);
+      await session.close();
+    });
+
+    test.runIf(shape === "controls")(
+      "keeps a control's icon, default and choices as the plugin declared them",
+      async () => {
+        const { session } = await openStubbornVoiceSession({});
+
+        expect(session.controls?.[0]).toMatchObject({
+          icon: "Mic",
+          defaultValue: "direct",
+          choices: [
+            { label: "Direct", value: "direct" },
+            { label: "Other", value: "other" },
+          ],
+        });
+        await session.close();
+      },
+    );
+
+    test.runIf(shape === "controls")(
+      "sends a live option that has no control, and the plugin's answer decides",
+      async () => {
+        const { harness, session, events } = await openStubbornVoiceSession({});
+
+        await session.applyOptions?.({ token_budget: 2000 });
+        expect(lastConfigure(harness.inputs)).toMatchObject({
+          changes: { providerOptions: { token_budget: 2000 } },
+        });
+
+        // The plugin refuses the request as a whole, so the other key it was given is not applied.
+        await expect(session.applyOptions?.({ loud: true, token_budget: "lots" })).rejects.toThrow(
+          "bad budget",
+        );
+        expect(eventsOfType(events, "options_changed")).toEqual([]);
+        expect(await session.applyOptions?.({ token_budget: 3000 })).toEqual({});
+        await session.close();
+      },
+    );
+
+    test("sends a key the plugin does not report, for the plugin to accept or refuse", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      await session.applyOptions?.({ loud: true, launch_key: "changed" });
+
+      const configure = lastConfigure(harness.inputs) as {
+        changes: { providerOptions: object; settings?: object };
+      };
+      expect(configure.changes.providerOptions).toEqual({ loud: true, launch_key: "changed" });
+      // A plugin reporting `settings` is sent the same keys under that name.
+      expect(configure.changes.settings).toEqual(
+        shape === "settings" ? { loud: true, launch_key: "changed" } : undefined,
+      );
+      await session.close();
+    });
+
+    test("applying options returns the settings that ended up different, and emits nothing", async () => {
+      const { session, events } = await openStubbornVoiceSession({});
+
+      const ended = await session.applyOptions?.({ voice: "other", loud: true });
+
+      expect(ended).toEqual({ voice: "direct" });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
   });
 
   test.each([
@@ -1234,6 +1794,11 @@ describe("PluginAgentClientRegistry", () => {
         expect(manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: outcome },
         ]);
+        harness.emit({ type: "session.closed", sessionId: "reusable-child" });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: outcome },
+        ]);
       } finally {
         await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
         await plugins.shutdown();
@@ -1268,6 +1833,7 @@ describe("PluginAgentClientRegistry", () => {
               turnId: "second-turn",
               state,
             });
+            emit({ type: "session.closed", sessionId: "reusable-child" });
           }
         },
       });
@@ -1289,6 +1855,100 @@ describe("PluginAgentClientRegistry", () => {
           }
         }
         expect(statuses.at(-1)).toBe(state === "started" ? "running" : state);
+      } finally {
+        await registry.shutdown();
+      }
+    },
+  );
+  test("keeps a child's canceled or failed turn when the child closes normally", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      const outcomes = [
+        ["child-canceled", "canceled"],
+        ["child-failed", "failed"],
+        ["child-completed", "completed"],
+      ] as const;
+      for (const [sessionId, state] of outcomes) {
+        harness.emit({
+          type: "session.opened",
+          sessionId,
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: "/workspace",
+        });
+        harness.emit({ type: "session.turn", sessionId, turnId: "turn", state: "started" });
+        harness.emit({ type: "session.turn", sessionId, turnId: "turn", state });
+        harness.emit({ type: "session.closed", sessionId });
+      }
+
+      const lastStatus = (id: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "provider_subagent" &&
+            event.event.type === "upsert" &&
+            event.event.id === id
+              ? [event.event.status]
+              : [],
+          )
+          .at(-1);
+      expect(lastStatus("child-canceled")).toBe("canceled");
+      expect(lastStatus("child-failed")).toBe("failed");
+      expect(lastStatus("child-completed")).toBe("completed");
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test.each([
+    { turns: [], error: false, expected: "completed" },
+    { turns: ["canceled", "started"], error: false, expected: "completed" },
+    { turns: ["failed", "started", "completed"], error: false, expected: "completed" },
+    { turns: ["canceled"], error: true, expected: "failed" },
+  ] as const)(
+    "closes a plugin child using its latest turn: $turns, error=$error",
+    async ({ turns, error, expected }) => {
+      const harness = createProviderHarness();
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([harness.registration]);
+      try {
+        const session = await registry.clients()[harness.registration.id]!.createSession({
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+        });
+        const events: AgentStreamEvent[] = [];
+        session.subscribe((event) => events.push(event));
+        const open = harness.inputs.find((input) => input.type === "session.open")!;
+        harness.emit({
+          type: "session.opened",
+          sessionId: "close-control",
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: tmpdir(),
+        });
+        for (const state of turns) {
+          harness.emit({ type: "session.turn", sessionId: "close-control", turnId: "turn", state });
+        }
+        harness.emit({
+          type: "session.closed",
+          sessionId: "close-control",
+          ...(error ? { error: { message: "Provider failed to close" } } : {}),
+        });
+        expect(events.at(-1)).toMatchObject({
+          type: "provider_subagent",
+          event: { type: "upsert", id: "close-control", status: expected },
+        });
       } finally {
         await registry.shutdown();
       }
@@ -1489,6 +2149,48 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("keeps a model's own thinking options and default instead of the catalog's", async () => {
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (input.type !== "catalog") return false;
+        emit({
+          type: "catalog",
+          requestId: input.requestId,
+          catalog: {
+            models: [
+              { id: "shared", label: "Shared" },
+              {
+                id: "fast",
+                label: "Fast",
+                thinkingOptions: [{ id: "light", label: "Light" }],
+                defaultThinkingOptionId: "light",
+              },
+              { id: "planner", label: "Planner", thinkingOptions: [] },
+            ],
+            modes: [],
+            thinkingOptions: [{ id: "deep", label: "Deep" }],
+            defaultModel: "shared",
+            defaultThinkingOption: "deep",
+          },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const catalog = await client.fetchCatalog({ scope: "global", force: false });
+      expect(catalog.models.map(modelThinking)).toEqual([
+        { id: "shared", thinkingOptions: ["deep"], defaultThinkingOptionId: "deep" },
+        { id: "fast", thinkingOptions: ["light"], defaultThinkingOptionId: "light" },
+        { id: "planner", thinkingOptions: [], defaultThinkingOptionId: undefined },
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {
     const harness = createProviderHarness();
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -1511,12 +2213,13 @@ describe("PluginAgentClientRegistry", () => {
     });
 
     const session = await client!.createSession({ provider: "plugin-direct", cwd: "/workspace" });
-    expect(session.features).toEqual([
-      expect.objectContaining({
+    expect(session.controls).toEqual([
+      {
         type: "select",
-        id: "voice",
-        options: [{ id: "direct", label: "Direct", value: "direct" }],
-      }),
+        key: "voice",
+        label: "Voice",
+        choices: [{ value: "direct", label: "Direct" }],
+      },
     ]);
     expect(session.describePersistence()).toMatchObject({
       provider: "plugin-direct",
@@ -1576,6 +2279,73 @@ describe("PluginAgentClientRegistry", () => {
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
 
+  test("carries a plugin's session and turn metrics into the agent stream", async () => {
+    const turnMetrics = [
+      { label: "Model", value: "plugin-model" },
+      { label: "Cache", value: "82%", tone: "ok" as const },
+    ];
+    const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "turn-1" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "started",
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "completed",
+          metrics: turnMetrics,
+        });
+        emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("hello", { clientMessageId: "client-message" });
+
+      expect(eventsOfType(events, "turn_completed")).toEqual([
+        {
+          type: "turn_completed",
+          provider: "plugin-direct",
+          turnId: "turn-1",
+          metrics: turnMetrics,
+        },
+      ]);
+      expect(eventsOfType(events, "session_metrics_updated")).toEqual([
+        { type: "session_metrics_updated", provider: "plugin-direct", metrics: sessionMetrics },
+      ]);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(eventsOfType(history, "turn_completed")).toContainEqual({
+        type: "turn_completed",
+        provider: "plugin-direct",
+        turnId: "turn-1",
+        metrics: turnMetrics,
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("delivers a supported steer to the active turn", async () => {
     const harness = createProviderHarness({
       capabilities: [...CAPABILITIES, "prompt.steer"],
@@ -1616,7 +2386,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("returns unavailable when steering a provider without prompt.steer capability", async () => {
+  test("offers no steering when the provider did not negotiate prompt.steer", async () => {
     const harness = createProviderHarness({
       capabilities: [
         "prompt.message",
@@ -1633,9 +2403,7 @@ describe("PluginAgentClientRegistry", () => {
       cwd: "/workspace",
     });
     try {
-      const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
-      expect(result).toEqual({ status: "unavailable" });
-      expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+      expect(session.steerActiveTurn).toBeUndefined();
     } finally {
       await session.close();
       registry.replace([]);
@@ -1857,6 +2625,9 @@ describe("pending provider responses", () => {
   );
 });
 
+/** A diagnostic context for a provider that does not report its installation. */
+const NO_INSTALLATION = { inspectInstallation: async () => undefined };
+
 describe("plugin provider launch and status", () => {
   test("resolves the executable against the provider's PATH override", async () => {
     const harness = createProviderHarness();
@@ -1868,7 +2639,13 @@ describe("plugin provider launch and status", () => {
       const definition = registry.definitions()[registration.id]!;
       const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report[0]).toBe("Plugin direct");
+      expect(report).toContain("  Daemon PATH: /paseo-nonexistent-bin");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: node not found on PATH",
+      ]);
     } finally {
       await registry.shutdown();
     }
@@ -1903,6 +2680,30 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("exposes the session launch for usage discovery", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([{ ...harness.registration, command: [process.execPath, "acp"] }]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const session = await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        { env: { HOME: "/session-home" } },
+      );
+      expect(session.usageSession?.()).toMatchObject({
+        provider: harness.registration.id,
+        model: "plugin-model",
+        env: { HOME: "/session-home" },
+        launch: { command: process.execPath, args: ["acp"], env: { HOME: "/session-home" } },
+        sessionKey: expect.any(String),
+      });
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves relative executable paths before sending launch data", async () => {
     const harness = createProviderHarness();
     const launches: Array<ProviderLaunch | undefined> = [];
@@ -1924,6 +2725,51 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("the diagnostic reports the launch, the version and the provider's own rows", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [process.execPath, "agent"],
+      async status() {
+        return { available: true, diagnostic: "Sign-in: work account\nPlan: Pro" };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      const { diagnostic } = await client.getDiagnostic!({
+        inspectInstallation: async () => ({ status: "installed", version: "1.2.3" }),
+      });
+      // The daemon's PATH and shell rows depend on the host; the formatter's own tests cover them.
+      const hostRows = /^ {2}Daemon (PATH|shell): /;
+      expect(diagnostic.split("\n").filter((row) => !hostRows.test(row))).toEqual([
+        "Plugin direct",
+        "  Command source: default",
+        `  Configured command: ${process.execPath} agent`,
+        "  PATH matches: not checked",
+        `  Resolved path: ${process.execPath}`,
+        "  Version: 1.2.3",
+        "  Sign-in: work account",
+        "  Plan: Pro",
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a provider without a command reports only its own rows", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      expect(await client.getDiagnostic!(NO_INSTALLATION)).toEqual({ diagnostic: "Plugin direct" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("a missing executable is unavailable with a diagnostic without connecting", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = {
@@ -1935,9 +2781,13 @@ describe("plugin provider launch and status", () => {
     try {
       const client = registry.clients()[registration.id]!;
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({
-        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
-      });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report).toContain("  Configured command: paseo-nonexistent-provider-executable");
+      expect(report).toContain("  PATH matches: none");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: paseo-nonexistent-provider-executable not found on PATH",
+      ]);
       expect(harness.inputs).toEqual([]);
     } finally {
       await registry.shutdown();
@@ -2153,5 +3003,680 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await imported.session.close();
   } finally {
     await registry.shutdown();
+  }
+});
+
+test("plugin provider import keeps the stats the plugin reported with its history", async () => {
+  const turnMetrics = [{ label: "Model", value: "plugin-model" }];
+  const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+  const harness = createProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type !== "session.open" || input.history !== "replay") return false;
+      emit({
+        type: "session.opened",
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        capabilities: CAPABILITIES,
+        restoration: "core",
+        persistence: input.persistence ?? { version: 1, data: { token: "root" } },
+        cwd: input.config.cwd,
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "user_message", id: "user-1", text: "go" },
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "assistant_message", id: "answer-1", text: "Done" },
+      });
+      emit({
+        type: "session.turn",
+        sessionId: input.sessionId,
+        turnId: "turn-1",
+        state: "completed",
+        metrics: turnMetrics,
+      });
+      emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+      emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+      return true;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const storedConfig = { provider: harness.registration.id, cwd: "/project" };
+  try {
+    const imported = await client.importSession!(
+      { providerHandleId: 'plugin:{"version":1,"data":{"token":"root"}}', cwd: "/project" },
+      { config: storedConfig, storedConfig },
+    );
+    expect(imported.sessionMetrics).toEqual(sessionMetrics);
+    expect(imported.timeline.map((entry) => entry.turnMetrics ?? null)).toEqual([
+      null,
+      turnMetrics,
+    ]);
+    await imported.session.close();
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test.each(["goose", "hermes"])(
+  "resumes a %s session saved by the generic ACP provider",
+  async (provider) => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([{ ...harness.registration, id: provider }]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const client = registry[provider].createClient(logger);
+
+    try {
+      const session = await client.resumeSession(
+        {
+          provider,
+          sessionId: "native-session",
+          nativeHandle: "native-session",
+        },
+        { provider, cwd: "/tmp" },
+      );
+      expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+        persistence: { version: 1, data: { sessionId: "native-session" } },
+      });
+      await session.close();
+    } finally {
+      await plugins.shutdown();
+    }
+  },
+);
+
+test("preserves a deferred ACP background job on steer and cancels it on explicit Stop through AgentManager", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-deferred-daemon-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  let cancelCount = 0;
+  let promptCount = 0;
+  let currentMode = "default";
+  let notifyAgent: ((message: AcpStreamMessage) => void) | null = null;
+  let holdNextPrompt: ((release: () => void) => void) | null = null;
+  const modeConfig = () => [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: currentMode,
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    },
+  ];
+  const registration = runAcpProvider({
+    id: "deferred-acp-daemon",
+    label: "Deferred ACP Daemon",
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+    connector() {
+      let controller!: ReadableStreamDefaultController<AcpStreamMessage>;
+      const readable = new ReadableStream<AcpStreamMessage>({
+        start(ctrl) {
+          controller = ctrl;
+        },
+      });
+      const send = (message: AcpStreamMessage) => controller.enqueue(message);
+      notifyAgent = send;
+      const writable = new WritableStream<AcpStreamMessage>({
+        write(message) {
+          if (!("method" in message)) return;
+          if (message.method === "session/cancel") {
+            cancelCount += 1;
+            return;
+          }
+          if (!("id" in message)) return;
+          if (message.method === "initialize") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+            });
+            return;
+          }
+          if (message.method === "session/new") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { sessionId: "acp-s1", configOptions: modeConfig() },
+            });
+            return;
+          }
+          if (message.method === "session/load") {
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
+            return;
+          }
+          if (message.method === "session/set_config_option") {
+            const params = message.params as { value?: string } | undefined;
+            if (typeof params?.value === "string") currentMode = params.value;
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
+            return;
+          }
+          if (message.method === "session/prompt") {
+            promptCount += 1;
+            if (promptCount === 1) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-1",
+                    name: "run_command",
+                    title: "Background job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            } else if (promptCount === 2) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "Steered reply" },
+                  },
+                },
+              });
+            } else {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-2",
+                    name: "run_command",
+                    title: "Cancelable job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            }
+            if (holdNextPrompt) {
+              const hook = holdNextPrompt;
+              holdNextPrompt = null;
+              hook(() =>
+                send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "cancelled" } }),
+              );
+              return;
+            }
+            send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+            return;
+          }
+          if (message.method === "session/close") {
+            send({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+        },
+      });
+      return { readable, writable };
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start background job",
+      logger,
+    });
+    expect(first.disposition).toBe("turn_started");
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Follow-up steer through AgentManager preserves the background job without session/cancel.
+    const followUp = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "still working?",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(followUp.disposition).toBe("steered");
+    expect(cancelCount).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Completing the job + reply + usage_update settles the turn cleanly.
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-job-1", status: "completed" },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Background job finished." },
+        },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "usage_update", used: 120, size: 1000 },
+      },
+    });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(cancelCount).toBe(0);
+
+    // Start a second deferred job, send two steers while steer 1 waits on ACP, and press Stop.
+    let heldSteerResponse: (() => void) | null = null;
+    const second = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start cancelable job",
+      logger,
+    });
+    if (second.disposition === "turn_started") await second.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Hold the next steer prompt so Stop races with a queued second steer.
+    holdNextPrompt = (release) => {
+      heldSteerResponse = release;
+    };
+    const steerOne = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "held steer 1",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerOne.disposition).toBe("steered");
+    const steerTwo = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "queued steer 2",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerTwo.disposition).toBe("steered");
+    await expect.poll(() => heldSteerResponse).not.toBeNull();
+    const promptsBeforeStop = promptCount;
+
+    // Stop must send session/cancel immediately, retire the deferred session cleanly,
+    // and never dispatch the queued steer 2 to ACP.
+    await manager.cancelAgentRun(agent.id);
+    expect(cancelCount).toBe(1);
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(promptCount).toBe(promptsBeforeStop);
+
+    // Changing mode immediately after stopping a deferred turn must transparently reopen the session.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(currentMode).toBe("plan");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("reopens cleanly for mode changes and follow-up sends initiated while Stop is closing a slow ACP process", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-slow-stop-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const script = join(home, "slow-stop-agent.cjs");
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    script,
+    `
+    const { createInterface } = require("node:readline");
+    const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+    let mode = "default";
+    const configOptions = () => [{
+      id: "mode", name: "Mode", category: "mode", type: "select", currentValue: mode,
+      options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }],
+    }];
+    process.on("SIGTERM", () => {
+      setTimeout(() => process.exit(0), 250);
+    });
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      if (msg.method === "initialize") {
+        send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+      } else if (msg.method === "session/new") {
+        send({ id: msg.id, result: { sessionId: "slow-s1", configOptions: configOptions() } });
+      } else if (msg.method === "session/load") {
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/set_config_option") {
+        if (msg.params && typeof msg.params.value === "string") mode = msg.params.value;
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/prompt") {
+        const text = msg.params?.prompt?.[0]?.text ?? "";
+        if (text.includes("start bg")) {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "tool_call", toolCallId: "slow-bg-1", name: "run_command",
+            title: "Slow bg job", status: "in_progress",
+          } } });
+        } else {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "After stop reply" },
+          } } });
+        }
+        send({ id: msg.id, result: { stopReason: "end_turn" } });
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+    `,
+  );
+  const registration = runAcpProvider({
+    id: "slow-stop-acp",
+    label: "Slow Stop ACP",
+    command: [process.execPath, script],
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start bg",
+      logger,
+    });
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Start Stop (takes 250ms to terminate the child on SIGTERM) and trigger a mode change mid-shutdown.
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const modePromise = manager.setAgentMode(agent.id, "plan");
+    await Promise.all([stopPromise, modePromise]);
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    // A follow-up prompt immediately after Stop + mode change succeeds cleanly.
+    const next = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "fresh prompt",
+      logger,
+    });
+    expect(next.disposition).toBe("turn_started");
+    if (next.disposition === "turn_started") await next.started;
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("does not block mode changes after a plugin refuses Stop by ignoring session.interrupt", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  const harness = createProviderHarness({
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: ["prompt.message", "session.interrupt", "session.configure"],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "hung-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "hung-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        // Intentionally never acknowledge session.interrupt.
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    const cancelResult = await manager.cancelAgentRun(agent.id);
+    expect(cancelResult.status).toBe("refused");
+
+    // Settings change must not hang behind the unacknowledged session.interrupt.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});
+
+test("bounds settings wait when Stop is queued behind an unanswered steer", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  let releaseSteer: (() => void) | null = null;
+  const harness = createProviderHarness({
+    capabilities: ["prompt.message", "prompt.steer", "session.interrupt", "session.configure"],
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [
+            "prompt.message",
+            "prompt.steer",
+            "session.interrupt",
+            "session.configure",
+          ],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        if (input.prompt.delivery === "steer") {
+          releaseSteer = () =>
+            emit({
+              type: "session.prompt_result",
+              sessionId: input.sessionId,
+              clientMessageId: input.prompt.clientMessageId,
+              result: { type: "steer", turnId: "steer-turn" },
+            });
+          return true;
+        }
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "steer-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "steer-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    // Start an unanswered steer, queue Stop behind it, then change mode.
+    const steerPromise = manager.steerAgentRun(agent.id, "unanswered steer").catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Mode change must complete within the bounded interrupt timeout even while Stop is queued.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+
+    releaseSteer?.();
+    await Promise.all([steerPromise, stopPromise]);
+  } finally {
+    releaseSteer?.();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
   }
 });

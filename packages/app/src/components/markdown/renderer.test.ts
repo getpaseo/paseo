@@ -3,6 +3,7 @@ import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/util
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
 import { matchCommandLink } from "@/agent-commands";
+import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
@@ -12,7 +13,7 @@ import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
-import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
+import { isRecognizedLink, prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
 
 it("recognizes complete known commands in inline code", () => {
@@ -35,6 +36,13 @@ it("resolves authored root-relative links only when the target is a known comman
   expect(matchCommandLink("/code-review/file", "markdown", names)).toBeNull();
   expect(matchCommandLink("/code-review", "text", names)).toBeNull();
   expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
+});
+
+it("treats only a parsed path or code span as a link the author did not write", () => {
+  expect(isRecognizedLink({ sourceType: "text" })).toBe(true);
+  expect(isRecognizedLink({ sourceType: "inline-code" })).toBe(true);
+  expect(isRecognizedLink({ sourceType: "markdown" })).toBe(false);
+  expect(isRecognizedLink({})).toBe(false);
 });
 
 describe("shared Markdown source adaptation", () => {
@@ -108,6 +116,37 @@ describe("shared Markdown source adaptation", () => {
       ["https://x/a.png", false],
       ["https://x/i.png", true],
       ["https://x/q.png", false],
+    ]);
+  });
+  it("renders linked images that share a line with text inline", async () => {
+    // A review bot's summary header: linked badges inside a heading with the score text.
+    const reviewHeader =
+      '<h2><a href="https://x/retrigger"><picture><source media="(prefers-color-scheme: dark)" srcset="https://x/r-dark.svg"><img alt="Retrigger" src="https://x/r.svg" align="right"></picture></a>Confidence Score: 5/5</h2>';
+    const source = [
+      reviewHeader,
+      "[![Alone](https://x/alone.png)](https://x)",
+      "[![a](https://x/a.png)](https://x) [![b](https://x/b.png)](https://x)",
+      "See [![gh](https://x/gh.png) GitHub](https://x) for more.",
+    ].join("\n\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    markInlineImages(tree);
+    const images: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Image") images.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(
+      images.map((image) => [image.attributes?.url, image.attributes?.isInline === true]),
+    ).toEqual([
+      ["https://x/r.svg", true],
+      ["https://x/alone.png", false],
+      ["https://x/a.png", true],
+      ["https://x/b.png", true],
+      ["https://x/gh.png", true],
     ]);
   });
   it("escapes spoiler delimiters only in prose", () => {
@@ -412,6 +451,47 @@ it("lets the engine own code boundaries while classifying candidate values", asy
   ]);
 });
 
+it("recognizes forge references in prose but not in code, links or paths", async () => {
+  const shorthand = createForgeShorthand({
+    forge: "gitlab",
+    remoteUrl: "git@gitlab.com:g/p.git",
+  })!;
+  const source = [
+    "Fixed in #12 and !13, see g/sub/q#14 and https://example.com/a#15.",
+    "`#16` and [#17](https://example.com) and src/app/index.ts and src/a/b/c#18",
+    "```\n#19\n```",
+  ].join("\n\n");
+  const prepared = prepareMarkdownSource(source, "/repo", {
+    forgeReferencePattern: shorthand.pattern,
+  });
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const recognized: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link" && node.attributes?.recognizedLink === "true") {
+      recognized.push(String(node.attributes.url));
+    }
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(recognized).toEqual(["#12", "!13", "g/sub/q#14", "src/app/index.ts", "src/a/b/c#18"]);
+  expect(recognized.map((url) => shorthand.resolve(url))).toEqual([
+    "https://gitlab.com/g/p/-/issues/12",
+    "https://gitlab.com/g/p/-/merge_requests/13",
+    "https://gitlab.com/g/sub/q/-/issues/14",
+    null,
+    "https://gitlab.com/src/a/b/c/-/issues/18",
+  ]);
+  // A rejected native regex silently falls back to no recognition at all.
+  expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+    isDisabled: false,
+    isDefault: false,
+  });
+});
+
 describe("bare URL sentence punctuation", () => {
   it.each([".", ",", ";", ":", "!", "?", ")", ").", "...", "?!"])(
     "leaves %s outside the link and preserves the rendered sentence",
@@ -489,6 +569,34 @@ describe("bare URL sentence punctuation", () => {
       expect(tree.children?.[0]?.children?.[0]?.attributes?.url).toBe("https://example.com/a.");
     },
   );
+
+  it.each([
+    ["https://a.com、https://b.com！", ["https://a.com", "、", "https://b.com", "！"]],
+    ["https://a.com（说明）以及", ["https://a.com", "（说明）以及"]],
+    ["看这里：https://example.com/foo，还有", ["看这里：", "https://example.com/foo", "，还有"]],
+    ["（https://example.com/a）", ["（", "https://example.com/a", "）"]],
+    ["见【https://example.com/a】。", ["见【", "https://example.com/a", "】。"]],
+    ["“https://example.com/a”…", ["“", "https://example.com/a", "”…"]],
+    [
+      "见https://zh.wikipedia.org/wiki/人工智能。",
+      ["见", "https://zh.wikipedia.org/wiki/人工智能", "。"],
+    ],
+  ])("ends a bare URL at CJK and typographic punctuation: %s", async (source, expected) => {
+    const prepared = prepareMarkdownSource(source);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const parts = (tree.children?.[0]?.children ?? []).map((node) =>
+      node.type === "Link" ? String(node.attributes?.url) : String(node.content),
+    );
+    expect(parts).toEqual(expected);
+    expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+      isDisabled: false,
+      isDefault: false,
+    });
+  });
 });
 
 it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
@@ -1023,3 +1131,30 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("external Markdown", () => {
+  const external = (source: string) => prepareMarkdownSource(source, undefined, { external: true });
+
+  it("recognizes no files, forge references or commands, only https URLs", () => {
+    const { linkRecognition } = external("Needs Node.js 22 and `~/.dsh/.env`, see #12");
+    expect("Needs Node.js 22, see #12".match(linkRecognition.text)).toBeNull();
+    expect(linkRecognition.inlineCode.test("~/.dsh/.env")).toBe(false);
+    expect("Docs at https://example.com/a.".match(linkRecognition.text)).toEqual([
+      "https://example.com/a",
+    ]);
+  });
+
+  it("keeps https links and leaves any other destination as its label", () => {
+    expect(
+      external(
+        "[Guide](docs/guide.md), [site](https://example.com), [mail](mailto:a@b.c), [ref][r]\n\n[r]: ./x",
+      ).render(),
+    ).toBe("Guide, [site](https://example.com), mail, ref\n\n[r]: ./x");
+  });
+
+  it("shows a relative image as its alt text", () => {
+    expect(external("![Demo](media/demo.png) ![Shot](https://x/a.png)").render()).toBe(
+      "Demo ![Shot](https://x/a.png)",
+    );
+  });
+});

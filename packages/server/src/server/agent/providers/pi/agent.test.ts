@@ -19,12 +19,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import {
-  PiProviderOptionsSchema,
-  PiRpcAgentClient,
-  PiRpcAgentSession,
-  transformPiModels,
-} from "./agent.js";
+import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
@@ -143,16 +138,6 @@ function piUserEntry(input: { id: string; parentId: string | null; text: string 
 
 function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
   return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
-}
-
-// Pi's context path: the entries from the root to the leaf.
-function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const branch: PiSessionEntry[] = [];
-  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
-    branch.unshift(entry);
-  }
-  return branch;
 }
 
 function parseEntryCapture(notification: string): unknown {
@@ -1018,7 +1003,7 @@ describe("PiRpcAgentSession", () => {
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
     fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
-    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1670,7 +1655,7 @@ describe("PiRpcAgentSession", () => {
   test("closes a history-only Pi runtime when replay fails", async () => {
     const pi = new FakePi();
     pi.queueSessionSetup((runtimeSession) => {
-      runtimeSession.getMessagesError = new Error("History unavailable");
+      runtimeSession.getHistoryError = new Error("History unavailable");
     });
     const session = await createClient(pi).resumeSession(
       {
@@ -1858,7 +1843,7 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
-  test("captures the session's user entries apart from the ones on the current branch", async () => {
+  test("captures all session user entries as rewind targets, including abandoned branches", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
@@ -1876,7 +1861,6 @@ describe("PiRpcAgentSession", () => {
     const context = {
       sessionManager: {
         getEntries: () => entries,
-        buildContextEntries: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
@@ -1891,10 +1875,6 @@ describe("PiRpcAgentSession", () => {
           { id: "abandoned", parentId: "one-reply", text: "rewound away" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
-        contextEntries: [
-          { id: "one", parentId: null, text: "first" },
-          { id: "two", parentId: "one-reply", text: "second" },
-        ],
       },
     ]);
   });
@@ -1907,6 +1887,7 @@ describe("PiRpcAgentSession", () => {
       createConfig({
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       }),
     );
 
@@ -1925,7 +1906,9 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
 
     await session.close();
   });
@@ -1948,6 +1931,7 @@ describe("PiRpcAgentSession", () => {
       },
       {
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       },
     );
 
@@ -1971,7 +1955,9 @@ describe("PiRpcAgentSession", () => {
     ]);
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
   });
 
   test("updates model and thinking through Pi runtime commands", async () => {
@@ -2208,6 +2194,33 @@ describe("PiRpcAgentSession", () => {
       error: "Pi exited",
     });
   });
+
+  test.each([false, true])(
+    "rejects new turns with Reload guidance after the Pi process exits (active: %s)",
+    async (active) => {
+      const { pi, session, events } = await createSession();
+      try {
+        if (active) {
+          await session.startTurn("before crash");
+        }
+        const runtime = pi.latestSession();
+        runtime.emit({ type: "process_exit", error: "Pi exited" });
+        if (active) {
+          await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+        }
+        const promptCount = runtime.prompts.length;
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await expect(session.startTurn("after crash")).rejects.toThrow(
+            "Pi process exited. Reload agent before sending another message.",
+          );
+        }
+        expect(runtime.prompts).toHaveLength(promptCount);
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("fails an autonomous turn when the Pi process exits before settlement", async () => {
     const { pi, events } = await createSession();
@@ -3066,13 +3079,13 @@ describe("PiRpcAgentClient", () => {
     },
   );
 
-  test("lists no draft features without starting a Pi session", async () => {
+  test("lists no draft controls without starting a Pi session", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
     await expect(
-      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
-    ).resolves.toEqual([]);
+      client.listControls(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual({ controls: [], options: {} });
 
     expect(pi.recordedLaunches).toHaveLength(0);
   });
@@ -3369,7 +3382,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
+    pi.latestSession().historyUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -3393,7 +3406,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    fakeSession.contextUserEntries = [
+    fakeSession.historyUserEntries = [
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
 
@@ -3958,35 +3971,73 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   });
 });
 
-describe("transformPiModels", () => {
-  test("normalizes labels that include the upstream provider prefix", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/google/gemini-2.5-flash-lite",
-          label: "openrouter/google/gemini_2.5 flash lite",
-        },
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-5.5",
-          label: "openrouter/OpenAI: GPT-5.5",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini 2.5 flash lite",
-        description: "openrouter/google/gemini_2.5 flash lite",
+describe("Pi catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
       },
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-5.5",
-        label: "GPT-5.5",
-        description: "openrouter/OpenAI: GPT-5.5",
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
       },
-    ]);
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "shortens a path-like name to its last segment",
+      model: {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+      },
+      label: "gemini-2.5-flash-lite",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "openrouter", id: "google/gemini_2.5-flash-lite" },
+      label: "gemini 2.5-flash-lite",
+    },
+    {
+      name: "falls back to an id with spaces when the name is blank",
+      model: { provider: "local", id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " },
+      label: "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    },
+  ])("$name", async ({ model, label }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
 

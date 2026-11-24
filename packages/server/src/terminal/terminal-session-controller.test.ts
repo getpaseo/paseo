@@ -93,6 +93,10 @@ function createLogger(): pino.Logger {
   } as unknown as pino.Logger;
 }
 
+function decodedTerminalFrames(frames: TerminalStreamFrame[]): string {
+  return frames.map((frame) => new TextDecoder().decode(frame.payload)).join("");
+}
+
 describe("terminal-session-controller restore", () => {
   test("delivers output produced while restore is in flight after the restore frame", async () => {
     let terminalListener: ((message: ServerMessage) => void) | null = null;
@@ -172,7 +176,10 @@ describe("terminal-session-controller restore", () => {
     terminalListener?.({ type: "output", data: "restore-after\n", revision: 2 });
     snapshot.resolve(terminalReplay("restore-before", 1, "\x1b[?1h\x1b[?2004h"));
     await snapshot.promise;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(() => {
+      const output = decodedTerminalFrames(binaryFrames.slice(1));
+      expect(output).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
+    });
 
     expect(outboundMessages).toContainEqual({
       type: "subscribe_terminal_response",
@@ -183,14 +190,12 @@ describe("terminal-session-controller restore", () => {
         requestId: "req-1",
       },
     });
-    expect(binaryFrames.map((frame) => frame.opcode)).toEqual([
-      TerminalStreamOpcode.Restore,
-      TerminalStreamOpcode.Output,
-    ]);
+    expect(binaryFrames[0]?.opcode).toBe(TerminalStreamOpcode.Restore);
+    const outputFrames = binaryFrames.slice(1);
+    expect(outputFrames.length).toBeGreaterThan(0);
+    expect(outputFrames.every((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
-    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
-      "\x1b[?1h\x1b[?2004hrestore-after\n",
-    );
+    expect(decodedTerminalFrames(outputFrames)).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
   });
 });
 
@@ -387,8 +392,25 @@ describe("terminal-session-controller with terminals held by a newer Paseo", () 
     };
   }
 
+  test("reports incompatible workers to a legacy subscription without a request id", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = createController({
+      terminalManager: incompatibleManager(),
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: () => {},
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+    await controller.dispatch({ type: "subscribe_terminals_request" });
+    expect(outboundMessages).toEqual([
+      { type: "status", payload: { status: "error", message: incompatible.message } },
+    ]);
+  });
+
   test.each([
     { type: "list_terminals_request" as const, requestId: "req-list" },
+    { type: "subscribe_terminals_request" as const, requestId: "req-observe" },
     { type: "list_terminals_request" as const, requestId: "req-list-cwd", cwd: "/work/repo" },
     {
       type: "create_terminal_request" as const,
@@ -500,8 +522,22 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
-            { id: "subdir-term", name: "Mobile", workspaceId: "ws-test", activity: null },
+            {
+              id: "root-term",
+              name: "Terminal 1",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+            {
+              id: "subdir-term",
+              name: "Mobile",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
           ],
         },
       },
@@ -571,6 +607,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: rootCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-root",
@@ -587,6 +625,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: worktreeCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-worktree",
@@ -672,7 +712,16 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
         type: "terminals_changed",
         payload: {
           cwd,
-          terminals: [{ id: "a", name: "A", workspaceId: "ws-a", activity: null }],
+          terminals: [
+            {
+              id: "a",
+              name: "A",
+              workspaceId: "ws-a",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+          ],
         },
       },
     ]);

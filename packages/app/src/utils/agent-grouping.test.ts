@@ -10,6 +10,7 @@ function makeAgent(overrides: Partial<AggregatedAgent> = {}): AggregatedAgent {
     serverLabel: (overrides as { serverLabel?: string }).serverLabel ?? "server",
     title: overrides.title ?? null,
     status: overrides.status ?? ("running" as AggregatedAgent["status"]),
+    backgroundWork: overrides.backgroundWork,
     turn:
       overrides.turn ??
       ({
@@ -71,6 +72,19 @@ describe("deriveProjectDisplayName", () => {
 });
 
 describe("groupAgents", () => {
+  it("keeps an idle agent with long-running background work in the active group", () => {
+    const agent = makeAgent({
+      status: "idle",
+      turn: { phase: "idle", cancellationRequestId: null },
+      lastActivityAt: new Date("2020-01-01T00:00:00.000Z"),
+      backgroundWork: { count: 1 },
+    });
+    expect(
+      groupAgents([agent])
+        .activeGroups.flatMap((group) => group.agents)
+        .map((item) => item.id),
+    ).toEqual([agent.id]);
+  });
   it("uses turn liveness instead of protocol status for active grouping", () => {
     const old = new Date("2020-01-01T00:00:00.000Z");
     const open = makeAgent({ id: "open", status: "idle", lastActivityAt: old });

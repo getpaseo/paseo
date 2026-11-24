@@ -1,5 +1,12 @@
 import type { AgentMessage } from "./agent-message.js";
-import type { AgentAttachment } from "./messages.js";
+import type {
+  AgentAttachment,
+  AgentOptionChoiceSchema,
+  AgentOptionControlSchema,
+  AgentOptionSelectControlSchema,
+  AgentOptionToggleControlSchema,
+} from "./messages.js";
+import type { z } from "zod";
 
 export type AgentProvider = string;
 
@@ -126,6 +133,8 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  /** The page that helps users set up and troubleshoot this provider. */
+  docsUrl?: string;
   defaultModeId?: string | null;
 }
 
@@ -153,6 +162,20 @@ export interface AgentFeatureSelect {
 }
 
 export type AgentFeature = AgentFeatureToggle | AgentFeatureSelect;
+
+export type AgentOptionChoice = z.infer<typeof AgentOptionChoiceSchema>;
+
+/** `key` is the top-level provider option key the control reads and writes. */
+export type AgentOptionToggleControl = z.infer<typeof AgentOptionToggleControlSchema>;
+
+/** `defaultValue` is the choice an unset option stands for. */
+export type AgentOptionSelectControl = z.infer<typeof AgentOptionSelectControlSchema>;
+
+/**
+ * A provider's description of a composer control over one top-level option key.
+ * The control carries no value: it is read from the agent's effective options.
+ */
+export type AgentOptionControl = z.infer<typeof AgentOptionControlSchema>;
 
 export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
@@ -196,6 +219,18 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+}
+
+export type AgentMetricTone = "default" | "ok" | "warning" | "danger";
+
+/**
+ * One provider-owned label/value row. The provider formats `value`; Paseo renders
+ * it as given and never interprets it.
+ */
+export interface AgentMetric {
+  label: string;
+  value: string;
+  tone?: AgentMetricTone;
 }
 
 export const TOOL_CALL_ICON_NAMES = [
@@ -390,7 +425,13 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      metrics?: AgentMetric[];
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "mode_changed";
@@ -523,6 +564,10 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
+  /**
+   * @deprecated COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+   * Folded into `providerOptions` at the daemon's edge; the daemon never reads it internally.
+   */
   featureValues?: Record<string, unknown>;
   title?: string | null;
   providerOptions?: ProviderOptions;

@@ -15,7 +15,8 @@ import {
   expectProviderInstalledInSettings,
   findAcpCatalogProvider,
   installAcpCatalogProvider,
-  openAddProviderArea,
+  openAddProvider,
+  openProviderDetail,
   openSettingsHost,
   openSettingsHostSection,
   seedSavedSettingsHosts,
@@ -28,7 +29,12 @@ const ACP_PROVIDER = {
 
 interface ProviderCatalogDaemonClient {
   getLastServerInfoMessage(): {
-    features?: { hopliteProvider?: boolean; plugins?: boolean };
+    features?: {
+      gooseProvider?: boolean;
+      fxProvider?: boolean;
+      hopliteProvider?: boolean;
+      plugins?: boolean;
+    };
   } | null;
   connect(): Promise<void>;
   close(): Promise<void>;
@@ -47,7 +53,7 @@ test.describe("ACP provider catalog", () => {
       await openSettings(page);
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
-      await openAddProviderArea(page);
+      await openAddProvider(page);
 
       await installAcpCatalogProvider(page, ACP_PROVIDER.name);
       await expectProviderInstalledInSettings(page, ACP_PROVIDER.name);
@@ -56,6 +62,31 @@ test.describe("ACP provider catalog", () => {
       await client.close().catch(() => undefined);
     }
   });
+});
+
+test("adds fx from the catalog with only a config entry", async ({ page }, testInfo) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "fx-catalog-e2e",
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.fxProvider).toBe(true);
+    await client.patchDaemonConfig({ removeProviders: ["fx"] });
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, getServerId());
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await openAddProvider(page);
+
+    await findAcpCatalogProvider(page, "fx");
+    await page.screenshot({ path: testInfo.outputPath("fx-catalog.png") });
+    await installAcpCatalogProvider(page, "fx");
+    await expectProviderInstalledInSettings(page, "fx");
+    await page.screenshot({ path: testInfo.outputPath("fx-installed.png") });
+    expect((await client.getDaemonConfig()).config.providers?.fx).toEqual({ enabled: true });
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: ["fx"] }).catch(() => undefined);
+    await client.close().catch(() => undefined);
+  }
 });
 
 for (const theme of ["light", "dark"] as const) {
@@ -79,7 +110,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("button", { name: "Hoplite provider details", exact: true }),
       ).toHaveCount(0);
-      await openAddProviderArea(page);
+      await openAddProvider(page);
       await findAcpCatalogProvider(page, "Hoplite");
       await page.screenshot({ path: testInfo.outputPath(`hoplite-catalog-${theme}.png`) });
       await installAcpCatalogProvider(page, "Hoplite");
@@ -102,7 +133,7 @@ for (const theme of ["light", "dark"] as const) {
         testInfo.outputPath(`hoplite-removed-${theme}.json`),
         JSON.stringify(await client.getProvidersSnapshot(), null, 2),
       );
-      await openAddProviderArea(page);
+      await openAddProvider(page);
       await findAcpCatalogProvider(page, "Hoplite");
       await page.screenshot({ path: testInfo.outputPath(`hoplite-removed-${theme}.png`) });
       await installAcpCatalogProvider(page, "Hoplite");
@@ -115,11 +146,11 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 async function removeHoplite(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByTestId("provider-actions-hoplite").click();
+  await openProviderDetail(page, "Hoplite");
   page.once("dialog", (dialog) => {
     void dialog.accept();
   });
-  await page.getByTestId("provider-remove-hoplite").click();
+  await page.getByTestId("provider-remove").click();
 }
 
 test("unsupported host asks for an update without writing Hoplite config", async ({
@@ -139,7 +170,7 @@ test("unsupported host asks for an update without writing Hoplite config", async
     await openSettings(page);
     await openSettingsHost(page, outdatedDaemon.serverId);
     await openSettingsHostSection(page, outdatedDaemon.serverId, "providers");
-    await openAddProviderArea(page);
+    await openAddProvider(page);
     await page.getByRole("button", { name: "Add Hoplite", exact: true }).click();
     const errorToast = page.getByTestId("app-toast-message");
     await expect(errorToast).toHaveText("Update the host to add Hoplite.");
@@ -178,3 +209,47 @@ test("model selector excludes Hoplite before opt-in", async ({ page }, testInfo)
     await client.close();
   }
 });
+
+test("adds bundled goose from the catalog", async ({ page }) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "goose-catalog-e2e",
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(true);
+    await client.patchDaemonConfig({ removeProviders: ["goose"] });
+    await gotoAppShell(page);
+    await addGooseFromSettings(page, getServerId());
+    expect((await client.getDaemonConfig()).config.providers?.goose).toEqual({ enabled: true });
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: ["goose"] });
+    await client.close();
+  }
+});
+
+test("adds goose through ACP on an older host", async ({ page, outdatedDaemon }) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "goose-catalog-old-host",
+    port: Number(new URL(`http://${outdatedDaemon.endpoint}`).port),
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(false);
+    await seedSavedSettingsHosts(page, [outdatedDaemon]);
+    await page.reload();
+    await addGooseFromSettings(page, outdatedDaemon.serverId);
+    expect((await client.getDaemonConfig()).config.providers?.goose).toMatchObject({
+      extends: "acp",
+      command: ["goose", "acp"],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+async function addGooseFromSettings(page: import("@playwright/test").Page, serverId: string) {
+  await openSettings(page);
+  await openSettingsHost(page, serverId);
+  await openSettingsHostSection(page, serverId, "providers");
+  await openAddProvider(page);
+  await installAcpCatalogProvider(page, "goose");
+  await expectProviderInstalledInSettings(page, "goose");
+}

@@ -72,14 +72,12 @@ const ASSISTANT_MARKDOWN = [
   "| Current \\| active | ~~obsolete~~ | ready |",
 ].join("\n");
 
-const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
+// text/plain carries the selection as displayed, so an inline code span the renderer
+// linked copies without its destination.
+const EXPECTED_WHOLE_SELECTION_TEXT = ASSISTANT_MARKDOWN.replace(
   "www.example.com stays",
   "[www.example.com](http://www.example.com) stays",
 )
-  .replace(
-    "`https://example.com/generated` stays",
-    "[`https://example.com/generated`](https://example.com/generated) stays",
-  )
   .replace(`${CROSS_STRUCTURE_MARKDOWN}\n\n`, "")
   .replace(
     "<https://autolink.example.com>",
@@ -422,7 +420,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await copySelection(page);
 
     const clipboard = await readRichClipboard(page);
-    expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_MARKDOWN);
+    expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_TEXT);
     expect(clipboard.html).not.toContain("<ul>");
     expect(clipboard.html).not.toContain("<li>");
     expect(clipboard.html).toContain("<div>- ");
@@ -644,6 +642,22 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '```typescript\nconst answer = "yes";\n  return answer;\n```\n\nAfter code.',
     );
 
+    // Crossing into part of the block keeps the selected code lines as a fenced block.
+    await selectAssistantAcrossCodeLines(page, "not a generated link.", "return");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      'not a generated link.\n\n```typescript\nconst answer = "yes";\n  return\n```',
+    );
+
+    // So does starting partway through the block and leaving it.
+    await selectAssistantAcrossCodeLines(page, "answer", "After code.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      '```typescript\nanswer = "yes";\n  return answer;\n```\n\nAfter code.',
+    );
+
     // Selecting a whole line runs off its end into the newline node. A trailing
     // newline auto-executes the line when it is pasted into a terminal.
     await selectAssistantAcrossCodeLines(page, "const", "  ");
@@ -667,6 +681,77 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await bashFence.locator("[data-paseo-markdown-ignore]").click();
 
     expect(await readPlainClipboard(page)).toBe("echo trailing");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("pasting an assistant selection preserves literal underscores and authored links", async ({
+  context,
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-paste-",
+    title: "Assistant selection paste",
+    initialPrompt: "Render the paste fixture.",
+    featureValues: {
+      mockAssistantResponse:
+        "Keep \\_literal\\_ and `https://example.com/generated` beside [the docs](https://example.com/docs).",
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+
+    const message = assistantMessageBlocks(page);
+    await expect(message.locator('a[href="https://example.com/generated"]')).toHaveText(
+      "https://example.com/generated",
+    );
+    await selectAssistantTextRange(page, "Keep _literal_", "the docs.");
+    await copySelection(page);
+
+    await page.evaluate(() => {
+      const fields = document.createElement("div");
+      fields.style.cssText =
+        "position: fixed; bottom: 0; left: 0; z-index: 10000; background: white";
+      const plainText = document.createElement("textarea");
+      plainText.setAttribute("aria-label", "Plain text paste");
+      const richText = document.createElement("div");
+      richText.contentEditable = "true";
+      richText.setAttribute("role", "textbox");
+      richText.setAttribute("aria-label", "Rich text paste");
+      fields.append(plainText, richText);
+      document.body.append(fields);
+    });
+
+    const plainText = page.getByRole("textbox", { name: "Plain text paste" });
+    await plainText.focus();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(plainText).toHaveValue(
+      "Keep _literal_ and `https://example.com/generated` beside [the docs](https://example.com/docs).",
+    );
+
+    const richText = page.getByRole("textbox", { name: "Rich text paste" });
+    await richText.focus();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(richText).toHaveText(
+      "Keep _literal_ and https://example.com/generated beside the docs.",
+    );
+    await expect(richText.locator("code")).toHaveText("https://example.com/generated");
+    await expect(richText.getByRole("link")).toHaveCount(2);
+    await expect(
+      richText.getByRole("link", { name: "https://example.com/generated" }),
+    ).toHaveAttribute("href", "https://example.com/generated");
+    await expect(richText.getByRole("link", { name: "the docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
   } finally {
     await agent.cleanup();
   }
@@ -722,4 +807,62 @@ test("copying a selection across an assistant image keeps its Markdown source an
   } finally {
     await agent.cleanup();
   }
+});
+
+test.describe("on a touch-capable desktop browser", () => {
+  // A touch screen registers the navigation pan's pointer listeners over the whole workspace.
+  // The pan accepts touch only, and a mouse drag must still extend the browser's selection.
+  test.use({ hasTouch: true });
+
+  test("a mouse drag selects across assistant list, quote, and code blocks", async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "assistant-selection-drag-",
+      title: "Assistant selection drag",
+      initialPrompt: "Render structured text.",
+      featureValues: {
+        mockAssistantResponse: [
+          "First paragraph.",
+          "",
+          "- List item.",
+          "",
+          "> Quote text.",
+          "",
+          "```ts",
+          "const answer = 1;",
+          "```",
+          "",
+          "Third paragraph.",
+        ].join("\n"),
+      },
+    });
+
+    try {
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "idle",
+        30_000,
+      );
+      await openAgentRoute(page, agent);
+      const blocks = assistantMessageBlocks(page);
+      const first = await blocks.getByText("First paragraph.").boundingBox();
+      const third = await blocks.getByText("Third paragraph.").boundingBox();
+      if (!first || !third) {
+        throw new Error("Expected rendered paragraphs");
+      }
+
+      await page.mouse.move(first.x + 1, first.y + first.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, { steps: 20 });
+      await page.mouse.up();
+
+      const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+      expect(selected).toContain("First paragraph.");
+      expect(selected).toContain("List item.");
+      expect(selected).toContain("Quote text.");
+      expect(selected).toContain("const answer = 1;");
+      expect(selected).toContain("Third paragraph.");
+    } finally {
+      await agent.cleanup();
+    }
+  });
 });

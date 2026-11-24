@@ -15,6 +15,8 @@ import {
   expectNewWorkspaceForAddedProject,
   expectAddProjectResultVisible,
   navigateAddProjectResults,
+  navigateAndDismissAddProject,
+  watchAddProjectRenderWarnings,
   openAddProjectFlow,
   openAddProjectHostSelection,
 } from "../support/helpers/add-project-flow";
@@ -146,6 +148,7 @@ test.describe("Add Project command-center flow", () => {
     test("Escape and Back restore searchable page input before closing at the root", async ({
       page,
     }) => {
+      const renderWarnings = watchAddProjectRenderWarnings(page);
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
         serverId: secondaryHost.serverId,
@@ -183,8 +186,9 @@ test.describe("Add Project command-center flow", () => {
 
       await page.keyboard.press("Escape");
       await expectAddProjectPage(page, "host");
-      await page.keyboard.press("Escape");
+      await navigateAndDismissAddProject(page);
       await expect(addProjectFlow(page)).not.toBeVisible();
+      expect(renderWarnings).toEqual([]);
     });
 
     test("New directory creates a Project on the selected remote host", async ({ page }) => {

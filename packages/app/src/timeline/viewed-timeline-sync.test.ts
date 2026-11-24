@@ -5,6 +5,7 @@ import type { ProjectedTimelineForwardFetchPlan } from "./timeline-sync-plan";
 import {
   consumeForcedTimelineTailReplacement,
   createViewedTimelineSync,
+  FRESHNESS_CHECK_QUIET_MS,
   type TimelineResponsePayload,
   type ViewedTimelineStatus,
   type ViewedTimelineSyncPorts,
@@ -28,7 +29,8 @@ function deferred<T>(): Deferred<T> {
 
 interface MembershipRequest {
   agentIds: string[];
-  succeed(): void;
+  cursors: Record<string, { epoch: string; seq: number }> | undefined;
+  succeed(timelines?: Record<string, "current" | "behind">): void;
   fail(message: string): void;
 }
 
@@ -90,13 +92,14 @@ test("visible catch-up settles before hidden open chats start fetching", async (
   world.sync.dispose();
 });
 
-test("a failed visible catch-up releases hidden chats without bypassing its error", async () => {
+test("a failed visible catch-up with a parked gap releases hidden chats without retrying", async () => {
   const world = new TimelineWorld();
   world.openedEarlier(["a-hidden"]);
   world.sync.replaceVisibleAgentIds("pane", ["z-visible"]);
   world.sync.setConnected(true);
   (await world.nextMembership()).succeed();
   const visible = await world.nextFetch("z-visible");
+  world.sync.recoverGap("z-visible", { epoch: "epoch-z-visible", endSeq: 1 });
   world.expectNoPendingFetch();
   visible.fail("temporarily unavailable");
   const hidden = await world.nextFetch("a-hidden");
@@ -125,9 +128,70 @@ test("switching chats promotes the newly visible catch-up while another visible 
   world.sync.dispose();
 });
 
+test("reconnect drains hidden chats two at a time after the visible chat settles", async () => {
+  const world = new TimelineWorld();
+  const hidden = Array.from({ length: 15 }, (_, index) => `hidden-${10 + index}`);
+  world.openedEarlier(hidden);
+  world.show("pane", ["visible"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed();
+  const beforeDisconnect = await world.nextFetch("visible");
+  world.sync.setConnected(false);
+  beforeDisconnect.respond({ hasNewer: false });
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed();
+  const visible = await world.nextFetch("visible");
+  world.expectNoPendingFetch();
+  visible.respond({ hasNewer: false });
+  const first = await world.nextFetch(hidden[0]);
+  let current = await world.nextFetch(hidden[1]);
+  world.expectNoPendingFetch();
+
+  first.fail("timeline request timed out");
+  for (const agentId of hidden.slice(2)) {
+    const next = await world.nextFetch(agentId);
+    world.expectNoPendingFetch();
+    current.respond({ hasNewer: false });
+    current = next;
+  }
+  current.respond({ hasNewer: false });
+  await vi.waitFor(() => {
+    expect(world.sync.getAgentTimelineStatus(hidden[0])).toBe("error");
+    for (const agentId of hidden.slice(1)) {
+      expect(world.sync.getAgentTimelineStatus(agentId)).toBe("ready");
+    }
+  });
+  world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("focusing a queued chat starts it while both hidden catch-ups are running", async () => {
+  const world = new TimelineWorld();
+  world.openedEarlier(["hidden-a", "hidden-b", "next-visible"]);
+  world.show("pane", ["visible"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed();
+  (await world.nextFetch("visible")).respond({ hasNewer: false });
+  const first = await world.nextFetch("hidden-a");
+  const second = await world.nextFetch("hidden-b");
+  world.expectNoPendingFetch();
+
+  world.show("pane", ["next-visible"]);
+  expect(world.pendingFetchCount).toBe(1);
+  (await world.nextFetch("next-visible")).respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("next-visible")).toBe("ready"));
+  first.respond({ hasNewer: false });
+  second.respond({ hasNewer: false });
+  world.sync.dispose();
+});
+
 class TimelineWorld {
-  constructor(private readonly observeMembership?: ViewedTimelineSyncPorts["observe"]) {}
+  constructor(
+    private readonly observeMembership?: ViewedTimelineSyncPorts["observe"],
+    private readonly checksFreshness = false,
+  ) {}
   readonly errors: string[] = [];
+  readonly appliedCurrent: string[] = [];
   readonly releasedMemberships: string[][] = [];
   readonly cursors = new Map<string, { epoch: string; endSeq: number }>();
   readonly cacheRequests: string[] = [];
@@ -142,17 +206,24 @@ class TimelineWorld {
         status: this.sync.getAgentTimelineStatus(agentId),
       });
     },
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
     prepare: async (agentId) => {
       this.cacheRequests.push(agentId);
       this.cacheRequestWaiters.shift()?.(agentId);
       await this.cacheGate?.promise;
     },
-    observe: (agentIds) => {
-      if (this.observeMembership) return this.observeMembership(agentIds);
-      const result = deferred<void>();
+    canCheckFreshness: () => this.checksFreshness,
+    applyCurrentTimeline: (agentId) => {
+      this.appliedCurrent.push(agentId);
+    },
+    observe: (agentIds, cursors) => {
+      if (this.observeMembership) return this.observeMembership(agentIds, cursors);
+      const result = deferred<{ timelines?: Record<string, "current" | "behind"> }>();
       this.memberships.push({
         agentIds,
-        succeed: () => result.resolve(),
+        cursors,
+        succeed: (timelines) => result.resolve({ timelines }),
         fail: (message) => result.reject(new Error(message)),
       });
       this.releaseMembershipWaiter();
@@ -160,6 +231,7 @@ class TimelineWorld {
         ready: result.promise,
         release: async () => {
           this.releasedMemberships.push(agentIds);
+          result.reject(new Error("Subscription released"));
         },
       };
     },
@@ -425,6 +497,102 @@ test("a gap absorbed by a running tail is recovered after the tail completes", a
   });
   recovery.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("a parked gap pages forward from the coverage established by the running tail", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const tail = await world.nextFetch("agent-a");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 7 });
+  tail.respond({ hasNewer: false, seq: 7 });
+
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 7 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  recovery.respond({ hasNewer: true, seq: 47 });
+  const followUp = await world.nextFetch("agent-a");
+  expect(followUp.request).toMatchObject({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 47 },
+  });
+  followUp.respond({ hasNewer: false, seq: 55 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("a chat without coverage that recovers a gap loads the latest tail when history overflows a page", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const tail = await world.nextFetch("agent-a");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  tail.respond({ hasNewer: false, seq: 0 });
+
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 0 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  recovery.respond({ hasNewer: true, seq: 40 });
+
+  const fallback = await world.nextFetch("agent-a");
+  expect(fallback.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  fallback.respond({ hasNewer: false, seq: 90 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("a recovery's follow-up page starts after rows another fetch applied meanwhile", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  (await world.nextFetch("agent-a")).respond({ hasNewer: false, seq: 0 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  const firstPage = await world.nextFetch("agent-a");
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 40 });
+  firstPage.respond({ hasNewer: true, seq: 40 });
+  const latestTail = await world.nextFetch("agent-a");
+  expect(latestTail.request.direction).toBe("tail");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 40 });
+  const recovery = await world.nextFetch("agent-a");
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 300 });
+  latestTail.respond({ hasNewer: false, seq: 300 });
+  recovery.respond({ hasNewer: true, seq: 80 });
+
+  const followUp = await world.nextFetch("agent-a");
+  expect(followUp.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 300 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  followUp.respond({ hasNewer: false, seq: 300 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
 });
 
 test("reports a chat current only once its parked follow-up page completes", async () => {
@@ -837,13 +1005,50 @@ test("redeclaring unchanged visibility does not bypass catch-up error", async ()
   await world.nextError();
 
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
-  world.sync.setActive(false);
-  world.sync.setActive(true);
 
   world.expectNoPendingMembership();
   world.expectNoPendingFetch();
   expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
 });
+
+test.each(["refocusing", "foregrounding"])(
+  "%s retries a timed-out visible timeline once",
+  async (trigger) => {
+    const world = new TimelineWorld();
+    world.show("pane", ["agent-a"]);
+    world.sync.setConnected(true);
+    (await world.nextMembership()).succeed();
+    (await world.nextFetch("agent-a")).fail("timeline request timed out");
+    await world.nextError();
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
+
+    const revisit = () => {
+      if (trigger === "refocusing") {
+        world.show("pane", []);
+        world.show("pane", ["agent-a"]);
+      } else {
+        world.sync.setActive(false);
+        world.sync.setActive(true);
+      }
+    };
+    revisit();
+    expect(world.pendingFetchCount).toBe(1);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+    (await world.nextFetch("agent-a")).fail("timeline request timed out again");
+    await vi.waitFor(() => expect(world.errors).toHaveLength(2));
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
+    world.show("pane", ["agent-a"]);
+    world.sync.setActive(true);
+    world.expectNoPendingFetch();
+
+    revisit();
+    (await world.nextFetch("agent-a")).respond({ hasNewer: false });
+    await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+    expect(world.sync.getAgentTimelineError("agent-a")).toBeNull();
+    world.expectNoPendingMembership();
+    world.sync.dispose();
+  },
+);
 
 test("a manual retry that fails returns to the error state", async () => {
   const world = new TimelineWorld();
@@ -864,6 +1069,37 @@ test("a manual retry that fails returns to the error state", async () => {
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error"));
 });
 
+test("refocusing during a membership update retries a reconnect without replaying the backlog", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setConnected(false);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "behind" });
+  const failed = await world.nextFetch("agent-a");
+  expect(failed.request.direction).toBe("after");
+  failed.fail("timeline request timed out");
+  await world.nextError();
+
+  world.show("pane", ["agent-b"]);
+  const membership = await world.nextMembership();
+  world.show("pane", ["agent-a"]);
+  expect(world.pendingFetchCount).toBe(1);
+  const retry = await world.nextFetch("agent-a");
+  expect(retry.request).toEqual(failed.request);
+  membership.succeed();
+  retry.respond({ hasNewer: true, seq: 82 });
+  const tail = await world.nextFetch("agent-a");
+  expect(tail.request.direction).toBe("tail");
+  tail.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
 test("gap recovery supersedes completed catch-up and pages through the current tail", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
@@ -871,7 +1107,8 @@ test("gap recovery supersedes completed catch-up and pages through the current t
   const membership = await world.nextMembership();
   membership.succeed();
   const initial = await world.nextFetch("agent-a");
-  initial.respond({ hasNewer: false });
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
+  initial.respond({ hasNewer: false, seq: 10 });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 
   world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
@@ -1197,4 +1434,385 @@ test("disposing a view releases its pending observation before bootstrap complet
   request.succeed();
   await Promise.resolve();
   world.expectNoPendingFetch();
+});
+
+function freshnessWorld(): TimelineWorld {
+  return new TimelineWorld(undefined, true);
+}
+
+test("a chat the daemon reports current finishes catching up without a fetch", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.sync.setConnected(true);
+  world.show("pane", ["agent-a"]);
+
+  const membership = await world.nextMembership();
+  expect(membership.cursors).toEqual({ "agent-a": { epoch: "epoch-a", seq: 42 } });
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+  membership.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  expect(world.appliedCurrent).toEqual(["agent-a"]);
+  expect(world.reportedCurrent).toEqual([{ agentId: "agent-a", status: "ready" }]);
+  world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("a chat the daemon reports behind fetches from its cursor and reports pending", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+
+  (await world.nextMembership()).succeed({ "agent-a": "behind" });
+
+  const fetch = await world.nextFetch("agent-a");
+  expect(fetch.request).toMatchObject({
+    direction: "after",
+    cursor: { epoch: "epoch-a", seq: 42 },
+  });
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  expect(world.appliedCurrent).toEqual([]);
+  fetch.respond({ hasNewer: false });
+  world.sync.dispose();
+});
+
+test("a chat with no cached cursor is not checked and fetches its tail", async () => {
+  const world = freshnessWorld();
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+
+  const membership = await world.nextMembership();
+  expect(membership.cursors).toEqual({});
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  membership.succeed();
+
+  expect((await world.nextFetch("agent-a")).request.direction).toBe("tail");
+  world.sync.dispose();
+});
+
+test("an answer without an entry for a chat falls back to the fetch", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+
+  (await world.nextMembership()).succeed({});
+
+  expect((await world.nextFetch("agent-a")).request.direction).toBe("after");
+  world.sync.dispose();
+});
+
+test("a chat being opened waits for its cache before the daemon compares its cursor", async () => {
+  const world = freshnessWorld();
+  world.cacheGate = deferred<void>();
+  world.sync.setConnected(true);
+  world.show("pane", ["agent-a"]);
+  await world.nextCacheRequest();
+
+  world.expectNoPendingMembership();
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+  world.cursors.set("agent-a", { epoch: "cached", endSeq: 9 });
+  world.cacheGate.resolve();
+
+  const membership = await world.nextMembership();
+  expect(membership.cursors).toEqual({ "agent-a": { epoch: "cached", seq: 9 } });
+  membership.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("an unanswered check starts reporting pending after the delay and resolves on the answer", async () => {
+  vi.useFakeTimers();
+  try {
+    const world = freshnessWorld();
+    world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+    world.sync.setConnected(true);
+    world.show("pane", ["agent-a"]);
+    const membership = await world.nextMembership();
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+    await vi.advanceTimersByTimeAsync(FRESHNESS_CHECK_QUIET_MS - 1);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+    world.expectNoPendingFetch();
+
+    membership.succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+    world.expectNoPendingFetch();
+    world.sync.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a slow cache read does not use up the delay for the daemon's answer", async () => {
+  vi.useFakeTimers();
+  try {
+    const world = freshnessWorld();
+    world.cacheGate = deferred<void>();
+    world.sync.setConnected(true);
+    world.show("pane", ["agent-a"]);
+    await world.nextCacheRequest();
+
+    await vi.advanceTimersByTimeAsync(FRESHNESS_CHECK_QUIET_MS * 4);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+    world.cursors.set("agent-a", { epoch: "cached", endSeq: 9 });
+    world.cacheGate.resolve();
+    const membership = await world.nextMembership();
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+    await vi.advanceTimersByTimeAsync(FRESHNESS_CHECK_QUIET_MS);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+
+    membership.succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+    world.sync.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("foregrounding a current chat checks over the subscription instead of fetching", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  const first = await world.nextMembership();
+  first.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+  const check = await world.nextMembership();
+  expect(check.agentIds).toEqual(["agent-a"]);
+  expect(check.cursors).toEqual({ "agent-a": { epoch: "epoch-a", seq: 42 } });
+
+  check.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("a slow answer to the foreground check stays silent while the socket stayed connected", async () => {
+  vi.useFakeTimers();
+  try {
+    const world = freshnessWorld();
+    world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+    world.show("pane", ["agent-a"]);
+    world.sync.setConnected(true);
+    (await world.nextMembership()).succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+
+    world.sync.setActive(false);
+    world.sync.setActive(true);
+    const check = await world.nextMembership();
+
+    await vi.advanceTimersByTimeAsync(FRESHNESS_CHECK_QUIET_MS * 4);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("checking");
+
+    check.succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+    world.expectNoPendingFetch();
+    world.sync.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a foreground check answered behind reports pending until the fetch lands", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  (await world.nextMembership()).succeed({ "agent-a": "behind" });
+
+  const fetch = await world.nextFetch("agent-a");
+  expect(fetch.request).toMatchObject({ direction: "after", cursor: { seq: 42 } });
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  fetch.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("the old subscription keeps delivering until the daemon accepts its replacement", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.cursors.set("agent-b", { epoch: "epoch-b", endSeq: 2 });
+  world.openedEarlier(["agent-b"]);
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current", "agent-b": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  const check = await world.nextMembership();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(world.releasedMemberships).toEqual([]);
+
+  check.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a", "agent-b"]]));
+  world.sync.dispose();
+});
+
+test("losing the connection during a check releases both the check and what it replaced", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  await world.nextMembership();
+  world.sync.setConnected(false);
+
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a"], ["agent-a"]]));
+  world.sync.dispose();
+});
+
+test("a replacement the daemon refuses still releases the subscription it replaced", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  const check = await world.nextMembership();
+  check.fail("refused");
+
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a"]]));
+  world.sync.dispose();
+});
+
+test("foregrounding asks only about visible chats; hidden chats stay caught up", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.cursors.set("agent-b", { epoch: "epoch-b", endSeq: 2 });
+  world.openedEarlier(["agent-b"]);
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current", "agent-b": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+
+  const check = await world.nextMembership();
+  expect(check.agentIds).toEqual(["agent-a", "agent-b"]);
+  expect(check.cursors).toEqual({ "agent-a": { epoch: "epoch-a", seq: 1 } });
+  expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready");
+  check.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("a gap found while the check is outstanding wins over a current answer", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  const membership = await world.nextMembership();
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.expectNoPendingFetch();
+  membership.succeed({ "agent-a": "current" });
+
+  const fetch = await world.nextFetch("agent-a");
+  expect(fetch.request).toMatchObject({ direction: "after", cursor: { seq: 42 } });
+  expect(world.appliedCurrent).toEqual([]);
+  fetch.respond({ hasNewer: false });
+  world.sync.dispose();
+});
+
+test("a failed check reports the error and retries through membership", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+
+  (await world.nextMembership()).fail("subscribe failed");
+
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error"));
+  world.sync.retryVisibleAgentTimeline("agent-a");
+  const retry = await world.nextMembership();
+  expect(retry.cursors).toEqual({ "agent-a": { epoch: "epoch-a", seq: 42 } });
+  retry.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("reconnecting reports reattaching instead of pending until the check answers", async () => {
+  vi.useFakeTimers();
+  try {
+    const world = freshnessWorld();
+    world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+    world.show("pane", ["agent-a"]);
+    world.sync.setConnected(true);
+    (await world.nextMembership()).succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+
+    world.sync.setConnected(false);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("reattaching");
+    world.sync.setConnected(true);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("reattaching");
+
+    const check = await world.nextMembership();
+    await vi.advanceTimersByTimeAsync(FRESHNESS_CHECK_QUIET_MS * 4);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("reattaching");
+
+    check.succeed({ "agent-a": "current" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+    world.expectNoPendingFetch();
+    world.sync.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("without the daemon capability nothing changes: no cursors, no checking, fetch on foreground", async () => {
+  const world = new TimelineWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 42 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+
+  const membership = await world.nextMembership();
+  expect(membership.cursors).toBeUndefined();
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  membership.succeed();
+  const first = await world.nextFetch("agent-a");
+  expect(first.request.direction).toBe("after");
+  first.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  expect((await world.nextFetch("agent-a")).request.direction).toBe("after");
+  world.expectNoPendingMembership();
+  world.sync.dispose();
 });
