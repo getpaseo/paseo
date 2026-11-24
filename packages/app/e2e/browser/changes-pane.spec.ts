@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
@@ -495,6 +496,56 @@ test("Changes offers Push for a branch that was never pushed and the push sets i
       .poll(() => branchUpstream(workspace, "feature"), { timeout: 30_000 })
       .toBe("origin/feature");
     await expect(primary).not.toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+});
+
+test("Changes pushes and pulls a branch whose only remote is not named origin", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["remote", "rename", "origin", "doras-mono"], { cwd: repoPath });
+    // git pull stops on a branch that is both ahead and behind until it is told how to combine them.
+    execFileSync("git", ["config", "pull.rebase", "false"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await test.step("a branch that is ahead offers Push and the push updates the remote", async () => {
+    await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+    commitAllWithGit(workspace.repoPath, "Local work");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [ahead 1]");
+    await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+    await primary.click();
+    await expectInSyncWithRemote(workspace);
+    expect(remoteBranchSubjects(workspace, "main")).toContain("Local work");
+    await expectNoGitActionLeft(page);
+  });
+  await test.step("a branch that is behind offers Pull and the pull brings the commits in", async () => {
+    pushTeammateCommits(workspace, ["Teammate one", "Teammate two"]);
+    fetchRemote(workspace, "doras-mono");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [behind 2]");
+    await expect(primary).toHaveAccessibleName("Pull", { timeout: 30_000 });
+    await primary.click();
+    await expectInSyncWithRemote(workspace);
+    expect(localBranchSubjects(workspace)).toEqual(
+      expect.arrayContaining(["Local work", "Teammate one", "Teammate two"]),
+    );
+    await expectNoGitActionLeft(page);
+  });
+  await test.step("a branch that is ahead and behind pulls and then pushes", async () => {
+    await writeFile(path.join(workspace.repoPath, "tracked.ts"), "export const tracked = 3;\n");
+    commitAllWithGit(workspace.repoPath, "More local work");
+    pushTeammateCommits(workspace, ["Teammate three", "Teammate four"]);
+    fetchRemote(workspace, "doras-mono");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [ahead 1, behind 2]");
+    await expect(primary).toHaveAccessibleName("Pull", { timeout: 30_000 });
+    await page.getByTestId("changes-primary-cta-caret").click();
+    await page.getByTestId("changes-menu-pull-and-push").click();
+    await expectInSyncWithRemote(workspace);
+    expect(remoteBranchSubjects(workspace, "main")).toEqual(
+      expect.arrayContaining(["More local work", "Teammate three", "Teammate four"]),
+    );
+    await expectNoGitActionLeft(page);
   });
 });
 
@@ -2200,6 +2251,79 @@ function remoteBranchHead(workspace: RemoteWorkspace, branch: string): string | 
     encoding: "utf8",
   }).trim();
   return line ? (line.split("\t")[0] ?? null) : null;
+}
+
+// The branch line of `git status -sb`, such as "## main...origin/main [ahead 1, behind 2]".
+function trackingStatus(workspace: RemoteWorkspace): string {
+  const status = execFileSync("git", ["status", "-sb"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  });
+  return status.split("\n")[0] ?? "";
+}
+
+// Neither ahead nor behind, which a push reaches only after the remote accepted it.
+async function expectInSyncWithRemote(workspace: RemoteWorkspace): Promise<void> {
+  await expect
+    .poll(() => trackingStatus(workspace), { timeout: 30_000 })
+    .toMatch(/^## [^ ]+\.\.\.[^ ]+$/);
+}
+
+// A clean main that is in sync with its remote has no git action, so the button is gone.
+async function expectNoGitActionLeft(page: Page): Promise<void> {
+  await expect(page.getByTestId("changes-primary-cta")).toBeHidden({ timeout: 30_000 });
+}
+
+function localBranchSubjects(workspace: RemoteWorkspace): string[] {
+  return commitSubjects(workspace.repoPath, "HEAD");
+}
+
+function remoteBranchSubjects(workspace: RemoteWorkspace, branch: string): string[] {
+  return commitSubjects(workspace.remotePath, branch);
+}
+
+function commitSubjects(repoPath: string, revision: string): string[] {
+  const log = execFileSync("git", ["log", "--format=%s", revision], {
+    cwd: repoPath,
+    encoding: "utf8",
+  });
+  return log.trim().split("\n");
+}
+
+// Paseo fetches only origin in the background, so the checkout learns about another remote's
+// commits when the user fetches it.
+function fetchRemote(workspace: RemoteWorkspace, remoteName: string): void {
+  execFileSync("git", ["fetch", "--quiet", remoteName], { cwd: workspace.repoPath });
+}
+
+// Lands commits on the remote's main from a second clone, as a teammate's push does.
+function pushTeammateCommits(workspace: RemoteWorkspace, subjects: string[]): void {
+  const clonePath = mkdtempSync(path.join(path.dirname(workspace.repoPath), "changes-teammate-"));
+  try {
+    execFileSync("git", ["clone", "--quiet", workspace.remotePath, clonePath]);
+    for (const subject of subjects) {
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Teammate",
+          "-c",
+          "user.email=teammate@paseo.test",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "--quiet",
+          "--allow-empty",
+          "-m",
+          subject,
+        ],
+        { cwd: clonePath },
+      );
+    }
+    execFileSync("git", ["push", "--quiet", "origin", "HEAD:main"], { cwd: clonePath });
+  } finally {
+    rmSync(clonePath, { recursive: true, force: true });
+  }
 }
 
 // Empty until the branch has an upstream.

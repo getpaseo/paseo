@@ -5824,10 +5824,20 @@ const CheckoutStatusCommonSchema = z.object({
   // as when the clone keeps no remote-tracking ref for the upstream). Absent from daemons that
   // predate it, which report all but "tracked" as a null upstreamRef.
   upstreamState: z.enum(["tracked", "none", "gone", "unknown"]).optional(),
-  // The remote a first push publishes currentBranch to, when the daemon can confirm git would
-  // push the branch there too. Null when there is no such remote, as when origin is missing or
-  // git is set to push the branch to another remote (branch.<name>.pushRemote,
-  // remote.pushDefault). Absent from daemons that predate it.
+  // The remote Pull fetches currentBranch from, as git names it: the remote of the branch's
+  // configured upstream, which is not necessarily origin, or "." when the upstream is a local
+  // branch. Null when the branch has no upstream. Absent from daemons that predate it, which
+  // pull only in checkouts that have origin (hasRemote).
+  pullRemote: z.string().nullable().optional(),
+  // The remote Push sends currentBranch to, resolved as the daemon's push resolves it. It is not
+  // necessarily origin. Null when Push has nowhere to send the branch, as when it has no upstream
+  // and origin is missing, or git is set to push it to another remote (branch.<name>.pushRemote,
+  // remote.pushDefault). Absent from daemons that predate it, which push only in checkouts that
+  // have origin (hasRemote).
+  pushRemote: z.string().nullable().optional(),
+  // "origin" when Push sends currentBranch to origin, and null otherwise. Clients that predate
+  // pushRemote read it to offer a first push; newer clients read pushRemote instead. Absent from
+  // daemons that predate it.
   firstPushRemote: z.string().nullable().optional(),
   forgeWeb: ForgeWebSchema.optional(),
 });

@@ -72,6 +72,41 @@ test("base selection RPCs are correlated while older checkout and branch message
   expect(WorkspaceBaseBranchSetResponseSchema.parse(response)).toEqual(response);
 });
 
+test("checkout status stays valid without pull and push remotes and retains them when sent", () => {
+  const olderDaemonPayload = {
+    cwd: "/repo",
+    requestId: "status",
+    error: null,
+    isGit: true,
+    isPaseoOwnedWorktree: false,
+    repoRoot: "/repo",
+    currentBranch: "main",
+    isDirty: false,
+    baseRef: "main",
+    aheadBehind: null,
+    aheadOfOrigin: 1,
+    behindOfOrigin: 2,
+    hasRemote: false,
+    remoteUrl: null,
+    upstreamRef: "refs/remotes/doras-mono/main",
+    upstreamState: "tracked",
+    firstPushRemote: null,
+  };
+  const parse = (payload: Record<string, unknown>) =>
+    CheckoutStatusResponseSchema.parse({ type: "checkout_status_response", payload }).payload;
+
+  const older = parse(olderDaemonPayload);
+  expect(older.pullRemote).toBeUndefined();
+  expect(older.pushRemote).toBeUndefined();
+  expect(
+    parse({ ...olderDaemonPayload, pullRemote: "doras-mono", pushRemote: "doras-mono" }),
+  ).toMatchObject({ pullRemote: "doras-mono", pushRemote: "doras-mono" });
+  expect(parse({ ...olderDaemonPayload, pullRemote: "upstream", pushRemote: null })).toMatchObject({
+    pullRemote: "upstream",
+    pushRemote: null,
+  });
+});
+
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
     type: "list_terminals_response",
