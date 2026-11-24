@@ -227,8 +227,27 @@ test("refresh follows the active Go account and re-reads its rotated key", async
   expect(JSON.stringify(report)).not.toContain("rotated-key");
 });
 
-// OpenCode 2 removes a login by deleting it and never reads auth.json again, so the file's key is
-// not a login OpenCode 2 has.
+// The state in #10659: OpenCode 2 opened the directory once and imported an unrelated login, and
+// the Go key is only in auth.json.
+test("reads the auth.json Go key when OpenCode 2 holds only an unrelated login", async () => {
+  await database([{ integration: "manifest", label: "API key" }]);
+  await openCode2([{ integrationID: "manifest", value: { type: "key", key: "other" } }]);
+  const accounts = await discover(install);
+  expect(accounts).toEqual([account("credentials")]);
+  const requests: Array<string | null> = [];
+  const report = await fetchUsage(
+    inputSchema.parse(accounts[0]!.input),
+    async (_url, init) => {
+      requests.push(bearer(init));
+      return Response.json(upstreamResponse);
+    },
+    install,
+  );
+  expect(report.status).toBe("available");
+  expect(requests).toEqual(["Bearer file-key", "Bearer file-key"]);
+});
+
+// A login OpenCode 2 cannot serve Go with from opencode.ai counts as no login.
 test.each<[string, Credential[]]>([
   ["no logins", []],
   ["an unrelated login", [{ integrationID: "manifest", value: { type: "key", key: "other" } }]],
@@ -266,8 +285,23 @@ test.each<[string, Credential[]]>([
   ],
   ["an unreadable Go login", [{ integrationID: "opencode-go", value: "invalid" }]],
   ["an empty Go key", [goKey("")]],
-])("does not revive the auth.json key when OpenCode 2 has %s", async (_name, credentials) => {
+])("reads the auth.json Go key when OpenCode 2 has %s", async (_name, credentials) => {
   await openCode2(credentials);
+  expect(await discover(install)).toEqual([account("credentials")]);
+  const report = await fetchUsage(
+    { store: "credentials" },
+    async (_url, init) => {
+      expect(bearer(init)).toBe("Bearer file-key");
+      return Response.json(upstreamResponse);
+    },
+    install,
+  );
+  expect(report.status).toBe("available");
+});
+
+test("discovers no account when neither OpenCode 2 nor auth.json has a Go login", async () => {
+  await openCode2([{ integrationID: "manifest", value: { type: "key", key: "other" } }]);
+  await rm(authFile);
   expect(await discover(install)).toEqual([]);
   await expect(
     fetchUsage(
@@ -280,6 +314,7 @@ test.each<[string, Credential[]]>([
   ).rejects.toThrow("login no longer exists");
 });
 
+// A failed listing does not show that OpenCode 2 has no Go login, so auth.json is not read.
 test.each([
   ["has no login listing", { version: "opencode v2.0.10" }],
   ["answers with something else", { version: "opencode v2.4.1", exported: "not JSON" }],
@@ -287,7 +322,7 @@ test.each([
     "lists logins in another shape",
     { version: "opencode v2.4.1", exported: JSON.stringify({ "opencode-go": "listed-secret" }) },
   ],
-])("fails instead of reading no login when OpenCode 2 %s", async (_name, state) => {
+])("fails instead of reading auth.json when OpenCode 2 %s", async (_name, state) => {
   await installState(state);
   const failure = await discover(install).catch((error: unknown) => error);
   expect(failure).toBeInstanceOf(Error);

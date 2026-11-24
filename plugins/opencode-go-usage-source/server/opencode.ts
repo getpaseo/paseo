@@ -58,7 +58,8 @@ export function installedOpenCode(env: NodeJS.ProcessEnv = process.env): OpenCod
 
 /**
  * Where the installed OpenCode keeps its logins. OpenCode 2 keeps them behind its own credential
- * listing. OpenCode 1 keeps them in auth.json, even though its database has a credential table too.
+ * listing, and `readLogins` reads auth.json after it. OpenCode 1 keeps them in auth.json only,
+ * even though its database has a credential table too.
  */
 export async function loginStore(install: OpenCodeInstall): Promise<Input["store"]> {
   let version: string;
@@ -75,18 +76,24 @@ export async function loginStore(install: OpenCodeInstall): Promise<Input["store
   return Number(VERSION.exec(version)?.[1] ?? 1) >= 2 ? "credentials" : "file";
 }
 
-/** Re-reads the store. A failed OpenCode 2 read throws, so it never reads as "no login". */
+/**
+ * Re-reads the store. A Go login in OpenCode 2 wins over auth.json, so a stale key in the file
+ * never replaces it. Without one, the file's key is used: OpenCode 2 imports auth.json only once,
+ * so a key saved there later is in no other place. A failed OpenCode 2 read throws, because it
+ * does not show that OpenCode 2 has no Go login.
+ */
 export async function readLogins(install: OpenCodeInstall, store: Input["store"]): Promise<Logins> {
-  if (store === "file") {
-    const key = await readFileKey(install.authFile);
-    return { opencode: null, go: key ? { type: "key", key } : null };
+  if (store === "credentials") {
+    const credentials = await exportCredentials(install);
+    const selected = (integrationID: string) => {
+      const entry = credentials.find((item) => item.integrationID === integrationID && item.active);
+      return entry ? goCredential(integrationID, entry.value) : null;
+    };
+    const logins = { opencode: selected("opencode"), go: selected("opencode-go") };
+    if (logins.opencode || logins.go) return logins;
   }
-  const credentials = await exportCredentials(install);
-  const selected = (integrationID: string) => {
-    const entry = credentials.find((item) => item.integrationID === integrationID && item.active);
-    return entry ? goCredential(integrationID, entry.value) : null;
-  };
-  return { opencode: selected("opencode"), go: selected("opencode-go") };
+  const key = await readFileKey(install.authFile);
+  return { opencode: null, go: key ? { type: "key", key } : null };
 }
 
 /** Runs OpenCode for plain output. OpenCode 2 colors it when the environment forces colors. */
