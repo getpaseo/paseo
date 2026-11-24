@@ -13973,6 +13973,41 @@ test("commits startup notices once on create and after restored history", async 
   }
 });
 
+test("keeps startup notices once across reload and archive/unarchive", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-startup-notice-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const notice: AgentTimelineItem = { type: "notification", level: "info", message: "Full access" };
+  class NotifyingSession extends TestAgentSession {
+    readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new NotifyingSession(config);
+    }
+    override async resumeSession() {
+      return new NotifyingSession({ provider: "codex", cwd: workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let agentId: string | undefined;
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    agentId = created.id;
+    expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual([notice]);
+
+    await manager.reloadAgentSession(agentId);
+    expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual([notice]);
+
+    await manager.archiveAgent(agentId);
+    await manager.unarchiveSnapshot(agentId);
+    expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual([notice]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("failed startup history closes the session without registering an agent", async () => {
   let closed = false;
   class FailingHistorySession extends TestAgentSession {

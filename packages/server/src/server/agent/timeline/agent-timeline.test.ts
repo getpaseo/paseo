@@ -880,6 +880,34 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)(
       ]);
     });
 
+    it("allows a plugin item to reuse its id after an earlier copy was retired", async () => {
+      const timeline = new AgentTimeline(createBackend());
+      await timeline.create(scope, { epoch: "e" });
+      await timeline.append(scope, [prompt("a", "t1"), prompt("b", "t2")]);
+      const pluginItem = (step: number): AgentTimelineItem => ({
+        type: "plugin",
+        pluginId: "reviewer",
+        id: "review",
+        surface: "card",
+        payload: { step },
+      });
+      await timeline.ingest(scope, { item: pluginItem(1) });
+      await rewind(timeline, "b");
+
+      const lateTurn = await timeline.ingest(scope, { item: pluginItem(99), turnId: "t2" });
+      expect(lateTurn.kind).toBe("dropped");
+
+      const reused = await timeline.ingest(scope, { item: pluginItem(2) });
+      expect(reused.kind).toBe("recorded");
+      const replaced = await timeline.ingest(scope, { item: pluginItem(3) });
+      expect(replaced.kind).toBe("recorded");
+
+      expect((await timeline.readRows(scope)).map((row) => row.item)).toEqual([
+        { type: "user_message", text: "a", messageId: "a" },
+        pluginItem(3),
+      ]);
+    });
+
     it("allows one open rewind at a time and leaves history alone when abandoned", async () => {
       const { timeline } = await conversation();
       const intent = await timeline.beginRewind(scope, "b");
@@ -1193,7 +1221,7 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     const backend = new DeferredTimelineBackend(create());
     const timeline = new AgentTimeline(backend);
     await timeline.create(scope, { epoch: "e" });
-    await timeline.append(scope, entries);
+    for (const entry of entries) await timeline.ingest(scope, entry);
     return { backend, timeline };
   }
 
@@ -1230,6 +1258,13 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     expect((await timeline.readRows(scope))[4]).toMatchObject({
       item: { messageId: "c", clientMessageId: "client-c" },
       providerMessageId: "c",
+    });
+
+    const appended = await timeline.append(scope, [steer("d"), reply("D")]);
+    expect(appended.kind).toBe("recorded");
+    expect((await timeline.readRows(scope))[6]).toMatchObject({
+      item: { messageId: "d", clientMessageId: "client-d" },
+      providerMessageId: "d",
     });
   });
 

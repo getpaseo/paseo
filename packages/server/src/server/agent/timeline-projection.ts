@@ -430,7 +430,8 @@ export class TimelineProjection {
 
   /**
    * Whether a new source row belongs to retired history: late output of a turn with no active
-   * rows left, or a late update to a retired item. An update to an active item is never retired.
+   * rows left, or a late update to a retired tool call. An update to an active item is never
+   * retired, and plugin rows may reuse stable ids in later turns.
    */
   isRetired(row: Pick<AgentTimelineRow, "item" | "turnId">): boolean {
     if (row.turnId !== undefined && this.retiredTurnIds.has(row.turnId)) return true;
@@ -448,8 +449,10 @@ export class TimelineProjection {
     const retired = this.rows.splice(cut);
     const activeTurnIds = new Set(this.rows.map((row) => row.turnId));
     for (const row of retired) {
-      const identity = timelineItemIdentity(row.item);
-      if (identity !== null) this.retiredIdentities.add(identity);
+      if (row.item.type === "tool_call") {
+        const identity = timelineItemIdentity(row.item);
+        if (identity !== null) this.retiredIdentities.add(identity);
+      }
       if (row.turnId !== undefined && !activeTurnIds.has(row.turnId)) {
         this.retiredTurnIds.add(row.turnId);
       }

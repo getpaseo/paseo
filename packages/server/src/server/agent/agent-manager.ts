@@ -93,7 +93,6 @@ import {
   type TimelineRetirementCommit,
   type TimelineRewindIntent,
   type TimelineScope,
-  type TimelineSeed,
 } from "./timeline/index.js";
 import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -776,32 +775,6 @@ function validateAgentId(agentId: string, source: string): string {
   return result.data;
 }
 
-function buildExplicitTimelineSeedForRegister(
-  now: Date,
-  options:
-    | {
-        timeline?: AgentTimelineItem[];
-        timelineRows?: AgentTimelineRow[];
-        timelineNextSeq?: number;
-        createdAt?: Date;
-        updatedAt?: Date;
-      }
-    | undefined,
-): TimelineSeed | null {
-  const hasTimeline = Boolean(options?.timeline?.length);
-  const hasTimelineRows = Boolean(options?.timelineRows?.length);
-  const hasTimelineNextSeq = options?.timelineNextSeq !== undefined;
-  if (!hasTimeline && !hasTimelineRows && !hasTimelineNextSeq) {
-    return null;
-  }
-  return {
-    entries: options?.timeline?.map((item) => ({ item })),
-    rows: options?.timelineRows,
-    nextSeq: options?.timelineNextSeq,
-    timestamp: (options?.updatedAt ?? options?.createdAt ?? now).toISOString(),
-  };
-}
-
 function toTimelineEntry(event: Extract<AgentStreamEvent, { type: "timeline" }>): TimelineEntry {
   return event.timestamp ? { item: event.item, timestamp: event.timestamp } : { item: event.item };
 }
@@ -811,28 +784,23 @@ function historyEvent(provider: AgentProvider, commit: TimelineCommit): AgentStr
   return { type: "timeline", provider, item: commit.row.item };
 }
 
-function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
-  const rows: AgentTimelineRow[] = [];
+function projectImportedTimelineEntries(
+  entries: readonly ImportedTimelineEntry[],
+): TimelineEntry[] {
+  const projected: TimelineEntry[] = [];
   for (const entry of entries) {
     for (const item of projectAgentMessages(entry.item)) {
-      rows.push({
-        seq: rows.length + 1,
-        timestamp: entry.timestamp ?? new Date().toISOString(),
-        item: limitAgentTimelineItemContent(item),
-        ...(item.type === "user_message" && item.clientMessageId && item.messageId
-          ? { providerMessageId: item.messageId }
-          : {}),
-      });
+      projected.push(entry.timestamp ? { item, timestamp: entry.timestamp } : { item });
     }
   }
-  return rows;
+  return projected;
 }
 
 function resolveImportedAgentTitle(
   config: AgentSessionConfig,
-  timelineRows: readonly AgentTimelineRow[],
+  entries: readonly Pick<TimelineEntry, "item">[],
 ): string | null {
-  const initialPrompt = getFirstUserMessageTextFromRows(timelineRows);
+  const initialPrompt = getFirstUserMessageTextFromEntries(entries);
   if (!initialPrompt) {
     return null;
   }
@@ -843,9 +811,11 @@ function resolveImportedAgentTitle(
   return explicitTitle ?? provisionalTitle ?? null;
 }
 
-function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): string | null {
-  for (const row of rows) {
-    const item = row.item;
+function getFirstUserMessageTextFromEntries(
+  entries: readonly Pick<TimelineEntry, "item">[],
+): string | null {
+  for (const entry of entries) {
+    const item = entry.item;
     if (item.type !== "user_message") {
       continue;
     }
@@ -1902,16 +1872,15 @@ export class AgentManager {
         }),
         { resolveDefaultModel: false },
       );
-      const timelineRows = buildImportedTimelineRows(imported.timeline);
-      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const importedEntries = projectImportedTimelineEntries(imported.timeline);
+      const initialTitle = resolveImportedAgentTitle(importedConfig, importedEntries);
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
         launchedOptions,
         labels: input.labels,
         workspaceId: input.workspaceId,
-        timelineRows,
-        timelineNextSeq: timelineRows.length + 1,
+        providerHistory: importedEntries,
         persistence: imported.persistence,
         initialTitle,
         publishWhenReady: true,
@@ -4591,9 +4560,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
-      timeline?: AgentTimelineItem[];
-      timelineRows?: AgentTimelineRow[];
-      timelineNextSeq?: number;
+      providerHistory?: readonly TimelineEntry[];
       persistence?: AgentPersistenceHandle;
       /**
        * Without history in the timeline, import the provider's own history into it before the
@@ -4640,7 +4607,7 @@ export class AgentManager {
       const now = new Date();
       // Read history before publishing the agent: a provider failure must leave the
       // session unregistered so the registration catch closes it.
-      const imported = await this.initializeAgentTimelineForRegister({
+      const timelineInit = await this.initializeAgentTimelineForRegister({
         agentId: resolvedAgentId,
         session,
         now,
@@ -4666,21 +4633,18 @@ export class AgentManager {
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-      if (imported) {
-        await this.applyProviderSubagentHistory(resolvedAgentId, imported.subagents, {
+      if (timelineInit.kind === "imported" && timelineInit.subagents.length > 0) {
+        await this.applyProviderSubagentHistory(resolvedAgentId, timelineInit.subagents, {
           dispatch: false,
         });
       }
       if (session.initialTimeline?.length) {
-        // An imported history already holds the startup rows.
-        if (!imported) {
+        // Opening notices belong once on a newly created timeline; imported and kept histories
+        // already carry them.
+        if (timelineInit.kind === "created") {
           await this.timeline.append(
             { agentId: managed.id },
-            buildImportedTimelineRows(session.initialTimeline).map((row) => ({
-              item: row.item,
-              timestamp: row.timestamp,
-              providerMessageId: row.providerMessageId,
-            })),
+            projectImportedTimelineEntries(session.initialTimeline),
           );
         }
         this.refreshSessionPersistence(managed);
@@ -4760,40 +4724,45 @@ export class AgentManager {
     return new Error(`Provider '${config.provider}' does not support MCP servers${source}`);
   }
 
-  /** Returns the imported provider history, or null when the timeline was seeded or kept. */
+  /** Initializes or preserves the agent timeline before registration. */
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     session: AgentSession;
     now: Date;
     options:
       | {
-          timeline?: AgentTimelineItem[];
-          timelineRows?: AgentTimelineRow[];
-          timelineNextSeq?: number;
+          providerHistory?: readonly TimelineEntry[];
           persistence?: AgentPersistenceHandle;
           importMissingHistory?: boolean;
           createdAt?: Date;
           updatedAt?: Date;
         }
       | undefined;
-  }): Promise<ProviderHistory | null> {
+  }): Promise<
+    | { kind: "created" }
+    | { kind: "kept" }
+    | { kind: "imported"; subagents: ProviderSubagentStreamEvent[] }
+  > {
     const { agentId, session, now, options } = params;
     const scope: TimelineScope = { agentId };
-    const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
-    if (explicitTimelineSeed) {
-      await this.timeline.create(scope, explicitTimelineSeed);
-      return null;
+    if (options?.providerHistory) {
+      const result = await this.timeline.importHistory(scope, options.providerHistory, {
+        timestamp: (options.updatedAt ?? options.createdAt ?? now).toISOString(),
+      });
+      return result.kind === "imported" ? { kind: "imported", subagents: [] } : { kind: "kept" };
     }
-    if (await this.timeline.describe(scope)) return null;
+    if (await this.timeline.describe(scope)) return { kind: "kept" };
     if (!options?.importMissingHistory) {
       await this.timeline.create(scope, { timestamp: now.toISOString() });
-      return null;
+      return { kind: "created" };
     }
     const history = await this.readProviderHistory(session.streamHistory());
     const result = await this.timeline.importHistory(scope, history.entries, {
       timestamp: now.toISOString(),
     });
-    return result.kind === "imported" ? history : null;
+    return result.kind === "imported"
+      ? { kind: "imported", subagents: history.subagents }
+      : { kind: "kept" };
   }
 
   /**

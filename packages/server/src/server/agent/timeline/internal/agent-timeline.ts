@@ -310,7 +310,8 @@ export class AgentTimeline {
     options?: TimelineAppendOptions,
   ): Promise<TimelineAppendResult> {
     return this.run(scope, async () => {
-      const commits = entries.length === 0 ? [] : await this.commit(scope, entries);
+      const commits =
+        entries.length === 0 ? [] : await this.commit(scope, entries.map(providerHistoryEntry));
       const failure = publishCommitted(options?.publish, commits);
       return failure
         ? { kind: "unpublished", commits, error: failure.error }

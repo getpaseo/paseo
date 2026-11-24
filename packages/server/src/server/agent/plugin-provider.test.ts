@@ -859,6 +859,15 @@ test("reload after failed plugin rewind replay resumes the committed fork", asyn
   );
 });
 
+test("rewinding a plugin agent to its first prompt empties the chat and accepts the next prompt", async () => {
+  await withRewindAgent(async ({ manager, agentId, messages }) => {
+    await manager.rewind(agentId, "client-A", "conversation");
+    expect(await messages()).toEqual([]);
+    await manager.runAgent(agentId, "D");
+    expect(await messages()).toEqual(["D", "Reply D"]);
+  });
+});
+
 test("closing during plugin rewind replay closes each native binding once", async () => {
   let opened!: () => void;
   let release!: () => void;
@@ -2302,13 +2311,12 @@ describe("plugin conversation rewind", () => {
     return { harness, registry, session };
   }
 
-  // The plugin protocol completes a revert without saying which messages it removed, so the
-  // resumed session's replay settles it.
-  test("a completed revert is unreported", async () => {
+  // Completing `session.revert` guarantees the plugin rewound to the supplied revert token.
+  test("a completed revert reports an exact cut at the target", async () => {
     const { harness, registry, session } = await openRevertableSession("request.completed");
     try {
       await expect(session.revertConversation!({ messageId: "prompt-b" })).resolves.toEqual({
-        kind: "unreported",
+        kind: "at_target",
       });
       expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([
         expect.objectContaining({ token: "before-b", scope: "conversation" }),

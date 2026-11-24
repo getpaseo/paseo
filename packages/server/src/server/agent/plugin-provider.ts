@@ -57,7 +57,7 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
-  ConversationRewindResult,
+  ConversationRewindCut,
 } from "./agent-sdk-types.js";
 import { RewindNotAppliedError } from "./agent-sdk-types.js";
 import {
@@ -1459,21 +1459,20 @@ class PluginAgentSession implements AgentSession {
     return ended;
   }
 
-  // A plugin completes `session.revert` without saying which messages it removed, and a failed
-  // request may have removed some, so neither is a cut. Paseo settles a completed one from the
-  // history the plugin replays when the session is resumed.
-  async revertConversation(input: { messageId: string }): Promise<ConversationRewindResult> {
+  // Completing `session.revert` guarantees the plugin rewound to the supplied revert token. A
+  // failed request or replay throws so the manager leaves the rewind open to settle on reload.
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
     await this.revert(input.messageId, "conversation");
-    return { kind: "unreported" };
+    return { kind: "at_target" };
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
     await this.revert(input.messageId, "files");
   }
 
-  async revertBoth(input: { messageId: string }): Promise<ConversationRewindResult> {
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
     await this.revert(input.messageId, "both");
-    return { kind: "unreported" };
+    return { kind: "at_target" };
   }
 
   timelineHistory(): ImportedProviderSession["timeline"] {
