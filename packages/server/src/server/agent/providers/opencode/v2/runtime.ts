@@ -51,7 +51,7 @@ export interface V2RuntimeOptions {
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   externalServer?: ExternalOpenCodeServer;
-  selection?: OpenCodeServiceSelection;
+  selection?: OpenCodeServiceSelection | (() => Promise<OpenCodeServiceSelection>);
   bridge?: OpenCodeBridge;
 }
 
@@ -68,12 +68,17 @@ export class V2Runtime {
   private generations = new Set<Generation>();
   private starts = new Set<Promise<Generation>>();
   private closed = false;
-  private readonly selection: Promise<OpenCodeServiceSelection>;
+  private readonly selectService: () => Promise<OpenCodeServiceSelection>;
 
   constructor(private readonly options: V2RuntimeOptions) {
-    this.selection = options.selection
-      ? Promise.resolve(options.selection)
-      : selectOpenCodeService({
+    if (typeof options.selection === "function") {
+      this.selectService = options.selection;
+    } else if (options.selection) {
+      const selection = options.selection;
+      this.selectService = () => Promise.resolve(selection);
+    } else {
+      this.selectService = () =>
+        selectOpenCodeService({
           explicit:
             options.externalServer ??
             resolveExternalOpenCodeServer({
@@ -82,22 +87,23 @@ export class V2Runtime {
             }),
           env: options.settings?.env,
         });
+    }
   }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
     this.assertBridgePort();
-    const selection = await raceProviderRefreshAbort(input.signal, this.selection);
+    const selection = await raceProviderRefreshAbort(input.signal, this.selectService());
     let pending: Promise<Generation>;
     if (selection.kind !== "owned") {
       this.assertSharedConfiguration(input, selection);
-      this.current ??= this.startTracked();
+      this.current ??= this.startTracked(undefined, selection);
       pending = this.current;
     } else if (input.env || input.dedicated) {
-      pending = this.startTracked(input.env);
+      pending = this.startTracked(input.env, selection);
     } else {
-      if (!this.current) this.current = this.startTracked();
+      if (!this.current) this.current = this.startTracked(undefined, selection);
       pending = this.current;
     }
     let generation: Generation;
@@ -201,8 +207,11 @@ export class V2Runtime {
     this.current = null;
   }
 
-  private startTracked(env?: Record<string, string>): Promise<Generation> {
-    const pending = this.start(env);
+  private startTracked(
+    env: Record<string, string> | undefined,
+    selection: OpenCodeServiceSelection,
+  ): Promise<Generation> {
+    const pending = this.start(env, selection);
     this.starts.add(pending);
     void pending.then(
       (generation) =>
@@ -219,8 +228,10 @@ export class V2Runtime {
     return pending;
   }
 
-  private async start(env: Record<string, string> = {}): Promise<Generation> {
-    const selection = await this.selection;
+  private async start(
+    env: Record<string, string> = {},
+    selection: OpenCodeServiceSelection,
+  ): Promise<Generation> {
     if (selection.kind !== "owned") {
       const generation: Generation = {
         ...(await connectSharedService(selection, this.options)),
