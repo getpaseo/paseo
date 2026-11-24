@@ -5031,14 +5031,24 @@ test("sends project.remove.request", async () => {
 for (const route of ["direct", "legacy-workspace", "modern-workspace"] as const) {
   for (const exactRefs of [undefined, false, true]) {
     test.each([
-      { refName: "refs/heads/topic", legacyRef: "topic" },
-      { refName: "refs/heads/refs/remotes/company/topic", legacyRef: "refs/remotes/company/topic" },
-      { refName: "refs/remotes/origin/topic", legacyRef: "topic" },
-      { refName: "refs/remotes/company/topic", legacyRef: null },
-      { refName: "refs/remotes/upstream/topic", legacyRef: null },
+      { refName: "refs/heads/topic", refMode: "exact" as const, legacyRef: "topic" },
+      {
+        refName: "refs/heads/refs/remotes/company/topic",
+        refMode: "exact" as const,
+        legacyRef: "refs/remotes/company/topic",
+      },
+      { refName: "refs/remotes/origin/topic", refMode: "exact" as const, legacyRef: "topic" },
+      { refName: "refs/remotes/company/topic", refMode: "exact" as const, legacyRef: null },
+      { refName: "refs/remotes/upstream/topic", refMode: "exact" as const, legacyRef: null },
+      { refName: "refs/heads/topic", refMode: undefined, legacyRef: "refs/heads/topic" },
+      {
+        refName: "refs/remotes/company/topic",
+        refMode: undefined,
+        legacyRef: "refs/remotes/company/topic",
+      },
     ])(
-      `negotiates exact checkout refs via ${route} (capability: ${exactRefs}): $refName`,
-      async ({ refName, legacyRef }) => {
+      `negotiates exact checkout refs via ${route} (capability: ${exactRefs}): $refMode $refName`,
+      async ({ refName, refMode, legacyRef }) => {
         const mock = createMockTransport();
         const client = new DaemonClient({
           url: "ws://test",
@@ -5059,9 +5069,9 @@ for (const route of ["direct", "legacy-workspace", "modern-workspace"] as const)
         await connecting;
         const creating =
           route === "direct"
-            ? client.createPaseoWorktree({ cwd: "/repo", action: "checkout", refName })
+            ? client.createPaseoWorktree({ cwd: "/repo", action: "checkout", refName, refMode })
             : client.createWorkspace({
-                source: { kind: "worktree", cwd: "/repo", action: "checkout", refName },
+                source: { kind: "worktree", cwd: "/repo", action: "checkout", refName, refMode },
               });
         void creating.catch(() => {});
         if (exactRefs !== true && legacyRef === null) {
@@ -5076,6 +5086,11 @@ for (const route of ["direct", "legacy-workspace", "modern-workspace"] as const)
             ? request.refName
             : z.object({ refName: z.string() }).parse(request.source).refName;
         expect(sentRef).toBe(exactRefs ? refName : legacyRef);
+        expect(
+          route === "direct"
+            ? request.refMode
+            : z.object({ refMode: z.literal("exact").optional() }).parse(request.source).refMode,
+        ).toBe(exactRefs === true ? refMode : undefined);
         mock.triggerMessage(
           wrapSessionMessage({
             type:

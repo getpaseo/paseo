@@ -38,6 +38,7 @@ export interface CreateWorktreeCoreInput {
   worktreeSlug?: string;
   branchName?: string;
   refName?: string;
+  refMode?: "exact";
   action?: "branch-off" | "checkout";
   checkoutSource?: ChangeRequestCheckoutSource;
   githubPrNumber?: number;
@@ -100,6 +101,7 @@ async function createWorktreeAtRepositoryRoot(
     intentInput = {
       action: "checkout",
       refName: input.refName,
+      refMode: input.refMode,
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       worktreeSlug: requestedWorktreeSlug,
@@ -113,6 +115,7 @@ async function createWorktreeAtRepositoryRoot(
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       refName: input.refName,
+      refMode: input.refMode,
       worktreeSlug: requestedWorktreeSlug,
     };
   } else {
@@ -120,6 +123,7 @@ async function createWorktreeAtRepositoryRoot(
     intentInput = {
       action: "branch-off",
       refName: input.refName,
+      refMode: input.refMode,
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       branchName: requestedBranchName,

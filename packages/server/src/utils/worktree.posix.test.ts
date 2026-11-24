@@ -411,6 +411,46 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       },
     );
 
+    it.each(["origin", "company"])(
+      "checks out an unmapped %s tracking ref without widening fetch configuration",
+      async (remote) => {
+        const remotePath = join(tempDir, "unmapped.git");
+        execFileSync("git", ["init", "--bare", "-b", "main", remotePath], { cwd: repoDir });
+        execFileSync("git", ["remote", "add", remote, remotePath], { cwd: repoDir });
+        execFileSync("git", ["push", remote, "main", "main:topic"], { cwd: repoDir });
+        const mapping = `+refs/heads/main:refs/remotes/${remote}/main`;
+        execFileSync("git", ["config", `remote.${remote}.fetch`, mapping], { cwd: repoDir });
+        execFileSync("git", ["fetch", remote, `+refs/heads/topic:refs/remotes/${remote}/topic`], {
+          cwd: repoDir,
+        });
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "unmapped-topic",
+          paseoHome,
+          source: {
+            kind: "checkout-branch",
+            branchName: "topic",
+            remoteRef: `refs/remotes/${remote}/topic`,
+          },
+        });
+        expect(result.branchName).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(
+          execFileSync("git", ["rev-parse", "main"], { cwd: repoDir, encoding: "utf8" }).trim(),
+        );
+        expect(
+          execFileSync("git", ["config", "--get-all", `remote.${remote}.fetch`], {
+            cwd: repoDir,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(mapping);
+      },
+    );
+
     it("checks out an existing local branch that is not checked out elsewhere", async () => {
       execFileSync("git", ["branch", "dev"], { cwd: repoDir });
 

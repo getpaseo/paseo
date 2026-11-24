@@ -117,6 +117,7 @@ describe("pickerItemToCheckoutRequest with an action", () => {
     };
     expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
+      refMode: "exact",
       refName: "refs/remotes/origin/dev",
     });
   });
@@ -155,8 +156,8 @@ describe("refListOptions", () => {
     expect(
       rows.map((row) => pickerItemToCheckoutRequest(data.itemById.get(row.id)!, "checkout")),
     ).toEqual([
-      { action: "checkout", refName: "refs/remotes/upstream/topic" },
-      { action: "checkout", refName: "refs/remotes/company/topic" },
+      { action: "checkout", refMode: "exact", refName: "refs/remotes/upstream/topic" },
+      { action: "checkout", refMode: "exact", refName: "refs/remotes/company/topic" },
     ]);
   });
 

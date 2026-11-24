@@ -531,7 +531,14 @@ interface RepoGitTarget {
     { change: WorkspaceGitRemoteRefChange; expiresAtMs: number }
   >;
   knownRemoteRefs: Set<string> | null;
+  knownRefs: Set<string> | null;
   closed: boolean;
+}
+
+interface RecordRepoRefChangeInput {
+  target: RepoGitTarget;
+  event: FileChange;
+  effect: Extract<ReturnType<typeof classifyGitMetadataPath>, { kind: "ref" }>;
 }
 
 interface RepoMetadataWorkspaceRefresh {
@@ -2531,6 +2538,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
       knownRemoteRefs: null,
+      knownRefs: null,
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
@@ -2660,6 +2668,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         await this.unsubscribeWatcherSubscription(subscription, target.repoGitRoot);
         return false;
       }
+      try {
+        const { stdout } = await this.deps.runGitCommand(
+          ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+          { cwd: target.cwd, envOverlay: READ_ONLY_GIT_ENV },
+        );
+        target.knownRefs = new Set(stdout.split("\n").filter(Boolean));
+        target.knownRemoteRefs = new Set(
+          [...target.knownRefs]
+            .filter((ref) => ref.startsWith("refs/remotes/"))
+            .map((ref) => ref.slice("refs/remotes/".length)),
+        );
+      } catch (error) {
+        target.knownRefs = null;
+        target.knownRemoteRefs = null;
+        this.logger.debug(
+          { err: error, repoGitRoot: target.repoGitRoot },
+          "Unable to snapshot ref names; using structural ref refreshes",
+        );
+      }
       if (
         target.closed ||
         (target.fallbackPolling && !options?.replaceFallback) ||
@@ -2766,9 +2793,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       if (effect.kind === "ref" || effect.kind === "all") defaultRefsChanged = true;
       if (effect.kind !== "ref") continue;
-      const isTopologyChange =
-        event.type === "create" || event.type === "delete" || effect.ref.endsWith("/HEAD");
-      if (isTopologyChange) defaultRefTopologyChanged = true;
+      if (this.recordRefChange({ target, event, effect })) defaultRefTopologyChanged = true;
     }
     if (defaultRefsChanged) this.defaultBranchRefCache.delete(target.repoGitRoot);
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
@@ -2779,6 +2804,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     return defaultRefTopologyChanged ? null : refreshes;
+  }
+
+  private recordRefChange({ target, event, effect }: RecordRepoRefChangeInput): boolean {
+    const qualifiedRef = `${effect.namespace === "local" ? "refs/heads/" : "refs/remotes/"}${effect.ref}`;
+    // Linux reports Git's atomic file replacements as creates, even for existing refs.
+    const isTopologyChange =
+      event.type === "delete" ||
+      target.knownRefs?.has(qualifiedRef) !== true ||
+      (effect.namespace === "remote" && effect.ref.endsWith("/HEAD"));
+
+    if (event.type === "delete") {
+      target.knownRefs?.delete(qualifiedRef);
+      if (effect.namespace === "remote") target.knownRemoteRefs?.delete(effect.ref);
+    } else {
+      target.knownRefs?.add(qualifiedRef);
+      if (effect.namespace === "remote") target.knownRemoteRefs?.add(effect.ref);
+    }
+    return isTopologyChange;
   }
 
   private refreshWorkingTreeIgnoresFromRepoMetadataEvents(
@@ -4161,6 +4204,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.recentFetchRemoteRefChanges.clear();
     for (const change of result.changes) {
       target.recentFetchRemoteRefChanges.set(change.ref, { change, expiresAtMs });
+      if (change.kind === "deleted") target.knownRefs?.delete(`refs/remotes/${change.ref}`);
+      else target.knownRefs?.add(`refs/remotes/${change.ref}`);
     }
     this.flushBufferedFetchMetadataEvents(target);
     if (

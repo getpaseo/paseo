@@ -1590,6 +1590,92 @@ test("a failed parent lookup is not repeated by forced refreshes before the retr
   expect(lookups).toBe(1);
 }, 30_000);
 
+test("atomic branch replacements refresh only their dependent checkout", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-atomic-ref-")));
+  const repo = path.join(root, "repo");
+  const one = path.join(root, "one");
+  const two = path.join(root, "two");
+  mkdirSync(repo);
+  function git(...args: string[]) {
+    return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+  }
+  git("init", "-b", "main");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  );
+  git("worktree", "add", "-b", "feature/one", one);
+  git("worktree", "add", "-b", "feature/two", two);
+  const observer = createFileObserver();
+  const refObserved = Promise.withResolvers<void>();
+  const reads = new Map<string, number>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    fileObserver: observer,
+    deps: {
+      getCheckoutStatus: async (cwd, context) => {
+        reads.set(cwd, (reads.get(cwd) ?? 0) + 1);
+        return readCheckoutStatus(cwd, context);
+      },
+      subscribe: async (directory, callback, options) =>
+        observer.subscribe(
+          directory,
+          (error, events) => {
+            callback(error, events);
+            if (
+              events.some((event) =>
+                event.path.replaceAll("\\", "/").endsWith("/refs/heads/feature/one"),
+              )
+            )
+              refObserved.resolve();
+          },
+          options,
+        ),
+    },
+  });
+  startGitCommandMetrics();
+  const subscriptions = [repo, one, two].map((cwd) => service.registerWorkspace({ cwd }, () => {}));
+  cleanup.push(async () => {
+    for (const subscription of subscriptions) subscription.unsubscribe();
+    await service.dispose();
+    await observer.close();
+    stopGitCommandMetrics();
+    rmSync(root, { recursive: true, force: true });
+  });
+  for (const cwd of [repo, one, two]) await service.getSnapshot(cwd, { includeForge: false });
+  await expect.poll(() => service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+  await expect.poll(() => service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+  await waitForGitCommandMetricsIdle({ quietMs: 2_200, timeoutMs: 10_000 });
+  reads.clear();
+  git(
+    "-C",
+    one,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "only one",
+  );
+  await refObserved.promise;
+  await expect.poll(() => Array.from(reads.keys()), { timeout: 10_000 }).toContain(one);
+  await waitForGitCommandMetricsIdle({ quietMs: 2_200, timeoutMs: 10_000 });
+  expect(reads.get(repo) ?? 0).toBe(0);
+  expect(reads.get(two) ?? 0).toBe(0);
+});
+
 test.each([false, true])(
   "default branch ref lookup is shared across worktrees and caches null (ambiguous: %s)",
   async (ambiguous) => {

@@ -1869,6 +1869,7 @@ const GitSetupOptionsSchema = z.object({
   createWorktree: z.boolean().optional(),
   worktreeSlug: z.string().optional(),
   refName: z.string().min(1).optional(),
+  refMode: z.literal("exact").optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
@@ -2889,6 +2890,7 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   attachments: AgentAttachmentsSchema.optional(),
   firstAgentContext: FirstAgentContextSchema.optional(),
   refName: z.string().min(1).optional(),
+  refMode: z.literal("exact").optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
@@ -3024,6 +3026,7 @@ export const WorkspaceCreateRequestSchema = z.object({
       action: z.enum(["branch-off", "checkout"]).optional(),
       // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
+      refMode: z.literal("exact").optional(),
       baseBranch: z.string().optional(),
       // New branch name for branch-off. The worktree path may use a different slug.
       branchName: z.string().min(1).optional(),

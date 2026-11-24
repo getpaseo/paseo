@@ -262,6 +262,7 @@ describe("New workspace isolation and ref actions", () => {
 
     expect(setup.checkoutRequestFor(release)).toEqual({
       action: "checkout",
+      refMode: "exact",
       refName: "refs/remotes/origin/release",
     });
     expect(setup.checkoutRequestFor(PULL_REQUEST)?.action).toBe("branch-off");

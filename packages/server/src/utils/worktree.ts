@@ -2830,7 +2830,20 @@ async function ensureLocalBranch({
   }
   if (remoteRef) {
     await refreshRemoteTrackingBaseRef(cwd, remoteRef);
-    await runGitCommand(["branch", "--track", branchName, remoteRef], { cwd });
+    try {
+      await runGitCommand(["branch", "--track", branchName, remoteRef], {
+        cwd,
+        envOverlay: { LC_ALL: "C" },
+      });
+    } catch (error) {
+      // Ad-hoc refs in single-branch clones need not belong to a fetch mapping.
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes("cannot set up tracking information;")
+      )
+        throw error;
+      await runGitCommand(["branch", "--no-track", branchName, remoteRef], { cwd });
+    }
     return;
   }
   try {

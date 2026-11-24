@@ -30,7 +30,7 @@ export type PickerItem =
 
 export type PickerCheckoutRequest = Pick<
   CreatePaseoWorktreeInput,
-  "action" | "refName" | "checkoutSource" | "githubPrNumber"
+  "action" | "refName" | "refMode" | "checkoutSource" | "githubPrNumber"
 >;
 
 /** What a new worktree does with the picked ref: start a new branch from it, or work on it. */
@@ -222,7 +222,11 @@ export function pickerItemToCheckoutRequest(
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      return { action, refName: item.refName };
+      return {
+        action,
+        refName: item.refName,
+        ...(action === "checkout" ? { refMode: "exact" as const } : {}),
+      };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";

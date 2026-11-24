@@ -140,7 +140,7 @@ describe("resolveWorktreeCreationIntent", () => {
         const refName = `refs/remotes/${remote}/feature/topic`;
         await expect(
           resolveWorktreeCreationIntent(
-            { action: "checkout", refName },
+            { action: "checkout", refName, refMode: "exact" },
             root,
             createResolverHarness(),
           ),
@@ -158,7 +158,7 @@ describe("resolveWorktreeCreationIntent", () => {
   test("normalizes an exact local checkout ref without reinterpreting its name", async () => {
     await expect(
       resolveWorktreeCreationIntent(
-        { action: "checkout", refName: "refs/heads/refs/remotes/company/topic" },
+        { action: "checkout", refName: "refs/heads/refs/remotes/company/topic", refMode: "exact" },
         repoRoot,
         createResolverHarness(),
       ),

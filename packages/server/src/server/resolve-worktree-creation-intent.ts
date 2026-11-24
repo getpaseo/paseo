@@ -30,6 +30,7 @@ export interface ResolveWorktreeCreationIntentInput {
   worktreeSlug?: string;
   branchName?: string;
   refName?: string;
+  refMode?: "exact";
   action?: "branch-off" | "checkout";
   checkoutSource?: {
     kind: "change_request";
@@ -128,7 +129,9 @@ export async function resolveWorktreeCreationIntent(
 
     const branchName = input.refName?.trim();
     if (branchName) {
-      return resolveBranchCheckoutSource({ repoRoot, refName: branchName });
+      return input.refMode === "exact"
+        ? resolveBranchCheckoutSource({ repoRoot, refName: branchName })
+        : { kind: "checkout-branch", branchName };
     }
 
     throw new MissingCheckoutTargetError();
