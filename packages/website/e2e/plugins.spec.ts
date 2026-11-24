@@ -177,7 +177,7 @@ test("filters by search and clears to all plugins", async ({ page }) => {
 test("keeps the directory's ranking window when searching", async ({ page }) => {
   await page.goto("/plugins?window=month");
   await submitSearch(page, "graphite");
-  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+  await expectDirectorySearch(page, "graphite", "month");
   await expect(page.getByRole("link", { name: "This month" })).toHaveAttribute(
     "aria-current",
     "true",
@@ -358,10 +358,16 @@ test.describe("search engine visits without JavaScript", () => {
   });
 
   test("renders search results and submits the search form", async ({ page }) => {
-    await page.goto("/plugins/all?q=graphite");
+    await page.goto("/plugins?window=month");
+    await submitSearch(page, "graphite");
+    await expectDirectorySearch(page, "graphite", "month");
     await expect(
       page.getByRole("heading", { level: 1, name: /^Results for “graphite”/ }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "This month" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     await expect(page.getByRole("main").getByRole("link", { name: /Graphite/ })).toBeVisible();
     await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
 
@@ -457,6 +463,15 @@ async function fillSearchWithMissedInputEvent(page: Page, term: string) {
 async function submitSearch(page: Page, term: string) {
   await searchPlugins(page, term);
   await page.keyboard.press("Enter");
+}
+
+async function expectDirectorySearch(page: Page, term: string, window: string) {
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/plugins/all" &&
+      url.searchParams.get("q") === term &&
+      url.searchParams.get("window") === window,
+  );
 }
 
 async function typeSearch(page: Page, term: string) {
