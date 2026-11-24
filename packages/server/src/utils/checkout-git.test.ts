@@ -1263,14 +1263,44 @@ const x = 1;
     });
     await expect(pushCurrentBranch(repoDir)).rejects.toThrow("Remote 'origin' is not configured.");
     await expect(pullCurrentBranch(repoDir)).rejects.toThrow(
-      "'local-only' has no upstream branch to pull from.",
+      "There is no tracking information for the current branch.",
     );
+  });
+
+  // Git decides whether a pull has something to pull. In a single-branch clone it pulls the one
+  // fetched branch into a branch that has no upstream.
+  it("pulls a branch with no upstream where git itself can pull", async () => {
+    const { remoteDir, cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    const singleBranchDir = join(tempDir, "single-branch");
+    execFileSync("git", [
+      "clone",
+      "--single-branch",
+      "--branch",
+      "main",
+      remoteDir,
+      singleBranchDir,
+    ]);
+    execFileSync("git", ["checkout", "-b", "local"], { cwd: singleBranchDir });
+    commitFile(cloneDir, "remote.txt", "remote\n", "remote commit");
+    execFileSync("git", ["push"], { cwd: cloneDir });
+
+    const status = await getCheckoutStatus(singleBranchDir);
+    await pullCurrentBranch(singleBranchDir);
+
+    expect(status).toMatchObject({ upstreamState: "none", pullRemote: null });
+    const pulledHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: singleBranchDir });
+    const remoteHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: cloneDir });
+    expect(pulledHead.toString()).toBe(remoteHead.toString());
   });
 
   // A checkout does not need a remote named origin. Pull and Push follow the branch's upstream.
   describe("a checkout whose only remote is not origin", () => {
     function headOf(cwd: string, ref = "HEAD"): string {
       return execFileSync("git", ["rev-parse", ref], { cwd }).toString().trim();
+    }
+
+    function branchesOf(gitDir: string): string {
+      return execFileSync("git", ["--git-dir", gitDir, "branch", "--list"]).toString().trim();
     }
 
     function pushRemoteCommits(cloneDir: string, count: number): void {
@@ -1374,29 +1404,80 @@ const x = 1;
       expect(headOf(remoteDir, "refs/heads/main")).toBe(remoteMainBefore);
     });
 
+    // Push follows the upstream only when `git push` would update it too.
     it.each([
-      { name: "the branch's pushRemote", key: "branch.main.pushRemote" },
-      { name: "remote.pushDefault", key: "remote.pushDefault" },
-    ])("does not push to the upstream when $name sends the branch to a fork", async ({ key }) => {
+      {
+        name: "the branch's pushRemote names a fork",
+        config: [["branch.main.pushRemote", "fork"]],
+      },
+      { name: "remote.pushDefault names a fork", config: [["remote.pushDefault", "fork"]] },
+      {
+        name: "the branch's pushRemote has a push refspec",
+        config: [
+          ["branch.main.pushRemote", "fork"],
+          ["remote.fork.push", "HEAD:refs/heads/published"],
+        ],
+      },
+      {
+        name: "the upstream remote has a push refspec",
+        config: [["remote.upstream.push", "HEAD:refs/heads/other"]],
+      },
+      { name: "push.default is nothing", config: [["push.default", "nothing"]] },
+    ])("does not push when $name", async ({ config }) => {
       const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir, "upstream");
       const forkDir = join(tempDir, "fork.git");
       execFileSync("git", ["init", "--bare", "-b", "main", forkDir]);
       execFileSync("git", ["remote", "add", "fork", forkDir], { cwd: repoDir });
-      execFileSync("git", ["config", key, "fork"], { cwd: repoDir });
+      for (const [key, value] of config) {
+        execFileSync("git", ["config", key, value], { cwd: repoDir });
+      }
       const remoteMainBefore = headOf(remoteDir, "refs/heads/main");
       commitFile(repoDir, "local.txt", "local\n", "local commit");
 
       const status = await getCheckoutStatus(repoDir);
       await expect(pushCurrentBranch(repoDir)).rejects.toThrow(
-        "Git is set to push this branch to 'fork'",
+        "Git is not set to push 'main' to 'upstream/main'",
       );
 
       expect(status).toMatchObject({
         upstreamState: "tracked",
         aheadOfOrigin: 1,
+        pullRemote: "upstream",
         pushRemote: null,
       });
+      expect(branchesOf(remoteDir)).toBe("* main");
       expect(headOf(remoteDir, "refs/heads/main")).toBe(remoteMainBefore);
+      expect(branchesOf(forkDir)).toBe("");
+    });
+
+    // Paseo writes this configuration for a PR checkout, so that its push reaches the
+    // contributor's branch.
+    it("pushes a Paseo worktree to the push refspec Paseo configured for it", async () => {
+      setupRemoteTrackingMain(repoDir, tempDir, "upstream");
+      const prRemoteDir = join(tempDir, "pr-remote.git");
+      execFileSync("git", ["init", "--bare", "-b", "main", prRemoteDir]);
+      const worktree = await createLegacyWorktreeForTest({
+        branchName: "contributor/feature",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "contributor-feature",
+        paseoHome,
+      });
+      const worktreeDir = worktree.worktreePath;
+      execFileSync("git", ["remote", "add", "paseo-pr-7", prRemoteDir], { cwd: worktreeDir });
+      execFileSync("git", ["config", "branch.contributor/feature.pushRemote", "paseo-pr-7"], {
+        cwd: worktreeDir,
+      });
+      execFileSync("git", ["config", "remote.paseo-pr-7.push", "HEAD:refs/heads/feature"], {
+        cwd: worktreeDir,
+      });
+      commitFile(worktreeDir, "feature.txt", "feature\n", "feature commit");
+
+      const status = await getCheckoutStatus(worktreeDir, { paseoHome });
+      await pushCurrentBranch(worktreeDir, undefined, { paseoHome });
+
+      expect(status).toMatchObject({ hasRemote: false, pushRemote: "paseo-pr-7" });
+      expect(headOf(prRemoteDir, "refs/heads/feature")).toBe(headOf(worktreeDir));
     });
   });
 

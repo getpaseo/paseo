@@ -4329,14 +4329,8 @@ export async function pullCurrentBranch(cwd: string, forgeService?: ForgeService
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for pull");
   }
-  const storedBranchName = await readStoredBranchName(cwd, currentBranch);
-  const [branchRemoteName, branchMergeRef] = await Promise.all([
-    getGitConfigValue(cwd, `branch.${storedBranchName}.remote`),
-    getGitConfigValue(cwd, `branch.${storedBranchName}.merge`),
-  ]);
-  if (resolvePullRemote(branchRemoteName, branchMergeRef) === null) {
-    throw new Error(`'${storedBranchName}' has no upstream branch to pull from.`);
-  }
+  // Git decides whether there is something to pull from. It does not need origin, and it can
+  // pull some branches that have no upstream, as in a single-branch clone.
   try {
     await runGitCommand(["pull"], { cwd, timeout: 120_000 });
     forgeService?.invalidate({ cwd });
@@ -4346,9 +4340,9 @@ export async function pullCurrentBranch(cwd: string, forgeService?: ForgeService
   }
 }
 
-// The remote `git pull` fetches a branch from: the remote of its configured upstream, which git
-// names "." when the upstream is a local branch. Checkout status reports the same remote, so the
-// Pull offer and the pull cannot disagree.
+// The remote `git pull` fetches a branch from when the branch has a configured upstream, which
+// git names "." when the upstream is a local branch. Checkout status reports it so that clients
+// offer Pull for any upstream, not only one on origin.
 function resolvePullRemote(
   branchRemoteName: string | null,
   branchMergeRef: string | null,
@@ -4399,10 +4393,10 @@ export async function pushCurrentBranch(
 // A branch with no upstream on a remote is published here.
 const PUBLISH_REMOTE = "origin";
 
-// Where Push sends the current branch, in order: the branch's push remote with a HEAD push
-// refspec, then its upstream, then origin under the branch's own name, which sets the upstream.
-// Checkout status reports the remote of this target, so the Push offer and the push cannot
-// disagree.
+// Where Push sends the current branch. In a checkout that has origin, in order: the branch's push
+// remote with a HEAD push refspec, then its upstream, then origin under the branch's own name,
+// which sets the upstream. Without origin, see resolvePushWithoutOrigin. Checkout status reports
+// the remote of this target, so the Push offer and the push cannot disagree.
 export type PushTarget =
   | { kind: "configured"; remoteName: string; headRef: string }
   | { kind: "upstream"; remoteName: string; headRef: string }
@@ -4428,56 +4422,76 @@ interface ResolvePushTargetInput {
 
 async function resolvePushTarget(input: ResolvePushTargetInput): Promise<PushTarget | PushRefusal> {
   const { cwd, storedBranchName, context } = input;
+  if ((await getOriginRemoteUrl(cwd, context)) === null) {
+    return resolvePushWithoutOrigin(input);
+  }
   const configured = await getCurrentBranchConfiguredPushTarget(cwd, storedBranchName, context);
   if (configured) {
     return { kind: "configured", ...configured };
   }
-  const [upstream, originUrl] = await Promise.all([
-    getCurrentBranchUpstreamPushTarget(cwd, storedBranchName, context),
-    getOriginRemoteUrl(cwd, context),
-  ]);
+  // In a checkout that has origin, Push has always followed the upstream, whatever the upstream
+  // branch is called.
+  const upstream = await getCurrentBranchUpstreamPushTarget(cwd, storedBranchName, context);
   if (upstream) {
-    // In a checkout that has origin, Push has always followed the upstream, whatever the upstream
-    // branch is called. A PR checkout reaches the contributor's branch this way.
-    return originUrl !== null
-      ? { kind: "upstream", ...upstream }
-      : resolveUpstreamPushWithoutOrigin({ cwd, storedBranchName, upstream, context });
-  }
-  if (originUrl === null) {
-    return { kind: "refused", reason: `Remote '${PUBLISH_REMOTE}' is not configured.` };
+    return { kind: "upstream", ...upstream };
   }
   return resolvePublish(input);
 }
 
-// Without origin, Push follows the upstream only where plain `git push` sends the branch too: to
-// a branch of the same name, on the remote git pushes this branch to. A differently named
-// upstream is often a shared base branch, as with `feature` tracking `upstream/main`.
-async function resolveUpstreamPushWithoutOrigin(input: {
-  cwd: string;
-  storedBranchName: string;
-  upstream: { remoteName: string; headRef: string };
-  context?: CheckoutContext;
-}): Promise<PushTarget | PushRefusal> {
-  const { cwd, storedBranchName, upstream, context } = input;
+// Without origin, Push follows the upstream only when the upstream branch has the branch's own
+// name and plain `git push` would update that same branch. A differently named upstream is often
+// a shared base branch, as with `feature` tracking `upstream/main`. Git's own push settings
+// (branch.<name>.pushRemote, remote.pushDefault, remote.<name>.push, push.default) can send the
+// branch elsewhere, and then the push is left to the user.
+async function resolvePushWithoutOrigin(
+  input: ResolvePushTargetInput,
+): Promise<PushTarget | PushRefusal> {
+  const { cwd, storedBranchName, context } = input;
+  const paseoWorktree = input.paseoWorktree ?? (await getPaseoWorktreeForCwd(cwd, { context }));
+  if (paseoWorktree.isPaseoOwnedWorktree) {
+    // Paseo writes this configuration for a PR checkout, so its push reaches the PR's branch.
+    const configured = await getCurrentBranchConfiguredPushTarget(cwd, storedBranchName, context);
+    if (configured) {
+      return { kind: "configured", ...configured };
+    }
+  }
+  const upstream = await getCurrentBranchUpstreamPushTarget(cwd, storedBranchName, context);
+  if (!upstream) {
+    return { kind: "refused", reason: `Remote '${PUBLISH_REMOTE}' is not configured.` };
+  }
+  const upstreamName = `${upstream.remoteName}/${upstream.headRef}`;
   if (upstream.headRef !== storedBranchName) {
     return {
       kind: "refused",
-      reason: `Push did not send '${storedBranchName}' to '${upstream.remoteName}/${upstream.headRef}' because the branch names differ. Push it from a terminal instead.`,
+      reason: `Push did not send '${storedBranchName}' to '${upstreamName}' because the branch names differ. Push it from a terminal instead.`,
     };
   }
-  const gitPushRemote = await readGitPushRemote({
-    cwd,
-    storedBranchName,
-    branchRemoteName: upstream.remoteName,
-    context,
-  });
-  if (gitPushRemote !== upstream.remoteName) {
+  if (!(await doesGitPushUpdateUpstream(cwd, storedBranchName, context))) {
     return {
       kind: "refused",
-      reason: `Git is set to push this branch to '${gitPushRemote}', so Push did not send it to '${upstream.remoteName}'. Push it from a terminal instead.`,
+      reason: `Git is not set to push '${storedBranchName}' to '${upstreamName}', so Push did not send it there. Push it from a terminal instead.`,
     };
   }
   return { kind: "upstream", ...upstream };
+}
+
+// Whether plain `git push` on this branch updates the branch's upstream. Git resolves its push
+// destination from its own settings and reports none when it cannot name a single one.
+async function doesGitPushUpdateUpstream(
+  cwd: string,
+  storedBranchName: string,
+  context?: CheckoutContext,
+): Promise<boolean> {
+  try {
+    const { stdout } = await getRunGitCommand(context)(
+      ["for-each-ref", "--format=%(push)%00%(upstream)", `refs/heads/${storedBranchName}`],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    );
+    const [pushRef, upstreamRef] = stdout.trim().split("\0");
+    return Boolean(pushRef) && pushRef === upstreamRef;
+  } catch {
+    return false;
+  }
 }
 
 // Publishing sends the branch to origin. A regular checkout needs git to push the branch there
