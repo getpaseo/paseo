@@ -129,7 +129,7 @@ interface OmpUnknownToolCall {
   args: unknown;
 }
 
-export type OmpTrackedToolCall =
+export type OmpTrackedToolCall = (
   | OmpBashToolCall
   | OmpReadToolCall
   | OmpEditToolCall
@@ -137,7 +137,8 @@ export type OmpTrackedToolCall =
   | OmpFindToolCall
   | OmpGrepToolCall
   | OmpLsToolCall
-  | OmpUnknownToolCall;
+  | OmpUnknownToolCall
+) & { intent?: string };
 
 interface ToolCallOutputSummary {
   output?: string;
@@ -320,6 +321,15 @@ export function isOmpToolFailure(
 }
 
 export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
+  const intent =
+    typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)
+      ? Reflect.get(rawArgs, "i")
+      : undefined;
+  const tracked = parseToolArgsWithoutIntent(toolName, rawArgs);
+  return typeof intent === "string" ? { ...tracked, intent } : tracked;
+}
+
+function parseToolArgsWithoutIntent(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
   if (toolName === "edit") {
     return parseEditToolArgs(rawArgs);
   }

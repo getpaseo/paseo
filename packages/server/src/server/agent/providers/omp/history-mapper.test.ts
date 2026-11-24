@@ -62,6 +62,58 @@ describe("OMP history mapper", () => {
     );
   });
 
+  test("preserves intent on historical tool starts and results", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "intent-1",
+            name: "read",
+            arguments: { path: "file", i: "Inspect file" },
+          },
+          {
+            type: "toolCall",
+            id: "intent-2",
+            name: "bash",
+            arguments: { command: "false", i: "Check failure" },
+          },
+          { type: "toolCall", id: "intent-3", name: "read", arguments: { path: "file", i: 42 } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "intent-1",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "intent-2",
+        toolName: "bash",
+        content: [{ type: "text", text: "failed" }],
+        isError: true,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "intent-3",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
+      },
+    ]);
+    expect(events.map((event) => event.item)).toMatchObject([
+      { callId: "intent-1", status: "running", intent: "Inspect file" },
+      { callId: "intent-2", status: "running", intent: "Check failure" },
+      { callId: "intent-3", status: "running" },
+      { callId: "intent-1", status: "completed", intent: "Inspect file" },
+      { callId: "intent-2", status: "failed", intent: "Check failure" },
+      { callId: "intent-3", status: "completed" },
+    ]);
+    expect(events[2]?.item).not.toHaveProperty("intent");
+    expect(events[5]?.item).not.toHaveProperty("intent");
+  });
+
   test("replays a web search details error as failed when OMP sets isError false", async () => {
     const events = await collectHistory([
       {

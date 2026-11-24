@@ -1362,6 +1362,7 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
           provider: "codex",
           callId: "delivery",
           name: "agent_message",
+          intent: "Deliver result",
           status: "completed",
           error: null,
           detail: { type: "plain_text", text: "Done" },

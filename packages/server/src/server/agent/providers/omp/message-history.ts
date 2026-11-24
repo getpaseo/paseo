@@ -199,6 +199,7 @@ export class OmpHistoryMapper {
             type: "tool_call",
             callId: this.resolveToolCallId(content.id, tracked),
             name: this.toolName(tracked, null),
+            ...(tracked.intent !== undefined ? { intent: tracked.intent } : {}),
             status: "running",
             detail,
             error: null,
@@ -226,6 +227,7 @@ export class OmpHistoryMapper {
       item: toToolResultTimelineItem({
         callId: this.resolveToolCallId(message.toolCallId, tracked),
         name: this.toolName(tracked, result),
+        ...(tracked.intent !== undefined ? { intent: tracked.intent } : {}),
         isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
         detail,
         errorText: toolFailureMessage(result),
@@ -297,6 +299,7 @@ export async function* streamOmpCoreHistory(
 function toToolResultTimelineItem(input: {
   callId: string;
   name: string;
+  intent?: string;
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
@@ -306,6 +309,7 @@ function toToolResultTimelineItem(input: {
       type: "tool_call",
       callId: input.callId,
       name: input.name,
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
       status: "failed",
       detail: input.detail,
       error: input.errorText,
@@ -315,6 +319,7 @@ function toToolResultTimelineItem(input: {
     type: "tool_call",
     callId: input.callId,
     name: input.name,
+    ...(input.intent !== undefined ? { intent: input.intent } : {}),
     status: "completed",
     detail: input.detail,
     error: null,

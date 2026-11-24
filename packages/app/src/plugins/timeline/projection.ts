@@ -11,11 +11,12 @@ const projectionCache = new WeakMap<
 >();
 
 function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
-  const { callId, name, status, error, detail, metadata, agentMessage } = data;
+  const { callId, name, intent, status, error, detail, metadata, agentMessage } = data;
   const base = {
     type: "tool_call" as const,
     callId,
     name,
+    ...(intent !== undefined ? { intent } : {}),
     detail,
     ...(metadata ? { metadata } : {}),
     ...(agentMessage ? { agentMessage } : {}),

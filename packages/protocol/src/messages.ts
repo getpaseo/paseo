@@ -744,6 +744,7 @@ const ToolCallBasePayloadSchema = z.object({
   type: z.literal("tool_call"),
   callId: z.string(),
   name: z.string(),
+  intent: z.string().optional(),
   detail: ToolCallDetailPayloadSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
 });

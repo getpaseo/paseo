@@ -972,6 +972,8 @@ reply text once, forks at its message, and shows its duration and stats. Read th
 `getAssistantReply` (`packages/app/src/types/stream.ts`) instead of checking `kind ===
 "assistant_message"`.
 
+OMP tool-call items include an optional `intent` string when the model provides one. The built-in timeline does not display it.
+
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.

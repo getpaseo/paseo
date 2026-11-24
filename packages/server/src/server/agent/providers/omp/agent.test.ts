@@ -981,6 +981,37 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("preserves tool intent across live updates and completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        args: { command: "echo hello" },
+        intent: "Inspect output",
+      }),
+    );
+    omp.emit({
+      type: "tool_execution_update",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      partialResult: { output: "hello" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      result: { output: "hello" },
+    });
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
+      { status: "running", intent: "Inspect output" },
+      { status: "running", intent: "Inspect output" },
+      { status: "completed", intent: "Inspect output" },
+    ]);
+  });
+
   test("shows a concise error for a failed tool while keeping shell output", async () => {
     const omp = new OmpHarness();
     await omp.start();

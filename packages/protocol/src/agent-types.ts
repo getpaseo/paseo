@@ -354,6 +354,7 @@ interface ToolCallBase {
   type: "tool_call";
   callId: string;
   name: string;
+  intent?: string;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
 }

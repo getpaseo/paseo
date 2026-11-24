@@ -1946,7 +1946,10 @@ export class OmpAgentSession implements AgentSession {
         return;
       case "tool_execution_start": {
         this.turnMeter.toolStarted(event.toolCallId, Date.now());
-        const toolCall = parseToolArgs(event.toolName, event.args);
+        const toolCall = {
+          ...parseToolArgs(event.toolName, event.args),
+          ...(event.intent !== undefined ? { intent: event.intent } : {}),
+        };
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.questionUi.start(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
@@ -2215,6 +2218,7 @@ export class OmpAgentSession implements AgentSession {
       name: bridgedTool
         ? `${bridgedTool.server} / ${bridgedTool.tool}`
         : resolveToolCallName(toolCall, result),
+      ...(toolCall.intent !== undefined ? { intent: toolCall.intent } : {}),
       detail,
     };
     const item =
