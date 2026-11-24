@@ -4,6 +4,7 @@ import {
   addConnectedHostAndReload,
   chooseHostBadgeDisplay,
   chooseHostColor,
+  chooseHostIcon,
   expectHostAppearancePreview,
   expectHostBadgeIconOnly,
   expectHostBadgeName,
@@ -115,12 +116,21 @@ test("customizes a host badge and preserves its appearance after reload", async 
     expect(widths.content).toBeLessThanOrEqual(widths.client);
   });
 
-  await test.step("preview a color and apply it to the sidebar badge", async () => {
+  await test.step("preview a color and icon and apply them to the sidebar badge and host popover", async () => {
     await openHostAppearanceSettings(page, badge.serverId);
     await chooseHostColor(page, "Teal");
+    await chooseHostIcon(page, "Laptop");
     await expectHostAppearancePreview(page, { serverId: badge.serverId, hostName, color: "teal" });
     await leaveHostAppearanceSettings(page);
     await expectHostBadgeTinted(page, { ...badge, hostName, color: "teal" });
+
+    await page.getByTestId("sidebar-hosts-trigger").click();
+    const hostRow = page.getByTestId(`sidebar-host-row-${badge.serverId}`);
+    await expect(hostRow).toBeVisible();
+    await expect(hostRow).toContainText("Direct");
+    await expect(hostRow).toContainText(/\d+(?:\.\d+)?(?:µs|ms|s)/);
+    await expect(hostRow).not.toContainText(/agents?/i);
+    await page.keyboard.press("Escape");
   });
 
   await test.step("keep the icon-only preference through reload", async () => {

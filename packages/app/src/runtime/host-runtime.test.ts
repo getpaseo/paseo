@@ -1114,6 +1114,39 @@ describe("HostRuntimeController", () => {
     expect(activeClient.latencyMeasurements()).toEqual([]);
   });
 
+  it("measures active latency on demand when an online host has no sample yet", async () => {
+    useHostRuntimeClock();
+    const initialClient = new FakeDaemonClient();
+    initialClient.setConnectionState({ status: "connected" });
+    initialClient.ping = async () => ({ rttMs: 14 });
+    const controller = new HostRuntimeController({
+      host: makeHost({
+        connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+        preferredConnectionId: "direct:lan:6767",
+      }),
+      deps: makeDeps({ "direct:lan:6767": 14 }, []),
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: "direct:lan:6767",
+        existingClient: initialClient as unknown as DaemonClient,
+      },
+    });
+    expect(controller.getSnapshot().probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "pending",
+      latencyMs: null,
+    });
+
+    await controller.refreshActiveLatency();
+
+    expect(controller.getSnapshot().probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "available",
+      latencyMs: 14,
+    });
+  });
+
   it.each([12, null])(
     "falls back to relay when the direct client disconnects with heartbeat RTT %s",
     async (heartbeatRtt) => {
@@ -3366,7 +3399,11 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "none",
+      icon: "server",
+      badgeDisplay: null,
+    });
 
     store.syncHosts([]);
   });
@@ -3390,13 +3427,51 @@ describe("HostRuntimeStore", () => {
     await hostListChanged;
 
     const updated = store.getHosts()[0];
-    expect(updated?.appearance).toEqual({ color: "teal", badgeDisplay: null });
+    expect(updated?.appearance).toEqual({ color: "teal", icon: "server", badgeDisplay: null });
     expect(updated?.updatedAt).not.toBe(host.updatedAt);
 
     const persisted = await storage.getItem("@paseo:daemon-registry");
     expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
       color: "teal",
+      icon: "server",
       badgeDisplay: null,
+    });
+
+    store.syncHosts([]);
+  });
+
+  it("records a chosen host icon without disturbing color or badge display", async () => {
+    const host = makeHost({
+      serverId: "srv_appearance",
+      appearance: { color: "violet", icon: "server", badgeDisplay: "icon" },
+    });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    const store = createAppearanceStore(storage);
+
+    const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    store.boot();
+    await registryLoaded;
+
+    const hostListChanged = onceHostListMatches(
+      store,
+      () => store.getHosts()[0]?.appearance.icon === "laptop",
+    );
+    await store.setHostIcon("srv_appearance", "laptop");
+    await hostListChanged;
+
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "violet",
+      icon: "laptop",
+      badgeDisplay: "icon",
+    });
+
+    const persisted = await storage.getItem("@paseo:daemon-registry");
+    expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
+      color: "violet",
+      icon: "laptop",
+      badgeDisplay: "icon",
     });
 
     store.syncHosts([]);
@@ -3405,7 +3480,7 @@ describe("HostRuntimeStore", () => {
   it("records a chosen badge display without disturbing the color", async () => {
     const host = makeHost({
       serverId: "srv_appearance",
-      appearance: { color: "amber", badgeDisplay: null },
+      appearance: { color: "amber", icon: "server", badgeDisplay: null },
     });
     const storage = createMemoryHostRuntimeStorage();
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -3423,11 +3498,16 @@ describe("HostRuntimeStore", () => {
     await store.setHostBadgeDisplay("srv_appearance", "icon");
     await hostListChanged;
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "amber", badgeDisplay: "icon" });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "amber",
+      icon: "server",
+      badgeDisplay: "icon",
+    });
 
     const persisted = await storage.getItem("@paseo:daemon-registry");
     expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
       color: "amber",
+      icon: "server",
       badgeDisplay: "icon",
     });
 
@@ -3476,16 +3556,25 @@ describe("HostRuntimeStore", () => {
     };
 
     const color = store.setHostColor("srv_appearance", "teal");
+    const icon = store.setHostIcon("srv_appearance", "mini");
     const display = store.setHostBadgeDisplay("srv_appearance", "icon");
     await Promise.resolve();
     expect(writeCount).toBe(1);
 
     firstWrite.resolve();
-    await Promise.all([color, display]);
+    await Promise.all([color, icon, display]);
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "teal",
+      icon: "mini",
+      badgeDisplay: "icon",
+    });
     const persistedHosts = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
-    expect(persistedHosts[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    expect(persistedHosts[0]?.appearance).toEqual({
+      color: "teal",
+      icon: "mini",
+      badgeDisplay: "icon",
+    });
     store.syncHosts([]);
   });
 

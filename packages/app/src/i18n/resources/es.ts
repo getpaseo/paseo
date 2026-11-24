@@ -2865,6 +2865,19 @@ export const es: TranslationResources = {
         name: {
           label: "Nombre",
         },
+        icon: {
+          label: "Icono",
+          accessibilityLabel: "Icono, {{value}}",
+          options: {
+            server: "Servidor",
+            laptop: "Portátil",
+            desktop: "Escritorio",
+            mini: "Mini",
+            workstation: "Estación de trabajo",
+            cloud: "Nube",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Color",
           accessibilityLabel: "Color, {{value}}",
@@ -2900,6 +2913,14 @@ export const es: TranslationResources = {
         relay: "Relé",
         local: "Local",
         remoteSsh: "SSH remoto",
+      },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relé",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Directo",
+        routed: "Vía",
       },
       connections: {
         title: "Conexiones",

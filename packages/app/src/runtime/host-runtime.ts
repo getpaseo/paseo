@@ -28,7 +28,12 @@ import {
   type HostProfile,
   type UnreadableHostEntries,
 } from "@/types/host-connection";
-import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
+import {
+  defaultHostAppearance,
+  type HostBadgeDisplay,
+  type HostColor,
+  type HostIcon,
+} from "@/hosts/appearance";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
@@ -943,6 +948,52 @@ export class HostRuntimeController {
     existingClient?: DaemonClient;
   }): Promise<void> {
     await this.switchToConnection(input);
+  }
+
+  /**
+   * Measures the active connection's round-trip time when the host is online and no sample has
+   * landed yet (for example right after connecting, before the first heartbeat interval fires).
+   */
+  async refreshActiveLatency(): Promise<void> {
+    const activeConnectionId = this.snapshot.activeConnectionId;
+    const activeClient = this.snapshot.client;
+    if (
+      this.snapshot.connectionStatus !== "online" ||
+      !activeConnectionId ||
+      !activeClient ||
+      activeClient.getConnectionState().status !== "connected"
+    ) {
+      return;
+    }
+    const existing = this.snapshot.probeByConnectionId.get(activeConnectionId);
+    if (existing?.status === "available") {
+      return;
+    }
+    const existingRtt = activeClient.getLastLivenessRttMs();
+    if (existingRtt !== null) {
+      this.recordActiveLatencySample(activeConnectionId, existingRtt);
+      return;
+    }
+    try {
+      const rttMs = await activeClient.measureLatency({ timeoutMs: 3_000 });
+      if (
+        this.snapshot.activeConnectionId !== activeConnectionId ||
+        this.snapshot.client !== activeClient ||
+        this.snapshot.connectionStatus !== "online"
+      ) {
+        return;
+      }
+      this.recordActiveLatencySample(activeConnectionId, rttMs);
+    } catch {
+      // A latency probe never drives teardown; the heartbeat owns liveness.
+    }
+  }
+
+  private recordActiveLatencySample(connectionId: string, rttMs: number): void {
+    this.recordActiveRttSample(rttMs, performance.now());
+    const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
+    probeByConnectionId.set(connectionId, { status: "available", latencyMs: rttMs });
+    this.updateSnapshot({ probeByConnectionId });
   }
 
   async runProbeCycleNow(): Promise<void> {
@@ -2436,11 +2487,28 @@ export class HostRuntimeStore {
     }));
   }
 
+  async setHostIcon(serverId: string, icon: HostIcon): Promise<void> {
+    await this.updateHostAppearance(serverId, (host) => ({
+      ...host,
+      appearance: { ...host.appearance, icon },
+    }));
+  }
+
   async setHostBadgeDisplay(serverId: string, badgeDisplay: HostBadgeDisplay): Promise<void> {
     await this.updateHostAppearance(serverId, (host) => ({
       ...host,
       appearance: { ...host.appearance, badgeDisplay },
     }));
+  }
+
+  refreshActiveLatencies(serverIds?: readonly string[]): void {
+    const targets = serverIds ?? this.hosts.map((host) => host.serverId);
+    for (const serverId of targets) {
+      const controller = this.controllers.get(serverId);
+      if (controller) {
+        void controller.refreshActiveLatency();
+      }
+    }
   }
 
   private updateHostAppearance(
@@ -3296,6 +3364,7 @@ export interface HostMutations {
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
+  setHostIcon: (serverId: string, icon: HostIcon) => Promise<void>;
   setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
@@ -3311,6 +3380,7 @@ export function useHostMutations(): HostMutations {
       beginLinkPairing: () => store.beginLinkPairing(),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
       setHostColor: (serverId, color) => store.setHostColor(serverId, color),
+      setHostIcon: (serverId, icon) => store.setHostIcon(serverId, icon),
       setHostBadgeDisplay: (serverId, badgeDisplay) =>
         store.setHostBadgeDisplay(serverId, badgeDisplay),
       removeHost: (serverId) => store.removeHost(serverId),

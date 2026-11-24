@@ -6,6 +6,20 @@ export type HostColor = "none" | IdentityColorName;
 
 export const HOST_COLORS: readonly HostColor[] = ["none", ...IDENTITY_COLOR_NAMES];
 
+export const HOST_ICONS = [
+  "server",
+  "laptop",
+  "desktop",
+  "mini",
+  "workstation",
+  "cloud",
+  "terminal",
+] as const;
+
+export type HostIcon = (typeof HOST_ICONS)[number];
+
+export const DEFAULT_HOST_ICON: HostIcon = "server";
+
 export type HostBadgeDisplay = "name" | "icon" | "hidden";
 
 export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon", "hidden"];
@@ -17,16 +31,37 @@ export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon",
  */
 export interface HostAppearance {
   color: HostColor;
+  icon: HostIcon;
   badgeDisplay: HostBadgeDisplay | null;
 }
 
-export const HostAppearanceSchema: z.ZodType<HostAppearance> = z.strictObject({
+const HOST_ICON_SET = new Set<string>(HOST_ICONS);
+
+function normalizeHostIcon(value: string | undefined): HostIcon {
+  if (value && HOST_ICON_SET.has(value)) {
+    return value as HostIcon;
+  }
+  return DEFAULT_HOST_ICON;
+}
+
+const StoredHostAppearanceSchema = z.strictObject({
   color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
+  // Loose string on disk so an icon added by a newer build falls back to "server" instead of
+  // failing the strict host parse and hiding the saved host.
+  icon: z.string().optional(),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
 });
 
+export const HostAppearanceSchema = StoredHostAppearanceSchema.transform(
+  (value): HostAppearance => ({
+    color: value.color,
+    icon: normalizeHostIcon(value.icon),
+    badgeDisplay: value.badgeDisplay,
+  }),
+);
+
 export function defaultHostAppearance(): HostAppearance {
-  return { color: "none", badgeDisplay: null };
+  return { color: "none", icon: DEFAULT_HOST_ICON, badgeDisplay: null };
 }
 
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
@@ -52,6 +87,7 @@ export interface HostBadgeModel {
   serverId: string;
   label: string;
   color: HostColor;
+  icon: HostIcon;
   showLabel: boolean;
 }
 
@@ -85,6 +121,7 @@ export function selectHostBadges(input: {
       serverId: host.serverId,
       label: host.label.trim() || host.serverId,
       color: host.appearance.color,
+      icon: host.appearance.icon,
       showLabel: display === "name",
     });
   }

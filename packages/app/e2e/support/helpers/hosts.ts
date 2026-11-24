@@ -195,6 +195,12 @@ export async function chooseHostColor(page: Page, colorName: string): Promise<vo
   await expect(page.getByRole("button", { name: `Color, ${colorName}` })).toBeVisible();
 }
 
+export async function chooseHostIcon(page: Page, iconName: string): Promise<void> {
+  await page.getByTestId("host-appearance-icon").click();
+  await page.getByRole("menuitem", { name: iconName, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Icon, ${iconName}` })).toBeVisible();
+}
+
 export async function chooseHostBadgeDisplay(
   page: Page,
   option: "Name" | "Icon only" | "Hidden",

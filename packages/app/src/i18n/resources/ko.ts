@@ -2819,6 +2819,19 @@ export const ko: TranslationResources = {
         name: {
           label: "이름",
         },
+        icon: {
+          label: "아이콘",
+          accessibilityLabel: "아이콘, {{value}}",
+          options: {
+            server: "서버",
+            laptop: "노트북",
+            desktop: "데스크톱",
+            mini: "미니",
+            workstation: "워크스테이션",
+            cloud: "클라우드",
+            terminal: "터미널",
+          },
+        },
         color: {
           label: "색상",
           accessibilityLabel: "색상, {{value}}",
@@ -2854,6 +2867,14 @@ export const ko: TranslationResources = {
         relay: "릴레이",
         local: "로컬",
         remoteSsh: "원격 SSH",
+      },
+      connectionKinds: {
+        local: "로컬",
+        relay: "릴레이",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "직접 연결",
+        routed: "경유",
       },
       connections: {
         title: "연결",
