@@ -883,7 +883,7 @@ test("prompt recency reads archived records without projecting agents or exposin
       projectLive: unexpectedProjection,
       projectStored: unexpectedProjection,
       isProviderVisible: () => false,
-      isStoredProviderAvailable: () => false,
+      registeredProviders: () => [],
     });
     expect(await directory.workspaceLastUserMessageTimes()).toEqual(
       new Map([["w", "2026-03-04T00:00:00.000Z"]]),
@@ -964,7 +964,7 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       projectStored: (record) =>
         buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
       isProviderVisible: () => true,
-      isStoredProviderAvailable: () => true,
+      registeredProviders: () => ["codex"],
     });
     const directory = new WorkspaceDirectory({
       getArchivingAt: () => null,

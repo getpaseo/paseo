@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import { AgentStorage } from "./agent-storage.js";
-import { AgentDirectory, type BackgroundVisibility } from "./directory.js";
+import { AgentDirectory, candidateSnapshot, type BackgroundVisibility } from "./directory.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 
 const NOW = "2026-03-01T12:00:00.000Z";
@@ -15,6 +15,8 @@ const NOW = "2026-03-01T12:00:00.000Z";
 let home: string;
 let storage: AgentStorage;
 let directory: AgentDirectory;
+let registeredProviders: string[];
+let projected: string[];
 
 function workspace(workspaceId: string, background: boolean): PersistedWorkspaceRecord {
   return {
@@ -46,6 +48,8 @@ beforeEach(async () => {
   await storage.upsert({ ...base, id: "in-background-workspace", workspaceId: "hidden" });
   await storage.upsert({ ...base, id: "internal", workspaceId: "open", internal: true });
   const workspaces = [workspace("open", false), workspace("hidden", true)];
+  registeredProviders = ["codex"];
+  projected = [];
   directory = new AgentDirectory({
     storage,
     manager: { listAgents: () => [] },
@@ -55,10 +59,12 @@ beforeEach(async () => {
     projectLive: () => {
       throw new Error("No live agents in this suite");
     },
-    projectStored: (record) =>
-      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
+    projectStored: (record, providers) => {
+      projected.push(record.id);
+      return buildStoredAgentPayload(record, providers, (_provider, own) => own ?? {});
+    },
     isProviderVisible: () => true,
-    isStoredProviderAvailable: () => true,
+    registeredProviders: () => registeredProviders,
   });
 });
 
@@ -70,8 +76,25 @@ async function listedIds(includeBackground: BackgroundVisibility): Promise<strin
   return (await directory.list({ includeBackground })).map((agent) => agent.id).toSorted();
 }
 
+test("paging candidates only project the selected stored row, once per request", async () => {
+  const rows = await directory.listCandidates({ includeBackground: true });
+  expect(projected).toEqual([]);
+  const row = rows.find((candidate) => "stored" in candidate && candidate.stored.id === "visible")!;
+  expect(candidateSnapshot(row)).toBe(candidateSnapshot(row));
+  expect(projected).toEqual(["visible"]);
+});
+
 test("default lists hide agents that are background or live in a background workspace", async () => {
   expect(await listedIds(false)).toEqual(["visible"]);
+});
+
+test("each list uses the current provider registry, including history of unavailable providers", async () => {
+  expect(await listedIds(false)).toEqual(["visible"]);
+  registeredProviders = [];
+  expect(await listedIds(false)).toEqual([]);
+  expect(
+    (await directory.list({ includeUnavailablePersisted: true })).map((agent) => agent.id),
+  ).toEqual(["visible"]);
 });
 
 test("inclusive lists show every background agent", async () => {

@@ -667,7 +667,6 @@ export class WorkspaceDirectory {
     const listedCount = entries.length;
     entries = entries.filter((workspace) => this.matchesFilter({ workspace, filter }));
     const filteredCount = entries.length;
-    entries.sort((left, right) => this.pager.compare(left, right, sort));
 
     const cursorToken = request.page?.cursor;
     if (cursorToken) {
@@ -677,6 +676,7 @@ export class WorkspaceDirectory {
       );
     }
 
+    entries = this.pager.sorted(entries, sort);
     const limit = request.page?.limit ?? 200;
     const pagedEntries = entries.slice(0, limit);
     const hasMore = entries.length > limit;

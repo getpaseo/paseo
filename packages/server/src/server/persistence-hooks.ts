@@ -116,20 +116,12 @@ export function isStoredAgentProviderAvailable(
  * `acceptAgentDirectoryUpdate` drops every state update that goes backwards.
  */
 export function resolveStoredAgentUpdatedAt(record: StoredAgentRecord): string {
-  const timestamps = [record.updatedAt, record.lastActivityAt]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .map((value) => ({
-      raw: value,
-      parsed: Date.parse(value),
-    }))
-    .filter((value) => !Number.isNaN(value.parsed));
-
-  if (timestamps.length === 0) {
-    return record.updatedAt;
-  }
-
-  timestamps.sort((a, b) => b.parsed - a.parsed);
-  return timestamps[0].raw;
+  const activity = record.lastActivityAt;
+  if (!activity || activity === record.updatedAt) return record.updatedAt;
+  const activityMs = Date.parse(activity);
+  if (Number.isNaN(activityMs)) return record.updatedAt;
+  const updatedMs = Date.parse(record.updatedAt);
+  return Number.isNaN(updatedMs) || activityMs > updatedMs ? activity : record.updatedAt;
 }
 
 export function extractTimestamps(record: StoredAgentRecord): {

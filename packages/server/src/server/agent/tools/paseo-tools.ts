@@ -41,7 +41,6 @@ import {
 import { summarizeAgentActivity } from "../activity-curator.js";
 import type { AgentStorage, StoredAgentRecord } from "../agent-storage.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
-import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
   killTerminalsForWorkspace,
@@ -2124,10 +2123,13 @@ function createToolCatalog(
     return backgroundWork ? { ...snapshot, backgroundWork } : snapshot;
   }
 
-  function projectStoredAgent(record: StoredAgentRecord) {
+  function projectStoredAgent(
+    record: StoredAgentRecord,
+    providers: ReadonlySet<string> = new Set(providerSnapshotManager.listRegisteredProviderIds()),
+  ) {
     return buildStoredAgentPayload(
       record,
-      new Set(providerSnapshotManager.listRegisteredProviderIds()),
+      providers,
       (provider, own) => agentManager.effectiveOptionsFor(provider, own),
       agentManager.getAgentBackgroundWorkSummary(record.id),
     );
@@ -2217,11 +2219,7 @@ function createToolCatalog(
         projectLive: projectLiveAgent,
         projectStored: projectStoredAgent,
         isProviderVisible: () => true,
-        isStoredProviderAvailable: (record) =>
-          isStoredAgentProviderAvailable(
-            record,
-            new Set(providerSnapshotManager.listRegisteredProviderIds()),
-          ),
+        registeredProviders: () => providerSnapshotManager.listRegisteredProviderIds(),
       });
       const agents = selectAgentListItems(
         await directory.list({ includeBackground, includeArchived }),

@@ -1,7 +1,12 @@
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageBehavior, AgentMessageDelivery } from "./agent/agent-messages/index.js";
-import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
+import {
+  AgentDirectory,
+  candidateSnapshot,
+  type AgentDirectoryCandidate,
+  type BackgroundVisibility,
+} from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
 import {
@@ -1265,13 +1270,9 @@ export class Session {
       storage: this.agentStorage,
       workspaces: this.workspaceRegistry,
       projectLive: (agent) => this.buildAgentPayload(agent),
-      projectStored: (record) => this.buildStoredAgentPayload(record),
+      projectStored: (record, providers) => this.buildStoredAgentPayload(record, providers),
       isProviderVisible: (provider) => this.isProviderVisibleToClient(provider),
-      isStoredProviderAvailable: (record) =>
-        isStoredAgentProviderAvailable(
-          record,
-          new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
-        ),
+      registeredProviders: () => this.providerSnapshotManager.listRegisteredProviderIds(),
     });
     this.agentUpdates = createAgentUpdatesService({
       includesWorkspace: (agent, backgroundVisibility) =>
@@ -2401,7 +2402,9 @@ export class Session {
 
   private buildStoredAgentPayload(
     record: StoredAgentRecord,
-    registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
+    registeredProviderIds: ReadonlySet<string> = new Set(
+      this.providerSnapshotManager.listRegisteredProviderIds(),
+    ),
   ): AgentSnapshotPayload {
     return buildStoredAgentPayload(
       record,
@@ -6054,7 +6057,7 @@ export class Session {
   }
 
   private async collectFetchAgentsEntries(params: {
-    candidates: AgentSnapshotPayload[];
+    candidates: AgentDirectoryCandidate[];
     limit: number;
     getPlacement: (workspaceId: string | undefined) => Promise<ProjectPlacementPayload | null>;
     filter: AgentUpdatesFilter | undefined;
@@ -6070,9 +6073,10 @@ export class Session {
     ) {
       const batch = candidates.slice(start, start + batchSize);
       const batchEntries = await Promise.all(
-        batch.map(async (agent) => {
-          const project = await getPlacement(agent.workspaceId);
-          return project ? { agent, project } : null;
+        batch.map(async (candidate) => {
+          const row = "stored" in candidate ? candidate.stored : candidate;
+          const project = await getPlacement(row.workspaceId);
+          return project ? { agent: candidateSnapshot(candidate), project } : null;
         }),
       );
       for (const entry of batchEntries) {
@@ -6126,7 +6130,7 @@ export class Session {
     const scope = request.type === "fetch_agents_request" ? request.scope : undefined;
     const sort = this.agentsPager.normalizeSort(request.sort);
 
-    let agents = await this.listAgentPayloads({
+    let agents = await this.agentDirectory.listCandidates({
       labels: filter?.labels,
       includeArchived: filter?.includeArchived,
       includeBackground: backgroundVisibility,
@@ -6135,12 +6139,14 @@ export class Session {
     const activePlacementsByWorkspaceId =
       scope === "active" ? await this.buildActiveProjectPlacementsByWorkspaceId() : null;
     if (activePlacementsByWorkspaceId) {
-      agents = agents.filter(
-        (agent) =>
+      agents = agents.filter((candidate) => {
+        const agent = "stored" in candidate ? candidate.stored : candidate;
+        return (
           !agent.archivedAt &&
           agent.workspaceId != null &&
-          activePlacementsByWorkspaceId.has(agent.workspaceId),
-      );
+          activePlacementsByWorkspaceId.has(agent.workspaceId)
+        );
+      });
     }
 
     const placementByWorkspaceId = new Map<string, Promise<ProjectPlacementPayload | null>>();
@@ -6163,12 +6169,10 @@ export class Session {
     };
 
     const search = agentDirectorySearchQuery(request);
-    let candidates = [...agents];
-    candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
     const cursorToken = request.page?.cursor;
     if (cursorToken) {
       const cursor = this.decodeAgentCursor(cursorToken, sort);
-      candidates = candidates.filter(
+      agents = agents.filter(
         (agent) => this.agentsPager.compareWithCursor(agent, cursor, sort) > 0,
       );
     }
@@ -6176,7 +6180,7 @@ export class Session {
     const limit = request.page?.limit ?? 200;
 
     const matchedEntries = await this.collectFetchAgentsEntries({
-      candidates,
+      candidates: this.agentsPager.sorted(agents, sort),
       limit,
       getPlacement,
       filter,
@@ -6201,16 +6205,18 @@ export class Session {
   }
 
   private readonly agentsPager = new SortablePager<
-    AgentSnapshotPayload,
+    AgentDirectoryCandidate,
     FetchAgentsRequestSort["key"]
   >({
     validKeys: FETCH_AGENTS_SORT_KEYS,
     defaultSort: [{ key: "updated_at", direction: "desc" }],
     label: "fetch_agents",
-    getId: (agent) => agent.id,
-    getSortValue: (agent, key): number | string => {
+    getId: (candidate) => ("stored" in candidate ? candidate.stored : candidate).id,
+    getSortValue: (candidate, key): number | string => {
+      const row = "stored" in candidate ? candidate.stored : candidate;
       switch (key) {
-        case "status_priority":
+        case "status_priority": {
+          const agent = candidateSnapshot(candidate);
           return getAgentStatusPriority({
             status: agent.status,
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
@@ -6218,12 +6224,17 @@ export class Session {
             attentionReason: agent.attentionReason ?? null,
             backgroundWork: agent.backgroundWork,
           });
+        }
         case "created_at":
-          return Date.parse(agent.createdAt);
+          return Date.parse(row.createdAt);
         case "updated_at":
-          return Date.parse(agent.updatedAt);
+          return Date.parse(
+            "stored" in candidate
+              ? resolveStoredAgentUpdatedAt(candidate.stored)
+              : candidate.updatedAt,
+          );
         case "title":
-          return agent.title?.toLocaleLowerCase() ?? "";
+          return row.title?.toLocaleLowerCase() ?? "";
       }
     },
   });

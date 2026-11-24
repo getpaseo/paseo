@@ -38,17 +38,20 @@ export class SortablePager<TItem, K extends string> {
     return deduped.length > 0 ? deduped : [...this.config.defaultSort];
   }
 
-  compare(left: TItem, right: TItem, sort: readonly SortSpec<K>[]): number {
-    for (const spec of sort) {
-      const leftValue = this.config.getSortValue(left, spec.key);
-      const rightValue = this.config.getSortValue(right, spec.key);
-      const base = compareValues(leftValue, rightValue);
-      if (base === 0) {
-        continue;
+  sorted(items: readonly TItem[], sort: readonly SortSpec<K>[]): TItem[] {
+    // Date parsing and status projection are paid once per row for the entire sort.
+    const rows = items.map((item) => ({
+      item,
+      values: sort.map(({ key }) => this.config.getSortValue(item, key)),
+    }));
+    rows.sort((left, right) => {
+      for (let i = 0; i < sort.length; i++) {
+        const order = compareValues(left.values[i]!, right.values[i]!);
+        if (order !== 0) return sort[i]!.direction === "asc" ? order : -order;
       }
-      return spec.direction === "asc" ? base : -base;
-    }
-    return this.config.getId(left).localeCompare(this.config.getId(right));
+      return this.config.getId(left.item).localeCompare(this.config.getId(right.item));
+    });
+    return rows.map(({ item }) => item);
   }
 
   compareWithCursor(item: TItem, cursor: DecodedCursor<K>, sort: readonly SortSpec<K>[]): number {
