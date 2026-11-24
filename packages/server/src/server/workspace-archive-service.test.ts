@@ -9,6 +9,7 @@ import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import {
   getPaseoWorktreeMetadataPath,
+  readPaseoWorktreeMetadata,
   setPaseoWorktreeUntrustedSource,
 } from "../utils/worktree-metadata.js";
 import { archiveCommand } from "./worktree/commands.js";
@@ -636,6 +637,81 @@ describe("archiveByScope", () => {
 
     expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
     expect(result.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("workspace scope backfills checkout metadata when archiving an unapproved pre-upgrade checkout that stays on disk", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const markerName = "backfilled-retained-teardown.log";
+    const marker = path.join(repoDir, markerName);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "pre-upgrade retained"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "pre-upgrade-retained");
+    // Pre-upgrade checkout: metadata has no untrustedSource yet; only the workspace record carries it.
+    expect(
+      (await readPaseoWorktreeMetadata(worktree.worktreePath))?.untrustedSource,
+    ).toBeUndefined();
+    const untrustedSource = {
+      kind: "change_request" as const,
+      forge: "github",
+      number: 91,
+      headRepository: "contributor/paseo",
+    };
+    const blockedWorkspaceId = "ws-pre-upgrade-blocked";
+    const keptSiblingId = "ws-pre-upgrade-sibling";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId: blockedWorkspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+          untrustedSource,
+        },
+        {
+          workspaceId: keptSiblingId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const first = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: blockedWorkspaceId },
+      requestId: "req-pre-upgrade-first",
+    });
+    expect(first.removedDirectory).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+    expect((await readPaseoWorktreeMetadata(worktree.worktreePath))?.untrustedSource).toEqual(
+      untrustedSource,
+    );
+
+    const second = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: keptSiblingId },
+      requestId: "req-pre-upgrade-second",
+    });
+    expect(second.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
     expect(existsSync(marker)).toBe(false);
   });
