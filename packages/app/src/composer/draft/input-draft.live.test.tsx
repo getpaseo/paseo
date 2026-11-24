@@ -145,7 +145,6 @@ describe("useAgentInputDraft live contract", () => {
       createModalDraft: null,
       attachmentFocusRequestByDraftKey: {},
       textReplacementRequestByDraftKey: {},
-      externalTextRevisionByDraftKey: {},
     });
   });
 

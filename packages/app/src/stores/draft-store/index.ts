@@ -86,11 +86,6 @@ interface DraftStoreRuntimeState {
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
    */
   metadataByDraftKey: Record<string, Record<string, JsonValue>>;
-  /**
-   * Bumped when text reaches a draft from outside its composer. A mounted composer owns its input
-   * text and only reads the store on hydration, so it reloads the text when this changes.
-   */
-  externalTextRevisionByDraftKey: Record<string, number>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -289,7 +284,6 @@ export const useDraftStore = create<DraftStore>()(
       attachmentFocusRequestByDraftKey: {},
       textReplacementRequestByDraftKey: {},
       metadataByDraftKey: {},
-      externalTextRevisionByDraftKey: {},
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -493,9 +487,9 @@ export const useDraftStore = create<DraftStore>()(
               : {}),
             ...(addition.text.length > 0
               ? {
-                  externalTextRevisionByDraftKey: {
-                    ...state.externalTextRevisionByDraftKey,
-                    [draftKey]: (state.externalTextRevisionByDraftKey[draftKey] ?? 0) + 1,
+                  textReplacementRequestByDraftKey: {
+                    ...state.textReplacementRequestByDraftKey,
+                    [draftKey]: (state.textReplacementRequestByDraftKey[draftKey] ?? 0) + 1,
                   },
                 }
               : {}),

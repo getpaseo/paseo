@@ -1,6 +1,8 @@
 import {
-  filterAndRankBuiltInResults,
+  compareBuiltInScores,
+  compareByRecency,
   joinSubtitleParts,
+  scoreSearchFields,
   type CommandCenterSearchFields,
 } from "@/command-center/results";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
@@ -73,10 +75,30 @@ const searchFields = (row: ShareTargetRow): CommandCenterSearchFields => ({
   hidden: [],
 });
 
+const DEFAULT_SHARE_TARGET_LIMIT = 5;
+
 /** With no query, the most recent few of each; with one, every match, best first. */
 export function rankShareTargetRows(rows: ShareTargetRows, query: string): ShareTargetRows {
+  const rankRows = (entries: readonly ShareTargetRow[]): ShareTargetRow[] => {
+    if (!query.trim()) {
+      return [...entries].sort(compareByRecency).slice(0, DEFAULT_SHARE_TARGET_LIMIT);
+    }
+    const scored: {
+      row: ShareTargetRow;
+      score: NonNullable<ReturnType<typeof scoreSearchFields>>;
+    }[] = [];
+    for (const row of entries) {
+      const score = scoreSearchFields(query, searchFields(row));
+      if (score) scored.push({ row, score });
+    }
+    scored.sort(
+      (left, right) =>
+        compareBuiltInScores(left.score, right.score) || compareByRecency(left.row, right.row),
+    );
+    return scored.map((entry) => entry.row);
+  };
   return {
-    agents: filterAndRankBuiltInResults(rows.agents, query, searchFields),
-    workspaces: filterAndRankBuiltInResults(rows.workspaces, query, searchFields),
+    agents: rankRows(rows.agents),
+    workspaces: rankRows(rows.workspaces),
   };
 }
