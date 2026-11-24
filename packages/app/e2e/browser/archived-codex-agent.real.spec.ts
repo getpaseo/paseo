@@ -57,6 +57,12 @@ async function unarchiveOpenAgent(page: Page): Promise<void> {
   await expectComposerEditable(page);
 }
 
+async function searchHistoryForCodexAgent(page: Page): Promise<void> {
+  await page.getByPlaceholder("Search history").fill("codex");
+  const row = page.getByRole("button").filter({ hasText: "rewind-flow-codex-" }).first();
+  await expect(row.getByText("codex", { exact: true })).toBeVisible({ timeout: 30_000 });
+}
+
 async function installHistoryReadGate(page: Page) {
   const gate = await installDaemonWebSocketGate(page);
   const response = "fetch_agent_history_response";
@@ -174,7 +180,11 @@ test.describe("archived Codex agent recovery", () => {
         { role: "assistant", text: INITIAL_REPLY },
       ]);
       await closeAgentTab(page, handle.agentId);
+      // Hold the browser's clock so the cached search stays within its freshness window.
+      await page.clock.setFixedTime(new Date());
       await openSessions(page);
+      await expectSessionRowArchived(page, "rewind-flow-codex-");
+      await searchHistoryForCodexAgent(page);
       await expectSessionRowArchived(page, "rewind-flow-codex-");
       await clickSessionRow(page, "rewind-flow-codex-");
 
@@ -186,6 +196,10 @@ test.describe("archived Codex agent recovery", () => {
       await openSessions(page);
       historyRead.release();
       await expectSessionRowNotArchived(page, "rewind-flow-codex-");
+      await test.step("Repeat the search and see the restored row", async () => {
+        await searchHistoryForCodexAgent(page);
+        await expectSessionRowNotArchived(page, "rewind-flow-codex-");
+      });
       await clickSessionRow(page, "rewind-flow-codex-");
       await expectComposerEditable(page);
     } finally {

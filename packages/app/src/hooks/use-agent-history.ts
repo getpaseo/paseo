@@ -227,8 +227,8 @@ export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
   search?: string;
-  /** Refresh cached pages when the History screen opens. */
-  refreshOnMount?: boolean;
+  /** Refresh cached pages when opening History or switching its filters. */
+  revalidateCachedResults?: boolean;
   /**
    * Leave out hosts that predate search, instead of searching no host. For a surface that adds
    * history matches to other results, where a missing host is not a claim of "no matches".
@@ -321,8 +321,9 @@ export function useAgentHistory(options: {
     enabled: queryEnabled,
     // A disabled search observer would keep an abandoned History read alive.
     subscribed: queryEnabled,
-    staleTime: 30_000,
-    ...(options.refreshOnMount ? { refetchOnMount: "always" } : {}),
+    ...(options.revalidateCachedResults
+      ? { staleTime: 0, refetchOnMount: true }
+      : { staleTime: 30_000 }),
     // Previous results stand in only until the next query's arrive. With no host to search,
     // nothing will arrive, so they would stand in, and read as still loading, indefinitely.
     ...(options.keepPreviousResults && queryEnabled ? { placeholderData: keepPreviousData } : {}),
