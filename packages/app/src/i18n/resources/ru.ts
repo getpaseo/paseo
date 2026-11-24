@@ -2854,6 +2854,23 @@ export const ru: TranslationResources = {
         name: {
           label: "Имя",
         },
+        icon: {
+          label: "Значок",
+          accessibilityLabel: "Значок, {{value}}",
+          auto: "Авто",
+          autoDetected: "Авто ({{icon}})",
+          options: {
+            server: "Сервер",
+            laptop: "Ноутбук",
+            desktop: "Компьютер",
+            mini: "Мини-ПК",
+            workstation: "Рабочая станция",
+            cloud: "Облако",
+            container: "Контейнер",
+            board: "Одноплатный ПК",
+            terminal: "Терминал",
+          },
+        },
         color: {
           label: "Цвет",
           accessibilityLabel: "Цвет, {{value}}",
@@ -2889,6 +2906,14 @@ export const ru: TranslationResources = {
         relay: "Ретранслятор",
         local: "Локальный",
         remoteSsh: "Удалённый SSH",
+      },
+      connectionKinds: {
+        local: "Локальный",
+        relay: "Ретранслятор",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Прямой",
+        routed: "Через",
       },
       connections: {
         title: "Подключения",

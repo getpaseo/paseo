@@ -73,6 +73,9 @@ export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
 const TRAILING_ACTION_DATASET = { comboboxTrailingAction: true };
+const FOOTER_DATASET = { comboboxFooter: true };
+const FOCUSED_COMBOBOX_ACTION_SELECTOR =
+  '[data-combobox-trailing-action] button, [data-combobox-trailing-action] [role="button"], [data-combobox-footer] button, [data-combobox-footer] [role="button"]';
 
 export type ComboboxOption = ComboboxOptionModel;
 export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
@@ -402,6 +405,7 @@ export function ComboboxEmpty({ children }: { children: ReactNode }): ReactEleme
 type RenderOptionFn = NonNullable<ComboboxProps["renderOption"]>;
 
 interface OptionRowProps {
+  index: number;
   option: ComboboxOption;
   selected: boolean;
   active: boolean;
@@ -409,20 +413,27 @@ interface OptionRowProps {
   renderOption: RenderOptionFn | undefined;
 }
 
-function OptionRow({ option, selected, active, onSelect, renderOption }: OptionRowProps) {
+function OptionRow({ index, option, selected, active, onSelect, renderOption }: OptionRowProps) {
   const handlePress = useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  const optionDataset = useMemo(() => ({ comboboxOptionIndex: String(index) }), [index]);
   if (renderOption) {
-    return <View>{renderOption({ option, selected, active, onPress: handlePress })}</View>;
+    return (
+      <View dataSet={optionDataset}>
+        {renderOption({ option, selected, active, onPress: handlePress })}
+      </View>
+    );
   }
   return (
-    <ComboboxItem
-      label={option.label}
-      description={option.description}
-      kind={option.kind}
-      selected={selected}
-      active={active}
-      onPress={handlePress}
-    />
+    <View dataSet={optionDataset}>
+      <ComboboxItem
+        label={option.label}
+        description={option.description}
+        kind={option.kind}
+        selected={selected}
+        active={active}
+        onPress={handlePress}
+      />
+    </View>
   );
 }
 
@@ -451,6 +462,7 @@ function OptionsList({
       {options.map((opt, index) => (
         <OptionRow
           key={opt.id}
+          index={index}
           option={opt}
           selected={opt.id === value}
           active={index === activeIndex}
@@ -952,8 +964,9 @@ function dispatchDesktopKey(
     return true;
   }
   if (key === "Enter") {
-    // Consume the shortcut but keep the browser's default button activation.
-    if (isWeb && document.activeElement?.matches("[data-combobox-trailing-action] button")) {
+    // Consume the shortcut but keep the browser's default button activation when the user moved
+    // keyboard focus onto a trailing action or footer button inside the combobox.
+    if (isWeb && document.activeElement?.matches(FOCUSED_COMBOBOX_ACTION_SELECTOR)) {
       return true;
     }
     if (input.orderedVisibleOptions.length === 0) return false;
@@ -1127,7 +1140,12 @@ function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children
     [safeAreaBottom],
   );
   const footerView = useMemo(
-    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
+    () =>
+      footer ? (
+        <View style={footerStyle} dataSet={FOOTER_DATASET}>
+          {footer}
+        </View>
+      ) : undefined,
     [footer, footerStyle],
   );
   return (
@@ -1341,7 +1359,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
               renderOption={props.renderOption}
             />
           )}
-          {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+          {props.footer ? (
+            <View style={styles.footer} dataSet={FOOTER_DATASET}>
+              {props.footer}
+            </View>
+          ) : null}
         </FloatingSurface>
       </View>
     </OverlayLayerProvider>
@@ -1596,6 +1618,30 @@ export function Combobox({
     value,
     setActiveIndex,
   );
+
+  // Keep activeIndex aligned when a keyboard user Tabs onto a specific option button on web.
+  useEffect(() => {
+    if (!IS_WEB || !isOpen || isMobile) return;
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const optionEl = target.closest("[data-combobox-option-index]");
+      if (!optionEl) return;
+      const nextIndex = Number.parseInt(
+        optionEl.getAttribute("data-combobox-option-index") ?? "",
+        10,
+      );
+      if (
+        Number.isInteger(nextIndex) &&
+        nextIndex >= 0 &&
+        nextIndex < orderedVisibleOptions.length
+      ) {
+        setActiveIndex(nextIndex);
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [isMobile, isOpen, orderedVisibleOptions.length]);
 
   const handleSelect = useCallback(
     (id: string) => {
