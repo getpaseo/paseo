@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, realpathSync, statSync, watch } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync, rmSync, statSync, watch } from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { networkInterfaces, platform, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -21,6 +21,7 @@ import type {
   SessionOutboundMessage,
 } from "../../messages.js";
 import { createPaseoDaemon, type PaseoDaemon, type PaseoDaemonConfig } from "../../bootstrap.js";
+import { BuiltinPluginLoader } from "../../plugins/builtin/index.js";
 import type { WebSocketLike } from "../../websocket-server.js";
 import type {
   AgentClient,
@@ -63,6 +64,35 @@ const HUB_ORIGIN = "https://hub.test";
 const SOCKET_URL = "wss://hub.test/daemon";
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 const REMOVAL_RETRY_CODES = new Set(["EBUSY", "ENOTEMPTY", "EPERM"]);
+
+let hubGitTemplatePromise: Promise<string> | null = null;
+let hubGitTemplateDir: string | null = null;
+
+function getHubGitTemplate(): Promise<string> {
+  if (!hubGitTemplatePromise) {
+    hubGitTemplatePromise = (async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "paseo-hub-git-template-"));
+      execFileSync("git", ["init", "-b", "main", dir], { stdio: "ignore" });
+      execFileSync("git", ["-C", dir, "config", "user.email", "hub@test.invalid"]);
+      execFileSync("git", ["-C", dir, "config", "user.name", "Hub Test"]);
+      execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "initial"], {
+        stdio: "ignore",
+      });
+      hubGitTemplateDir = dir;
+      process.once("exit", () => {
+        if (hubGitTemplateDir) {
+          try {
+            rmSync(hubGitTemplateDir, { recursive: true, force: true });
+          } catch {
+            // Best-effort cleanup on process exit.
+          }
+        }
+      });
+      return dir;
+    })();
+  }
+  return hubGitTemplatePromise;
+}
 
 async function removeDirectoryAfterWritesSettle(directory: string): Promise<void> {
   for (let retry = 0; retry < 10; retry += 1) {
@@ -1399,15 +1429,10 @@ export class HubRelationshipHarness {
 
   private async createHome(): Promise<void> {
     this.root = await mkdtemp(path.join(tmpdir(), "paseo-hub-relationship-"));
+    await cp(await getHubGitTemplate(), this.root, { recursive: true });
     this.paseoHome = path.join(this.root, ".paseo");
     const staticDir = path.join(this.root, "static");
     await Promise.all([mkdir(this.paseoHome, { recursive: true }), mkdir(staticDir)]);
-    execFileSync("git", ["init", "-b", "main", this.root], { stdio: "ignore" });
-    execFileSync("git", ["-C", this.root, "config", "user.email", "hub@test.invalid"]);
-    execFileSync("git", ["-C", this.root, "config", "user.name", "Hub Test"]);
-    execFileSync("git", ["-C", this.root, "commit", "--allow-empty", "-m", "initial"], {
-      stdio: "ignore",
-    });
     this.config = {
       listen: "0.0.0.0:0",
       paseoHome: this.paseoHome,
@@ -1435,6 +1460,8 @@ export class HubRelationshipHarness {
       },
     });
     this.daemon = await createPaseoDaemon(this.config, pino({ level: "trace" }, destination), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
       hubRelationshipRemote: this.remote,
       hubRelationshipClock: this.clock,
       hubRelationshipRetryPolicy: this.clock,

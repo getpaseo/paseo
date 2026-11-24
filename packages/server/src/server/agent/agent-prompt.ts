@@ -1,4 +1,8 @@
-import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
+import {
+  prepareAgentMessage,
+  type AgentMessageDelivery,
+  type AgentPromptSource,
+} from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
 import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
@@ -26,8 +30,12 @@ export type AgentRunController = Pick<
 
 export class AgentTurnBusyError extends Error {}
 
+/** The turn a steer targeted ended or changed before the provider took the steer. */
+export class AgentTurnChangedError extends Error {}
+
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
+  admit?: () => boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
   replaceRunning?: boolean;
@@ -127,11 +135,17 @@ export async function startAgentRun(
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
-  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  const admit = options?.admit;
+  const admitCommand = admit
+    ? () => {
+        if (!admit()) throw new Error("Queued agent message was withdrawn");
+      }
+    : undefined;
+  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions, admitCommand)) {
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
-  const promptStart = new ForegroundPromptStart(agentId);
+  const promptStart = new ForegroundPromptStart(agentId, admit);
   try {
     try {
       await agentManager.reloadStalePluginSession(agentId);
@@ -244,6 +258,7 @@ export async function unarchiveAgentState(
 
 export interface SendPromptToAgentParams {
   idleOnly?: boolean;
+  admit?: StartAgentRunOptions["admit"];
   /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
   beforeDispatch?: () => Promise<void>;
   onDispatch?: StartAgentRunOptions["onDispatch"];
@@ -267,6 +282,11 @@ export interface SendPromptToAgentParams {
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
   logger: Logger;
+}
+
+/** A prompt that does not wait its turn. Messages queued for the agent go with it. */
+export interface SendDirectPromptParams extends SendPromptToAgentParams {
+  agentMessages: Pick<AgentMessageDelivery, "sendDirect">;
 }
 
 export interface StartCreatedAgentInitialPromptParams {
@@ -339,7 +359,7 @@ async function resolvePromptSource(
   manager: Pick<AgentManager, "getAgent">,
   storage: AgentStorage,
 ): Promise<AgentPromptSource | undefined> {
-  if (!source || source.title) return source;
+  if (!source || source.kind === "change-request-update" || source.title) return source;
   const title = (
     manager.getAgent(source.agentId)?.config.title ?? (await storage.get(source.agentId))?.title
   )?.trim();
@@ -354,21 +374,36 @@ async function resolvePromptSource(
  * chat mentions, notify-on-finish) MUST go through this so behavior can never
  * drift between them.
  *
+ * The prompt does not wait in the agent's message queue, and it does not jump it either:
+ * messages already queued for the agent are delivered ahead of it in the same provider prompt.
+ *
  * When `unarchive` is false and the agent is archived, the call is a silent
  * no-op (returns the normal turn-start disposition) — the agent is not run.
  */
 export async function sendPromptToAgent(
-  params: SendPromptToAgentParams,
+  params: SendDirectPromptParams,
 ): Promise<PromptDispatchResult> {
-  const source = await resolvePromptSource(params.source, params.agentManager, params.agentStorage);
-  const delivery = prepareAgentMessage(params.prompt, source, params.messageId);
-  return sendPreparedPromptToAgent({
-    ...params,
-    prompt: delivery.prompt,
-    runOptions: delivery.messageId
-      ? { ...params.runOptions, clientMessageId: delivery.messageId }
-      : params.runOptions,
-  });
+  const { agentMessages, source, messageId, ...send } = params;
+  return agentMessages.sendDirect(
+    {
+      recipientId: params.agentId,
+      prompt: params.prompt,
+      source: await resolvePromptSource(source, params.agentManager, params.agentStorage),
+      messageId,
+      sessionMode: params.sessionMode,
+      unarchive: params.unarchive,
+    },
+    (joined) =>
+      sendPreparedPromptToAgent({
+        ...send,
+        prompt: joined.prompt,
+        sessionMode: joined.sessionMode,
+        unarchive: joined.unarchive,
+        runOptions: joined.messageId
+          ? { ...send.runOptions, clientMessageId: joined.messageId }
+          : send.runOptions,
+      }),
+  );
 }
 
 /** Dispatch daemon-prepared context without reclassifying it as human input. */
@@ -411,9 +446,13 @@ export async function sendPreparedPromptToAgent(
   }
 
   await params.beforeDispatch?.();
+  if (!params.idleOnly && params.admit?.() === false) {
+    throw new Error("Queued agent message was withdrawn");
+  }
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: !params.idleOnly,
     idleOnly: params.idleOnly,
+    admit: params.admit,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,

@@ -1,10 +1,13 @@
-import type { AgentTimelineItem } from "../../agent-sdk-types.js";
+import type {
+  AgentMetric,
+  AgentTimelineItem,
+  ConversationRewindCut,
+} from "../../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
   AgentTimelineRow,
 } from "../../agent-timeline-store-types.js";
-import type { ConversationRewindCut } from "../../agent-sdk-types.js";
 import type { ProjectedTimelineRow, TimelineRetirement } from "../../timeline-projection.js";
 import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.js";
 
@@ -19,6 +22,7 @@ export interface TimelineEntry {
   timestamp?: string;
   turnId?: string;
   providerMessageId?: string;
+  turnMetrics?: AgentMetric[];
 }
 
 export interface TimelineSeed {
@@ -138,6 +142,12 @@ export interface AgentTimelineBackend {
     clientMessageId: string,
     providerMessageId: string,
   ): MaybePromise<AgentTimelineRow | null>;
+  /** Records a completed turn's metrics on its footer row. Null when the turn has none. */
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): MaybePromise<ProjectedTimelineRow | null>;
   findSubmittedPrompt(
     scope: TimelineScope,
     clientMessageId: string,

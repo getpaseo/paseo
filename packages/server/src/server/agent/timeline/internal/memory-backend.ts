@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
-import type { AgentTimelineItem } from "../../agent-sdk-types.js";
+import type { AgentMetric, AgentTimelineItem } from "../../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
@@ -60,6 +60,7 @@ function buildRow(entry: TimelineEntry, seq: number, timestamp: string): AgentTi
     item: entry.item,
     ...(entry.turnId ? { turnId: entry.turnId } : {}),
     ...(entry.providerMessageId ? { providerMessageId: entry.providerMessageId } : {}),
+    ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
   };
 }
 
@@ -208,6 +209,15 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       clientMessageId,
       providerMessageId,
     );
+  }
+
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): ProjectedTimelineRow | null {
+    const row = this.requireState(scope).projection.stampTurnMetrics(metrics, options?.turnId);
+    return row ? { ...row } : null;
   }
 
   findSubmittedPrompt(scope: TimelineScope, clientMessageId: string): AgentTimelineRow | null {

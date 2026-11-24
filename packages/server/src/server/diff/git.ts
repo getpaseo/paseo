@@ -12,7 +12,7 @@ import {
   type CheckoutDiffCompare,
 } from "../../utils/checkout-git.js";
 import { lstat, readFile, readlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { DiffEndpoint, DiffSubscribeRequest } from "@getpaseo/protocol/messages";
 import type { DiffEntry, DiffBody } from "@getpaseo/protocol/binary-frames/index";
 import { runGitCommand, type GitCommandOptions } from "../../utils/run-git-command.js";
@@ -21,6 +21,15 @@ import { parseDiff, highlightDiffWithFileContent } from "../utils/diff-highlight
 export type Compare = Omit<DiffSubscribeRequest, "type" | "requestId"> & {
   checkoutBase?: { compare: CheckoutDiffCompare; paseoHome: string };
 };
+export interface ComparisonRevisions {
+  refs: Map<string, string | null>;
+  checkoutBase?: string | null;
+}
+
+export function isMovingRevision(rev: string): boolean {
+  return !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(rev);
+}
+
 export interface ListedFile {
   entry: DiffEntry;
   identity: string;
@@ -90,6 +99,7 @@ async function resolveEndpoint(
   cwd: string,
   endpoint: DiffEndpoint,
   indexFile: string | null,
+  revisions?: ComparisonRevisions,
 ): Promise<string> {
   if (endpoint.kind === "empty") return EMPTY;
   if (endpoint.kind === "index") {
@@ -108,7 +118,9 @@ async function resolveEndpoint(
       acceptExitCodes: [0, 128],
     },
   );
-  if (result.exitCode === 0) return result.stdout.trim();
+  const sha = result.exitCode === 0 ? result.stdout.trim() : null;
+  if (isMovingRevision(ref)) revisions?.refs.set(ref, sha);
+  if (sha !== null) return sha;
   if (ref === "HEAD") {
     const unborn = await runGitCommand(["rev-parse", "--verify", "HEAD"], {
       cwd,
@@ -142,11 +154,16 @@ function parseStats(
   }
   return stats;
 }
-export async function listComparison(compare: Compare): Promise<Comparison> {
+export async function listComparison(
+  compare: Compare,
+  revisions?: ComparisonRevisions,
+): Promise<Comparison> {
   if (compare.checkoutBase) {
+    if (revisions) revisions.checkoutBase = null;
     const selected = await resolveCheckoutDiffBase(compare.cwd, compare.checkoutBase.compare, {
       paseoHome: compare.checkoutBase.paseoHome,
     });
+    if (revisions) revisions.checkoutBase = selected;
     if (!selected) throw new DiffReadError("REF_NOT_FOUND", "Comparison base is unavailable");
     compare = { ...compare, base: { kind: "rev", rev: selected } };
   }
@@ -157,14 +174,14 @@ export async function listComparison(compare: Compare): Promise<Comparison> {
     if (compare.base.kind === "index" || compare.head.kind === "index")
       privateIndex = await snapshotComparisonIndex(cwd);
     const indexFile = privateIndex ? privateIndex.indexFile : null;
-    const baseSha = await resolveEndpoint(cwd, compare.base, indexFile);
-    const headSha = await resolveEndpoint(cwd, compare.head, indexFile);
+    const baseSha = await resolveEndpoint(cwd, compare.base, indexFile, revisions);
+    const headSha = await resolveEndpoint(cwd, compare.head, indexFile, revisions);
     let mergeBaseSha = "";
     let comparisonBaseSha = baseSha;
     if (compare.mergeBase) {
       const headCommit =
         compare.head.kind === "index"
-          ? await resolveEndpoint(cwd, { kind: "rev", rev: "HEAD" }, indexFile)
+          ? await resolveEndpoint(cwd, { kind: "rev", rev: "HEAD" }, indexFile, revisions)
           : headSha;
       if (headCommit === EMPTY) comparisonBaseSha = EMPTY;
       else if (baseSha !== EMPTY) {
@@ -427,13 +444,34 @@ async function readWorktreeContent({
   if (value.isSymbolicLink())
     return { hashed: false, literal: `symlink:${await readlink(absolutePath)}` };
   if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
-    const submodule = await runGitCommand(
-      ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
-      { cwd: absolutePath, envOverlay: { GIT_OPTIONAL_LOCKS: "0" } },
-    );
-    return { hashed: false, literal: `submodule:${submodule.stdout}` };
+    return { hashed: false, literal: await readSubmoduleIdentity(path, absolutePath, options) };
   }
   return { hashed: value.isFile() && text, literal: null };
+}
+
+// An uninitialized submodule has no `.git`; running git there would discover
+// whichever repository sits above it. Its content is the commit the index
+// records. Pinning GIT_DIR keeps an initialized submodule's status on its own `.git`.
+async function readSubmoduleIdentity(
+  path: string,
+  submodulePath: string,
+  options: GitCommandOptions,
+): Promise<string> {
+  try {
+    await lstat(join(submodulePath, ".git"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const recorded = await runGitCommand(["rev-parse", "--verify", "--quiet", `:0:${path}`], {
+      ...options,
+      acceptExitCodes: [0, 1],
+    });
+    return `submodule-uninitialized:${recorded.stdout.trim()}`;
+  }
+  const status = await runGitCommand(
+    ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
+    { cwd: submodulePath, envOverlay: { GIT_DIR: ".git", GIT_OPTIONAL_LOCKS: "0" } },
+  );
+  return `submodule:${status.stdout}`;
 }
 
 function diffArguments(compare: Compare, baseSha: string, headSha: string): string[] {

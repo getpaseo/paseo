@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTimelineItem, ConversationRewindCut } from "../../agent-sdk-types.js";
+import type {
+  AgentMetric,
+  AgentTimelineItem,
+  ConversationRewindCut,
+} from "../../agent-sdk-types.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
 import type {
   AgentTimelineFetchOptions,
@@ -327,6 +331,15 @@ export class AgentTimeline {
     return this.run(scope, () =>
       this.backend.attachProviderMessageId(scope, clientMessageId, providerMessageId),
     );
+  }
+
+  /** Records a completed turn's metrics on its footer row. Null when the turn has none. */
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): Promise<ProjectedTimelineRow | null> {
+    return this.run(scope, () => this.backend.stampTurnMetrics(scope, metrics, options));
   }
 
   findSubmittedPrompt(

@@ -517,6 +517,77 @@ export class ProviderCatalogSession {
       });
     }
   }
+
+  async handleInspectProviderInstallationRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.installation.inspect.request" }>,
+  ): Promise<void> {
+    const response = { provider: msg.provider, requestId: msg.requestId };
+    try {
+      const installation = await this.providerSnapshotManager.installations.inspect(msg.provider, {
+        refresh: msg.refresh,
+      });
+      this.host.emit({
+        type: "provider.installation.inspect.response",
+        payload: { ...response, installation, error: null },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "provider.installation.inspect.response",
+        payload: {
+          ...response,
+          installation: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  async handleUpdateProviderRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.installation.update.request" }>,
+  ): Promise<void> {
+    const response = { provider: msg.provider, requestId: msg.requestId };
+    try {
+      const update = this.providerSnapshotManager.installations.update(msg.provider);
+      this.host.emit({
+        type: "provider.installation.update.response",
+        payload: { ...response, update, error: null },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "provider.installation.update.response",
+        payload: {
+          ...response,
+          update: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  async handleCheckProviderUpdatesRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.installation.check_updates.request" }>,
+  ): Promise<void> {
+    const response = { provider: msg.provider, requestId: msg.requestId };
+    try {
+      const updateCheck = await this.providerSnapshotManager.installations.checkForUpdates(
+        msg.provider,
+        { refresh: msg.refresh },
+      );
+      this.host.emit({
+        type: "provider.installation.check_updates.response",
+        payload: { ...response, updateCheck, error: null },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "provider.installation.check_updates.response",
+        payload: {
+          ...response,
+          updateCheck: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
 }
 
 function resolveCatalogRequestCwd(cwd?: string | null): string | undefined {

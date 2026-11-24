@@ -907,6 +907,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -980,6 +982,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -1026,6 +1030,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -1069,6 +1075,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -1098,6 +1106,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -5101,4 +5111,277 @@ describe("ForgeService", () => {
       }),
     ).rejects.toThrow("Unable to resolve GitHub repository for pull request creation");
   });
+});
+
+describe("exact GitHub pull request observations", () => {
+  it("shares alias batches and rejects an incomplete snapshot without discarding a healthy PR", async () => {
+    vi.useFakeTimers();
+    const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    const rateLimit = {
+      limit: 5000,
+      remaining: 4900,
+      resetAt: new Date(Date.now() + 100_000).toISOString(),
+    };
+    const pr = {
+      state: "OPEN",
+      headRefOid: "abc",
+      reviewDecision: null,
+      statusCheckRollup: null,
+      comments: empty,
+      reviews: empty,
+      reviewThreads: empty,
+    };
+    const paged = {
+      pullRequest: {
+        ...pr,
+        comments: { ...empty, pageInfo: { hasNextPage: true, endCursor: "page-2" } },
+      },
+    };
+    const comment = { id: "101", url: "https://github.com/owner/repo/pull/2#issuecomment-101" };
+    const runner = createRunner([
+      JSON.stringify({ data: { rateLimit, request0: { pullRequest: pr }, request1: paged } }),
+      JSON.stringify({ data: { rateLimit, request0: { pullRequest: null } } }),
+      JSON.stringify({ data: { rateLimit, request0: { pullRequest: pr }, request1: paged } }),
+      JSON.stringify({
+        data: {
+          rateLimit,
+          request0: { pullRequest: { comments: { ...empty, nodes: [comment] } } },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "gh",
+      resolveRepoHost: async () => {
+        throw new Error("An exact URL must not resolve a checkout");
+      },
+    });
+    const received: unknown[] = [];
+    const errors: unknown[] = [];
+    const callbacks = {
+      async snapshot(snapshot: unknown) {
+        received.push(snapshot);
+      },
+      error(error: unknown) {
+        errors.push(error);
+      },
+    };
+    try {
+      const canonical = service.changeRequests.resolve(
+        "https://GitHub.com/Owner/Repo/pull/01?x=1#checks",
+      );
+      expect(canonical).toBe("https://github.com/owner/repo/pull/1");
+      service.changeRequests.observe(canonical, callbacks);
+      service.changeRequests.observe("https://github.com/owner/repo/pull/2", callbacks);
+      await vi.advanceTimersByTimeAsync(25);
+      expect(received).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      expect(runner.calls).toHaveLength(2);
+      expect(runner.calls[0]?.args.at(-1)).toContain("pullRequest(number: 1)");
+      expect(runner.calls[0]?.args.at(-1)).toContain("pullRequest(number: 2)");
+      expect(runner.calls[1]?.args.at(-1)).toContain('before: "page-2"');
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(received).toHaveLength(3);
+      expect(received[2]).toMatchObject({ activity: [{ ...comment, kind: "comment" }] });
+      expect(errors).toHaveLength(1);
+    } finally {
+      service.dispose?.();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("batches co-due workspace discovery and exact PR reads with one check rollup", async () => {
+  vi.useFakeTimers();
+  let now = 0;
+  const pageInfo = { hasNextPage: false, endCursor: null };
+  const rollup = {
+    __typename: "StatusContext",
+    id: "context",
+    context: "ci",
+    state: "SUCCESS",
+  };
+  const checkUrl = "https://github.com/acme/widgets/actions/runs/7";
+  const check = {
+    __typename: "CheckRun",
+    id: "run",
+    name: "build",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    detailsUrl: checkUrl,
+  };
+  const targetUrl = "https://example.com/ci";
+  const runner = createRunner([
+    batchPollStatusJson({
+      t0: batchPollRepositoryJson([
+        batchPollPrNodeJson({
+          number: 41,
+          headRefName: "feature",
+          headRefOid: "abc",
+          state: "OPEN",
+        }),
+      ]),
+      rateLimit: {
+        limit: 5000,
+        remaining: 4900,
+        resetAt: new Date(Date.now() + 100_000).toISOString(),
+      },
+      request0: {
+        pullRequest: {
+          state: "OPEN",
+          headRefOid: "abc",
+          statusCheckRollup: {
+            state: "SUCCESS",
+            contexts: { nodes: [{ ...rollup, targetUrl }, check], pageInfo },
+          },
+          reviewDecision: null,
+          comments: { nodes: [], pageInfo },
+          reviews: { nodes: [], pageInfo },
+          reviewThreads: { nodes: [], pageInfo },
+        },
+      },
+    }),
+  ]);
+  const service = createGitHubService({
+    runner: runner.runner,
+    now: () => now,
+    resolveGhPath: async () => "gh",
+    resolveRepoHost: async () => null,
+    resolveRepoSlug: async () => "acme/widgets",
+  });
+  const statuses: unknown[] = [];
+  const snapshots: unknown[] = [];
+  const errors: unknown[] = [];
+  try {
+    service.changeRequests.observe("https://github.com/acme/widgets/pull/41", {
+      async snapshot(value) {
+        snapshots.push(value);
+      },
+      error(error) {
+        errors.push(error);
+      },
+    });
+    service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature",
+      headSha: "abc",
+      onStatus: (status) => statuses.push(status),
+    });
+    now = 25;
+    await vi.advanceTimersByTimeAsync(25);
+    expect(errors).toEqual([]);
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.args.at(-1)).toMatch(/query PaseoMixedPullRequestPoll/);
+    expect(runner.calls[0]?.args.at(-1)).toContain('pullRequests(headRefName: "feature"');
+    expect(runner.calls[0]?.args.at(-1)).toContain("pullRequest(number: 41)");
+    expect(runner.calls[0]?.args.at(-1)?.match(/statusCheckRollup/g)).toHaveLength(1);
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        headSha: "abc",
+        checksState: "passed",
+        checks: [
+          expect.objectContaining({ id: "context", url: targetUrl }),
+          expect.objectContaining({ id: "run", url: checkUrl }),
+        ],
+      }),
+    ]);
+    expect(statuses).toEqual([expect.objectContaining({ number: 41, checksStatus: "success" })]);
+  } finally {
+    service.dispose?.();
+    vi.useRealTimers();
+  }
+});
+
+it("skips pagination after the last exact observer releases its PR", async () => {
+  vi.useFakeTimers();
+  const runner = createDeferredRunner();
+  const service = createGitHubService({ runner: runner.runner, resolveGhPath: async () => "gh" });
+  const snapshots: unknown[] = [];
+  const errors: unknown[] = [];
+  try {
+    const release = service.changeRequests.observe("https://github.com/acme/widgets/pull/41", {
+      async snapshot(value) {
+        snapshots.push(value);
+      },
+      error(error) {
+        errors.push(error);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(runner.calls).toHaveLength(1);
+    const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    release();
+    runner.resolveNext(
+      batchPollStatusJson({
+        rateLimit: {
+          limit: 5000,
+          remaining: 4900,
+          resetAt: new Date(Date.now() + 100_000).toISOString(),
+        },
+        request0: {
+          pullRequest: {
+            state: "OPEN",
+            headRefOid: "abc",
+            statusCheckRollup: null,
+            reviewDecision: null,
+            comments: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "more-comments" } },
+            reviews: empty,
+            reviewThreads: empty,
+          },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(runner.calls).toHaveLength(1);
+    expect(snapshots).toEqual([]);
+    expect(errors).toEqual([]);
+  } finally {
+    service.dispose?.();
+    vi.useRealTimers();
+  }
+});
+
+it("forwards the resolved gh executablePath to the command runner", async () => {
+  const seenExecutablePaths: Array<string | undefined> = [];
+  const service = createGitHubService({
+    resolveGhPath: async () => "/opt/github-cli/bin/gh",
+    resolveRepoHost: async () => null,
+    runner: async (_args, options) => {
+      seenExecutablePaths.push(options.executablePath);
+      return { stdout: "[]", stderr: "" };
+    },
+  });
+
+  await service.searchIssuesAndPrs({ cwd: "/repo", query: "test", kinds: ["github-issue"] });
+  expect(seenExecutablePaths).toEqual(["/opt/github-cli/bin/gh"]);
+});
+
+it("re-resolves gh and retries when the previously cached executable disappears", async () => {
+  let availablePath = "/first/bin/gh";
+  const seenExecutablePaths: Array<string | undefined> = [];
+  const service = createGitHubService({
+    resolveGhPath: async () => availablePath,
+    resolveRepoHost: async () => null,
+    runner: async (_args, options) => {
+      seenExecutablePaths.push(options.executablePath);
+      if (options.executablePath !== availablePath) {
+        const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { stdout: "[]", stderr: "" };
+    },
+  });
+
+  await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-issue"] });
+  availablePath = "/second/bin/gh";
+  const secondResult = await service.searchIssuesAndPrs({
+    cwd: "/repo",
+    query: "second",
+    kinds: ["github-issue"],
+  });
+
+  expect(secondResult.featuresEnabled).toBe(true);
+  expect(seenExecutablePaths).toEqual(["/first/bin/gh", "/first/bin/gh", "/second/bin/gh"]);
 });

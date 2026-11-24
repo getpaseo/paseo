@@ -514,7 +514,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open st
 
 ACP agents communicate over JSON-RPC 2.0 on stdio. Paseo spawns the agent process and talks to it through stdin/stdout.
 
-Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Most catalog entries create the same `extends: "acp"` provider config shown below. Hoplite activates its [bundled provider](plugins.md#built-in-plugins) instead.
+Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Most catalog entries create the same `extends: "acp"` provider config shown below. Goose, Hermes, and Hoplite activate their [bundled providers](plugins.md#built-in-plugins) instead. An existing `extends: "acp"` entry for goose or Hermes migrates to the bundled provider on load and keeps a custom command. Hermes agents saved with the old adapter resume with their mode translated (`plugins/hermes-provider/server/legacy-modes.ts`).
 
 ### Adding a generic ACP provider
 
@@ -626,32 +626,6 @@ ACP probes use short timeouts and browser-suppression environment variables so a
 ```
 
 Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/acp-mode.md)
-
-### Example: Hermes (Nous Research)
-
-[Hermes](https://github.com/NousResearch/hermes-agent) is an open-source coding agent by Nous Research with persistent memory and multi-provider LLM support. It supports ACP via the `acp` subcommand.
-
-1. Install: `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash`
-2. Install ACP support: `pip install -e '.[acp]'`
-3. Configure Hermes credentials in `~/.hermes/`
-4. Add to config.json:
-
-```json
-{
-  "agents": {
-    "providers": {
-      "hermes": {
-        "extends": "acp",
-        "label": "Hermes",
-        "description": "Nous Research self-improving AI agent",
-        "command": ["hermes", "acp"]
-      }
-    }
-  }
-}
-```
-
-Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
 
 ### How ACP providers work in Paseo
 
@@ -853,12 +827,6 @@ A config.json with multiple custom providers:
         "extends": "acp",
         "label": "Google Gemini",
         "command": ["gemini", "--acp"]
-      },
-
-      "hermes": {
-        "extends": "acp",
-        "label": "Hermes",
-        "command": ["hermes", "acp"]
       }
     }
   }

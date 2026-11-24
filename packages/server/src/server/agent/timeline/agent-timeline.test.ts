@@ -1497,3 +1497,147 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "B"]);
   });
 });
+
+describe.each(TIMELINE_CONTRACT_BACKENDS)("turn metrics over a '$name' backend", ({ create }) => {
+  const scope = { agentId: "a" };
+  const metrics = [
+    { label: "Model", value: "opus" },
+    { label: "Time", value: "2s" },
+  ];
+  const tool = {
+    type: "tool_call" as const,
+    callId: "call-1",
+    name: "shell",
+    error: null,
+    detail: { type: "shell" as const, command: "ls" },
+  };
+
+  async function turnMetricsByRow(timeline: AgentTimeline) {
+    return (await timeline.fetch(scope)).rows.map((row) => row.turnMetrics ?? null);
+  }
+
+  it("stamps the turn's last assistant message even when reasoning follows", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "go" }, turnId: "turn-1" },
+      { item: { type: "assistant_message", text: "First" }, turnId: "turn-1" },
+      { item: { ...tool, status: "completed" }, turnId: "turn-1" },
+      { item: { type: "assistant_message", text: "Done" }, turnId: "turn-1" },
+      { item: { type: "reasoning", text: "wrap up" }, turnId: "turn-1" },
+    ]);
+
+    const stamped = await timeline.stampTurnMetrics(scope, metrics, { turnId: "turn-1" });
+
+    expect(stamped).toMatchObject({ seqEnd: 4, item: { text: "Done" }, turnMetrics: metrics });
+    expect(await turnMetricsByRow(timeline)).toEqual([null, null, null, metrics, null]);
+  });
+
+  it("falls back to the turn's last row when it is a tool call and no message was written", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "go" } },
+      { item: { type: "reasoning", text: "thinking" } },
+      { item: { ...tool, status: "completed" } },
+    ]);
+
+    await timeline.stampTurnMetrics(scope, metrics);
+
+    expect(await turnMetricsByRow(timeline)).toEqual([null, null, metrics]);
+  });
+
+  it("leaves the previous turn alone when the completed turn has no footer row", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "one" } },
+      { item: { type: "assistant_message", text: "Answer one" } },
+      { item: { type: "user_message", text: "two" } },
+      { item: { type: "reasoning", text: "thinking" } },
+    ]);
+
+    expect(await timeline.stampTurnMetrics(scope, metrics)).toBeNull();
+    expect(await turnMetricsByRow(timeline)).toEqual([null, null, null, null]);
+  });
+
+  it("finds the completed turn by id when a newer turn already has rows", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "one" }, turnId: "turn-1" },
+      { item: { type: "assistant_message", text: "Answer one" }, turnId: "turn-1" },
+      { item: { type: "user_message", text: "two" }, turnId: "turn-2" },
+      { item: { type: "assistant_message", text: "Answer two" }, turnId: "turn-2" },
+    ]);
+
+    await timeline.stampTurnMetrics(scope, metrics, { turnId: "turn-1" });
+
+    expect(await turnMetricsByRow(timeline)).toEqual([null, metrics, null, null]);
+  });
+
+  it("stamps nothing for a turn that wrote no rows instead of the turn before it", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "one" }, turnId: "turn-1" },
+      { item: { type: "assistant_message", text: "Answer one" }, turnId: "turn-1" },
+    ]);
+
+    expect(await timeline.stampTurnMetrics(scope, metrics, { turnId: "turn-2" })).toBeNull();
+    expect(await turnMetricsByRow(timeline)).toEqual([null, null]);
+  });
+
+  it("keeps the metrics when a late update lands on the stamped row", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      { item: { type: "user_message", text: "go" }, turnId: "turn-1" },
+      { item: { ...tool, status: "running" }, turnId: "turn-1" },
+    ]);
+    await timeline.stampTurnMetrics(scope, metrics, { turnId: "turn-1" });
+
+    await timeline.ingest(scope, { item: { ...tool, status: "completed" }, turnId: "turn-1" });
+
+    expect((await timeline.fetch(scope)).rows[1]).toMatchObject({
+      item: { status: "completed" },
+      turnMetrics: metrics,
+    });
+  });
+
+  it("keeps the stats on a message whose chunks the projection merges", async () => {
+    const timeline = new AgentTimeline(create());
+    const at = "2026-11-22T00:00:00.000Z";
+    await timeline.create(scope, {
+      epoch: "e",
+      entries: [
+        { timestamp: at, item: { type: "user_message", text: "go" } },
+        { timestamp: at, item: { type: "assistant_message", text: "Do" } },
+        { timestamp: at, item: { type: "assistant_message", text: "ne" }, turnMetrics: metrics },
+      ],
+    });
+
+    const rows = (await timeline.fetch(scope)).rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
+  });
+
+  it("keeps the stats on a tool card whose updates the projection merges", async () => {
+    const timeline = new AgentTimeline(create());
+    const at = "2026-11-22T00:00:00.000Z";
+    await timeline.create(scope, {
+      epoch: "e",
+      entries: [
+        { timestamp: at, item: { type: "user_message", text: "go" } },
+        { timestamp: at, item: { ...tool, status: "running" } },
+        { timestamp: at, item: { ...tool, status: "completed" }, turnMetrics: metrics },
+      ],
+    });
+
+    const rows = (await timeline.fetch(scope)).rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { status: "completed" }, turnMetrics: metrics });
+  });
+});

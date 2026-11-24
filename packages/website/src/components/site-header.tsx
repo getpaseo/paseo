@@ -3,6 +3,7 @@ import { PLUGINS_LINKED } from "~/plugins/launch";
 import "~/styles.css";
 import { DiscordIcon, GitHubIcon } from "~/components/brand-icons";
 import { LanguageSelector } from "~/components/language-selector";
+import { PaseoLockup } from "~/components/paseo-brand";
 import { useLocalizePath } from "~/i18n";
 import { useStars } from "~/routes/__root";
 
@@ -14,11 +15,14 @@ export function SiteHeader() {
   const { stars } = useStars();
   return (
     <header className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
-      <a href={localize("/")} className="flex items-center gap-3">
-        <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
-        <span className="text-lg font-medium">Paseo</span>
+      <a
+        href={localize("/")}
+        aria-label="Paseo"
+        className="inline-flex items-center text-foreground"
+      >
+        <PaseoLockup className="h-[22px] w-auto" />
       </a>
-      <div className="flex flex-wrap items-center justify-center gap-4">
+      <nav className="flex flex-wrap items-center justify-center gap-4">
         {PLUGINS_LINKED && (
           <a href={localize("/plugins")} className={NAV_LINK_CLASS}>
             {t("nav.plugins")}
@@ -59,7 +63,7 @@ export function SiteHeader() {
           <GitHubIcon width="18" height="18" />
           {stars && <span className="text-sm">{stars}</span>}
         </a>
-      </div>
+      </nav>
     </header>
   );
 }

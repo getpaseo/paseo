@@ -1,5 +1,5 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
-import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import type { AgentMetric, AgentTimelineItem } from "../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
@@ -124,6 +124,13 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
     return this.defer(() =>
       this.inner.attachProviderMessageId(scope, clientMessageId, providerMessageId),
     );
+  }
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): Promise<ProjectedTimelineRow | null> {
+    return this.defer(() => this.inner.stampTurnMetrics(scope, metrics, options));
   }
   findSubmittedPrompt(
     scope: TimelineScope,

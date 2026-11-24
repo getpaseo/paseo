@@ -86,23 +86,29 @@ class RejectingHubExecutionAgents implements HubExecutionAgents {
 }
 
 describe("HubExecutionController", () => {
-  test("validates a named agent through the daemon provider registry", async () => {
+  test.each([
+    { cwd: "/workspace", valid: true },
+    { cwd: undefined, valid: false },
+    { cwd: "/missing-workspace", valid: false },
+  ])("validates a named agent with cwd $cwd", async ({ cwd, valid }) => {
     const messages: SessionOutboundMessage[] = [];
+    const unavailable = { path: ["model"], message: "Model is unavailable" };
     const validateAgentConfiguration = async (
-      message: Omit<HubExecutionAgentValidateRequest, "type" | "requestId">,
-    ) =>
-      message.model === "missing" ? [{ path: ["model"], message: "Model is unavailable" }] : [];
+      input: Omit<HubExecutionAgentValidateRequest, "type" | "requestId">,
+    ) => (input.model === "workspace-model" && input.cwd === "/workspace" ? [] : [unavailable]);
     const controller = new HubExecutionController({
       agents: new ControlledHubExecutionAgents(),
       validateAgentConfiguration,
       send: (message) => messages.push(message),
     });
 
+    const scope = cwd === undefined ? {} : { cwd };
     await controller.validateAgent({
       type: "hub.execution.agent.validate.request",
       requestId: "validate-agent",
-      provider: "codex",
-      model: "missing",
+      provider: "opencode",
+      model: "workspace-model",
+      ...scope,
     });
 
     expect(messages).toEqual([
@@ -110,8 +116,8 @@ describe("HubExecutionController", () => {
         type: "hub.execution.agent.validate.response",
         payload: {
           requestId: "validate-agent",
-          valid: false,
-          issues: [{ path: ["model"], message: "Model is unavailable" }],
+          valid,
+          issues: valid ? [] : [unavailable],
           error: null,
         },
       },

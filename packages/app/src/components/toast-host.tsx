@@ -53,6 +53,12 @@ export interface ToastState {
 /** Dismisses the toast it was returned for; a no-op once another toast replaced it. */
 export type DismissToast = () => void;
 
+/**
+ * Dismisses the toast with this ID, and does nothing once another toast replaced it. Without an
+ * ID, it dismisses whichever toast is shown.
+ */
+export type DismissToastById = (id?: number) => void;
+
 export interface ToastApi {
   show: (content: ReactNode, options?: ToastShowOptions) => DismissToast;
   copied: (label?: string) => void;
@@ -81,7 +87,7 @@ const errorIcon = (theme: Theme) => ({ color: theme.colors.destructive });
 export function useToastHost(): {
   api: ToastApi;
   toast: ToastState | null;
-  dismiss: () => void;
+  dismiss: DismissToastById;
 } {
   const { t } = useTranslation();
   const [toast, setToastState] = useState<ToastState | null>(null);
@@ -95,6 +101,13 @@ export function useToastHost(): {
     setToastState(next);
     previous?.onDismiss?.();
   }, []);
+
+  const dismiss = useCallback<DismissToastById>(
+    (id) => {
+      if (id === undefined || toastRef.current?.id === id) setToast(null);
+    },
+    [setToast],
+  );
 
   const show = useCallback(
     (content: ReactNode, options?: ToastShowOptions): DismissToast => {
@@ -127,11 +140,9 @@ export function useToastHost(): {
         testID: options?.testID,
         onDismiss: options?.onDismiss,
       });
-      return () => {
-        if (toastRef.current?.id === id) setToast(null);
-      };
+      return () => dismiss(id);
     },
-    [setToast],
+    [dismiss, setToast],
   );
 
   const api = useMemo<ToastApi>(
@@ -147,10 +158,6 @@ export function useToastHost(): {
     [show, t],
   );
 
-  const dismiss = useCallback(() => {
-    setToast(null);
-  }, [setToast]);
-
   return { api, toast, dismiss };
 }
 
@@ -161,7 +168,8 @@ export function ToastViewport({
   onBottomCoverageChange,
 }: {
   toast: ToastState | null;
-  onDismiss: () => void;
+  /** Called with the ID of the toast that timed out. */
+  onDismiss: (id: number) => void;
   placement?: ToastViewportPlacement;
   /** Sidebar placement: reports the distance from the region's bottom edge to the toast's top. */
   onBottomCoverageChange?: (coverage: number) => void;
@@ -180,7 +188,7 @@ export function ToastViewport({
   }, []);
 
   const scheduleDismiss = useCallback(
-    (durationMs: number | null) => {
+    (id: number, durationMs: number | null) => {
       clearTimer();
       if (durationMs === null) {
         remainingDurationRef.current = 0;
@@ -190,8 +198,10 @@ export function ToastViewport({
       const nextDurationMs = Math.max(0, durationMs);
       remainingDurationRef.current = nextDurationMs;
       dismissDeadlineRef.current = Date.now() + nextDurationMs;
+      // A replacing toast is in the host before this viewport renders it and reschedules, so the
+      // timer names its own toast rather than dismissing whichever one is current.
       timeoutRef.current = setTimeout(() => {
-        onDismiss();
+        onDismiss(id);
       }, nextDurationMs);
     },
     [onDismiss, clearTimer],
@@ -209,13 +219,14 @@ export function ToastViewport({
     if (!toast || toast.durationMs === null) {
       return;
     }
-    scheduleDismiss(remainingDurationRef.current || toast.durationMs);
+    scheduleDismiss(toast.id, remainingDurationRef.current || toast.durationMs);
   }, [scheduleDismiss, toast]);
 
   const toastId = toast?.id;
   const durationMs = toast?.durationMs ?? null;
   useEffect(() => {
-    scheduleDismiss(durationMs);
+    if (toastId === undefined) return;
+    scheduleDismiss(toastId, durationMs);
     return clearTimer;
   }, [clearTimer, durationMs, scheduleDismiss, toastId]);
 

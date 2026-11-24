@@ -4,11 +4,29 @@ import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
+  ProviderInspectionSchema,
+  ProviderUpdateCheckSchema,
+  ProviderUpdateResultSchema,
   ProviderStatusSchema,
+  type ProviderInspection,
+  type ProviderUpdateCheck,
+  type ProviderUpdateContext,
+  type ProviderUpdateReport,
+  type ProviderUpdateResult,
+  type ProviderInstallationContext,
+  type ProviderUpdateCheckContext,
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import type { PluginHookEvents, PluginHookAgent, AgentToolResult } from "@getpaseo/plugin/server";
+import type {
+  PluginHookEvents,
+  PluginHookAgent,
+  AgentToolResult,
+  PluginWorktreeCreateInput,
+  PluginWorktreeRemoveRequest,
+  PluginWorktreeRestoreRequest,
+} from "@getpaseo/plugin/server";
+import { z } from "zod";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import path from "node:path";
@@ -32,6 +50,7 @@ import type {
   PluginProcessRequest,
   PluginProviderMetadata,
   PluginUsageSourceMetadata,
+  PluginWorktreeManagerCapabilities,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import {
@@ -43,7 +62,40 @@ import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const WORKTREE_MANAGER_TIMEOUT_MS = 120_000;
 const TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
+
+const worktreeCreateResultSchema = z
+  .object({ type: z.literal("created"), path: z.string().min(1) })
+  .strict()
+  .nullable();
+const worktreeRemoveResultSchema = z
+  .object({ type: z.literal("removed") })
+  .strict()
+  .nullable();
+const worktreeRestoreResultSchema = z
+  .object({ type: z.literal("restored"), path: z.string().min(1) })
+  .strict()
+  .nullable();
+
+export interface PluginWorktreeManagerRuntime {
+  hasWorktreeManager(options?: {
+    operation?: "create" | "remove" | "restore";
+    preferredPluginId?: string;
+  }): boolean;
+  createWorktree(
+    request: PluginWorktreeCreateInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ pluginId: string; path: string } | null>;
+  removeWorktree(
+    request: PluginWorktreeRemoveRequest,
+    options?: { preferredPluginId?: string; signal?: AbortSignal },
+  ): Promise<{ pluginId: string } | null>;
+  restoreWorktree(
+    request: PluginWorktreeRestoreRequest,
+    options?: { preferredPluginId?: string; signal?: AbortSignal },
+  ): Promise<{ pluginId: string; path: string } | null>;
+}
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
@@ -68,7 +120,17 @@ interface PluginChild {
 interface PendingInvocation {
   resolve: (output: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  /** Absent for requests without a deadline. */
+  timeout?: ReturnType<typeof setTimeout>;
+  report?: (report: ProviderUpdateReport) => void;
+}
+
+interface PluginRequestOptions {
+  signal?: AbortSignal;
+  /** Receives `provider.installation.report` messages for the request. */
+  report?: (report: ProviderUpdateReport) => void;
+  /** Overrides the default per-message timeout (e.g. shared budget across serial worktree managers). */
+  timeoutMs?: number;
 }
 
 interface LoadedPlugin {
@@ -82,6 +144,7 @@ interface LoadedPlugin {
   subscriptionMethods: ReadonlySet<string>;
   subscriptions: Map<string, BufferedPluginSubscription>;
   hooks: string[];
+  worktreeManager: PluginWorktreeManagerCapabilities | null;
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
   child: PluginChild | null;
@@ -267,6 +330,30 @@ function jsonTransportValue<Value>(value: Value): Value {
   return JSON.parse(encoded) as Value;
 }
 
+function isInstallationRequest(message: PluginProcessRequest): boolean {
+  return (
+    message.type === "provider.installation.inspect" ||
+    message.type === "provider.installation.check_updates" ||
+    message.type === "provider.installation.update"
+  );
+}
+
+function isWorktreeManagerRequest(message: PluginProcessRequest): boolean {
+  return (
+    message.type === "worktree.create" ||
+    message.type === "worktree.remove" ||
+    message.type === "worktree.restore"
+  );
+}
+
+function requestTimeoutMs(message: PluginProcessRequest): number | null {
+  if (message.type === "tool.call") return TOOL_CALL_TIMEOUT_MS;
+  if (isWorktreeManagerRequest(message)) return WORKTREE_MANAGER_TIMEOUT_MS;
+  // An updater runs as long as it needs; daemon shutdown aborts it.
+  if (message.type === "provider.installation.update") return null;
+  return REQUEST_TIMEOUT_MS;
+}
+
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
   return new Promise((resolve, reject) => {
     child.send(message, (error) => {
@@ -435,6 +522,69 @@ export class PluginRuntime {
         providerId,
         request,
       }),
+    );
+  }
+
+  async inspectProviderInstallation(
+    pluginId: string,
+    providerId: string,
+    context: ProviderInstallationContext,
+  ): Promise<ProviderInspection> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderInspectionSchema.parse(
+      await this.request(
+        loaded,
+        {
+          type: "provider.installation.inspect",
+          requestId: randomUUID(),
+          providerId,
+          request: { launch: context.launch },
+        },
+        { signal: context.signal },
+      ),
+    );
+  }
+
+  async checkProviderUpdates(
+    pluginId: string,
+    providerId: string,
+    context: ProviderUpdateCheckContext,
+  ): Promise<ProviderUpdateCheck> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderUpdateCheckSchema.parse(
+      await this.request(
+        loaded,
+        {
+          type: "provider.installation.check_updates",
+          requestId: randomUUID(),
+          providerId,
+          request: { launch: context.launch, installedVersion: context.installedVersion },
+        },
+        { signal: context.signal },
+      ),
+    );
+  }
+
+  async updateProvider(
+    pluginId: string,
+    providerId: string,
+    context: ProviderUpdateContext,
+  ): Promise<ProviderUpdateResult> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderUpdateResultSchema.parse(
+      await this.request(
+        loaded,
+        {
+          type: "provider.installation.update",
+          requestId: randomUUID(),
+          providerId,
+          request: { launch: context.launch },
+        },
+        { signal: context.signal, report: (report) => context.report(report) },
+      ),
     );
   }
 
@@ -656,6 +806,109 @@ export class PluginRuntime {
     return request;
   }
 
+  hasWorktreeManager(options?: {
+    operation?: "create" | "remove" | "restore";
+    preferredPluginId?: string;
+  }): boolean {
+    const operation = options?.operation ?? "create";
+    const supports = (manager: PluginWorktreeManagerCapabilities | null): boolean => {
+      if (!manager) return false;
+      if (operation === "remove") return manager.hasRemove;
+      if (operation === "restore") return manager.hasRestore;
+      return true;
+    };
+    if (options?.preferredPluginId) {
+      return supports(this.plugins.get(options.preferredPluginId)?.worktreeManager ?? null);
+    }
+    for (const loaded of this.plugins.values()) {
+      if (supports(loaded.worktreeManager)) return true;
+    }
+    return false;
+  }
+
+  async createWorktree(
+    request: PluginWorktreeCreateInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ pluginId: string; path: string } | null> {
+    const plugins = [...this.plugins.values()]
+      .filter((plugin) => plugin.worktreeManager !== null)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    // All create callbacks share one timeout budget.
+    const deadline = Date.now() + WORKTREE_MANAGER_TIMEOUT_MS;
+    for (const loaded of plugins) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error("Worktree creation manager budget expired");
+      }
+      try {
+        const raw = await this.request(
+          loaded,
+          { type: "worktree.create", requestId: randomUUID(), request },
+          { signal: options?.signal, timeoutMs: remainingMs },
+        );
+        const parsed = worktreeCreateResultSchema.parse(raw ?? null);
+        if (parsed !== null) {
+          return { pluginId: loaded.id, path: parsed.path };
+        }
+      } catch (error) {
+        throw new Error(`Plugin ${loaded.id} worktree.create failed: ${describeError(error)}`, {
+          cause: error,
+        });
+      }
+    }
+    return null;
+  }
+
+  async removeWorktree(
+    request: PluginWorktreeRemoveRequest,
+    options?: { preferredPluginId?: string; signal?: AbortSignal },
+  ): Promise<{ pluginId: string } | null> {
+    if (!options?.preferredPluginId) return null;
+    const loaded = this.plugins.get(options.preferredPluginId);
+    if (!loaded?.worktreeManager?.hasRemove) return null;
+    try {
+      const raw = await this.request(
+        loaded,
+        { type: "worktree.remove", requestId: randomUUID(), request },
+        { signal: options.signal },
+      );
+      const parsed = worktreeRemoveResultSchema.parse(raw ?? null);
+      if (parsed !== null) {
+        return { pluginId: loaded.id };
+      }
+      return null;
+    } catch (error) {
+      throw new Error(`Plugin ${loaded.id} worktree.remove failed: ${describeError(error)}`, {
+        cause: error,
+      });
+    }
+  }
+
+  async restoreWorktree(
+    request: PluginWorktreeRestoreRequest,
+    options?: { preferredPluginId?: string; signal?: AbortSignal },
+  ): Promise<{ pluginId: string; path: string } | null> {
+    if (!options?.preferredPluginId) return null;
+    const loaded = this.plugins.get(options.preferredPluginId);
+    if (!loaded?.worktreeManager?.hasRestore) return null;
+    try {
+      const raw = await this.request(
+        loaded,
+        { type: "worktree.restore", requestId: randomUUID(), request },
+        { signal: options.signal },
+      );
+      const parsed = worktreeRestoreResultSchema.parse(raw ?? null);
+      if (parsed !== null) {
+        return { pluginId: loaded.id, path: parsed.path };
+      }
+      return null;
+    } catch (error) {
+      throw new Error(`Plugin ${loaded.id} worktree.restore failed: ${describeError(error)}`, {
+        cause: error,
+      });
+    }
+  }
+
   async getProviderCatalogCacheKey(
     pluginId: string,
     providerId: string,
@@ -732,7 +985,7 @@ export class PluginRuntime {
       return (await this.request(
         loaded,
         { type: "tool.call", requestId, agent, name, input },
-        signal,
+        { signal },
       )) as AgentToolResult;
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -743,8 +996,9 @@ export class PluginRuntime {
   private request(
     loaded: LoadedPlugin,
     message: Extract<PluginProcessRequest, { requestId: string }>,
-    signal?: AbortSignal,
+    options: PluginRequestOptions = {},
   ): Promise<unknown> {
+    const { signal, report } = options;
     const child = loaded.child;
     const pluginId = loaded.id;
     if (!child) throw new Error(`Plugin ${pluginId} has no server entry`);
@@ -756,27 +1010,39 @@ export class PluginRuntime {
         loaded.pending.delete(requestId);
         if (message.type === "tool.call")
           void send(child, { type: "tool.cancel", requestId }).catch(() => {});
+        if (isWorktreeManagerRequest(message))
+          void send(child, { type: "worktree.cancel", requestId }).catch(() => {});
+        if (isInstallationRequest(message))
+          void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
         signal?.removeEventListener("abort", cancel);
-        reject(signal?.reason ?? new Error("Tool call canceled"));
+        reject(signal?.reason ?? new Error("Plugin request canceled"));
       };
-      const timeout = setTimeout(
-        () => {
-          loaded.pending.delete(requestId);
-          signal?.removeEventListener("abort", cancel);
-          if (message.type === "tool.call")
-            void send(child, { type: "tool.cancel", requestId }).catch(() => {});
-          if (message.type === "hook") {
-            void send(child, { type: "hook.cancel", requestId }).catch(() => {});
-          }
-          // The handler may still start after the daemon gave up on it.
-          if (message.type === "subscribe") {
-            const { subscriptionId } = message;
-            void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
-          }
-          reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
-        },
-        message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
-      );
+      const timeoutMs = options.timeoutMs ?? requestTimeoutMs(message);
+      const timeout =
+        timeoutMs === null
+          ? undefined
+          : setTimeout(() => {
+              loaded.pending.delete(requestId);
+              signal?.removeEventListener("abort", cancel);
+              if (message.type === "tool.call")
+                void send(child, { type: "tool.cancel", requestId }).catch(() => {});
+              if (message.type === "hook") {
+                void send(child, { type: "hook.cancel", requestId }).catch(() => {});
+              }
+              if (isWorktreeManagerRequest(message)) {
+                void send(child, { type: "worktree.cancel", requestId }).catch(() => {});
+              }
+              // The handler may still start after the daemon gave up on it.
+              if (message.type === "subscribe") {
+                const { subscriptionId } = message;
+                void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
+              }
+              if (isInstallationRequest(message))
+                void send(child, { type: "provider.installation.cancel", requestId }).catch(
+                  () => {},
+                );
+              reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
+            }, timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       loaded.pending.set(requestId, {
         resolve: (value) => {
@@ -788,6 +1054,7 @@ export class PluginRuntime {
           reject(error);
         },
         timeout,
+        report,
       });
       void send(child, message).catch((error) => {
         clearTimeout(timeout);
@@ -830,6 +1097,7 @@ export class PluginRuntime {
         subscriptionMethods: new Set(),
         subscriptions: new Map(),
         hooks: [],
+        worktreeManager: null,
         providers: [],
         usageSources: [],
         child: null,
@@ -962,6 +1230,7 @@ export class PluginRuntime {
       subscriptionMethods: new Set(ready.subscriptions ?? []),
       subscriptions: new Map(),
       hooks: ready.hooks ?? [],
+      worktreeManager: ready.worktreeManager ?? null,
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
       child,
@@ -1051,8 +1320,16 @@ export class PluginRuntime {
       }
       return;
     }
+    if (message.type === "worktree_manager.changed") {
+      loaded.worktreeManager = message.worktreeManager;
+      return;
+    }
     if (message.type === "settings.changed") {
       this.dependencies.onSettingsChanged?.(loaded.id, message.settingsId);
+      return;
+    }
+    if (message.type === "provider.installation.report") {
+      loaded.pending.get(message.requestId)?.report?.(message.report);
       return;
     }
     if (message.type.startsWith("provider.")) {

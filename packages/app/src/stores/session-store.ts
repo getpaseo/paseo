@@ -33,9 +33,11 @@ import type {
   AgentMode,
   AgentCapabilityFlags,
   AgentUsage,
+  AgentMetric,
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentBackgroundWorkSummary,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -78,7 +80,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
-  backgroundWork?: { count: number };
+  backgroundWork?: AgentBackgroundWorkSummary;
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;
@@ -92,6 +94,8 @@ export interface Agent {
   runtimeInfo?: AgentRuntimeInfo;
   usageScopeKey?: string;
   lastUsage?: AgentUsage;
+  /** What the provider reports about the session, as label and value rows. */
+  sessionMetrics?: AgentMetric[];
   lastError?: string | null;
   title: string | null;
   cwd: string;

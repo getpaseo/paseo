@@ -19,7 +19,7 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 | Provider    | Transport                                  | Setup and limitations                                            |
 | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers/antigravity.md) |
+| Antigravity | ACP over the installed `agy acp` CLI       | [Antigravity](../public-docs/supported-providers/antigravity.md) |
 | Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/supported-providers/muse-code.md)     |
 
 ## Provider-native session options
@@ -50,8 +50,8 @@ or without a control.
   reject. A key the running session cannot apply (one the provider reads only when it opens) is
   rejected too, so a stored option always describes what runs. Claude reads most options when it
   starts its query, and replacing a started query would end its background work, so after the
-  first prompt only Fast can change. Codex fixes its approval policy and sandbox when the thread
-  starts, so it applies only `service_tier` and `plan_mode` live. A session with no
+  first prompt only Fast and Ultracode can change. Codex fixes its approval policy and sandbox
+  when the thread starts, so it applies only `service_tier` and `plan_mode` live. A session with no
   `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
   it ended up with when they differ from the request. The daemon stores the patch and that
   result in one step after the call resolves. Throwing rejects the whole patch and none of it is
@@ -221,11 +221,32 @@ Plugin callbacks follow the same contract; see [plugin providers](plugins.md#con
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager
-aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+aborts the shared refresh signal at the deadline, and when it stops. Shutdown waits for running
+probes to settle before it shuts down provider clients, so a probe cannot start provider work,
+such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 
-Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
+Providers change their model lists on the server without a CLI update, so the daemon refreshes
+each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
+`30 min / enabled providers` apart, and each tick starts at most one refresh: the provider refreshed
+longest ago, if that was a full interval ago. Ticks do not wait for refreshes, so a provider that
+probes many workspace targets does not delay the others, and provider CLIs never start in a burst.
+Any forced refresh, configuration change, or newly enabled provider counts as a refresh and pushes
+that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with these differences:
+
+- It joins discovery already in flight.
+- It passes `force: false`, because providers treat `force` as a requested hard refresh. OpenCode
+  rotates its shared server on it.
+- An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
+  no update.
+- A result that is not ready, or a catalogue the provider marks `incomplete`, keeps a ready
+  catalogue. Plugin status probes report a failed startup as unavailable, so that counts as
+  transient. Set `ProviderCatalog.incomplete` when discovery fails and you fall back to a partial
+  list, as Claude does when model discovery times out. A manual refresh still publishes all three.
+
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 
@@ -262,6 +283,53 @@ identity, so unchanged registrations and builtins keep their results. Await the 
 promise for completion: equal results, including equal discovery timestamps, emit no transition.
 
 ---
+
+## Installation and updates
+
+The provider list and the **Installation** section of a provider's page read `AgentClient.installation`. Built-ins set
+it on the client; plugins set `ProviderRegistration.installation`, which the plugin bridge maps to
+the same interface. `ProviderInstallations` in `packages/server/src/server/agent/provider-installation/`
+owns deadlines, caching and the one running update per provider, so a provider only answers.
+
+Declare only what the vendor offers:
+
+- `installUrl` and `updateUrl` link the vendor's own install and update docs.
+- `inspect` reports the version the CLI prints. Versions are opaque: Paseo shows them as written
+  and never parses them.
+- `checkForUpdates` receives the version `inspect` reported as `installedVersion` and asks the
+  source the CLI's own updater reads, such as the vendor's release endpoint or the CLI's
+  `update --check`. Do not read the version again. Leave it out when that source is inside the binary or
+  depends on how the CLI was installed, which is why Copilot and OpenCode have no check. Do not
+  build a release lookup of your own.
+- `update` runs the CLI's own update command and passes its output through, using
+  `runUpdateCommand`. Paseo adds no verification, signature check or rollback, so the update does
+  exactly what the same command does in a terminal.
+
+The three calls are separate because they cost differently. `inspect` runs for every provider
+whenever the provider list shows, because each row states its version; a provider's page shares the
+row's request. It has a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
+network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
+answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
+checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
+aborted only when the daemon stops. A failed update stays on the provider until the next refresh
+of its installation, which tells every client observing the provider's updates that it is gone; a
+running one is never dropped.
+
+The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
+for a provider that declares `update`, or **Update instructions** for one that declares only
+`updateUrl`, whatever the check answers and whether the provider has one. The check's answer shows
+beside the action when it has one. Copilot and OpenCode have no check, so they show **Update** alone.
+
+Write the success message for the provider's process model. A CLI that Paseo starts once per agent
+uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,
+so its message asks the user to restart the daemon.
+
+`createCliInstallation()` covers a CLI that prints `--version` and updates with a subcommand. It
+resolves the configured command, so a profile that extends a built-in reports and updates the CLI
+that profile launches. Clients for `extends: "acp"` providers declare no installation.
+
+Test with fake executables, as `providers/provider-update-checks.test.ts` does. Running a real
+updater during development replaces the CLI on your machine.
 
 ## Usage sources
 
