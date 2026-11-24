@@ -42,6 +42,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
+    refetch: query.refetch,
   };
 }
 

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test as base, type Page } from "../support/fixtures";
@@ -296,29 +297,47 @@ test.describe("Projects settings", () => {
       originUrl: "https://gitlab.com/acme/empty-project.git",
     });
     const client = await connectSeedClient();
-    let projectViewKey: string | null = null;
+    let projectId: string | undefined;
 
     try {
       await gotoAppShell(page);
 
-      projectViewKey = await addProjectFromSidebar(page, repo.path);
+      const projectViewKey = await addProjectFromSidebar(page, repo.path);
+      projectId = (await client.listProjects()).projects.find(
+        (entry) => entry.projectKey === projectViewKey,
+      )?.projectId;
+      expect(projectId).toEqual(expect.any(String));
       await openProjectSettingsFromSidebar(page, projectViewKey);
 
       await expectProjectSettingsFormVisible(page);
       const details = page.getByTestId("project-details-section");
       await expect(details.getByText(repo.path, { exact: true })).toBeVisible();
-      await expect(details.getByRole("link", { name: "Repository" })).toBeVisible();
+      const repository = details.getByRole("link", { name: "Repository" });
+      await expect(repository).toBeVisible();
+      await expect(
+        details.getByText("https://gitlab.com/acme/empty-project", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
+
+      await returnToProjectsList(page);
+      execFileSync(
+        "git",
+        ["remote", "set-url", "origin", "https://gitlab.com/acme/moved-project.git"],
+        {
+          cwd: repo.path,
+        },
+      );
+      await openProjectSettings(page, path.basename(repo.path));
+      await expect(
+        details.getByText("https://gitlab.com/acme/moved-project", { exact: true }),
+      ).toBeVisible();
+      await expect(repository).toBeVisible();
     } finally {
-      if (projectViewKey) {
-        const project = (await client.listProjects()).projects.find(
-          (entry) => entry.projectKey === projectViewKey,
-        );
-        expect(project).toBeDefined();
-        await client.removeProject(project!.projectId);
+      if (projectId) {
+        await client.removeProject(projectId);
         expect(
-          (await client.listProjects()).projects.map((entry) => entry.projectKey),
-        ).not.toContain(projectViewKey);
+          (await client.listProjects()).projects.map((entry) => entry.projectId),
+        ).not.toContain(projectId);
       }
       await client.close().catch(() => undefined);
       await repo.cleanup().catch(() => undefined);

@@ -344,7 +344,16 @@ function ProjectDetailsGroup({ selectedHost }: { selectedHost: ProjectHostEntry 
   const isLocalExecution = useIsLocalDaemon(serverId);
   const { targets } = useDesktopOpenTargets({ isLocalExecution });
   const fileManager = targets.find((target) => target.kind === "file-manager");
-  const { status } = useCheckoutStatusQuery({ serverId, cwd: repoRoot });
+  const { status, refetch: refetchCheckoutStatus } = useCheckoutStatusQuery({
+    serverId,
+    cwd: repoRoot,
+  });
+  // Project roots without an active workspace do not receive checkout status pushes.
+  useFocusEffect(
+    useCallback(() => {
+      void refetchCheckoutStatus({ cancelRefetch: false });
+    }, [refetchCheckoutStatus]),
+  );
   const repositoryUrl = status?.isGit
     ? buildForgeRepositoryUrl(forgeFromRemoteUrl(status.remoteUrl), status)
     : null;
