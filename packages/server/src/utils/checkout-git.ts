@@ -4475,7 +4475,7 @@ async function resolvePushWithoutOrigin(
   if (!gitPushUpdatesUpstream) {
     return {
       kind: "refused",
-      reason: `Git is not set to push '${storedBranchName}' to '${upstreamName}', so Push did not send it there. Push it from a terminal instead.`,
+      reason: `Push did not send '${storedBranchName}' to '${upstreamName}' because Git's push settings do not confirm that destination. Push it from a terminal instead.`,
     };
   }
   return { kind: "upstream", ...upstream };
@@ -4484,12 +4484,17 @@ async function resolvePushWithoutOrigin(
 // Whether plain `git push` on this branch updates the branch's upstream. Git resolves its push
 // destination from its own settings and reports none when it cannot name a single one. The
 // remote is compared by name as well, because two remotes can map onto one remote-tracking ref.
+// Matching mode is left to the user: Git then sends the branch only when the remote still has
+// it, and the checkout's remote-tracking refs can outlive a branch deleted on the remote.
 async function doesGitPushUpdateUpstream(input: {
   cwd: string;
   storedBranchName: string;
   upstreamRemoteName: string;
   context?: CheckoutContext;
 }): Promise<boolean> {
+  if ((await getGitConfigValue(input.cwd, "push.default", input.context)) === "matching") {
+    return false;
+  }
   try {
     const { stdout } = await getRunGitCommand(input.context)(
       [

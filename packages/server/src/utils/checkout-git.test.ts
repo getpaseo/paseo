@@ -1430,6 +1430,9 @@ const x = 1;
         ],
       },
       { name: "push.default is nothing", config: [["push.default", "nothing"]] },
+      // Matching mode sends a branch only when the remote still has it, which the checkout
+      // cannot know.
+      { name: "push.default is matching", config: [["push.default", "matching"]] },
     ])("does not push when $name", async ({ config }) => {
       const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir, "upstream");
       const forkDir = join(tempDir, "fork.git");
@@ -1443,7 +1446,7 @@ const x = 1;
 
       const status = await getCheckoutStatus(repoDir);
       await expect(pushCurrentBranch(repoDir)).rejects.toThrow(
-        "Git is not set to push 'main' to 'upstream/main'",
+        "Push did not send 'main' to 'upstream/main' because Git's push settings do not confirm",
       );
 
       expect(status).toMatchObject({
