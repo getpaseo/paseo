@@ -23,12 +23,14 @@ import {
 } from "../../../utils/worktree-metadata.js";
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import {
+  FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
+import { createWorkspaceProvisioningService } from "../workspace-provisioning/workspace-provisioning-service.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
@@ -296,8 +298,23 @@ function createGitRepository(): { tempDir: string; repoDir: string } {
   return { tempDir, repoDir };
 }
 
-async function createBaseRecoveryFixture(baseBranch: string | null) {
-  const { tempDir, repoDir } = createGitRepository();
+async function createBaseRecoveryFixture(
+  baseBranch: string | null,
+  options: { bareSource?: boolean } = {},
+) {
+  const { tempDir, repoDir: checkoutDir } = createGitRepository();
+  const repoDir = options.bareSource ? join(realpathSync(tempDir), "repo.git") : checkoutDir;
+  if (options.bareSource) {
+    execFileSync("git", ["clone", "--bare", "-q", checkoutDir, repoDir], { stdio: "pipe" });
+    // A bare clone does not copy the checkout's local config; its linked worktrees share this one.
+    for (const [key, value] of [
+      ["user.name", "Paseo Test"],
+      ["user.email", "test@example.com"],
+      ["core.autocrlf", "false"],
+    ]) {
+      execFileSync("git", ["--git-dir", repoDir, "config", key, value], { stdio: "pipe" });
+    }
+  }
   const paseoHome = join(tempDir, "paseo-home");
   const created = await createWorktree({
     cwd: repoDir,
@@ -648,6 +665,23 @@ test("restore rejects a branch checked out elsewhere without inventing another b
   ).toBe("* feature");
 });
 
+test("restores a workspace after the last checkout of a bare repository is archived", async () => {
+  const fixture = await createBaseRecoveryFixture("main", { bareSource: true });
+  await fixture.archiveAndRemove();
+
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+  expect(readFileSync(join(fixture.workspace.cwd, "feature.txt"), "utf8")).toBe("feature\n");
+  expect(
+    execFileSync("git", ["symbolic-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("refs/heads/feature");
+});
+
 test("restores a user-created worktree at its recorded path outside Paseo's root", async () => {
   const { tempDir, repoDir } = createGitRepository();
   const worktreeRoot = join(realpathSync(tempDir), "external-worktree");
@@ -686,4 +720,135 @@ test("restores a user-created worktree at its recorded path outside Paseo's root
     }).trim(),
   ).toBe("external-feature");
   expect(unarchived).toEqual([workspace.workspaceId]);
+});
+
+describe("recovery approval ownership for shared archived history", () => {
+  async function setupSlugReuseHistory(options: { keepLatestCheckoutOnDisk: boolean }) {
+    const { tempDir, repoDir } = createGitRepository();
+    const paseoHome = join(tempDir, "paseo-home");
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      join(paseoHome, "workspaces.json"),
+      pino({ level: "silent" }),
+    );
+    const projectRegistry = new FileBackedProjectRegistry(
+      join(paseoHome, "projects.json"),
+      pino({ level: "silent" }),
+    );
+    const provisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: async () => {},
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: {
+        getCheckout: async (cwd) => getCheckoutStatus(cwd),
+        getSnapshot: async () => ({
+          checkout: null,
+          forge: { pullRequest: null, checkedAt: null, error: null },
+        }),
+      },
+      isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+      logger: pino({ level: "silent" }),
+    });
+
+    const firstWorktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "shared-slug",
+      source: { kind: "branch-off", branchName: "feature/older-approved", baseBranch: "main" },
+      paseoHome,
+    });
+    const olderApproved = await provisioning.createWorkspaceForWorktree({
+      sourceCwd: repoDir,
+      repoRoot: repoDir,
+      cwd: firstWorktree.worktreePath,
+      worktreeRoot: firstWorktree.worktreePath,
+      branch: firstWorktree.branchName,
+      baseBranch: firstWorktree.baseRef,
+      title: null,
+      isPaseoOwnedWorktree: true,
+    });
+    await workspaceRegistry.archive(olderApproved.workspaceId, "2026-04-01T00:00:00.000Z");
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: firstWorktree.worktreePath,
+      paseoHome,
+    });
+
+    const untrustedSource = {
+      kind: "change_request" as const,
+      forge: "github",
+      number: 72,
+      headRepository: "contributor/repo",
+    };
+    const secondWorktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "shared-slug",
+      source: { kind: "branch-off", branchName: "contributor/pr-72", baseBranch: "main" },
+      paseoHome,
+    });
+    await writePaseoWorktreeMetadata(secondWorktree.worktreePath, {
+      baseRefName: "main",
+      untrustedSource,
+    });
+    const laterUntrusted = await provisioning.createWorkspaceForWorktree({
+      sourceCwd: repoDir,
+      repoRoot: repoDir,
+      cwd: secondWorktree.worktreePath,
+      worktreeRoot: secondWorktree.worktreePath,
+      branch: secondWorktree.branchName,
+      baseBranch: secondWorktree.baseRef,
+      title: null,
+      isPaseoOwnedWorktree: true,
+      untrustedSource,
+    });
+    await workspaceRegistry.archive(laterUntrusted.workspaceId, "2026-04-02T00:00:00.000Z");
+    if (!options.keepLatestCheckoutOnDisk) {
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: secondWorktree.worktreePath,
+        paseoHome,
+      });
+    }
+
+    const recovery = createWorkspaceRecoveryService({
+      paseoHome,
+      getWorkspace: (id) => workspaceRegistry.get(id),
+      getProject: (id) => projectRegistry.get(id),
+      isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+      unarchiveWorkspace: async (workspace) => {
+        await provisioning.ensureWorkspaceRecordUnarchived(workspace);
+      },
+    });
+
+    return {
+      olderApproved,
+      untrustedSource,
+      worktreePath: firstWorktree.worktreePath,
+      workspaceRegistry,
+      recovery,
+    };
+  }
+
+  test("restoring a deleted approved workspace after slug reuse keeps the recreated worktree approved", async () => {
+    const { olderApproved, worktreePath, workspaceRegistry, recovery } =
+      await setupSlugReuseHistory({ keepLatestCheckoutOnDisk: false });
+
+    const result = await recovery.restore(olderApproved.workspaceId);
+
+    expect(result).toEqual({ workspaceId: olderApproved.workspaceId, action: "restore" });
+    const restored = await workspaceRegistry.get(olderApproved.workspaceId);
+    expect(restored?.archivedAt).toBeNull();
+    expect(restored?.untrustedSource).toBeUndefined();
+    expect((await readPaseoWorktreeMetadata(worktreePath))?.untrustedSource).toBeUndefined();
+  });
+
+  test("unarchiving onto a retained unapproved checkout inherits untrustedSource from worktree metadata", async () => {
+    const { olderApproved, untrustedSource, workspaceRegistry, recovery } =
+      await setupSlugReuseHistory({ keepLatestCheckoutOnDisk: true });
+
+    const result = await recovery.restore(olderApproved.workspaceId);
+
+    expect(result).toEqual({ workspaceId: olderApproved.workspaceId, action: "unarchive" });
+    const restored = await workspaceRegistry.get(olderApproved.workspaceId);
+    expect(restored?.archivedAt).toBeNull();
+    expect(restored?.untrustedSource).toEqual(untrustedSource);
+  });
 });

@@ -64,6 +64,10 @@ import {
   expectSettingsHostPickerLabel,
   openSettingsHostSection,
   removeCurrentHostFromSettings,
+  openSidebarHostPicker,
+  sidebarHostRowButton,
+  activateSidebarHostSettingsWithKeyboard,
+  bindCommandCenterToEnter,
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -187,6 +191,25 @@ test.describe("Settings sidebar scroll position", () => {
 });
 
 test.describe("Settings sidebar navigation", () => {
+  test("the sidebar host row opens Overview in one click", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "sidebar-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await sidebarHostRowButton(page).click();
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+  });
+
+  test("Enter opens the active sidebar host row", async ({ page, withWorkspace }) => {
+    await bindCommandCenterToEnter(page);
+    const workspace = await withWorkspace({ prefix: "keyboard-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await activateSidebarHostSettingsWithKeyboard(page);
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+  });
+
   test("opening Settings closes the composer model selector until it is opened again", async ({
     page,
     withWorkspace,
@@ -541,7 +564,7 @@ test.describe("Settings — compact master-detail", () => {
     await openWorkspace(page, workspace);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
     await page.getByTestId("sidebar-hosts-trigger").click();
-    await page.getByRole("button", { name: /Open .* settings/ }).click();
+    await sidebarHostRowButton(page).click();
 
     await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
     await expect(page.getByText("Overview", { exact: true })).toBeVisible();
