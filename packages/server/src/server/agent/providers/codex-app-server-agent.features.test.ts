@@ -18,6 +18,7 @@ import type {
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
+  waitForNextTimelineItem,
   type FakeCodexAppServer,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -171,6 +172,80 @@ async function createConnectedSession(
   harness.appServer.assertNoErrors();
   return harness;
 }
+
+describe("Codex MCP startup logging", () => {
+  test("warns on failed startup without logging credentials even at trace level", async () => {
+    const capture = createCapturedLogger();
+    capture.logger.level = "trace";
+    const { session, appServer } = await createConnectedSession({}, { logger: capture.logger });
+    try {
+      const processed = waitForNextTimelineItem(session);
+      const secret = "test-mcp-bearer-secret";
+      const responseBody = `Authorization: Bearer ${secret}; private response body`;
+      appServer.child.stdout.write(
+        JSON.stringify({
+          method: "mcpServer/startupStatus/updated",
+          params: {
+            threadId: "thread-1",
+            name: "paseo",
+            status: "failed",
+            error: `MCP client for \`paseo\` failed to start: MCP startup failed: handshaking with MCP server failed: Send message error Transport [test] error: unexpected server response: HTTP 502: ${responseBody}`,
+            failureReason: null,
+          },
+        }) + "\n",
+      );
+      appServer.warns({ threadId: "thread-1", message: "Notification queue drained" });
+      await processed;
+
+      expect(capture.entries.filter((entry) => (entry.level ?? 0) >= 40)).toEqual([
+        expect.objectContaining({
+          level: 40,
+          msg: "Codex MCP server startup failed",
+          serverName: "paseo",
+          status: "failed",
+          error: "HTTP 502",
+          sessionId: "thread-1",
+        }),
+      ]);
+      expect(JSON.stringify(capture.entries)).not.toContain(secret);
+      expect(JSON.stringify(capture.entries)).not.toContain("private response body");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("logs non-failure startup updates at debug level", async () => {
+    const capture = createCapturedLogger();
+    const { session, appServer } = await createConnectedSession({}, { logger: capture.logger });
+    try {
+      const processed = waitForNextTimelineItem(session);
+      const statuses = ["starting", "ready", "cancelled"];
+      for (const status of statuses) {
+        appServer.child.stdout.write(
+          JSON.stringify({
+            method: "mcpServer/startupStatus/updated",
+            params: {
+              threadId: "thread-1",
+              name: "paseo",
+              status,
+              error: null,
+              failureReason: null,
+            },
+          }) + "\n",
+        );
+      }
+      appServer.warns({ threadId: "thread-1", message: "Notification queue drained" });
+      await processed;
+
+      expect(capture.entries.filter((entry) => (entry.level ?? 0) >= 40)).toEqual([]);
+      expect(capture.entries.filter((entry) => entry.serverName === "paseo")).toEqual(
+        statuses.map((status) => expect.objectContaining({ level: 20, status })),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+});
 
 describe("Codex app-server provider controls", () => {
   test("GPT-6.1 Sol offers catalog speed tiers and sends Ultrafast", async () => {

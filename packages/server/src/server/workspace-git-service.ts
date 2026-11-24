@@ -7,13 +7,14 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { CheckoutContext } from "../utils/checkout-git.js";
+import type { CheckoutContext, UpstreamState } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
   type CheckoutSnapshotFacts,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
+  configuredUpstreamRef,
   getCheckoutDiff,
   getCheckoutRefDerivedState,
   getCheckoutSnapshotFacts,
@@ -22,6 +23,7 @@ import {
   getCheckoutWorktreeState,
   getPullRequestStatus,
   forgeAuthStateFromError,
+  projectUpstreamStatus,
   hasOriginRemote,
   listBranchSuggestions,
   resolveRepositoryDefaultBranch,
@@ -181,7 +183,9 @@ export interface WorkspaceGitRuntimeSnapshot {
     upstreamRef: string | null;
     aheadOfOrigin: number | null;
     behindOfOrigin: number | null;
+    upstreamState: UpstreamState;
     hasRemote: boolean;
+    firstPushRemote: string | null;
     diffStat: { additions: number; deletions: number } | null;
   };
   forge: {
@@ -422,6 +426,8 @@ interface WorkspaceGitServiceDependencies {
    * fakes. Any forge not listed here is built (and cached once) by the registry.
    */
   forgeOverrides?: Record<string, ForgeService>;
+  /** Shared forge resolver when callers share adapter instances with other services. */
+  forgeResolver?: ForgeResolver;
   /** Resolves an SSH config alias to its HostName; defaults to `ssh -G`. */
   resolveSshHostname?: SshHostnameResolver;
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
@@ -723,10 +729,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.fileObserver.subscribe.bind(this.fileObserver),
       options.deps,
     );
-    this.forgeResolver = createForgeResolver({
-      createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
-      resolveSshHostname: this.deps.resolveSshHostname,
-    });
+    this.forgeResolver =
+      this.deps.forgeResolver ??
+      createForgeResolver({
+        createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+        resolveSshHostname: this.deps.resolveSshHostname,
+      });
   }
 
   resolveForge(cwd: string): Promise<ForgeResolution | null> {
@@ -834,9 +842,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd = resolve(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot");
     const target = this.ensureWorkspaceTarget(cwd);
-    // The snapshot cached while the folder was gone can say "not git". Resume
-    // first, so a restored folder is read again instead of served from it.
-    if (target.folderMissing) {
+    // Restoration clears folderMissing before the fresh snapshot is ready.
+    if (target.folderRestorePromise) {
+      await target.folderRestorePromise;
+    } else if (target.folderMissing) {
       await this.resumeWorkspaceIfFolderRestored(target);
     }
     if (!request.force && target.latestSnapshot) {
@@ -2877,7 +2886,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         facts.storedBaseRef,
         facts.resolvedBaseRef,
         facts.comparisonBaseRef,
-        facts.upstreamStatus?.ref,
+        configuredUpstreamRef(facts.upstreamStatus),
       ];
       const usesBranch = dependentRefs.some(
         (ref) => ref === branch || ref === `refs/heads/${branch}`,
@@ -2914,7 +2923,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         facts.storedBaseRef,
         facts.resolvedBaseRef,
         facts.comparisonBaseRef,
-        facts.upstreamStatus?.ref,
+        configuredUpstreamRef(facts.upstreamStatus),
         configuredRemoteRef,
         shortstatRemoteRef,
       ];
@@ -3679,9 +3688,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       ...latestGit,
       aheadBehind: derived.aheadBehind,
       diffStat: derived.diffStat,
-      upstreamRef: derived.upstreamStatus?.ref ?? null,
-      aheadOfOrigin: derived.upstreamStatus?.aheadBehind.ahead ?? null,
-      behindOfOrigin: derived.upstreamStatus?.aheadBehind.behind ?? null,
+      ...projectUpstreamStatus(derived.upstreamStatus),
     };
     const loadedAtMs = this.deps.now().getTime();
     target.latestGitLoadedAtMs = loadedAtMs;
@@ -3776,7 +3783,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       upstreamRef: checkoutStatus.upstreamRef,
       aheadOfOrigin: checkoutStatus.aheadOfOrigin,
       behindOfOrigin: checkoutStatus.behindOfOrigin,
+      upstreamState: checkoutStatus.upstreamState,
       hasRemote: checkoutStatus.hasRemote,
+      firstPushRemote: checkoutStatus.firstPushRemote,
       diffStat,
     };
     const loadedAtMs = this.deps.now().getTime();
@@ -4431,7 +4440,9 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
       upstreamRef: null,
       aheadOfOrigin: null,
       behindOfOrigin: null,
+      upstreamState: "none",
       hasRemote: false,
+      firstPushRemote: null,
       diffStat: null,
     },
     forge: buildForgeUnavailableSnapshot(),

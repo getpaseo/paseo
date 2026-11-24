@@ -102,6 +102,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
 | `runtimeInfo`        | `RuntimeInfo?`                           | Live runtime state (see below)                                                                                                                                                                                                                                                                                                                                                      |
 | `features`           | `AgentFeature[]?`                        | Provider-reported features (toggles/selects)                                                                                                                                                                                                                                                                                                                                        |
+| `sessionMetrics`     | `AgentMetric[]?`                         | Provider-reported session metrics, already formatted for display; the latest report replaces the list                                                                                                                                                                                                                                                                               |
 | `persistence`        | `PersistenceHandle?`                     | Handle for resuming sessions                                                                                                                                                                                                                                                                                                                                                        |
 | `lastError`          | `string?` (nullable)                     | Last error message, if any                                                                                                                                                                                                                                                                                                                                                          |
 | `requiresAttention`  | `boolean?`                               | Whether the agent needs user attention                                                                                                                                                                                                                                                                                                                                              |
@@ -186,11 +187,13 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 Single file, validated with `PersistedConfigSchema`.
 
-`agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
-`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from the shared
-`~/.agents/skills` and Claude skill directories and keeps config plus filesystem convergence behind
-one serialized owner. Codex discovers the shared directory. Updates retire unchanged files from
-Paseo-managed copies in `~/.codex/skills`, preserving user edits and untracked files.
+`agents.skills.selection` stores the orchestration-skill preference for the daemon host, and a
+missing value defaults to `{ mode: "all" }`. The daemon does not persist installed state. It
+derives installed state from `~/.agents/skills`, `~/.claude/skills`, and `~/.gemini/config/skills`,
+and serializes configuration and filesystem convergence through one owner. Codex and Gemini CLI
+discover `~/.agents/skills`, while Antigravity discovers `~/.gemini/config/skills`. Updates retire
+unchanged files from Paseo-managed copies in `~/.codex/skills` and preserve user edits and
+untracked files.
 
 `paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
@@ -580,12 +583,17 @@ host, kinds, and ids. Opening a cached workspace uses exact workspace and projec
 directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
-checkpoint are also applied in one transaction. Reads wait for accepted changes to reach storage,
+checkpoint are also applied in one transaction. A stored checkpoint carries a version. When a writer
+bug could have stored a checkpoint without its directory, bump the version: older checkpoints are
+rejected on read, cached rows still paint, and each host re-syncs its directory once. Reads wait for
+accepted changes to reach storage,
 then retry only when a requested row changes during the read. Unrelated agent streams do not
 invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
 the affected reads.
 
-The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
+The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. After an
+eviction, only a baseline replacement stores that host's directory again. Mutations queued around
+the eviction are dropped when they are written, so a checkpoint never outlives its rows. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.

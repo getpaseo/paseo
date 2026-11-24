@@ -1,0 +1,5 @@
+- Antigravity approvals and history: Choose a permission mode, answer tool approvals, and import or reopen sessions. Requires Antigravity CLI 1.5.0 or later.
+- Use existing worktrees: Start a workspace in a worktree you already have, or create one from a branch or pull request.
+- Update providers in Paseo: See each provider's status and installed version, and update supported CLIs from the app.
+
+Full notes: https://paseo.sh/changelog

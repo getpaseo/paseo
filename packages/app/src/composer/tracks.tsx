@@ -21,6 +21,7 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { isWeb } from "@/constants/platform";
 import { usePanelAwareHorizontalScrollGesture } from "@/mobile-panels/gestures";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -45,7 +46,7 @@ export function ComposerTrackBar({ children }: { children: ReactNode }): ReactEl
   const scrollGesture = usePanelAwareHorizontalScrollGesture();
   const scrollBoundary = useHorizontalScrollBoundary();
   return (
-    <View style={styles.bar} pointerEvents="box-none">
+    <View style={styles.bar} dataSet={CHAT_COLUMN_RAIL_DATASET} pointerEvents="box-none">
       <View style={styles.trackViewport} pointerEvents="box-none">
         <GestureDetector gesture={scrollGesture}>
           <Animated.ScrollView

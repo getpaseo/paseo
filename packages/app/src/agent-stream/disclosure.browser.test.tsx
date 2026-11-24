@@ -266,7 +266,33 @@ function renderCopyOutput() {
   return <button type="button">Copy output</button>;
 }
 
+const searchQuery = "IANA example domains";
+const queryOnlySearch = { type: "search", query: searchQuery, toolName: "web_search" } as const;
+
+function renderSearchDetails() {
+  return <ToolCallDetailsContent detail={queryOnlySearch} />;
+}
+
+function SearchBadge() {
+  const [expanded, setExpanded] = React.useState(false);
+  const toggle = React.useCallback(() => setExpanded((current) => !current), []);
+  return (
+    <ExpandableBadge
+      label="Search"
+      isExpanded={expanded}
+      onToggle={toggle}
+      renderDetails={renderSearchDetails}
+    />
+  );
+}
+
 describe("tool detail interaction", () => {
+  it("shows the query when an expanded search has no results", async () => {
+    act(() => root.render(<SearchBadge />));
+    await page.getByRole("button", { name: "Search" }).click();
+    await expect.element(page.getByText(searchQuery, { exact: true })).toBeVisible();
+  });
+
   it("keeps detail controls in the tab order", async () => {
     function Badge() {
       const [expanded, setExpanded] = React.useState(true);

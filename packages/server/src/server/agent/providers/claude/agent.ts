@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { ClaudeResultMeter } from "./metrics.js";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
@@ -124,6 +125,7 @@ import {
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
+  type AgentMetric,
   type AgentMode,
   type AgentModelDefinition,
   type AgentPermissionRequest,
@@ -1054,37 +1056,11 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   );
 }
 
-function claudeAutoModeUnavailableOn(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
-  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
-    return "Bedrock";
-  }
-  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX)) {
-    return "Vertex";
-  }
-  return null;
-}
-
-function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
-  if (mode !== "auto") {
-    return;
-  }
-  const transport = claudeAutoModeUnavailableOn(env);
-  if (transport === null) {
-    return;
-  }
-  throw new Error(
-    `Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses ${transport}. Select another permission mode or unset the ${transport === "Bedrock" ? "CLAUDE_CODE_USE_BEDROCK" : "CLAUDE_CODE_USE_VERTEX"} environment variable.`,
-  );
-}
-
-function claudeModeCatalog(env: NodeJS.ProcessEnv): {
-  modes: AgentMode[];
-  defaultModeId: PermissionMode;
-} {
-  if (claudeAutoModeUnavailableOn(env)) {
-    return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
-  }
-  return { modes: DEFAULT_MODES, defaultModeId: "auto" };
+function claudeDefaultMode(env: NodeJS.ProcessEnv): PermissionMode {
+  return isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK) ||
+    isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX)
+    ? "default"
+    : "auto";
 }
 
 function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
@@ -1780,6 +1756,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.version = Promise.resolve(claudeCodeVersion);
     const env = this.buildProviderEnv();
     let discoveredModelIds = new Set<string>();
+    let incomplete = false;
     try {
       const advertisedModels = await runProviderRefreshActivity(context, "models", () =>
         this.discoverModels({
@@ -1796,6 +1773,7 @@ export class ClaudeAgentClient implements AgentClient {
       );
     } catch (error) {
       context?.signal.throwIfAborted();
+      incomplete = true;
       this.logger.warn(
         { err: error },
         "Claude model discovery failed; omitting discovery-required models",
@@ -1809,10 +1787,11 @@ export class ClaudeAgentClient implements AgentClient {
         discoveredModelIds,
       ),
     );
-    const modeCatalog = claudeModeCatalog(env);
     return {
       models,
-      ...modeCatalog,
+      modes: DEFAULT_MODES,
+      defaultModeId: claudeDefaultMode(env),
+      ...(incomplete ? { incomplete } : {}),
     };
   }
 
@@ -1821,7 +1800,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
-    return claudeModeCatalog(this.buildProviderEnv(launchEnv)).defaultModeId;
+    return claudeDefaultMode(this.buildProviderEnv(launchEnv));
   }
 
   private buildProviderEnv(launchEnv?: Record<string, string>): NodeJS.ProcessEnv {
@@ -2539,6 +2518,7 @@ class ClaudeAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
+  private readonly resultMeter = new ClaudeResultMeter();
   private compacting = false;
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
@@ -2945,7 +2925,6 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
     const previousQuery = this.query;
     const activeQuery = await this.ensureQuery(normalized);
@@ -3859,6 +3838,7 @@ class ClaudeAgentSession implements AgentSession {
     this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
+    this.resultMeter.queryStarted();
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -4004,7 +3984,6 @@ class ClaudeAgentSession implements AgentSession {
     const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
     const settingsOptions = await this.buildSettingsOptions(providerOptions);
     const sdkEnv = this.harnessEnvironment;
-    assertClaudeModeCanRun(permissionMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -5371,6 +5350,25 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
+    const metrics = this.resultMeter.observe(
+      message,
+      this.lastRuntimeModel ?? this.config.model ?? null,
+    );
+    this.appendTurnOutcomeEvents(message, metrics.turn, events);
+    if (metrics.session?.length) {
+      events.push({
+        type: "session_metrics_updated",
+        provider: "claude",
+        metrics: metrics.session,
+      });
+    }
+  }
+
+  private appendTurnOutcomeEvents(
+    message: Extract<SDKMessage, { type: "result" }>,
+    turnMetrics: AgentMetric[],
+    events: AgentStreamEvent[],
+  ): void {
     const usage = this.convertUsage(message);
     // Claude Code reports a turn that stopped on an API error (a usage limit, an overloaded or
     // rejected request) as `success` with `is_error`, carrying the error text in `result`.
@@ -5414,7 +5412,7 @@ class ClaudeAgentSession implements AgentSession {
           },
         });
       }
-      events.push({ type: "turn_completed", provider: "claude", usage });
+      events.push({ type: "turn_completed", provider: "claude", usage, metrics: turnMetrics });
       return;
     }
     const errorMessage =

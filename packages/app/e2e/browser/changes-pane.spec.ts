@@ -471,6 +471,33 @@ test("All changes combines committed and pending edits and preserves an unfinish
   });
 });
 
+test("Changes offers Push for a branch that was never pushed and the push sets its upstream", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await test.step("committing the edit makes Push the primary action", async () => {
+    await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+    commitAllWithGit(workspace.repoPath, "Feature work");
+    await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+  await test.step("Push sends the branch and sets its upstream", async () => {
+    await primary.click();
+    await expect
+      .poll(() => remoteBranchHead(workspace, "feature"), { timeout: 30_000 })
+      .toBe(localHead(workspace));
+    // git writes the upstream after the remote has the branch, so wait for it too.
+    await expect
+      .poll(() => branchUpstream(workspace, "feature"), { timeout: 30_000 })
+      .toBe("origin/feature");
+    await expect(primary).not.toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+});
+
 test("Changes selects exact local and remote bases and retains the selection after reload", async ({
   page,
 }, testInfo) => {
@@ -1598,6 +1625,237 @@ test("canvas diff replaces a selection with forward and backward drags", async (
   }
 });
 
+test("canvas diff double-click selects the grapheme under the pointer, not the nearest caret", async ({
+  context,
+  page,
+}) => {
+  const content = "call(foo bar)";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    fraction: 0.75,
+    start: { line: 0, offset: 3 },
+    end: { line: 0, offset: 3 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "call");
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    fraction: 0.1,
+    start: { line: 0, offset: 4 },
+    end: { line: 0, offset: 4 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "(");
+});
+
+test("canvas diff double-click selects the clicked word and replaces an existing selection", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo charlie delta";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    start: { line: 0, offset: 0 },
+    end: { line: 0, offset: 4 },
+  });
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    start: { line: 0, offset: 8 },
+    end: { line: 0, offset: 8 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "bravo");
+});
+
+test("canvas diff double-click drag extends the selection word by word in both directions", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo charlie delta";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end, expectedText] of [
+    [{ line: 0, offset: 8 }, { line: 0, offset: 14 }, "bravo charlie"],
+    [{ line: 0, offset: 14 }, { line: 0, offset: 2 }, "alpha bravo charlie"],
+  ] as const) {
+    await dragAddedTextRange(page, { lines: [content], clickCount: 2, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, expectedText);
+  }
+});
+
+test("canvas diff double-click drag extends word by word across lines and wrapped lines", async ({
+  context,
+  page,
+}) => {
+  const lines = ["alpha bravo", "charlie delta"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end, expectedText] of [
+    [{ line: 0, offset: 8 }, { line: 1, offset: 10 }, "bravo\ncharlie delta"],
+    [{ line: 1, offset: 10 }, { line: 0, offset: 2 }, "alpha bravo\ncharlie delta"],
+  ] as const) {
+    await dragAddedTextRange(page, { lines, clickCount: 2, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, expectedText);
+  }
+
+  const wrapped = `${"alpha ".repeat(40)}bravo charlie`;
+  const wrappedWorkspace = await createWorkspaceWithExactSelectionDiff(wrapped);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: true });
+  await openSelectionWorkspaceChanges(page, wrappedWorkspace);
+  await setOpenChangesPresentation(page, { layout: "unified", wrapLines: true });
+  const bravoStart = 40 * "alpha ".length;
+  await dragAddedTextRange(page, {
+    lines: [wrapped],
+    wrapped: true,
+    clickCount: 2,
+    start: { line: 0, offset: bravoStart + 2 },
+    end: { line: 0, offset: bravoStart + 9 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "bravo charlie");
+});
+
+test("canvas diff double-click drag keeps word selection on the split side", async ({
+  context,
+  page,
+}) => {
+  const lines = ["RIGHT-ONE", "RIGHT-TWO"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "split", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
+
+  await dragAddedTextRange(page, {
+    lines,
+    side: "right",
+    clickCount: 2,
+    start: { line: 0, offset: 7 },
+    end: { line: 1, offset: 3 },
+  });
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ONE\nRIGHT");
+});
+
+test("canvas diff triple-click selects the whole source line and replaces an existing selection", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    start: { line: 0, offset: 0 },
+    end: { line: 0, offset: 3 },
+  });
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 3,
+    start: { line: 0, offset: 8 },
+    end: { line: 0, offset: 8 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, content);
+});
+
+test("canvas diff triple-click drag extends whole source lines in both directions", async ({
+  context,
+  page,
+}) => {
+  const lines = ["alpha", "bravo", "charlie"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end] of [
+    [
+      { line: 0, offset: 2 },
+      { line: 2, offset: 3 },
+    ],
+    [
+      { line: 2, offset: 3 },
+      { line: 0, offset: 1 },
+    ],
+  ] as const) {
+    await dragAddedTextRange(page, { lines, clickCount: 3, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, "alpha\nbravo\ncharlie");
+  }
+});
+
+test("canvas diff triple-click selects every wrapped fragment of a source line", async ({
+  context,
+  page,
+}) => {
+  const content = `${"alpha ".repeat(80)}omega`;
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: true });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "unified", wrapLines: true });
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    wrapped: true,
+    clickCount: 3,
+    start: { line: 0, offset: 20 },
+    end: { line: 0, offset: 20 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, content);
+});
+
+test("canvas diff triple-click drag keeps whole source lines on the split side", async ({
+  context,
+  page,
+}) => {
+  const lines = ["RIGHT-ONE", "RIGHT-TWO"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "split", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
+
+  await dragAddedTextRange(page, {
+    lines,
+    side: "right",
+    clickCount: 3,
+    start: { line: 1, offset: 3 },
+    end: { line: 0, offset: 4 },
+  });
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("RIGHT-ONE\nRIGHT-TWO");
+});
+
 test("canvas diff copies only the selected split side", async ({ context, page }) => {
   const lines = ["RIGHT-ONE", "RIGHT-TWO"];
   const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
@@ -1889,6 +2147,68 @@ async function createWorkspaceWithMountedTabDiff(
     throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repo.path}`);
   }
   return { id: createdWorkspace.workspace.id, repoPath: repo.path };
+}
+
+interface RemoteWorkspace extends DirtyWorkspace {
+  remotePath: string;
+}
+
+// A regular checkout with a local bare remote and one uncommitted edit.
+async function createWorkspaceWithRemote(
+  prepare: (repoPath: string) => void,
+): Promise<RemoteWorkspace> {
+  const repo = await createTempGitRepo("changes-push-", {
+    withRemote: true,
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  // The helper keeps the bare remote inside the checkout; keep it out of the status.
+  await writeFile(path.join(repo.path, ".git/info/exclude"), "remote.git/\n");
+  prepare(repo.path);
+  await writeFile(path.join(repo.path, "tracked.ts"), "export const tracked = 2;\n");
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) {
+    throw new Error(created.error ?? `Failed to create workspace ${repo.path}`);
+  }
+  return {
+    id: created.workspace.id,
+    repoPath: repo.path,
+    remotePath: path.join(repo.path, "remote.git"),
+  };
+}
+
+// The app's Commit asks an agent provider for a message, and this harness has none.
+function commitAllWithGit(repoPath: string, message: string): void {
+  execFileSync("git", ["commit", "-am", message], { cwd: repoPath, stdio: "ignore" });
+}
+
+function localHead(workspace: RemoteWorkspace): string {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  }).trim();
+}
+
+function remoteBranchHead(workspace: RemoteWorkspace, branch: string): string | null {
+  const line = execFileSync("git", ["ls-remote", "--heads", workspace.remotePath, branch], {
+    encoding: "utf8",
+  }).trim();
+  return line ? (line.split("\t")[0] ?? null) : null;
+}
+
+// Empty until the branch has an upstream.
+function branchUpstream(workspace: RemoteWorkspace, branch: string): string {
+  return execFileSync(
+    "git",
+    ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${branch}`],
+    { cwd: workspace.repoPath, encoding: "utf8" },
+  ).trim();
 }
 
 async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {
@@ -2482,6 +2802,8 @@ async function dragAddedTextRange(
     side?: "left" | "right";
     wrapped?: boolean;
     horizontalOffset?: number;
+    clickCount?: 1 | 2 | 3;
+    fraction?: number;
   },
 ): Promise<void> {
   const body = page.getByTestId("diff-file-0-body");
@@ -2520,14 +2842,38 @@ async function dragAddedTextRange(
         columnLeft +
         gutterWidth +
         8 +
-        localOffset * metrics.characterWidth -
+        (localOffset + (input.fraction ?? 0)) * metrics.characterWidth -
         (input.horizontalOffset ?? 0),
       y: bounds.y + (1 + fragmentsBefore(line) + fragment + 0.5) * lineHeight,
     };
   };
   const start = point(input.start);
   const end = point(input.end);
+  const clickCount = input.clickCount ?? 1;
   await page.mouse.move(start.x, start.y);
+  if (clickCount > 1) {
+    const isSinglePoint =
+      input.start.line === input.end.line && input.start.offset === input.end.offset;
+    if (isSinglePoint && clickCount === 2) {
+      await page.mouse.dblclick(start.x, start.y);
+      return;
+    }
+    if (isSinglePoint) {
+      for (let count = 1; count <= clickCount; count += 1) {
+        await page.mouse.down({ clickCount: count });
+        await page.mouse.up({ clickCount: count });
+      }
+      return;
+    }
+    for (let count = 1; count < clickCount; count += 1) {
+      await page.mouse.down({ clickCount: count });
+      await page.mouse.up({ clickCount: count });
+    }
+    await page.mouse.down({ clickCount });
+    await page.mouse.move(end.x, end.y, { steps: 12 });
+    await page.mouse.up({ clickCount });
+    return;
+  }
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 12 });
   await page.mouse.up();

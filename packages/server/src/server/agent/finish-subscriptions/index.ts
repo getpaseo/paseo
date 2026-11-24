@@ -199,7 +199,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           title,
           event: finishNotificationEvents[reason],
         },
-        activeTurnBehavior: "steer",
+        // A finish report never enters a running turn.
+        activeTurnBehavior: "queue",
         unarchive: false,
       });
       acknowledgments.push(

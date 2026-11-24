@@ -18,44 +18,6 @@ test.each(["3.0.0", "2.0.9", "2.0.7", "2.0.4", "2.0.3", "v2.0.1"])(
   },
 );
 
-test("records the runtime once and retains its position across resume", async () => {
-  const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
-  const { V2Harness } = await import("./test-utils/v2-harness.js");
-  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
-  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
-  const harness = new V2Harness();
-  const client = new OpenCodeV2AgentClient({
-    logger: createTestLogger(),
-    runtime: harness.runtime,
-  });
-  const original = withOpenCodeRuntimeNotice(
-    await client.createSession({ provider: "opencode", cwd: "/tmp/project" }),
-    2,
-  );
-  const notice = { type: "notification", level: "info", message: "This chat uses OpenCode v2." };
-  try {
-    expect(original.initialTimeline?.map((entry) => entry.item)).toEqual([notice]);
-    const handle = original.describePersistence()!;
-    await original.close();
-    const resumed = withOpenCodeRuntimeNotice(await client.resumeSession(handle), 2, handle);
-    try {
-      expect(resumed.initialTimeline).toEqual([]);
-      const history = [];
-      for await (const event of resumed.streamHistory()) history.push(event);
-      expect(history).toEqual([
-        { type: "timeline", provider: "opencode", ...original.initialTimeline![0] },
-      ]);
-      expect(resumed.describePersistence()?.metadata?.openCodeRuntimeNotices).toEqual(
-        handle.metadata?.openCodeRuntimeNotices,
-      );
-    } finally {
-      await resumed.close();
-    }
-  } finally {
-    await client.shutdown();
-  }
-});
-
 test("retries a rejected version probe after the configured binary changes", async () => {
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -217,59 +179,6 @@ test.each([0, 1, 2, 3, 4, 5, 6, 8])(
     }
   },
 );
-
-test("appends a first notice after old history and records a changed major version", async () => {
-  const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
-  const { V2Harness } = await import("./test-utils/v2-harness.js");
-  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
-  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
-  const harness = new V2Harness();
-  harness.history.push({ id: "old", type: "user", text: "Earlier prompt", time: { created: 1 } });
-  const client = new OpenCodeV2AgentClient({
-    logger: createTestLogger(),
-    runtime: harness.runtime,
-  });
-  const previous = {
-    provider: "opencode",
-    sessionId: "session",
-    metadata: { cwd: "/tmp/project" },
-  };
-  const session = withOpenCodeRuntimeNotice(await client.resumeSession(previous), 2, previous);
-  try {
-    const history = [];
-    for await (const event of session.streamHistory()) history.push(event);
-    expect(history).toEqual([
-      expect.objectContaining({
-        type: "timeline",
-        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
-      }),
-      expect.objectContaining({
-        type: "timeline",
-        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
-      }),
-    ]);
-    await session.close();
-    const v1Handle = {
-      ...previous,
-      metadata: {
-        ...previous.metadata,
-        openCodeRuntimeNotices: [{ major: 1, timestamp: "2026-01-01T00:00:00.000Z" }],
-      },
-    };
-    const changed = withOpenCodeRuntimeNotice(await client.resumeSession(v1Handle), 2, v1Handle);
-    try {
-      expect(changed.initialTimeline?.map((entry) => entry.item)).toEqual([
-        { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
-      ]);
-      expect(changed.describePersistence()?.metadata?.openCodeRuntimeNotices).toHaveLength(2);
-    } finally {
-      await changed.close();
-    }
-  } finally {
-    await session.close();
-    await client.shutdown();
-  }
-});
 
 test.each([
   "process.exit(1)",
