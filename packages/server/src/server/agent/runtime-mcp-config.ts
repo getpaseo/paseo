@@ -1,6 +1,12 @@
 import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 
 export const PASEO_MCP_SERVER_NAME = "paseo";
+
+/**
+ * Paseo tools every agent may call without asking. They only work inside a team run and only
+ * reach members of it, so a prompt before each message would defeat peer messaging.
+ */
+export const PASEO_TEAM_MESSAGE_TOOLS = ["send_team_message", "list_team_members"] as const;
 const PASEO_MCP_PATHNAME = "/mcp/agents";
 
 export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSessionConfig {

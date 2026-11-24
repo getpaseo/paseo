@@ -1,5 +1,6 @@
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
+import { PASEO_MCP_SERVER_NAME, PASEO_TEAM_MESSAGE_TOOLS } from "../../runtime-mcp-config.js";
 
 const ApprovalPolicySchema = z.union([
   z.enum(["untrusted", "on-request", "never"]),
@@ -63,6 +64,26 @@ export const CodexProviderOptionsSchema = z
   .strict() satisfies z.ZodType<ProviderOptions>;
 
 export type CodexProviderOptions = z.infer<typeof CodexProviderOptionsSchema>;
+
+/**
+ * Approves Paseo's team messaging tools in Codex's own MCP config. Unlike a tool policy this does
+ * not set `enabled_tools`, so the server keeps every other tool, and each of those keeps its
+ * approval mode.
+ */
+export function approvePaseoTeamTools(config: Record<string, unknown>): Record<string, unknown> {
+  const mcpServers = readRecord(config.mcp_servers);
+  const paseo = mcpServers[PASEO_MCP_SERVER_NAME];
+  if (paseo == null) return config;
+  const serverConfig = readRecord(paseo);
+  const tools = readRecord(serverConfig.tools);
+  for (const tool of PASEO_TEAM_MESSAGE_TOOLS) {
+    tools[tool] = { ...readRecord(tools[tool]), approval_mode: "approve" };
+  }
+  return {
+    ...config,
+    mcp_servers: { ...mcpServers, [PASEO_MCP_SERVER_NAME]: { ...serverConfig, tools } },
+  };
+}
 
 export function applyCodexToolPolicy(
   config: Record<string, unknown>,

@@ -1814,6 +1814,43 @@ describe("Codex app-server provider", () => {
     expect(turnStart).not.toHaveProperty("config.mcp_servers.hub.tools.reply");
   });
 
+  test("approves the team messaging tools on the injected Paseo server and keeps its other tools", async () => {
+    const session = createSession({
+      modeId: undefined,
+      providerOptions: { sandbox_mode: "read-only" },
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1/mcp/agents?callerAgentId=a1" },
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("hello");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      config: {
+        mcp_servers: {
+          paseo: {
+            tools: {
+              send_team_message: { approval_mode: "approve" },
+              list_team_members: { approval_mode: "approve" },
+            },
+          },
+        },
+      },
+    });
+    // Nothing limits the server to those tools, and no other tool is approved.
+    expect(turnStart).not.toHaveProperty("config.mcp_servers.paseo.enabled_tools");
+    expect(turnStart).not.toHaveProperty("config.mcp_servers.paseo.default_tools_approval_mode");
+    expect(turnStart).not.toHaveProperty("config.mcp_servers.paseo.tools.create_agent");
+  });
+
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const fakeClient: CodexClientLike = {

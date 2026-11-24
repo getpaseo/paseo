@@ -1,5 +1,6 @@
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
+import { PASEO_MCP_SERVER_NAME, PASEO_TEAM_MESSAGE_TOOLS } from "../../runtime-mcp-config.js";
 
 const PermissionRulesSchema = z
   .object({
@@ -92,6 +93,22 @@ export const ClaudeProviderOptionsSchema = z
   .strict() satisfies z.ZodType<ProviderOptions>;
 
 export type ClaudeProviderOptions = z.infer<typeof ClaudeProviderOptionsSchema>;
+
+/**
+ * Lets the agent call Paseo's team messaging tools without a permission prompt. Only adds allow
+ * rules, so deny rules and every other tool's approval stay as configured.
+ */
+export function allowPaseoTeamTools(
+  options: ClaudeProviderOptions,
+  hasPaseoServer: boolean,
+): ClaudeProviderOptions {
+  if (!hasPaseoServer) return options;
+  const allowedTools = Array.isArray(options.allowedTools)
+    ? options.allowedTools.filter((tool): tool is string => typeof tool === "string")
+    : [];
+  const grants = PASEO_TEAM_MESSAGE_TOOLS.map((tool) => `mcp__${PASEO_MCP_SERVER_NAME}__${tool}`);
+  return { ...options, allowedTools: [...new Set([...allowedTools, ...grants])] };
+}
 
 export function applyClaudeToolPolicy(
   options: ClaudeProviderOptions,

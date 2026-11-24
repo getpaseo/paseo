@@ -13,6 +13,7 @@ import { LRUCache } from "lru-cache";
 import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { bypassApprovesAsk } from "./bypass-approval.js";
+import { PASEO_MCP_SERVER_NAME } from "../../runtime-mcp-config.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -82,6 +83,7 @@ import {
 } from "../diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import {
+  allowPaseoTeamTools,
   applyClaudeToolPolicy,
   ClaudeProviderOptionsSchema,
   type ClaudeProviderOptions,
@@ -4031,7 +4033,10 @@ class ClaudeAgentSession implements AgentSession {
       ultracode: _ultracode,
       ...sdkProviderOptions
     } = this.config.providerOptions;
-    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
+    const providerOptions = allowPaseoTeamTools(
+      applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy),
+      this.config.mcpServers?.[PASEO_MCP_SERVER_NAME] !== undefined,
+    );
     const settingsOptions = await this.buildSettingsOptions(providerOptions);
     const sdkEnv = this.harnessEnvironment;
 
