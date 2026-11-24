@@ -6,7 +6,12 @@ import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import {
+  PROVIDER_CAPABILITIES,
+  type ProviderEvent,
+  type ProviderPrompt,
+  type ProviderRegistration,
+} from "@getpaseo/plugin/server/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
@@ -410,6 +415,232 @@ register(${JSON.stringify(guardUrl)});`;
     await session.close();
     await adapters.shutdown();
     await runtime.stopAll();
+  });
+  // The muse provider runs against a fake MSP host (injected through the
+  // provider's command override), but everything above it is real: the plugin
+  // subprocess, PluginRuntime's capability enforcement, and the
+  // PluginAgentClientRegistry path an agent actually uses. On a muse build
+  // that does not negotiate `session.subsession`, the daemon fails the whole
+  // provider connection when the child is projected, so both tests fail
+  // before the fix.
+  async function startMuseRuntime() {
+    const fakeMuse = fileURLToPath(
+      new URL("../../../../../plugins/muse-provider/test/fake-muse.mjs", import.meta.url),
+    );
+    const directory = fileURLToPath(
+      new URL("../../../../../plugins/muse-provider/", import.meta.url),
+    );
+    const runtime = createTestRuntime({}, undefined, "0.11.0");
+    await runtime.startPlugin("muse-provider", directory);
+    const [metadata] = runtime.getProviderRegistrations("muse-provider");
+    expect(metadata).toBeDefined();
+    return { runtime, metadata: metadata!, fakeMuse };
+  }
+
+  async function startMuseClient(extraEnv: Record<string, string>) {
+    const { runtime, metadata, fakeMuse } = await startMuseRuntime();
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([
+      {
+        ...adaptRuntimeProvider(runtime, "muse-provider", metadata),
+        command: metadata.command,
+      },
+    ]);
+    const client = adapters.definitions()[metadata.id]!.createClient(pino({ level: "silent" }), {
+      command: { mode: "replace", argv: [process.execPath, fakeMuse] },
+      env: { MUSE_TEST_SCENARIO: "subagent", MUSE_TEST_CHILD: "tool", ...extraEnv },
+    });
+    return { runtime, adapters, client };
+  }
+
+  function hasSettledTurn(events: readonly AgentStreamEvent[]): boolean {
+    return events.some((event) => event.type === "turn_completed" || event.type === "turn_failed");
+  }
+
+  // Asserting on the settled turn (rather than polling only for completion)
+  // puts the provider's failure — e.g. "Provider parent session did not
+  // negotiate session.subsession" — in the test output.
+  async function expectTurnCompleted(events: readonly AgentStreamEvent[]): Promise<void> {
+    await expect.poll(() => hasSettledTurn(events)).toBe(true);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(hasCompletedAgentTurn(events)).toBe(true);
+  }
+
+  function hasSubagentTimeline(events: readonly AgentStreamEvent[]): boolean {
+    return events.some(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "assistant_message" &&
+        event.event.item.text.includes("SUBAGENT_PHASE0_OK"),
+    );
+  }
+
+  it("projects a muse subagent through PluginRuntime without failing the connection", async () => {
+    const { runtime, adapters, client } = await startMuseClient({});
+    try {
+      const events: AgentStreamEvent[] = [];
+      const session = await client.createSession({ provider: "muse", cwd: process.cwd() });
+      session.subscribe((event) => events.push(event));
+      await session.startTurn("dispatch a subagent", { clientMessageId: "muse-live" });
+      await expectTurnCompleted(events);
+      expect(hasSubagentTimeline(events)).toBe(true);
+      // The connection survives: a fresh session on the same provider opens
+      // and completes a turn instead of hitting a dead cached connection.
+      const second = await client.createSession({ provider: "muse", cwd: process.cwd() });
+      const secondEvents: AgentStreamEvent[] = [];
+      second.subscribe((event) => secondEvents.push(event));
+      await second.startTurn("again", { clientMessageId: "muse-live-2" });
+      await expectTurnCompleted(secondEvents);
+      await second.close();
+      await session.close();
+    } finally {
+      await adapters.shutdown();
+      await runtime.stopAll();
+    }
+  });
+
+  it("replays a muse subagent from history on resume without failing the connection", async () => {
+    const historyDirectory = await mkdtemp(path.join(tmpdir(), "paseo-muse-history-"));
+    temporaryDirectories.push(historyDirectory);
+    const { runtime, adapters, client } = await startMuseClient({
+      MUSE_TEST_HISTORY: path.join(historyDirectory, "native-history.ndjson"),
+    });
+    try {
+      const first = await client.createSession({ provider: "muse", cwd: process.cwd() });
+      const persistence = first.describePersistence();
+      expect(persistence).not.toBeNull();
+      await first.close();
+
+      // Seed old history without running a live subagent first, so this test
+      // reaches resume even when live child projection is broken.
+      await writeFile(
+        path.join(historyDirectory, "native-history.ndjson"),
+        JSON.stringify({
+          itemId: "historical-subagent",
+          revision: 1,
+          kind: "toolCall",
+          status: "completed",
+          tool: "subagent_spawn",
+          childSessionId: "fixture-child",
+        }) + "\n",
+      );
+      const resumed = await client.resumeSession(persistence!, { cwd: process.cwd() });
+      const resumedEvents: AgentStreamEvent[] = [];
+      resumed.subscribe((event) => resumedEvents.push(event));
+      // History replayed during resume is exposed through streamHistory.
+      const replayed: AgentStreamEvent[] = [];
+      for await (const event of resumed.streamHistory()) replayed.push(event);
+      expect(hasSubagentTimeline(replayed)).toBe(true);
+      await resumed.startTurn("continue", { clientMessageId: "muse-resumed" });
+      await expectTurnCompleted(resumedEvents);
+      await resumed.close();
+    } finally {
+      await adapters.shutdown();
+      await runtime.stopAll();
+    }
+  });
+
+  it("keeps other Muse sessions live when a parent closes during a child read", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-muse-child-read-"));
+    temporaryDirectories.push(directory);
+    const requests = path.join(directory, "requests.ndjson");
+    const release = path.join(directory, "release");
+    const { runtime, metadata, fakeMuse } = await startMuseRuntime();
+    try {
+      const connection = await runtime.connectProvider("muse-provider", metadata.id, {
+        versions: [1],
+        capabilities: PROVIDER_CAPABILITIES,
+        launch: {
+          command: process.execPath,
+          args: [fakeMuse],
+          env: {
+            MUSE_TEST_SCENARIO: "subagent",
+            MUSE_TEST_CHILD: "tool",
+            MUSE_TEST_REQUESTS: requests,
+            MUSE_TEST_CHILD_READ_RELEASE: release,
+          },
+        },
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      for (const sessionId of ["closing", "sibling"]) {
+        await connection.send({
+          type: "session.open",
+          requestId: `open-${sessionId}`,
+          sessionId,
+          history: "skip",
+          config: { cwd: process.cwd(), env: {}, mcpServers: {}, settings: {}, persist: true },
+        });
+        await expect
+          .poll(() => events, { timeout: 5000 })
+          .toContainEqual(expect.objectContaining({ type: "session.ready", sessionId }));
+      }
+      const prompt: ProviderPrompt = {
+        clientMessageId: "spawn-child",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "spawn a child" }] },
+      };
+      await connection.send({ type: "session.prompt", sessionId: "closing", prompt });
+      await expect
+        .poll(() => readFile(requests, "utf8"), { timeout: 5000 })
+        .toContain('"method":"session/read"');
+
+      // send() resolves after the runtime has accepted the close and removed
+      // the parent from its session table, while the child read is still pending.
+      await connection.send({
+        type: "session.close",
+        requestId: "close-parent",
+        sessionId: "closing",
+      });
+      await writeFile(release, "");
+
+      const closeSettled = (event: ProviderEvent) =>
+        (event.type === "request.completed" && event.requestId === "close-parent") ||
+        (event.type === "session.runtime_failed" && event.sessionId === "sibling");
+      await expect.poll(() => events.some(closeSettled), { timeout: 5000 }).toBe(true);
+      expect(
+        events.filter(
+          (event) => event.type === "session.runtime_failed" && event.sessionId === "sibling",
+        ),
+      ).toEqual([]);
+      expect(events).toContainEqual({ type: "request.completed", requestId: "close-parent" });
+      await connection.send({ type: "session.prompt", sessionId: "sibling", prompt });
+      await expect
+        .poll(() => events, { timeout: 5000 })
+        .toContainEqual(
+          expect.objectContaining({
+            type: "session.turn",
+            sessionId: "sibling",
+            state: "completed",
+          }),
+        );
+    } finally {
+      await writeFile(release, "");
+      await runtime.stopAll();
+    }
+  });
+
+  it("closes a Muse agent when the host exits without answering a child read", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-muse-close-"));
+    temporaryDirectories.push(directory);
+    const requests = path.join(directory, "requests.ndjson");
+    const { runtime, adapters, client } = await startMuseClient({
+      MUSE_TEST_HANG: "session/read",
+      MUSE_TEST_REQUESTS: requests,
+    });
+    try {
+      const session = await client.createSession({ provider: "muse", cwd: process.cwd() });
+      await session.startTurn("spawn a child", { clientMessageId: "close-with-pending-read" });
+      await expect
+        .poll(() => readFile(requests, "utf8"), { timeout: 5000 })
+        .toContain('"method":"session/read"');
+
+      await expect(session.close()).resolves.toBeUndefined();
+    } finally {
+      await adapters.shutdown();
+      await runtime.stopAll();
+    }
   });
 
   it("runs a provider connection through the real plugin subprocess boundary", async () => {
