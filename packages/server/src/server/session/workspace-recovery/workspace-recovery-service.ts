@@ -5,6 +5,7 @@ import { resolveRepositoryDefaultBranch } from "../../../utils/checkout-git.js";
 import { runWithRepositoryRoot } from "../../../utils/git-repository-discovery.js";
 import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
+import { setPaseoWorktreeUntrustedSource } from "../../../utils/worktree-metadata.js";
 import {
   createWorktree,
   isPaseoOwnedWorktreeCwd,
@@ -279,6 +280,9 @@ export function createWorkspaceRecoveryService(deps: {
         },
         error,
       );
+    }
+    if (workspace.untrustedSource) {
+      await setPaseoWorktreeUntrustedSource(recreatedWorktreePath, workspace.untrustedSource);
     }
     return { worktreePath: recreatedWorktreePath, pluginId: restoredByPluginId };
   }
