@@ -356,10 +356,12 @@ async function listSessions(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
+  const extraScanDeadline = performance.now() + EXTRA_SESSION_SCAN_BUDGET_MS;
   await withRequestRuntime(state, {
     boundarySessionId: "sessions",
     signal,
-    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
+    run: (runtime) =>
+      runtime.listSessions({ cwd: input.cwd, limit: input.limit, extraScanDeadline }),
     publish(selected) {
       state.emit({
         type: "sessions",
@@ -998,15 +1000,23 @@ class AcpRuntime {
   }
 
   /** Selects the most recent sessions from a bounded scan of the provider's pages. */
-  async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
+  async listSessions({
+    cwd,
+    limit,
+    extraScanDeadline,
+  }: {
+    cwd?: string;
+    limit?: number;
+    extraScanDeadline: number;
+  }): Promise<SessionInfo[]> {
     const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;
-    let extraScanDeadline: number | undefined;
     // ACP does not guarantee that sessions arrive in recency order.
     for (let pages = 0; pages < SESSION_SCAN_LIMIT; pages += 1) {
+      // Once we have enough rows, pages can improve the order only within the original budget.
       const remainingMs =
-        extraScanDeadline === undefined ? undefined : extraScanDeadline - performance.now();
+        cursor && sessions.length >= wanted ? extraScanDeadline - performance.now() : undefined;
       if (remainingMs !== undefined && remainingMs <= 0) break;
       const request = this.call(this.connection.listSessions({ cwd, cursor }));
       const page =
@@ -1019,9 +1029,6 @@ class AcpRuntime {
       sessions.push(...page.sessions.slice(0, SESSION_SCAN_LIMIT - sessions.length));
       cursor = page.nextCursor ?? undefined;
       if (!cursor || sessions.length === SESSION_SCAN_LIMIT) break;
-      // Once we have enough rows, further pages can improve the order but must not block the list.
-      if (sessions.length >= wanted)
-        extraScanDeadline ??= performance.now() + EXTRA_SESSION_SCAN_BUDGET_MS;
     }
     return sessions.sort((a, b) => sessionUpdatedAt(b) - sessionUpdatedAt(a)).slice(0, wanted);
   }

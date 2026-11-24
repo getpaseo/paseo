@@ -1,5 +1,9 @@
 // An ACP peer that returns sessions in storage order, with an optional page boundary.
 const readline = require("node:readline");
+const { existsSync, renameSync, writeFileSync } = require("node:fs");
+const path = require("node:path");
+const stalledListing = process.argv.indexOf("--stall-after-first-page");
+const controlDir = stalledListing === -1 ? null : process.argv[stalledListing + 1];
 
 if (process.argv.includes("--version")) {
   process.stdout.write("1.5.13\n");
@@ -27,6 +31,27 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { list: {} } } },
     };
   } else if (method === "session/list") {
+    if (controlDir) {
+      if (params.cursor) {
+        writeFileSync(path.join(controlDir, "second-page"), "");
+        return;
+      }
+      const marker = path.join(controlDir, "first-page");
+      writeFileSync(marker + ".tmp", String(process.pid));
+      renameSync(marker + ".tmp", marker);
+      const gate = setInterval(() => {
+        if (!existsSync(path.join(controlDir, "release-first-page"))) return;
+        clearInterval(gate);
+        process.stdout.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: { sessions: sessions.slice(0, 42), nextCursor: "next" },
+          }) + "\n",
+        );
+      }, 10);
+      return;
+    }
     const pageSize = process.argv.includes("--paginated") ? 42 : sessions.length;
     response = {
       result: params.cursor
