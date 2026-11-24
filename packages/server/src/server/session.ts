@@ -5559,6 +5559,9 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
+      if (Array.isArray(agentId) && expectedAttentionKey != null) {
+        throw new Error("An expected attention key applies to a single agent");
+      }
       for (const id of agentIds) {
         if (!this.agentManager.getAgent(id) && !(await this.agentStorage.get(id))) {
           throw new Error(`Agent not found: ${id}`);
@@ -8389,7 +8392,7 @@ export class Session {
   private async handleWorkspaceClearAttentionRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
   ): Promise<void> {
-    const { requestId, workspaceId, observedAttentionKeys } = request;
+    const { requestId, workspaceId, observedAttentionKeys, observedResultIds } = request;
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
     let agents: AgentSnapshotPayload[];
     try {
@@ -8436,14 +8439,17 @@ export class Session {
         // Clearing attention is scoped to the workspace that OWNS the agent, by
         // workspaceId — never by comparing cwd strings. A sibling workspace
         // sharing the same directory keeps its own agents' attention.
+        // Attention keys already identify the observed result. The workspace's
+        // review list can omit a child whose attention key is still present.
         const clearableAgents = agents.filter(
           (agent) =>
             !agent.archivedAt &&
             agent.workspaceId === workspace.workspaceId &&
             hasClearableAttention(agent) &&
-            (!agent.reviewResult ||
-              !request.observedResultIds ||
-              request.observedResultIds.includes(agent.reviewResult.id)),
+            (observedAttentionKeys ||
+              !agent.reviewResult ||
+              !observedResultIds ||
+              observedResultIds.includes(agent.reviewResult.id)),
         );
 
         for (const agent of clearableAgents) {

@@ -2503,10 +2503,16 @@ export class DaemonClient {
     }
   }
 
+  // An attention key identifies one agent's notification, so it only pairs with a single id.
+  clearAgentAttention(agentId: string, expectedAttentionKey?: string | null): Promise<void>;
+  clearAgentAttention(agentIds: string[]): Promise<void>;
   async clearAgentAttention(
     agentId: string | string[],
     expectedAttentionKey?: string | null,
   ): Promise<void> {
+    if (Array.isArray(agentId) && expectedAttentionKey != null) {
+      throw new Error("An expected attention key applies to a single agent");
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "clear_agent_attention",

@@ -83,7 +83,11 @@ import {
   foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
-import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import type {
+  AgentSnapshotWriteOptions,
+  AgentStorage,
+  StoredAgentRecord,
+} from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -460,7 +464,9 @@ function applyReviewAction(
 ): { clearAttention: boolean; reviewResult: StoredAgentRecord["reviewResult"] } | null {
   const { reviewResult, requiresAttention, attentionReason } = state;
   if (action.kind === "done") {
-    if (reviewResult?.id !== action.resultId) return null;
+    if (reviewResult?.id !== action.resultId) {
+      throw new Error("This chat result is no longer current");
+    }
     return {
       reviewResult: undefined,
       clearAttention: requiresAttention === true && attentionReason === "finished",
@@ -472,7 +478,7 @@ function applyReviewAction(
   return {
     clearAttention: true,
     reviewResult:
-      reviewResult && !reviewResult.followUpAt
+      attentionReason === "finished" && reviewResult && !reviewResult.followUpAt
         ? { ...reviewResult, followUpAt: new Date().toISOString() }
         : reviewResult,
   };
@@ -2946,6 +2952,13 @@ export class AgentManager {
   private updateAgentReview(agentId: string, action: ReviewAction): Promise<boolean> {
     return this.runLifecycleMutation(agentId, async () => {
       const agent = this.agents.get(agentId);
+      const registry = agent ? this.registry : this.requireRegistry();
+      const record = action.kind === "done" || !agent ? await registry?.get(agentId) : undefined;
+      const markedDoneResultId = action.kind === "done" ? action.resultId : undefined;
+      if (action.kind === "done") {
+        if (record?.archivedAt) throw new Error("This chat is archived");
+        if (record?.lastMarkedDoneResultId === action.resultId) return true;
+      }
       if (agent) {
         if (action.kind === "read" && agent.pendingPermissions.size > 0) return false;
         const change = applyReviewAction(
@@ -2962,38 +2975,49 @@ export class AgentManager {
         await this.persistAgentReview(agent, {
           attention: change.clearAttention ? { requiresAttention: false } : agent.attention,
           reviewResult: change.reviewResult,
+          markedDoneResultId,
         });
         return true;
       }
 
-      const registry = this.requireRegistry();
-      const record = await registry.get(agentId);
-      if (!record || record.internal || record.archivedAt) return false;
-      const change = applyReviewAction(record, action);
-      if (!change) return false;
-      const nextRecord: StoredAgentRecord = {
-        ...record,
-        updatedAt: this.nextStoredUpdatedAt(record),
-        reviewResult: change.reviewResult,
-        ...(change.clearAttention
-          ? { requiresAttention: false, attentionReason: null, attentionTimestamp: null }
-          : {}),
-      };
-      await registry.upsert(nextRecord);
-      this.dispatchStoredAgentState(nextRecord);
-      return true;
+      return this.updateStoredAgentReview(agentId, record ?? null, action);
     });
+  }
+
+  private async updateStoredAgentReview(
+    agentId: string,
+    record: StoredAgentRecord | null,
+    action: ReviewAction,
+  ): Promise<boolean> {
+    if (!record || record.internal || record.archivedAt) {
+      if (action.kind === "done") throw new Error(`Agent not found: ${agentId}`);
+      return false;
+    }
+    const change = applyReviewAction(record, action);
+    if (!change) return false;
+    const nextRecord: StoredAgentRecord = {
+      ...record,
+      reviewResult: change.reviewResult,
+      lastMarkedDoneResultId:
+        action.kind === "done" ? action.resultId : record.lastMarkedDoneResultId,
+      ...(change.clearAttention
+        ? { requiresAttention: false, attentionReason: null, attentionTimestamp: null }
+        : {}),
+    };
+    await this.requireRegistry().upsert(nextRecord);
+    this.dispatchStoredAgentState(nextRecord);
+    return true;
   }
 
   private async persistAgentReview(
     agent: ManagedAgent,
-    change: Pick<ManagedAgent, "attention" | "reviewResult">,
+    change: Pick<ManagedAgent, "attention" | "reviewResult"> & { markedDoneResultId?: string },
   ): Promise<void> {
     const previous = { attention: agent.attention, reviewResult: agent.reviewResult };
-    Object.assign(agent, change);
-    this.touchUpdatedAt(agent);
+    const { markedDoneResultId, ...review } = change;
+    Object.assign(agent, review);
     try {
-      await this.persistSnapshot(agent);
+      await this.persistSnapshot(agent, { markedDoneResultId });
     } catch (error) {
       // Provider events can publish a newer result while the filesystem write is pending.
       if (agent.attention === change.attention && agent.reviewResult === change.reviewResult) {
@@ -3034,13 +3058,11 @@ export class AgentManager {
     if (!canMarkUnread || !attentionReason) {
       throw new Error(`Agent is no longer settled and read: ${agentId}`);
     }
-    const updatedAt = this.nextStoredUpdatedAt(record);
     const nextRecord: StoredAgentRecord = {
       ...record,
-      updatedAt,
       requiresAttention: true,
       attentionReason,
-      attentionTimestamp: updatedAt,
+      attentionTimestamp: new Date().toISOString(),
     };
     await registry.upsert(nextRecord);
     this.dispatchStoredAgentState(nextRecord);
@@ -5136,7 +5158,7 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: AgentSnapshotWriteOptions,
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -5840,6 +5862,9 @@ export class AgentManager {
     );
     if (terminalDisposition === "stale") return;
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
+      if (!options?.fromHistory && agent.lifecycle === "running" && !agent.pendingReplacement) {
+        agent.reviewResult = undefined;
+      }
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;

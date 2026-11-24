@@ -5,6 +5,7 @@ import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 export function useMarkAgentDone(serverId: string | undefined) {
+  // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
   const supported = useHostFeature(serverId, "agentFollowUp");
   const toast = useToast();
   const markDone = useCallback(

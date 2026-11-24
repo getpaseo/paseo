@@ -44,8 +44,8 @@ const NOOP_SUBAGENT = () => undefined;
 function resolveChildTrackClearance(childCount: number, isCompact: boolean) {
   if (childCount === 0) return { tail: 0, controls: 0 };
   return {
-    tail: resolveComposerTrackTailClearance(isCompact),
-    controls: resolveComposerTrackControlClearance(isCompact),
+    tail: resolveComposerTrackTailClearance({ isCompact, hasTrackAction: false }),
+    controls: resolveComposerTrackControlClearance({ isCompact, hasTrackAction: false }),
   };
 }
 

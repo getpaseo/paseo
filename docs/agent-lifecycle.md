@@ -368,7 +368,9 @@ workspace is explicitly marked read. Marking a result unread keeps its reminder.
 
 Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
 interaction with its chat, including repeat clicks in an already focused pane. A completion
-arriving while focused stays unread until the next interaction; leaving does not acknowledge it. Loading an agent's runtime is
+arriving while focused stays unread until the next interaction; leaving does not acknowledge it.
+Reading, marking unread, and marking done leave the chat's activity timestamp intact so older
+chats keep their place in recency sorts. Loading an agent's runtime is
 neither, so resuming carries the stored attention and the stored last-activity time through
 untouched. Forging either makes a background resume look like the user read a workspace and like the
 agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted

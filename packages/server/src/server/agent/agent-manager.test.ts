@@ -6794,9 +6794,11 @@ test("successful results survive acknowledgement, manual unread and restart unti
   await manager.clearAgentAttention(id, getAttentionKey(first));
   const reminder = snapshot().reviewResult;
   expect(reminder?.followUpAt).toEqual(expect.any(String));
+  expect(snapshot().updatedAt).toBe(first.updatedAt);
   await manager.clearAgentAttention(id, getAttentionKey(first));
   await manager.markAgentUnread(id);
   expect(snapshot().requiresAttention).toBe(true);
+  expect(snapshot().updatedAt).toBe(first.updatedAt);
   await manager.clearAgentAttention(id, getAttentionKey(snapshot()));
   expect(snapshot().reviewResult).toEqual(reminder);
 
@@ -6808,7 +6810,9 @@ test("successful results survive acknowledgement, manual unread and restart unti
   const second = snapshot();
   expect(second.reviewResult?.id).not.toBe(first.reviewResult!.id);
   await manager.clearAgentAttention(id, getAttentionKey(first));
-  await manager.markAgentDone(id, first.reviewResult!.id);
+  await expect(manager.markAgentDone(id, first.reviewResult!.id)).rejects.toThrow(
+    "This chat result is no longer current",
+  );
   expect(snapshot()).toMatchObject({ requiresAttention: true, reviewResult: second.reviewResult });
   await manager.clearAgentAttention(id, getAttentionKey(second));
   await manager.closeAgent(id);
@@ -6823,13 +6827,18 @@ test("successful results survive acknowledgement, manual unread and restart unti
   await ensureAgentLoaded(id, { agentManager: restarted, agentStorage: reopenedStore, logger });
   expect(restarted.getAgent(id)?.reviewResult?.id).toBe(second.reviewResult!.id);
   await restarted.closeAgent(id);
+  const storedUpdatedAt = (await reopenedStore.get(id))!.updatedAt;
   await restarted.markAgentUnread(id);
-  await restarted.markAgentDone(id, second.reviewResult!.id);
+  expect((await reopenedStore.get(id))?.updatedAt).toBe(storedUpdatedAt);
   await restarted.markAgentDone(id, second.reviewResult!.id);
   await restarted.flush();
-  const resolved = await new AgentStorage(directory, logger).get(id);
+  const resolvedStore = new AgentStorage(directory, logger);
+  const resolved = await resolvedStore.get(id);
+  expect(resolved?.updatedAt).toBe(storedUpdatedAt);
   expect(resolved?.requiresAttention).toBe(false);
   expect(resolved?.reviewResult).toBeUndefined();
+  const afterResolution = new AgentManager({ clients, registry: resolvedStore, logger });
+  await afterResolution.markAgentDone(id, second.reviewResult!.id);
 });
 
 test("a failed review write leaves the same result available to retry", async () => {
@@ -6862,6 +6871,7 @@ test("a failed review write leaves the same result available to retry", async ()
   const snapshot = () => toAgentPayload(manager.getAgent(id)!);
   const key = getAttentionKey(snapshot());
   const result = snapshot().reviewResult!;
+  const activityAt = snapshot().updatedAt;
   storage.failNextWrite = true;
   await expect(manager.clearAgentAttention(id, key)).rejects.toThrow("Write failed");
   expect(snapshot()).toMatchObject({ requiresAttention: true, reviewResult: result });
@@ -6871,9 +6881,10 @@ test("a failed review write leaves the same result available to retry", async ()
   expect(snapshot().reviewResult?.followUpAt).toEqual(expect.any(String));
   await manager.markAgentDone(id, result.id);
   expect((await storage.get(id))?.reviewResult).toBeUndefined();
+  expect(snapshot().updatedAt).toBe(activityAt);
 });
 
-test("an autonomous finish replaces only the result identity, and a rejected reply preserves follow-up", async () => {
+test("an autonomous finish replaces the result identity and only reading a finish creates follow-up", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "agent-review-race-"));
   const session = new (class extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
@@ -6916,7 +6927,9 @@ test("an autonomous finish replaces only the result identity, and a rejected rep
   expect(next.attentionTimestamp).toBe(first.attentionTimestamp);
   expect(next.reviewResult!.id).not.toBe(first.reviewResult!.id);
   await manager.clearAgentAttention(id, getAttentionKey(first));
-  await manager.markAgentDone(id, first.reviewResult!.id);
+  await expect(manager.markAgentDone(id, first.reviewResult!.id)).rejects.toThrow(
+    "This chat result is no longer current",
+  );
   expect(snapshot().requiresAttention).toBe(true);
   await expect(manager.streamAgent(id, "rejected while unread").next()).rejects.toThrow(
     "Reply rejected",
@@ -6925,16 +6938,29 @@ test("an autonomous finish replaces only the result identity, and a rejected rep
   expect(failed).toMatchObject({ attentionReason: "error", reviewResult: next.reviewResult });
   expect(failed.reviewResult?.followUpAt).toBeUndefined();
   expect(await manager.clearAgentAttention(id, getAttentionKey(next))).toBe(false);
-  await manager.markAgentDone(id, first.reviewResult!.id);
-  expect(snapshot().attentionReason).toBe("error");
   await manager.clearAgentAttention(id, getAttentionKey(failed));
   expect(snapshot().requiresAttention).toBe(false);
+  expect(snapshot().reviewResult).toEqual(next.reviewResult);
+
+  const latest = await finish("c", "turn_completed");
+  await manager.clearAgentAttention(id, getAttentionKey(latest));
   const reminder = snapshot().reviewResult;
   expect(reminder?.followUpAt).toEqual(expect.any(String));
   await expect(manager.streamAgent(id, "rejected").next()).rejects.toThrow("Reply rejected");
   expect(snapshot()).toMatchObject({ attentionReason: "error", reviewResult: reminder });
   await manager.clearAgentAttention(id, getAttentionKey(snapshot()));
   expect(snapshot().reviewResult).toEqual(reminder);
+
+  const running = waitForAgentLifecycle(manager, id, "running");
+  session.pushEvent({ type: "turn_started", provider: "codex", turnId: "fails" });
+  await running;
+  const errored = waitForAgentLifecycle(manager, id, "error");
+  session.pushEvent({ type: "turn_failed", provider: "codex", turnId: "fails", error: "Failed" });
+  await errored;
+  expect(snapshot()).toMatchObject({ attentionReason: "error" });
+  expect(snapshot().reviewResult).toBeUndefined();
+  await manager.clearAgentAttention(id, getAttentionKey(snapshot()));
+  expect(snapshot().reviewResult).toBeUndefined();
 });
 
 test("legacy records only carry forward an outstanding unread finish", () => {

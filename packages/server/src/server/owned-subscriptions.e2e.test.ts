@@ -1,5 +1,6 @@
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 import { createPaseoApi } from "@getpaseo/client";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentManager } from "./agent/agent-manager.js";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -1823,17 +1824,35 @@ test("mark as read only acknowledges the chat notifications in the observed work
       workspaceId,
       cwd: daemon.staticDir,
     });
+    const backgroundParent = await client.createAgent({
+      provider: "codex",
+      workspaceId,
+      cwd: daemon.staticDir,
+      background: true,
+    });
+    const child = await client.createAgent({
+      provider: "codex",
+      workspaceId,
+      cwd: daemon.staticDir,
+      labels: { [PARENT_AGENT_ID_LABEL]: backgroundParent.id },
+    });
     await client.sendMessage(first.id, "Reply with OK.");
     await client.waitForFinish(first.id, 5000);
+    await client.sendMessage(child.id, "Reply with OK.");
+    await client.waitForFinish(child.id, 5000);
     const observed = (await client.fetchWorkspaces()).entries.find((ws) => ws.id === workspaceId)!;
     expect(observed.status).toBe("attention");
+    expect(observed.attentionKeys).toHaveProperty(child.id);
+    expect(observed.reviewResults?.map((result) => result.agentId)).toEqual([first.id]);
 
     await client.sendMessage(second.id, "Emit a turn failure");
     await client.waitForFinish(second.id, 5000);
     await client.clearWorkspaceAttention(workspaceId, {
       observedAttentionKeys: observed.attentionKeys,
+      observedResultIds: observed.reviewResults?.map((result) => result.id),
     });
     expect((await client.fetchAgent(first.id))?.agent.requiresAttention).toBe(false);
+    expect((await client.fetchAgent(child.id))?.agent.requiresAttention).toBe(false);
     expect((await client.fetchAgent(second.id))?.agent).toMatchObject({
       requiresAttention: true,
       attentionReason: "error",
@@ -1849,6 +1868,36 @@ test("mark as read only acknowledges the chat notifications in the observed work
       requiresAttention: true,
       attentionReason: "finished",
     });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+test("mark done reports superseded and archived results and accepts a completed retry", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const { id } = await client.createAgent({ provider: "codex", cwd: daemon.staticDir });
+    const finish = async () => {
+      await client.sendMessage(id, "Reply with OK.");
+      await client.waitForFinish(id, 5000);
+      return (await client.fetchAgent(id))!.agent.reviewResult!;
+    };
+    const first = await finish();
+    const second = await finish();
+    await expect(client.markAgentDone(id, first.id)).rejects.toThrow(
+      "This chat result is no longer current",
+    );
+    expect((await client.fetchAgent(id))?.agent.reviewResult).toEqual(second);
+    await client.markAgentDone(id, second.id);
+    await client.markAgentDone(id, second.id);
+    expect((await client.fetchAgent(id))?.agent.reviewResult).toBeUndefined();
+
+    const third = await finish();
+    await client.archiveAgent(id);
+    await expect(client.markAgentDone(id, third.id)).rejects.toThrow("This chat is archived");
   } finally {
     await client.close();
     await daemon.close();

@@ -72,6 +72,7 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import { TimelineSyncStatus } from "@/timeline/sync-status";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
+import { useHostFeature } from "@/runtime/host-features";
 import { useAgentFactsLine } from "@/panels/agent-facts-line";
 import { PaneSubtitle } from "@/panels/pane-subtitle";
 import { definePanel } from "@/panels/panel-registry";
@@ -1441,12 +1442,20 @@ const AgentStreamSection = memo(function AgentStreamSection({
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   // The track bar's space is reserved whenever the bar is mounted, pills or not: pills come and go
-  // every turn, and the transcript must not jump with them.
+  // every turn, and the transcript must not jump with them. The taller Mark done row is reserved
+  // wherever that pill can appear, for the same reason.
+  const paneHost = usePaneContext().host;
+  // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
+  const canMarkDone = useHostFeature(serverId, "agentFollowUp");
+  const trackClearanceInput = {
+    isCompact: isCompactFormFactor,
+    hasTrackAction: canMarkDone && paneHost !== "sheet",
+  };
   const bottomOverlayTailClearance = hasActiveComposer
-    ? resolveComposerTrackTailClearance(isCompactFormFactor)
+    ? resolveComposerTrackTailClearance(trackClearanceInput)
     : 0;
   const bottomOverlayControlClearance = hasActiveComposer
-    ? resolveComposerTrackControlClearance(isCompactFormFactor)
+    ? resolveComposerTrackControlClearance(trackClearanceInput)
     : 0;
   const streamItemsRaw = useAgentStreamTail(serverId, agentId);
   const pendingMessageSubmissions = useSessionStore(

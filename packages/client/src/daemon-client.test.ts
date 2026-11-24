@@ -1577,6 +1577,30 @@ test("identifies the request when marking an agent as read times out", async () 
   expect(client.isConnected).toBe(true);
 });
 
+test("refuses to apply one attention key to several agents", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_attention_key_batch",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+  const sentBefore = transport.sent.length;
+
+  const batch = client.clearAgentAttention as (
+    agentId: string[],
+    expectedAttentionKey: string,
+  ) => Promise<void>;
+  await expect(batch.call(client, ["agent-1", "agent-2"], "key-of-agent-1")).rejects.toThrow(
+    "An expected attention key applies to a single agent",
+  );
+  expect(transport.sent.length).toBe(sentBefore);
+});
+
 test("defaults session RPC waiters to sixty seconds", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

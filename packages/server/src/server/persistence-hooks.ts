@@ -110,8 +110,8 @@ export function isStoredAgentProviderAvailable(
 
 /**
  * When the record last changed, from either of the two timestamps it carries. They diverge
- * because renaming, labelling, restoring from archive, marking unread, and clearing attention
- * all move `updatedAt` on an unloaded agent without touching `lastActivityAt`. Reading one
+ * because renaming, labelling, and restoring from archive move `updatedAt` on an unloaded agent
+ * without touching `lastActivityAt`. Reading one
  * field alone hands consumers a time older than one they have already seen, and
  * `acceptAgentDirectoryUpdate` drops every state update that goes backwards.
  */

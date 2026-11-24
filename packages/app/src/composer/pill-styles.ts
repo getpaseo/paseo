@@ -13,17 +13,27 @@ export function resolveComposerPillClearance(isCompact: boolean): number {
   return isCompact ? COMPOSER_PILL_CLEARANCE.compact : COMPOSER_PILL_CLEARANCE.wide;
 }
 
-export function resolveComposerTrackTailClearance(isCompact: boolean): number {
-  const composerClearance = resolveComposerPillClearance(isCompact);
-  const transcriptClearance = isCompact ? SPACING[6] : 20;
-  return (
-    transcriptClearance + TRACK_ACTION_HEIGHT[controlSizingForLayout(isCompact)] + composerClearance
-  );
+export interface ComposerTrackClearanceInput {
+  isCompact: boolean;
+  /** The track can hold the Mark done action, which needs a full touch target on touch layouts. */
+  hasTrackAction: boolean;
 }
 
-export function resolveComposerTrackControlClearance(isCompact: boolean): number {
-  const clearance = resolveComposerPillClearance(isCompact);
-  return clearance + TRACK_ACTION_HEIGHT[controlSizingForLayout(isCompact)] + clearance;
+function resolveTrackRowHeight({ isCompact, hasTrackAction }: ComposerTrackClearanceInput): number {
+  return hasTrackAction
+    ? TRACK_ACTION_HEIGHT[controlSizingForLayout(isCompact)]
+    : COMPOSER_PILL_MIN_HEIGHT;
+}
+
+export function resolveComposerTrackTailClearance(input: ComposerTrackClearanceInput): number {
+  const composerClearance = resolveComposerPillClearance(input.isCompact);
+  const transcriptClearance = input.isCompact ? SPACING[6] : 20;
+  return transcriptClearance + resolveTrackRowHeight(input) + composerClearance;
+}
+
+export function resolveComposerTrackControlClearance(input: ComposerTrackClearanceInput): number {
+  const clearance = resolveComposerPillClearance(input.isCompact);
+  return clearance + resolveTrackRowHeight(input) + clearance;
 }
 
 /** Shared visual contract for the compact pills immediately above the composer. */

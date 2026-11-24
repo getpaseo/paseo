@@ -204,8 +204,9 @@ function SidebarWorkspaceMenuItems({
         : [result.title, `#${result.agentId.slice(0, 7)}`].filter(Boolean).join(" ");
       return {
         agentId: result.agentId,
+        // A subagent's result is always named so it isn't mistaken for the main chat.
         label:
-          results.length === 1
+          results.length === 1 && !result.nested
             ? t("sidebar.workspace.actions.markDone")
             : t("sidebar.workspace.actions.markChatDone", { chat }),
         onSelect: () => void markDone(result.agentId, result.id),

@@ -87,6 +87,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().nullable().optional(),
   reviewResult: AgentReviewResultSchema.nullable().optional(),
+  lastMarkedDoneResultId: z.string().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -118,6 +119,12 @@ export type StoredAgentRecord = Omit<
   reviewResult?: NonNullable<RawStoredAgentRecord["reviewResult"]>;
   config?: Omit<RawStoredAgentConfig, "featureValues"> | null;
 };
+
+export interface AgentSnapshotWriteOptions {
+  title?: string | null;
+  internal?: boolean;
+  markedDoneResultId?: string;
+}
 
 // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
 function foldLegacyRecordFields(record: RawStoredAgentRecord): StoredAgentRecord {
@@ -408,21 +415,21 @@ export class AgentStorage {
     this.pathsById.delete(agentId);
   }
 
-  async applySnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent, options?: AgentSnapshotWriteOptions): Promise<void> {
     await this.load();
+    const { title, internal, markedDoneResultId } = options ?? {};
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
       const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        title: hasTitleOverride ? (title ?? null) : (existing?.title ?? null),
         createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+        internal: hasInternalOverride ? internal : (agent.internal ?? existing?.internal),
       });
+      // Save the receipt with the result change so a retry after reconnect or restart is safe.
+      record.lastMarkedDoneResultId = markedDoneResultId ?? existing?.lastMarkedDoneResultId;
 
       // Preserve soft-delete/archive status across snapshot flushes. The
       // projection runs inside the per-agent write queue so it cannot commit a
