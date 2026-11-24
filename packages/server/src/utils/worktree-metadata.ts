@@ -272,11 +272,23 @@ export async function setPaseoWorktreeUntrustedSource(
   untrustedSource: PaseoWorktreeUntrustedSource | null,
 ): Promise<boolean> {
   return mutateMetadata(worktreeRoot, async (root) => {
-    const current = await readMetadataFile(root);
+    let current: PaseoWorktreeMetadata | null;
+    try {
+      current = await readMetadataFile(root);
+    } catch (error) {
+      const cause = (error as { cause?: NodeJS.ErrnoException }).cause;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || cause?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
     if (!current) {
       return false;
     }
     const hadUntrustedSource = Boolean(current.untrustedSource);
+    if (!untrustedSource && !hadUntrustedSource) {
+      return false;
+    }
     const { untrustedSource: _previous, ...rest } = current;
     const next: PaseoWorktreeMetadata = untrustedSource ? { ...rest, untrustedSource } : rest;
     await writePaseoWorktreeMetadataFile(root, next);

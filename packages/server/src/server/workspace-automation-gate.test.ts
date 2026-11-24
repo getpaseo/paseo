@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getPaseoWorktreeMetadataPath,
   readPaseoWorktreeMetadata,
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
@@ -62,8 +63,8 @@ describe("workspace automation gate", () => {
     ).toBe(`Scripts are blocked for ${noun} #42 from contributor/paseo. Run setup to allow them.`);
   });
 
-  it("clears untrustedSource from both workspace records and worktree metadata", async () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "automation-gate-"));
+  async function createUntrustedWorktreeFixture(number: number) {
+    const tempDir = mkdtempSync(path.join(tmpdir(), `automation-gate-${number}-`));
     cleanupPaths.push(tempDir);
     const repoDir = path.join(tempDir, "repo");
     const worktreeDir = path.join(tempDir, "wt");
@@ -78,18 +79,17 @@ describe("workspace automation gate", () => {
       cwd: repoDir,
       stdio: "pipe",
     });
-    execFileSync("git", ["worktree", "add", "-b", "pr-42", worktreeDir, "main"], {
+    execFileSync("git", ["worktree", "add", "-b", `pr-${number}`, worktreeDir, "main"], {
       cwd: repoDir,
       stdio: "pipe",
     });
     const source = {
       kind: "change_request" as const,
       forge: "github",
-      number: 42,
+      number,
       headRepository: "contributor/paseo",
     };
     await writePaseoWorktreeMetadata(worktreeDir, { baseRefName: "main", untrustedSource: source });
-
     const records = new Map<string, PersistedWorkspaceRecord>([
       [
         "ws-1",
@@ -120,6 +120,11 @@ describe("workspace automation gate", () => {
         return next;
       },
     };
+    return { worktreeDir, source, records, registry };
+  }
+
+  it("clears untrustedSource from both workspace records and worktree metadata", async () => {
+    const { worktreeDir, records, registry } = await createUntrustedWorktreeFixture(42);
 
     const cleared = await clearWorkspaceAutomationBlock(registry, "ws-1");
 
@@ -127,4 +132,26 @@ describe("workspace automation gate", () => {
     expect(records.get("ws-1")?.untrustedSource).toBeUndefined();
     expect((await readPaseoWorktreeMetadata(worktreeDir))?.untrustedSource).toBeUndefined();
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails without clearing workspace records when worktree metadata cannot be written",
+    async () => {
+      const { worktreeDir, source, records, registry } = await createUntrustedWorktreeFixture(43);
+      const metadataDir = path.dirname(await getPaseoWorktreeMetadataPath(worktreeDir));
+
+      chmodSync(metadataDir, 0o555);
+      try {
+        await expect(clearWorkspaceAutomationBlock(registry, "ws-1")).rejects.toThrow();
+        expect(records.get("ws-1")?.untrustedSource).toEqual(source);
+        expect((await readPaseoWorktreeMetadata(worktreeDir))?.untrustedSource).toEqual(source);
+      } finally {
+        chmodSync(metadataDir, 0o755);
+      }
+
+      const retried = await clearWorkspaceAutomationBlock(registry, "ws-1");
+      expect(retried).toBe(true);
+      expect(records.get("ws-1")?.untrustedSource).toBeUndefined();
+      expect((await readPaseoWorktreeMetadata(worktreeDir))?.untrustedSource).toBeUndefined();
+    },
+  );
 });
