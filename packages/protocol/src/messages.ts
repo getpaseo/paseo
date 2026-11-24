@@ -856,6 +856,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema,
     turnId: z.string().optional(),
+    turnMetrics: z.array(AgentMetricSchema).optional(),
   }),
   z.object({
     type: z.literal("permission_requested"),

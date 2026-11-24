@@ -5093,4 +5093,30 @@ describe("turn metrics", () => {
 
     expect(repeated.tail).toBe(first.tail);
   });
+
+  it("stamps turn metrics carried on a live timeline event appended by reload", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("question", "user_message"), 1),
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: { type: "assistant_message", text: "Appended reply." },
+            turnMetrics: metrics,
+          },
+          2,
+        ),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 0, endSeq: 0 },
+      hasAuthoritativeBaseline: true,
+    });
+
+    expect(metricsByKind([...result.tail, ...result.head])).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: metrics },
+    ]);
+  });
 });

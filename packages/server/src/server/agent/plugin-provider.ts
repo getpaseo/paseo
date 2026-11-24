@@ -69,7 +69,7 @@ import type {
   AgentClientDiagnosticContext,
   ConversationRewindCut,
 } from "./agent-sdk-types.js";
-import { RewindNotAppliedError } from "./agent-sdk-types.js";
+import { RewindAppliedError, RewindNotAppliedError } from "./agent-sdk-types.js";
 import {
   resolveProviderLaunch,
   checkProviderLaunchAvailable,
@@ -2059,10 +2059,17 @@ class PluginAgentSession implements AgentSession {
       scope,
     });
     if (scope !== "files") {
+      const cut: ConversationRewindCut = { kind: "at_target" };
       const persistence = this.bridge.persistence;
-      if (!persistence) throw new Error("Plugin rewind removed session persistence");
+      if (!persistence) {
+        throw RewindAppliedError.from(cut, new Error("Plugin rewind removed session persistence"));
+      }
       this.replay = { persistence, config: this.bridge.config, messageId, scope, closed: false };
-      await this.ensureReplay();
+      try {
+        await this.ensureReplay();
+      } catch (error) {
+        throw RewindAppliedError.from(cut, error);
+      }
     }
   }
 

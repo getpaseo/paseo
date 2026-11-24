@@ -14058,8 +14058,17 @@ test.each(["first load", "reconcile"])(
             { workspaceId: undefined },
           );
 
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
     if (path === "reconcile") {
       await manager.reconcileProviderHistory(agent.id);
+      const streamedMetrics = events.flatMap((event) =>
+        event.type === "agent_stream" && event.event.type === "timeline"
+          ? [event.event.turnMetrics ?? null]
+          : [],
+      );
+      expect(streamedMetrics).toEqual([null, first, null, second, null, null]);
     }
 
     expect(

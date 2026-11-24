@@ -1671,7 +1671,10 @@ export function reduceStreamUpdate(
         ),
         event,
       );
-      return event.item.type === "reasoning" ? updated : finalizeActiveThoughts(updated);
+      const stamped = event.turnMetrics?.length
+        ? stampCompletedTurnMetrics(updated, event.turnMetrics, event.turnId)
+        : updated;
+      return event.item.type === "reasoning" ? stamped : finalizeActiveThoughts(stamped);
     }
     case "turn_completed":
       return stampCompletedTurnMetrics(finalizeActiveThoughts(state), event.metrics, event.turnId);

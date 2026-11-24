@@ -18,7 +18,6 @@ import { sendPreparedPromptToAgent } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { RewindOutcomeUnknownError } from "./rewind/rewind.js";
 import {
   RewindNotAppliedError,
   type AgentClient,
@@ -846,22 +845,24 @@ test("failed plugin rewind replay blocks prompts until retry without repeating n
   );
 });
 
-test("a failed plugin rewind replay blocks prompts until a reload settles the committed rewind", async () => {
+test("a failed plugin rewind replay blocks prompts until reload reopens the rewound session", async () => {
   let failReplay = true;
   await withRewindAgent(
     async ({ manager, agentId, messages }) => {
-      // The native revert committed, but the session could not replay what it kept.
-      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toMatchObject({
-        name: "RewindOutcomeUnknownError",
-        cause: { message: "replay failed" },
-      });
-      await expect(manager.runAgent(agentId, "D")).rejects.toBeInstanceOf(
-        RewindOutcomeUnknownError,
+      // The native revert committed at target, then reopening the session for replay failed.
+      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toThrow(
+        "replay failed",
       );
-      await manager.reloadAgentSession(agentId);
       expect(await messages()).toEqual(["A", "Reply A"]);
+      await expect(manager.runAgent(agentId, "D")).rejects.toThrow("Retry the rewind or reload");
+      await manager.reloadAgentSession(agentId);
       await manager.runAgent(agentId, "D");
-      expect(await messages()).toEqual(["A", "Reply A", "D", "Reply D"]);
+      expect((await messages()).filter((text) => !text.startsWith("[System Error]"))).toEqual([
+        "A",
+        "Reply A",
+        "D",
+        "Reply D",
+      ]);
     },
     {
       handleInput: async (input, emit) => {
@@ -883,10 +884,9 @@ test("reload after failed plugin rewind replay resumes the committed fork", asyn
   let failReplay = true;
   await withRewindAgent(
     async ({ manager, agentId, messages }) => {
-      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toMatchObject({
-        name: "RewindOutcomeUnknownError",
-        cause: { message: "replay failed" },
-      });
+      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toThrow(
+        "replay failed",
+      );
       await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
       expect(await messages()).toEqual(["A", "Reply A"]);
     },
@@ -918,6 +918,38 @@ test("rewinding a plugin agent to its first prompt empties the chat and accepts 
     await manager.runAgent(agentId, "D");
     expect(await messages()).toEqual(["D", "Reply D"]);
   });
+});
+
+test("a failed replay after rewinding the first prompt still recovers on reload", async () => {
+  let failReplay = true;
+  await withRewindAgent(
+    async ({ manager, agentId, messages }) => {
+      await expect(manager.rewind(agentId, "client-A", "conversation")).rejects.toThrow(
+        "replay failed",
+      );
+      expect(await messages()).toEqual([]);
+      await expect(manager.runAgent(agentId, "D")).rejects.toThrow("Retry the rewind or reload");
+      await manager.reloadAgentSession(agentId);
+      await manager.runAgent(agentId, "D");
+      expect((await messages()).filter((text) => !text.startsWith("[System Error]"))).toEqual([
+        "D",
+        "Reply D",
+      ]);
+    },
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
+          return false;
+        failReplay = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "replay failed" },
+        });
+        return true;
+      },
+    },
+  );
 });
 
 test("closing during plugin rewind replay closes each native binding once", async () => {

@@ -64,6 +64,7 @@ import {
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
+  RewindAppliedError,
   RewindNotAppliedError,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
@@ -795,7 +796,12 @@ function toTimelineEntry(event: Extract<AgentStreamEvent, { type: "timeline" }>)
 
 /** The live event that publishes a row committed from provider history. */
 function historyEvent(provider: AgentProvider, commit: TimelineCommit): AgentStreamEvent {
-  return { type: "timeline", provider, item: commit.row.item };
+  return {
+    type: "timeline",
+    provider,
+    item: commit.row.item,
+    ...(commit.row.turnMetrics ? { turnMetrics: commit.row.turnMetrics } : {}),
+  };
 }
 
 function projectImportedTimelineEntries(
@@ -4357,10 +4363,16 @@ export class AgentManager {
         mode: target.mode,
       })) ?? { kind: "at_target" };
     } catch (error) {
-      if (!(error instanceof RewindNotAppliedError))
-        throw new RewindOutcomeUnknownError({ cause: error });
-      await this.timeline.abandonRewind(scope, intent.id);
-      throw error;
+      if (error instanceof RewindNotAppliedError) {
+        await this.timeline.abandonRewind(scope, intent.id);
+        throw error;
+      }
+      if (error instanceof RewindAppliedError) {
+        await this.timeline.recordRewindCut(scope, intent.id, error.cut);
+        await this.completeRewind(agent, intent.id);
+        throw error.cause ?? error;
+      }
+      throw new RewindOutcomeUnknownError({ cause: error });
     }
     if (result.kind === "unreported") {
       await this.persistRewoundSession(agent);

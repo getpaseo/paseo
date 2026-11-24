@@ -241,6 +241,7 @@ test("manager snapshots capture pending and answered question state before the t
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     expect(manager.getAgent(agent.id)?.persistence?.metadata?.asyncQuestions).toEqual([
       {
@@ -274,6 +275,7 @@ test("concurrent answers deliver only one response to the active Codex turn", as
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     const results = await Promise.allSettled([
       manager.respondToPermission(agent.id, permission.id, answer),
@@ -294,6 +296,7 @@ test("a failed submission releases the request so the user can retry", async () 
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     await expect(manager.respondToPermission(agent.id, permission.id, answer)).rejects.toThrow(
       "Delivery failed",

@@ -4803,7 +4803,9 @@ describe("message order for one recipient", () => {
     }
     /** Everything the queue will deliver without a new prompt has been delivered. */
     async function settled(): Promise<void> {
+      await agentManager.flush();
       await delivery.waitForDispatch(recipient.id, new AbortController().signal);
+      await agentManager.flush();
       expect(delivery.hasPending(recipient.id)).toBe(false);
     }
     /** Resolves when the message is queued; a steer or an interrupt by default when it is dispatched. */
@@ -4909,7 +4911,7 @@ describe("message order for one recipient", () => {
         { from: recipient.senderId, text: "Go ahead and cut the release" },
         { from: "person", text: "Pause the release" },
       ]);
-      const rows = recipient.agentManager.getTimeline(recipient.recipientId);
+      const rows = await recipient.agentManager.getTimeline(recipient.recipientId);
       expect(rows.flatMap((row) => (row.type === "user_message" ? [row.text] : []))).toEqual([
         "Pause the release",
       ]);

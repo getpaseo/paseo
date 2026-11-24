@@ -471,6 +471,7 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       turnId?: string;
       timestamp?: string;
+      turnMetrics?: AgentMetric[];
     }
   | {
       type: "permission_requested";
@@ -665,6 +666,28 @@ export class RewindNotAppliedError extends Error {
   static from(error: unknown): RewindNotAppliedError {
     if (error instanceof RewindNotAppliedError) return error;
     return new RewindNotAppliedError(error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+  }
+}
+
+/**
+ * The provider applied the rewind with a known cut, then failed while refreshing its local
+ * session state. Paseo commits the confirmed cut and lets Reload reopen the session.
+ */
+export class RewindAppliedError extends Error {
+  constructor(
+    readonly cut: ConversationRewindCut,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "RewindAppliedError";
+  }
+
+  static from(cut: ConversationRewindCut, error: unknown): RewindAppliedError {
+    if (error instanceof RewindAppliedError) return error;
+    return new RewindAppliedError(cut, error instanceof Error ? error.message : String(error), {
       cause: error,
     });
   }
