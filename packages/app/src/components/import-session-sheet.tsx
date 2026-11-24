@@ -105,6 +105,7 @@ interface SessionsQueryConfig {
   // Query's default retry would keep the header spinner turning and pile up
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
+  refetchOnMount: true;
   placeholderData: () => RecentSessionsResponse | undefined;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
@@ -129,6 +130,8 @@ function buildSessionsQueriesConfig(args: {
     queryKey: buildSessionsQueryKey({ serverId, cwd, query, limit, provider }),
     enabled,
     retry: false as const,
+    // An import can invalidate an inactive host. Refresh its listing when observed again.
+    refetchOnMount: true as const,
     // While Load more fetches the next page, keep showing the page it grew from. React Query's
     // keepPreviousData cannot do this here: useQueries gives a changed key a new observer, which
     // has no previous data, so the rows would vanish and the list would remount at the top.
@@ -699,19 +702,17 @@ export function ImportSessionSheet({
         cwd: entry.cwd,
         ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
       });
-      return { agent, target };
-    },
-    onSuccess: ({ agent, target }) => {
+      // A pending import keeps the listing and navigation from the host it was sent to.
+      void queryClient.invalidateQueries({
+        queryKey: sessionsQueryRoot,
+        refetchType: "none",
+      });
       onClose();
       if (target.crossWorkspace) {
         onImported?.(agent);
       } else {
         onImportedAgent?.(agent.id);
       }
-      void queryClient.invalidateQueries({
-        queryKey: sessionsQueryRoot,
-        refetchType: "none",
-      });
     },
   });
 
