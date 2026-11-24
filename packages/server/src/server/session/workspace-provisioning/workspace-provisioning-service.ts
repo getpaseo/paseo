@@ -275,7 +275,7 @@ export function createWorkspaceProvisioningService(deps: {
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
       const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
-      const inheritedUntrustedSource = await resolveCheckoutUntrustedSource(
+      const { untrustedSource: inheritedUntrustedSource } = await resolveCheckoutUntrustedSource(
         checkoutRoot,
         baseMetadata?.untrustedSource,
       );
@@ -430,12 +430,12 @@ export function createWorkspaceProvisioningService(deps: {
   async function resolveCheckoutUntrustedSource(
     checkoutRoot: string,
     knownMetadataUntrustedSource?: UntrustedWorkspaceSource,
-  ): Promise<UntrustedWorkspaceSource | undefined> {
+  ): Promise<{ hasEvidence: boolean; untrustedSource: UntrustedWorkspaceSource | undefined }> {
     const metadataUntrustedSource =
       knownMetadataUntrustedSource ??
       (await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null))?.untrustedSource;
     if (metadataUntrustedSource) {
-      return metadataUntrustedSource;
+      return { hasEvidence: true, untrustedSource: metadataUntrustedSource };
     }
     const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
     const matching = (await workspaceRegistry.listAll()).filter((candidate) =>
@@ -443,49 +443,43 @@ export function createWorkspaceProvisioningService(deps: {
     );
     const active = matching.filter((candidate) => !candidate.archivedAt);
     if (active.length > 0) {
-      return active.find((candidate) => Boolean(candidate.untrustedSource))?.untrustedSource;
+      return {
+        hasEvidence: true,
+        untrustedSource: active.find((candidate) => Boolean(candidate.untrustedSource))
+          ?.untrustedSource,
+      };
     }
     // No active workspace owns this existing directory yet (for example, a
     // checkout retained on disk from before metadata persisted untrustedSource):
     // fall back to the most recently archived record for this path.
     const latestArchived = matching
       .filter((candidate) => Boolean(candidate.archivedAt))
-      .sort((a, b) => (b.archivedAt ?? "").localeCompare(a.archivedAt ?? ""))[0];
-    return latestArchived?.untrustedSource;
+      .sort(
+        (a, b) =>
+          (b.archivedAt ?? "").localeCompare(a.archivedAt ?? "") ||
+          b.createdAt.localeCompare(a.createdAt),
+      )[0];
+    return {
+      hasEvidence: Boolean(latestArchived),
+      untrustedSource: latestArchived?.untrustedSource,
+    };
   }
 
   async function syncUnarchivedCheckoutUntrustedSource(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
-    const checkoutRoot = workspace.worktreeRoot ?? workspace.cwd;
-    const metadataUntrustedSource = (
-      await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null)
-    )?.untrustedSource;
-    if (metadataUntrustedSource) {
-      return workspace.untrustedSource
-        ? workspace
-        : { ...workspace, untrustedSource: metadataUntrustedSource };
-    }
-    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-    const activeOnCheckout = (await workspaceRegistry.listActive()).filter((candidate) =>
-      matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
-    );
-    if (activeOnCheckout.length === 0) {
+    const resolved = await resolveCheckoutUntrustedSource(workspace.worktreeRoot ?? workspace.cwd);
+    if (!resolved.hasEvidence) {
       return workspace;
     }
-    const activeUntrustedSource = activeOnCheckout.find((candidate) =>
-      Boolean(candidate.untrustedSource),
-    )?.untrustedSource;
-    if (activeUntrustedSource) {
+    if (resolved.untrustedSource) {
       return workspace.untrustedSource
         ? workspace
-        : { ...workspace, untrustedSource: activeUntrustedSource };
+        : { ...workspace, untrustedSource: resolved.untrustedSource };
     }
     if (!workspace.untrustedSource) {
       return workspace;
     }
-    // Live active workspaces already own this checkout and it is approved:
-    // drop stale untrustedSource from a previous checkout that used this path.
     const { untrustedSource: _stale, ...approved } = workspace;
     return approved;
   }
