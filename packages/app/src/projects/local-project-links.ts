@@ -104,7 +104,6 @@ export function resolveProjectGitIdentity(input: {
   workspaces: Iterable<WorkspaceDescriptor>;
 }): ProjectGitIdentity | null {
   let resolved: ProjectGitIdentity | null = null;
-  let sawIdentity = false;
 
   for (const workspace of input.workspaces) {
     if (workspace.projectId !== input.project.projectId) continue;
@@ -114,20 +113,26 @@ export function resolveProjectGitIdentity(input: {
     // after the supported daemon floor guarantees workspaceMultiplicity (2027-11-23).
     if (workspace.workspaceKind === "checkout") continue;
     const checkout = workspace.project?.checkout;
-    const identityRoot = checkout?.isGit
-      ? findProjectCheckoutRoot(input.project.projectRootPath, checkout)
-      : null;
     const remoteUrl = workspace.gitRuntime?.remoteUrl;
-    if (!identityRoot || !remoteUrl) continue;
+    if (!checkout?.isGit || !remoteUrl) continue;
+    const projectRootPath = input.project.projectRootPath;
+    // A workspace can own an independent nested project, and a linked worktree can
+    // override origin. Only accept Git facts observed at the selected project or
+    // within its exact checkout. mainRepoRoot alone establishes shared Git storage.
+    if (
+      !pathsReferToSameLocation(checkout.cwd, projectRootPath) &&
+      !pathsReferToSameLocation(checkout.worktreeRoot, projectRootPath)
+    ) {
+      continue;
+    }
 
     const identity = deriveProjectGitIdentity({
-      projectRootPath: input.project.projectRootPath,
-      worktreeRoot: identityRoot,
+      projectRootPath,
+      worktreeRoot: checkout.worktreeRoot,
       remoteUrl,
     });
     if (!identity) continue;
 
-    sawIdentity = true;
     if (resolved && !sameLocalProjectLinkIdentity(resolved, identity)) {
       // Contradictory workspace snapshots are not proof of an identity.
       return null;
@@ -135,39 +140,7 @@ export function resolveProjectGitIdentity(input: {
     resolved = identity;
   }
 
-  return sawIdentity ? resolved : null;
-}
-
-/**
- * Use Git facts only when the workspace proves they belong to the selected project root. An
- * arbitrary ancestor workspace can own an explicitly selected nested project, including an
- * independent nested repository, so containment alone is not enough evidence.
- */
-function findProjectCheckoutRoot(
-  projectRootPath: string,
-  checkout: {
-    cwd: string;
-    worktreeRoot: string;
-    mainRepoRoot: string | null;
-  },
-): string | null {
-  const hasCheckoutAtSelectedRoot =
-    pathsReferToSameLocation(checkout.cwd, projectRootPath) ||
-    pathsReferToSameLocation(checkout.worktreeRoot, projectRootPath);
-  // mainRepoRoot comes from Git's common directory and is authoritative regardless of whether
-  // Paseo owns the worktree's lifecycle.
-  const hasObservedMainRepoRoot =
-    checkout.mainRepoRoot !== null &&
-    pathsReferToSameLocation(checkout.mainRepoRoot, projectRootPath);
-  if (!hasCheckoutAtSelectedRoot && !hasObservedMainRepoRoot) return null;
-
-  const candidateRoots = [checkout.worktreeRoot, checkout.mainRepoRoot];
-  return (
-    candidateRoots.find(
-      (root): root is string =>
-        root !== null && relativeProjectPath(root, projectRootPath) !== null,
-    ) ?? null
-  );
+  return resolved;
 }
 
 function pathsReferToSameLocation(left: string, right: string): boolean {

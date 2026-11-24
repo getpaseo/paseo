@@ -238,7 +238,7 @@ describe("local project links", () => {
     expect(sameLocalProjectLinkIdentity(trailingWhitespace!, withoutWhitespace!)).toBe(false);
   });
 
-  test("uses the main checkout when resolving a managed worktree project", () => {
+  test("does not infer the selected main checkout subdirectory from a managed worktree", () => {
     const descriptor = project({ id: "prj-managed", root: "/repos/app/packages/web" });
     expect(
       resolveProjectGitIdentity({
@@ -248,17 +248,14 @@ describe("local project links", () => {
             id: "ws-managed",
             projectId: descriptor.projectId,
             projectRoot: descriptor.projectRootPath,
+            workspaceDirectory: "/repos/.paseo/worktrees/feature/packages/web",
             worktreeRoot: "/repos/.paseo/worktrees/feature",
             mainRepoRoot: "/repos/app",
             remote: "https://github.com/acme/app.git",
           }),
         ],
       }),
-    ).toEqual({
-      repository: "github.com/acme/app",
-      remoteDisplay: "github.com/acme/app",
-      subdirectory: "packages/web",
-    });
+    ).toBeNull();
   });
 
   test("uses the managed worktree when it contains the selected project", () => {
@@ -287,47 +284,44 @@ describe("local project links", () => {
     });
   });
 
-  test("uses a managed worktree for its exact main-repository project", () => {
-    const descriptor = project({ id: "prj-main", root: "/repos/app" });
-    expect(
-      resolveProjectGitIdentity({
-        project: descriptor,
-        workspaces: [
-          workspace({
-            id: "ws-main",
-            projectId: descriptor.projectId,
-            projectRoot: descriptor.projectRootPath,
-            workspaceDirectory: "/repos/.paseo/worktrees/feature",
-            worktreeRoot: "/repos/.paseo/worktrees/feature",
-            mainRepoRoot: "/repos/app",
-            remote: "https://github.com/acme/app.git",
-          }),
-        ],
-      }),
-    ).toMatchObject({ repository: "github.com/acme/app", subdirectory: "" });
-  });
+  test.each([true, false])(
+    "verifies the selected main checkout independently of a worktree origin override (managed: %s)",
+    (isPaseoOwnedWorktree) => {
+      const descriptor = project({
+        id: "prj-main",
+        key: "remote:github.com/fork/app",
+        root: "/repos/app",
+      });
+      const overriddenWorktree = workspace({
+        id: "ws-feature",
+        projectId: descriptor.projectId,
+        projectRoot: descriptor.projectRootPath,
+        workspaceDirectory: "/repos/worktrees/feature",
+        workspaceKind: "worktree",
+        isPaseoOwnedWorktree,
+        worktreeRoot: "/repos/worktrees/feature",
+        mainRepoRoot: "/repos/app",
+        remote: "https://github.com/fork/app.git",
+      });
+      const mainCheckout = workspace({
+        id: "ws-main",
+        projectId: descriptor.projectId,
+        projectRoot: descriptor.projectRootPath,
+        worktreeRoot: "/repos/app",
+        remote: "https://github.com/upstream/app.git",
+      });
 
-  test("uses a user-owned worktree for its exact main-repository project", () => {
-    const descriptor = project({ id: "prj-user-worktree", root: "/repos/app" });
-    expect(
-      resolveProjectGitIdentity({
-        project: descriptor,
-        workspaces: [
-          workspace({
-            id: "ws-user-worktree",
-            projectId: descriptor.projectId,
-            projectRoot: descriptor.projectRootPath,
-            workspaceDirectory: "/repos/worktrees/feature",
-            workspaceKind: "worktree",
-            isPaseoOwnedWorktree: false,
-            worktreeRoot: "/repos/worktrees/feature",
-            mainRepoRoot: "/repos/app",
-            remote: "https://github.com/acme/app.git",
-          }),
-        ],
-      }),
-    ).toMatchObject({ repository: "github.com/acme/app", subdirectory: "" });
-  });
+      expect(
+        resolveProjectGitIdentity({ project: descriptor, workspaces: [overriddenWorktree] }),
+      ).toBeNull();
+      expect(
+        resolveProjectGitIdentity({
+          project: descriptor,
+          workspaces: [overriddenWorktree, mainCheckout],
+        }),
+      ).toMatchObject({ repository: "github.com/upstream/app", subdirectory: "" });
+    },
+  );
 
   test("does not use an ancestor workspace checkout as selected-root evidence", () => {
     const descriptor = project({ id: "prj-inner", root: "/repo/outer/inner" });

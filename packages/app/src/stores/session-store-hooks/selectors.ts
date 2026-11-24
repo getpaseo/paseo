@@ -142,18 +142,16 @@ export function selectWorkspaceDirectoryServerIds(
   state: SessionsSnapshot,
   serverIds: readonly string[],
 ): string[] {
-  return serverIds.filter((serverId) => {
-    const session = state.sessions[serverId];
-    return (
-      session?.hasHydratedWorkspaces === true || session?.hasWorkspaceDirectorySnapshot === true
-    );
-  });
+  return serverIds.filter((serverId) => isWorkspaceDirectoryReady(state.sessions[serverId]));
 }
 
-function hasPendingWorkspaceHydration(
-  session: SessionsSnapshot["sessions"][string] | undefined,
+export function isWorkspaceDirectoryReady(
+  session?: Pick<
+    SessionsSnapshot["sessions"][string],
+    "hasHydratedWorkspaces" | "hasWorkspaceDirectorySnapshot"
+  >,
 ): boolean {
-  return !session || session.hasHydratedWorkspaces === false;
+  return session?.hasHydratedWorkspaces === true || session?.hasWorkspaceDirectorySnapshot === true;
 }
 
 export function selectWorkspaceStructureProjects(
@@ -162,11 +160,9 @@ export function selectWorkspaceStructureProjects(
   workspaceSort?: WorkspaceSort,
   localProjectLinks: Iterable<LocalProjectLink> = [],
 ): WorkspaceStructureProject[] {
-  const unhydratedProjectLinkServerIds = serverIds.filter((serverId) =>
-    hasPendingWorkspaceHydration(state.sessions[serverId]),
-  );
-  const hydratedProjectLinkServerIds = serverIds.filter(
-    (serverId) => !hasPendingWorkspaceHydration(state.sessions[serverId]),
+  const hydratedProjectLinkServerIds = new Set(selectWorkspaceDirectoryServerIds(state, serverIds));
+  const unhydratedProjectLinkServerIds = serverIds.filter(
+    (serverId) => !hydratedProjectLinkServerIds.has(serverId),
   );
   const sessions: Array<{
     serverId: string;
@@ -207,7 +203,7 @@ export function createWorkspaceStructureProjectsSelector(
   localProjectLinks: readonly LocalProjectLink[] = [],
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
-    hasPendingWorkspaceHydration: boolean;
+    directoryReady: boolean;
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
     projects: Map<string, ProjectDescriptor> | undefined;
   }> | null = null;
@@ -215,7 +211,8 @@ export function createWorkspaceStructureProjectsSelector(
 
   return (state) => {
     const inputs = serverIds.map((serverId) => ({
-      hasPendingWorkspaceHydration: hasPendingWorkspaceHydration(state.sessions[serverId]),
+      directoryReady:
+        localProjectLinks.length > 0 && isWorkspaceDirectoryReady(state.sessions[serverId]),
       workspaces: state.sessions[serverId]?.workspaces,
       projects: state.sessions[serverId]?.projects,
     }));
@@ -224,7 +221,7 @@ export function createWorkspaceStructureProjectsSelector(
       priorInputs !== null &&
       inputs.every(
         (input, index) =>
-          input.hasPendingWorkspaceHydration === priorInputs[index]?.hasPendingWorkspaceHydration &&
+          input.directoryReady === priorInputs[index]?.directoryReady &&
           input.workspaces === priorInputs[index]?.workspaces &&
           input.projects === priorInputs[index]?.projects,
       );

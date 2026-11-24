@@ -12,6 +12,7 @@ import {
   type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
+import { isWorkspaceDirectoryReady } from "@/stores/session-store-hooks/selectors";
 import {
   buildProjectLinkPlacements,
   buildProjectLinkSuggestions,
@@ -32,6 +33,7 @@ export interface ProjectHostReplica {
   serverId: string;
   serverName: string;
   hasHydratedWorkspaces?: boolean;
+  hasWorkspaceDirectorySnapshot?: boolean;
   workspaces: WorkspaceDescriptor[];
   projects: ProjectDescriptor[];
 }
@@ -101,6 +103,7 @@ function selectProjectHostReplicas(
         serverId: host.serverId,
         serverName: host.label,
         hasHydratedWorkspaces: session?.hasHydratedWorkspaces ?? false,
+        hasWorkspaceDirectorySnapshot: session?.hasWorkspaceDirectorySnapshot ?? false,
         workspaces: Array.from(session?.workspaces.values() ?? []),
         projects: Array.from(session?.projects.values() ?? []),
       };
@@ -140,10 +143,10 @@ export function deriveProjectsFromReplica(input: {
 
   const localProjectLinks = Array.from(input.localProjectLinks ?? []);
   const unhydratedProjectLinkServerIds = input.replicas
-    .filter((replica) => replica.hasHydratedWorkspaces === false)
+    .filter((replica) => !isWorkspaceDirectoryReady(replica))
     .map((replica) => replica.serverId);
   const hydratedProjectLinkServerIds = input.replicas
-    .filter((replica) => replica.hasHydratedWorkspaces === true)
+    .filter(isWorkspaceDirectoryReady)
     .map((replica) => replica.serverId);
   const projectLinkPlacements = buildProjectLinkPlacements({ hosts });
   return {
