@@ -170,33 +170,11 @@ jobs:
         run: |
           set -euo pipefail
           export PASEO_REAL_XCRUN="$(command -v xcrun)"
-          stapler_bin="$(mktemp -d)"
-          trap 'rm -rf "$stapler_bin"' EXIT
-          cat > "$stapler_bin/xcrun" <<'STAPLER'
-          #!/bin/bash
-          if [[ "${1:-}" != stapler || "${2:-}" != staple ]]; then
-            exec "$PASEO_REAL_XCRUN" "$@"
-          fi
-          output="$(mktemp)"
-          trap 'rm -f "$output"' EXIT
-          for attempt in 1 2 3 4; do
-            if "$PASEO_REAL_XCRUN" "$@" >"$output" 2>&1; then
-              cat "$output"
-              exit 0
-            else
-              status=$?
-            fi
-            cat "$output"
-            if [[ "$status" != 68 || "$attempt" == 4 ]] ||
-              ! grep -Fq 'NSURLErrorDomain Code=-1005' "$output"; then
-              exit "$status"
-            fi
-            echo "::warning::Apple staple connection lost; retrying the same signed app ($attempt/4)" >&2
-            sleep 30
-          done
-          STAPLER
-          chmod +x "$stapler_bin/xcrun"
-          export PATH="$stapler_bin:$PATH"
+          xcrun_bin="$(mktemp -d)"
+          trap 'rm -rf "$xcrun_bin"' EXIT
+          cp scripts/macos-xcrun-retry.sh "$xcrun_bin/xcrun"
+          chmod +x "$xcrun_bin/xcrun"
+          export PATH="$xcrun_bin:$PATH"
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
@@ -502,6 +480,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p release-manifests
           cd release-manifests
           manifests_dir="$PWD/final"
           mkdir -p "$manifests_dir"

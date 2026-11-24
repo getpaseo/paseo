@@ -6,21 +6,26 @@ All workspaces share one version and release together.
 
 A release has exactly two steps. The agent does the first, the user authorizes the second.
 
-**Preparation** (reversible — agent does this):
+**Preparation** (reversible — agent does this on the release branch):
 
-- format, lint, typecheck all green
-- resolve the [release base](#release-base-and-source), get the [release inventory](#release-inventory) approved when one applies, and confirm CI for the resulting release source is green
+- resolve the [release base](#release-base-and-source) and get the [release inventory](#release-inventory) approved when one applies
 - classify the diff from the previous stable to the release source as patch or minor, then show the
   target version and rationale to the user
-- draft the changelog, show it to the user, wait for review
-- run the pre-release sanity check, surface findings to the user
+- draft `CHANGELOG.md` and `CHANGELOG.zh-CN.md`, show the draft to the user, and wait for review
+- run the pre-release sanity check (stable only) and surface findings to the user
+- commit the approved changelog and any requested ACP update, run format, lint, and typecheck, then
+  run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag
+- push the `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` branch and confirm its `CI` and
+  `Desktop Packages` runs pass (never wait on `main` CI)
 
 **Go-ahead** (user says "go ahead"):
 
-- commit the approved release inputs locally on the release branch
-- run the release, which publishes npm and pushes the release branch and tag
+- run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta), which publishes npm
+  with retry and registry visibility checks, advances the `beta` dist-tag on stable when newer, and
+  pushes the tag on the already-verified commit
 - create the release heartbeat immediately and babysit it to completion
-- [reconcile `main`](#reconcile-main) with what shipped
+- open the [reconcile `main`](#reconcile-main) PR right away so its CI runs in parallel with release
+  builds, then delete the remote release branch once the PR merges
 
 Rules that apply to both steps:
 
@@ -87,29 +92,42 @@ An explicit user instruction can select another base.
 
 1. Fetch `origin` with tags and resolve the base to one commit.
 2. Create the release workspace through Paseo MCP on a new branch from the base, named
-   `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` for the version being cut. Run the release from
-   this workspace: `release:push` pushes `HEAD` to the current branch.
+   `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` for the version being cut. `release:push` refuses
+   `main` and any branch outside `release/*`.
 3. Cherry-pick the approved commits in their `main` order with `git cherry-pick -x`, so each
    commit records the `main` commit it came from. Include the prerequisites the inventory listed.
    Resolve conflicts within the approved changes and report how. A resolution that needs new
    behavior is a scope addition: surface it for selection.
-4. Confirm CI for the release source. When the source is a commit whose CI already passed (the
-   captured `origin/main`, or the beta tag being promoted), use that run and watch pending CI to
-   completion. Otherwise push the release branch and run `gh workflow run ci.yml --ref <branch>`,
-   because CI push runs target only `main`.
-5. Keep the changelog, any explicitly requested ACP catalog update, lockfile preparation, and the
-   version commit local until the go-ahead. The release command pushes the release branch and tag
-   as one batch, and the tag push starts the release workflows. Then run
-   `gh workflow run ci.yml --ref <branch>` so CI covers the complete release commit.
-6. [Reconcile `main`](#reconcile-main).
+4. Commit the approved `CHANGELOG.md`, `CHANGELOG.zh-CN.md`, and any explicitly requested ACP
+   catalog update on the release branch. Run `npm run format`, `npm run lint`, and
+   `npm run typecheck`, then run `npm run release:prep:<mode>`. This checks the packages, bumps all
+   workspace versions, generates stable F-Droid changelogs, updates `package-lock.json`, and creates
+   `chore(release): cut <version>` without a tag.
+5. Push the release branch (`git push -u origin HEAD`). Pushing any `release/**` branch triggers
+   `CI` (all 21 jobs) and `Desktop Packages` (Linux user-namespace smoke) in their own concurrency
+   groups, isolated from `main` traffic. Never wait on `main` CI, because `main` cancels in-progress
+   runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
+   Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
+6. After go-ahead, run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta). This
+   publishes to npm and pushes the `v*` tag on the already-verified commit. Because the release
+   branch is already pushed at `HEAD`, no second CI run starts and only the tag release workflows
+   run.
+7. Start [Reconcile `main`](#reconcile-main) immediately so its PR checks overlap with desktop and
+   EAS builds.
+
+When promoting or branching from a tag created before `release:prep:*`, `release:ship`, and the
+`release/**` workflow triggers existed (for example `v0.17.0-beta.1`), either cherry-pick the
+release-tooling commit onto the release branch (leaving product code unchanged) or follow the
+older tag's scripts (`version:all:*`, manual `gh workflow run ci.yml --ref <branch>`,
+`release:publish`, and `release:push`) until the next tag carries the new tooling.
 
 A stable hotfix can take the version a patch beta line would promote to, such as `0.13.3`
 shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version. Continue the line
 as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
-computes that from a prerelease, so follow the [manual steps](#manual-step-by-step) with
-`npm version 0.13.4-beta.1 --include-workspace-root --message "chore(release): cut %s"` and
-`npm run release:publish:beta`. Record the tested beta tag as its source so its soak still counts
-for the unchanged content.
+computes that from a prerelease, so run `npm run release:check`, bump with
+`npm version 0.13.4-beta.1 --include-workspace-root --no-git-tag-version && git commit -m "chore(release): cut 0.13.4-beta.1"`,
+push the release branch for `CI` and `Desktop Packages`, then ship with `npm run release:ship:beta`.
+Record the tested beta tag as its source so its soak still counts for the unchanged content.
 
 ## Release inventory
 
@@ -137,19 +155,31 @@ For a promotion, every item defaults to defer.
 
 ## Reconcile main
 
-After the release push, open a PR into `main` that brings in what shipped and keeps newer
-development on `main`:
+Right after the tag push (in parallel with desktop and EAS builds), open a PR into `main` from a
+fresh branch off `origin/main` named `reconcile/vX.Y.Z` or `reconcile/vX.Y.Z-beta.N`:
 
-- The shipped `CHANGELOG.md` and `CHANGELOG.zh-CN.md` entries, exactly as tagged. A beta or
-  promotion entry replaces the series entry on `main`. A stable hotfix on an older line goes
-  below any newer entries.
-- The shipped version in every `package.json` and `package-lock.json`, unless `main` already
-  carries a newer version, plus the F-Droid changelog files a stable release generates.
-- No claims about unshipped work: a shipped entry describes only the tagged content, and notes
-  `main` holds for changes that have not shipped stay out of it.
+```bash
+git fetch origin --tags
+git checkout -b reconcile/vX.Y.Z origin/main
+npm run release:reconcile -- --tag vX.Y.Z
+```
 
-Delete the release branch once the PR merges. The tag is the record of shipped source; Paseo
-maintains no release track besides `main`.
+`scripts/reconcile-release.mjs` updates the working tree without cherry-picking stale lockfile
+hunks from the release base:
+
+- Copies the tagged `CHANGELOG.md` and `CHANGELOG.zh-CN.md` entries verbatim. A beta or promotion
+  entry replaces the series beta entry on `main`. A stable hotfix on an older line is placed below
+  any newer entries.
+- Copies the generated F-Droid changelog files from the tag for stable releases.
+- Updates every `package.json` version and regenerates `package-lock.json` on top of current `main`
+  only when the shipped version is newer than `main`'s version.
+- Leaves unshipped work on `main` untouched and makes no claims about unshipped work in the
+  changelog entry.
+
+Commit, open the PR into `main`, and merge once its checks pass. After the reconcile PR merges and
+the release completes, delete the remote release branch (`git push origin --delete release/vX.Y.Z`
+or `release/vX.Y.Z-beta.N`). The tag is the record of shipped source; Paseo maintains no release
+track besides `main`.
 
 ## ACP catalog updates
 
@@ -189,35 +219,42 @@ as described in **Fixing a failed release build**.
 
 ## Standard release (stable)
 
-Before running any stable release command:
+Before preparing a stable release on `release/vX.Y.Z`:
 
-- Make sure the release source passed CI, the approved release inputs are committed locally on the release branch, and the working tree is clean.
-- **Run `npm run format`, `npm run lint`, and `npm run typecheck` and commit any resulting changes BEFORE you start any `release:*` command.** `release:check` runs `npm install --workspaces --include-workspace-root` as part of `release:prepare`, which can mutate `package-lock.json` (e.g. churning `"dev": true` markers on optional deps). The next step, `version:all:*`, runs `npm version` which aborts when the working tree is dirty. If this happens mid-flight you have to commit the lockfile churn before retrying — and the pre-commit format hook will reject a lockfile-only commit because oxfmt internally skips `package-lock.json` while lefthook's glob still matches it. Avoid the whole mess by running format/lint/typecheck first, then `release:prepare` once on its own to absorb any lockfile churn into a normal commit, then start the release.
-- Do not use a release command as a substitute for checking whether the current commit is actually ready.
-
-```bash
-# Run exactly one, matching the approved decision:
-npm run release:patch
-npm run release:minor
-```
-
-This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. The workflows create the GitHub Release as a draft while builds and release-note sync run. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no mobile-release workflow under `.github/workflows`.
-
-After the stable release succeeds, check `npm view @getpaseo/cli dist-tags`. When the new stable
-is newer than `beta`, move `beta` to it for every published package. This changes dist-tags only;
-do not republish the packages:
+- Commit the approved `CHANGELOG.md`, `CHANGELOG.zh-CN.md`, and any requested ACP update.
+- Run `npm run format`, `npm run lint`, and `npm run typecheck`, commit any resulting changes, and
+  confirm the working tree is clean.
+- Do not use a release command as a substitute for checking whether the current commit is ready.
 
 ```bash
-PASEO_VERSION=$(node -p "require('./package.json').version")
-for package in highlight relay protocol client plugin server cli; do
-  npm dist-tag add "@getpaseo/$package@$PASEO_VERSION" beta
-done
+# 1. Preparation (reversible): run checks and commit the version bump without tagging.
+npm run release:prep:patch
+# or:
+npm run release:prep:minor
+
+# 2. Push the release branch and wait for CI + Desktop Packages on this commit.
+git push -u origin HEAD
+
+# 3. After go-ahead and green release-branch checks: publish npm and push the tag.
+npm run release:ship
 ```
 
-Verify `latest` resolves to `PASEO_VERSION`, and `beta` resolves to `PASEO_VERSION` or the
-active newer beta, before considering the stable release complete.
+`release:ship` runs `scripts/publish-release-packages.mjs` and `scripts/push-current-release-tag.mjs`:
 
-The Docker workflow builds images from the checked-out source tree on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
+- Publishes all seven `@getpaseo/*` packages in dependency order, skips versions already on npm,
+  retries transient 429/5xx/network errors, and waits until each version is visible on npm before
+  continuing.
+- Checks `npm view @getpaseo/cli dist-tags` and moves npm's `beta` dist-tag to the new stable
+  version across all seven packages whenever the stable version is newer than `beta` (leaving
+  `beta` untouched during a stable hotfix on an older line).
+- Refuses non-`release/*` branches, tags `HEAD` with `vX.Y.Z`, and pushes the tag. Because `HEAD`
+  is already on the release branch, no second CI run starts.
+
+The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. The workflows create the GitHub Release as a draft while builds and release-note sync run. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no mobile-release workflow under `.github/workflows`.
+
+Verify `npm view @getpaseo/cli dist-tags` shows `latest` at the shipped version, and `beta` at the shipped version or an active newer beta, before considering the stable release complete.
+
+The Docker workflow builds images from the checked-out source tree on `main` as non-publishing checks (cancelling superseded `main` runs). Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
 
 The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 
@@ -228,29 +265,43 @@ The production relay is the Elixir service in [getpaseo/paseo-relay](https://git
 ```bash
 npm run typecheck            # Verify the exact commit you intend to release
 npm run release:check        # Typecheck, build, dry-run pack
-# Run exactly one approved version command:
+# Run exactly one approved version command (commits without tagging):
 npm run version:all:patch
 npm run version:all:minor
-npm run release:publish      # Publish to npm
-npm run release:push         # Push HEAD + tag (triggers CI workflows)
-# Then move npm's beta dist-tag to this stable version when it is newer than beta (see above).
+git push -u origin HEAD      # Trigger CI + Desktop Packages on release/vX.Y.Z
+# Wait for CI and Desktop Packages on this branch to pass, then after go-ahead:
+npm run release:publish      # Publish to npm (idempotent, with propagation + beta dist-tag sync)
+npm run release:push         # Create tag vX.Y.Z on HEAD and push (triggers release workflows)
 ```
 
 ## Beta flow
 
 ```bash
-npm run release:beta:patch       # Start the next patch beta line
-npm run release:beta:minor       # Start the next minor beta line
-# ... test desktop and APK prerelease assets from GitHub Releases ...
-npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
-npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
+# 1. Preparation (reversible) on release/vX.Y.Z-beta.N:
+npm run release:prep:beta:patch  # Start the next patch beta line
+# or:
+npm run release:prep:beta:minor  # Start the next minor beta line
+# or for follow-up betas:
+npm run release:prep:beta:next   # Cut X.Y.Z-beta.2, beta.3, ...
+
+# 2. Push the release branch and wait for CI + Desktop Packages to pass:
+git push -u origin HEAD
+
+# 3. After go-ahead:
+npm run release:ship:beta
+
+# Later, after soak, promote on release/vX.Y.Z:
+npm run release:prep:promote
+git push -u origin HEAD
+# Wait for CI + Desktop Packages to pass, then after go-ahead:
+npm run release:ship
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
 - Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
 - The user-facing beta instructions, including the public TestFlight join link for the `Paseo Beta` group, live in `public-docs/updates.md` and its `zh-CN` pair. Update them when a beta path is added or removed.
 - Betas publish desktop assets and APKs for testing. They also build iOS, upload it to TestFlight, add it to the `Paseo Beta` external group, and submit it for Beta App Review. They do not submit mobile builds to the production stores.
-- `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
+- `release:prep:promote` + `release:ship` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Require the Linux artifact CI checks with both restricted and usable user namespaces to pass before publication; see [packaged desktop smoke](testing.md#packaged-desktop-smoke). Keep the installed-package and AppImage checks together.
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
@@ -278,17 +329,17 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 ### Default behavior
 
-`npm run release:patch` or `npm run release:minor` → tag push → 36h ramp. No extra action needed.
+`npm run release:prep:patch` or `npm run release:prep:minor` → push release branch → green checks → `npm run release:ship` → tag push → 36h ramp. No extra action needed.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
 ### Instant-admit release (rollout_hours=0)
 
-`npm run release:patch` and `npm run release:minor` tag-push, and tag-push runs always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), cut the release normally, wait for it to publish, then flip the manifests:
+Tag-push runs from `npm run release:ship` always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), ship the release normally, wait for it to publish, then flip the manifests:
 
 ```bash
-# 1. Cut and publish (36h ramp from tag push).
-npm run release:patch
+# 1. Ship the verified release branch (36h ramp from tag push).
+npm run release:ship
 
 # 2. Wait for Desktop Release to publish the GitHub Release.
 gh run watch <desktop-release-run-id> --exit-status
@@ -339,7 +390,7 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases cut via `npm run release:patch` or `npm run release:minor` — those paths always tag-push and stamp 36. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+This does **not** apply to fresh releases shipped via `npm run release:ship` — tag-push runs always stamp 36. For a fresh release with a custom ramp, ship normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
 
 ### Releasing during an active rollout
 
@@ -449,10 +500,11 @@ that resumes the release in the current conversation. Create it automatically
 with `create_heartbeat`. The heartbeat owns the release until it either reaches
 the completion checklist or finds a failure that needs new user authority.
 
-Each heartbeat checks the release tag commit, all GitHub Actions runs for the
-release branch and tag, npm dist-tags, the GitHub Release body and assets,
-desktop updater manifests, the published Docker image, and the applicable EAS
-workflow. Inspect the GitHub Release itself and confirm that the macOS, Linux,
+Each heartbeat checks the release tag commit, `CI` and `Desktop Packages` for the release branch,
+every tag-triggered GitHub Actions run (`Desktop Release`, `Android APK Release`, `Docker`,
+`Release Notes Sync`), npm dist-tags, the GitHub Release body and assets, desktop updater
+manifests, the published Docker image, the applicable EAS workflow, the reconcile PR, and remote
+release branch cleanup. Inspect the GitHub Release itself and confirm that the macOS, Linux,
 Windows, and Android APK assets are present along with the channel manifests
 (`latest-mac.yml`, `latest-linux.yml`, and `latest.yml` for stable;
 `beta-mac.yml`, `beta-linux.yml`, and `beta.yml` for beta).
@@ -461,8 +513,9 @@ For stable releases, also confirm every required mobile build, external
 TestFlight distribution, Beta App Review submission, and store submission job
 for the release commit. For betas, confirm
 the beta EAS workflow completed its TestFlight distribution and Beta App Review
-path. Delete the heartbeat only after every applicable checklist item passes,
-then report the release as shipped.
+path. Once the reconcile PR merges and every applicable checklist item passes,
+delete the remote release branch (`git push origin --delete release/vX.Y.Z` or
+`release/vX.Y.Z-beta.N`), delete the heartbeat, and report the release as shipped.
 
 Pattern:
 
@@ -474,7 +527,7 @@ Pattern:
   "timezone": "UTC",
   "maxRuns": 120,
   "expiresIn": "24h",
-  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; every GitHub Actions run for the release branch and tag; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; and the matching EAS workflow. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, and submit_android to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes, delete THIS heartbeat, report shipped, and stop.",
+  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; CI and Desktop Packages on release/vX.Y.Z; every tag-triggered GitHub Actions run; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; the matching EAS workflow; and the reconcile PR into main. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, and submit_android to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes and the reconcile PR is merged, delete origin/release/vX.Y.Z, delete THIS heartbeat, report shipped, and stop.",
 }
 ```
 
@@ -576,12 +629,16 @@ intentionally unavailable to desktop updater clients.
 
 ## Notes
 
-- `version:all:*` bumps root + syncs workspace versions and `@getpaseo/*` dependency versions
-- The npm `version` lifecycle regenerates F-Droid changelog files from `CHANGELOG.md` for stable releases only (`npm run fdroid:changelogs`) and stages them, so the release tag carries them. Betas are a no-op. A stable run **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first. See [docs/android.md](android.md) for why these files are generated per ABI.
-- `release:prepare` refreshes workspace `node_modules` links to prevent stale types
-- `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
-- If `release:publish` partially fails, re-run it — npm skips already-published versions
-- If `release:publish:beta` partially fails, re-run it — npm skips already-published versions and keeps prereleases off `latest` because every publish uses `--tag beta`
+- `version:all:*` bumps root, syncs workspace versions and `@getpaseo/*` dependency versions, and
+  commits `chore(release): cut <version>` without creating a tag. `release:push` creates and pushes
+  the tag atomically after release-branch CI passes.
+- `release:push` refuses `main` and any branch outside `release/*`.
+- The npm `version` lifecycle regenerates F-Droid changelog files from `CHANGELOG.md` for stable releases only (`npm run fdroid:changelogs`) and stages them, so the release commit and tag carry them. Betas are a no-op. A stable run **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first. See [docs/android.md](android.md) for why these files are generated per ABI.
+- `release:prepare` refreshes workspace `node_modules` links to prevent stale types.
+- `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`.
+- `release:publish` and `release:publish:beta` run `scripts/publish-release-packages.mjs`: if a run
+  fails partway through, re-running skips versions already published on npm, retries transient
+  registry errors, and waits for each version to become visible on npm before continuing.
 - The website uses GitHub's latest published release API for download links, so published beta prereleases do not replace the stable download target.
 
 ## Changelog format
@@ -602,6 +659,7 @@ No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or 
 - `CHANGELOG.md` holds stable releases and at most one entry for the current beta series.
 - The first beta of a version inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
 - Each subsequent beta rewrites that entry in place: the heading becomes the new beta number and date, and the body describes the full change from the previous stable release to this beta. Never add a second beta entry.
+- The entry announces changes and leaves setup steps, click paths, migration notes, configuration keys, hedges and edge cases to product docs. The headline change is the first highlight. [Changelog conciseness](#changelog-conciseness) and [Changelog ordering](#changelog-ordering) hold the rules.
 - The entry is a list of changes, not of PRs. When a later beta reverts, reworks, or follows up on something an earlier beta added, rewrite the bullet to the current behavior or delete it. A stable user never saw the earlier beta behavior, so fixes to it are not "Fixed" bullets.
 - Anything that already shipped to stable through a patch release on an older line stays out of the beta entry.
 - Stable promotion renames the entry to `## 0.1.60 - YYYY-MM-DD` after a final review.
@@ -657,14 +715,30 @@ claims a general improvement, rewrite it with the concrete change.
 
 ## Changelog conciseness
 
-Every section bullet must be scannable at a glance. The changelog is not release documentation — it's a list. [Highlights](#changelog-highlights) get more room; every other bullet follows these limits.
+An entry announces what changed. Product docs own setup, navigation, migration and edge cases, and the PR link leads to the rest. These rules apply to highlights and section bullets.
 
-- **One sentence per bullet, max.** If a bullet contains two sentences, the second one is doing work that belongs in product docs, not the changelog. Cut it.
+- **No instructions.** Cut setup steps, click paths, configuration keys, flags and migration notes. "Open a provider's settings from Settings, setup, or the model picker" is a click path. "Existing goose settings and sessions carry over to the bundled plugin" is a migration note.
+- **One warning for a breaking requirement.** When the update stops something working until the user acts, state the requirement in one short sentence after the announcement, and link the product doc that has the steps: "Requires [Antigravity CLI 1.5.0 or later](https://paseo.sh/docs/supported-providers/antigravity)." Nothing else earns a second sentence.
+- **No hedges or exception clauses.** Cut "when needed", "for eligible models", "on hosts where…", "except…", "with a hint shown when…" and "across common install shapes". Keep the condition that triggers a fixed failure, as in `Fixed <failure> when <condition>`.
+- **The shorter bullet is still true.** When a change reaches only some providers, platforms or file types, name what it covers in the sentence's own words: "update supported CLIs" where one provider has no update command, "Markdown previews and source views" where HTML previews on iOS are left out, "by default" where an explicit interrupt still replaces the turn. Do not widen the claim to remove a clause.
+- **State the outcome and stop.** Say what the user gets. Leave out queues, snapshots, caches, timeouts, LAN/WAN topology, TLS handshakes and IPC.
+
+Each row is from the first draft of 0.17.1:
+
+| Avoid                                                                                                                                                                                                                                                     | Write                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Open a provider's settings from Settings, setup, or the model picker to update supported CLIs and watch their output                                                                                                                                      | Update supported CLIs from the app                                                                |
+| Use Antigravity CLI 1.5.0 or later on the daemon host, and include `acp` if you override its command                                                                                                                                                      | Requires Antigravity CLI 1.5.0 or later                                                           |
+| Reports and notifications from other agents arrive in order when the current turn ends instead of interrupting it. An interrupt or your own prompt carries earlier queued messages in the same turn, and Stop holds queued messages until the next prompt | By default, messages from other agents wait for the current turn to end                           |
+| Changed worktree teardown to keep the worktree when the command exceeds one minute or the `worktree.teardownTimeoutMs` limit in `paseo.json`                                                                                                              | Changed worktree teardown to keep the worktree when the command times out                         |
+| Fixed file views losing their scroll position when switching Preview and Source, except HTML previews on iOS                                                                                                                                              | Fixed Markdown previews and source views losing their scroll position when switching between them |
+
+Section bullets also follow these limits:
+
+- **One sentence per bullet, max.** A second sentence is documentation. Cut it.
 - **No trailing periods.** Bullets are list items, not prose. Drop the period at the end of every bullet, including the period inside any bolded lead-in. `**Configurable terminal scrollback**` not `**Configurable terminal scrollback.**`.
 - **One line per bullet.** If a bullet wraps to three lines in a narrow column, it's too long.
 - **Split bullets that pack multiple distinct changes.** If a bullet uses "and", "plus", a comma list, or an em-dash to chain several independent improvements, break them into separate bullets — even when they share a theme or author. One bullet = one user-facing change.
-- **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
-- **Stop after identifying the change.** Do not explain LAN/WAN topology, TLS handshakes, IPC, or other architecture in a changelog bullet. Put necessary background in product docs.
 - **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
 
 ## Changelog highlights
@@ -677,7 +751,7 @@ reader who stops after the highlights should have missed nothing they would ask 
 ```markdown
 ## 0.16.0 - 2026-11-20
 
-- **Undo workspace archive:** Archiving a workspace in the app now shows a "Workspace archived" toast for six seconds. Undo, or Cmd/Ctrl+Z, restores the workspace with its tabs and agents. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
+- **Undo workspace archive:** Restore an archived workspace with Undo or Cmd/Ctrl+Z. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
 
 ### Added
 ```
@@ -688,17 +762,19 @@ reader who stops after the highlights should have missed nothing they would ask 
 - **The lead-in is not a place or something Paseo already had.** A device, screen or area names
   where the change landed. A feature name that was true of the last release hides the news: Paseo
   already had keyboard shortcuts, so the lead-in says they now work on mobile.
-- **The first sentence says the plain thing.** Write what a user would tell a friend: Paseo now
+- **One short sentence says the plain thing.** Write what a user would tell a friend: Paseo now
   shows the background tasks an agent is running. Leave out the conditions and mechanics that make
-  it true.
+  it true. A second sentence is only for a
+  [breaking requirement](#changelog-conciseness).
 - **Describe the new behavior, not the old one.** Say what is faster or better now, and do not
   dwell on how slow or broken it was before. A number is welcome as a short aside after the new
   behavior is stated: seconds, a percentage, a multiple.
 - **Do not list what a sentence already covers.** After "the same shortcuts as desktop", naming
   five of them adds nothing. Keep a list only when it sets the scope, such as the providers a
   feature works with.
-- **The description runs one to three sentences.** Sentences end with periods, and the attribution
-  follows the last one. [Changelog wording](#changelog-wording) applies in full.
+- **Sentences end with periods, and the attribution follows the last one.**
+  [Changelog wording](#changelog-wording) and [Changelog conciseness](#changelog-conciseness)
+  apply.
 - **A highlight replaces the section bullets it covers.** A PR appears once in an entry, so its
   attribution moves to the highlight.
 - **A highlight is something a user would name.** Everything else stays a section bullet. A patch
@@ -707,13 +783,13 @@ reader who stops after the highlights should have missed nothing they would ask 
   of related fixes, becomes a highlight only when it passes the same test as a feature, and then
   it is written as what works now: `**Fewer reconnects on return:**`.
 
-| Avoid                                                                                      | Write                                                                                                            |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                                               |
-| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                                              |
-| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                                                         |
-| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner on hosts with many worktrees |
-| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                                                    |
+| Avoid                                                                                      | Write                                                                               |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                  |
+| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                 |
+| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                            |
+| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner |
+| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                       |
 
 Before showing a draft, read only the bold lead-ins top to bottom. Each one must answer "what is
 new?" without its description, and each must outrank the one below it.
@@ -763,6 +839,9 @@ question.
    for them: `Undo workspace archive`, `Fewer reconnects on return`. Fixes are routine, so one
    that earned a highlight still follows everything new or improved.
 
+- **The headline change goes first, whatever its group.** It is the change the release is announced
+  with. 0.17.1 leads with `Antigravity approvals and history`, which needs one provider. The groups
+  rank everything after it.
 - **Reach decides before kind.** A new capability that needs a hardware keyboard is in group 3.
 - **Rank the whole list in one pass.** The order you collected the pull requests in, the alphabet
   and the order of the sections below are not rankings.
@@ -802,13 +881,12 @@ Every entry covers `previous stable release → release source`: first beta, lat
 
 ### Beta release
 
-- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory), and CI for the release source is green
+- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory)
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
-- [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before cutting the release
+- [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before running `release:prep:*`
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
-- [ ] The changelog, ACP, lockfile, and version commits stayed local until the approved release command pushed the release branch and tag
-- [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
-- [ ] Every GitHub Actions run for the complete release commit and tag is green
+- [ ] `npm run release:prep:beta:patch`, `release:prep:beta:minor`, or `release:prep:beta:next` created the version commit on `release/vX.Y.Z-beta.N` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] After go-ahead, `npm run release:ship:beta` published npm and pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
@@ -817,23 +895,21 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] GitHub `Docker` workflow is green and the versioned beta image is published without moving `latest`
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
 - [ ] EAS `Release iOS Beta` completed its build, TestFlight distribution, external beta group, and Beta App Review path
-- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`, and `origin/release/vX.Y.Z-beta.N` was deleted
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed
 
 ### Stable release (or promotion)
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
-- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory), and CI for the release source is green
+- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory)
 - [ ] A promotion ships the tested beta's product content after its soak, unless the user explicitly overrode either default
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
-- [ ] Ensure the approved release inputs are committed locally and the git worktree is clean before running any release command
-- [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release. Commit the matching [`CHANGELOG.zh-CN.md` entry](#changelog-translations) with it
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
-- [ ] The changelog, ACP, lockfile, and version commits stayed local until the approved release command pushed the release branch and tag
-- [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully
-- [ ] Every GitHub Actions run for the complete release commit and tag is green
+- [ ] Ensure local format, lint, and typecheck pass and the working tree is clean before running `release:prep:*`
+- [ ] `npm run release:prep:patch`, `release:prep:minor`, or `release:prep:promote` created the version commit on `release/vX.Y.Z` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] After go-ahead, `npm run release:ship` published npm, updated dist-tags, and pushed the `vX.Y.Z` tag without triggering a second CI run
 - [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
@@ -848,5 +924,5 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track
-- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries, F-Droid changelogs, and version into `main`, and `origin/release/vX.Y.Z` was deleted
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed

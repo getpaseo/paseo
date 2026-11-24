@@ -290,6 +290,7 @@ export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
 export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
 import type {
   AgentCapabilityFlags,
+  AgentMetric,
   AgentModelDefinition,
   AgentMode,
   AgentPermissionRequest,
@@ -429,6 +430,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   iconSvg: z.string().optional(),
+  docsUrl: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
 });
 
@@ -480,6 +482,12 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+});
+
+export const AgentMetricSchema: z.ZodType<AgentMetric> = z.object({
+  label: z.string(),
+  value: z.string(),
+  tone: z.enum(["default", "ok", "warning", "danger"]).optional(),
 });
 
 const McpStdioServerConfigSchema = z.object({
@@ -827,6 +835,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
     usage: AgentUsageSchema.optional(),
+    metrics: z.array(AgentMetricSchema).optional(),
   }),
   z.object({
     type: z.literal("turn_failed"),
@@ -939,6 +948,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   /** Opaque. Changes whenever the accounts this agent reports usage for can change. */
   usageScopeKey: z.string().optional(),
   lastUsage: AgentUsageSchema.optional(),
+  sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
@@ -1347,6 +1357,9 @@ const ImageAttachmentSchema = z.object({
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
+/** An agent sender may also queue: wait until the recipient's running turn ends. */
+export const AgentActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
+export type AgentActiveTurnBehavior = z.infer<typeof AgentActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
@@ -1524,7 +1537,8 @@ export const SendAgentMessageRequestSchema = z.object({
   sourceAgentServerId: z.string().min(1).optional(),
   sessionMode: z.string().optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
-  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
+  /** queue needs an agent sender. */
+  activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
@@ -3451,6 +3465,7 @@ export const HubExecutionAgentValidateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.validate.request"),
   requestId: z.string(),
   provider: z.string(),
+  cwd: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -4151,6 +4166,10 @@ export const ServerInfoStatusPayloadSchema = z
         hopliteProvider: z.boolean().optional(),
         // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
         fxProvider: z.boolean().optional(),
+        // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
+        gooseProvider: z.boolean().optional(),
+        // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once host floor includes the bundled adapter.
+        hermesProvider: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
@@ -4176,6 +4195,8 @@ export const ServerInfoStatusPayloadSchema = z
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
         agentMessageBatching: z.boolean().optional(),
+        // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
+        agentActiveTurnBehaviors: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -5126,6 +5147,8 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   seqEnd: z.number().int().nonnegative(),
   sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema),
   collapsed: z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle", "identity"])),
+  /** Set on the row that carries the turn footer: the turn's last assistant message, else its last tool call. */
+  turnMetrics: z.array(AgentMetricSchema).optional(),
 });
 
 export const FetchAgentTimelineResponseMessageSchema = z.object({
@@ -5521,6 +5544,10 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     deliveryStatus: z.literal("queued").optional(),
+    /** The behavior applied to a queued agent message. */
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
+    /** What happens to a queued agent message, and how the sender can change it. */
+    guidance: z.string().optional(),
     error: z.string().nullable(),
   }),
 });
@@ -5791,6 +5818,17 @@ const CheckoutStatusCommonSchema = z.object({
   // upstream branch name is not necessarily currentBranch, so composing one is wrong.
   // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
+  // How currentBranch relates to its upstream: "tracked" (upstreamRef and the counts are set),
+  // "none" (never pushed; Push does a first push), "gone" (the upstream's remote-tracking ref no
+  // longer exists, as after the remote branch is deleted), or "unknown" (the daemon cannot tell,
+  // as when the clone keeps no remote-tracking ref for the upstream). Absent from daemons that
+  // predate it, which report all but "tracked" as a null upstreamRef.
+  upstreamState: z.enum(["tracked", "none", "gone", "unknown"]).optional(),
+  // The remote a first push publishes currentBranch to, when the daemon can confirm git would
+  // push the branch there too. Null when there is no such remote, as when origin is missing or
+  // git is set to push the branch to another remote (branch.<name>.pushRemote,
+  // remote.pushDefault). Absent from daemons that predate it.
+  firstPushRemote: z.string().nullable().optional(),
   forgeWeb: ForgeWebSchema.optional(),
 });
 
@@ -6990,6 +7028,7 @@ export const ProviderUsageWindowSchema = z.object({
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),
+  durationSeconds: z.number().optional(),
   runsOutAt: z.string().nullable().optional(),
   shortfallPct: z.number().nullable().optional(),
   tone: ProviderUsageToneSchema.optional(),
@@ -7052,6 +7091,7 @@ export const UsageProblemSchema = z.discriminatedUnion("kind", [
 const AvailableUsageReportSchema = z.object({
   status: z.literal("available"),
   planLabel: z.string().optional(),
+  observedAt: z.string().optional(),
   windows: z.array(ProviderUsageWindowSchema),
   balances: z.array(ProviderUsageBalanceSchema).optional(),
   details: z.array(ProviderUsageDetailSchema).optional(),
@@ -7068,6 +7108,8 @@ export const UsageReportEntrySchema = z.object({
   sourceId: z.string(),
   sourceLabel: z.string(),
   icon: z.string().optional(),
+  /** Host hint for whether this report starts shown until the user overrides it. Absent means true. */
+  defaultEnabled: z.boolean().optional(),
   report: UsageReportSchema,
   // Successful completion time; fetchedAt remains the attempt timestamp for ordering.
   successfulAt: z.string().optional(),

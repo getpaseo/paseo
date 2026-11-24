@@ -5,6 +5,7 @@ import type {
 } from "expo-router/react-navigation";
 import { router, type Href } from "expo-router";
 import {
+  decodeWorkspaceIdFromPathSegment,
   encodeWorkspaceIdForPathSegment,
   getHostWorkspaceOpenParamFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -37,6 +38,27 @@ export function registerWorkspaceRouteNavigationRef(
       rootNavigationRef = null;
     }
   };
+}
+
+/**
+ * The workspace on screen right now, read from the focused route, or null on any other screen
+ * (Settings, New workspace, ...). Unlike a component's last render, it stays correct for work that
+ * finishes after the screen that started it is gone.
+ */
+export function getFocusedWorkspaceSelection(): { serverId: string; workspaceId: string } | null {
+  // Typed routes narrow the container's route to `never`; this only reads name and params.
+  const route = rootNavigationRef?.current?.getCurrentRoute() as
+    | { name: string; params?: { serverId?: unknown; workspaceId?: unknown } }
+    | undefined;
+  if (route?.name !== HOST_WORKSPACE_ROUTE_NAME) {
+    return null;
+  }
+  const params = route.params;
+  if (typeof params?.serverId !== "string" || typeof params.workspaceId !== "string") {
+    return null;
+  }
+  const workspaceId = decodeWorkspaceIdFromPathSegment(params.workspaceId);
+  return workspaceId ? { serverId: params.serverId, workspaceId } : null;
 }
 
 interface MountedRouteStack {

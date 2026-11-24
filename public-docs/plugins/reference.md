@@ -419,6 +419,8 @@ configuration, persistence, permissions, and failures are events.
 Use the single `session.prompt` input for messages, structured commands, steering, and command side
 effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
+Report measurements as `metrics` on a completed `session.turn` and through `session.metrics`. See
+[Report metrics](/docs/plugins/providers#report-metrics).
 
 Provider options are one record, `ProviderSessionConfig.providerOptions` on `session.open`. It
 includes configured defaults and per-agent overrides; validate and apply it in your provider. Report
@@ -433,7 +435,30 @@ Paseo refreshes an agent by closing its current provider session and opening it 
 configuration and persistence. Providers re-read external state during `session.open`.
 
 Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
-hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
+hooks for vendor behavior. See [Adapt an ACP agent](/docs/plugins/providers#adapt-an-acp-agent).
+
+In `discover` and `configure`, call `context.request(method, params)` to send an ACP extension
+request. The promise returns a JSON value or rejects with the agent's JSON-RPC error.
+
+In `toolCall`, use `context.mcpServerNames` to recognize servers that Paseo supplied when it opened
+the ACP session. Include an empty-list fallback for older SDK versions or servers configured
+directly in the agent. `toolCall.content` holds the call's ACP `content` blocks, and
+`context.previous` is the call as Paseo last presented it, after every transformer. Both are absent
+on older SDK versions, and `previous` is absent on a call's first update. See
+[Adapt an ACP agent](/docs/plugins/providers#adapt-an-acp-agent) for the standard tool cards.
+
+Use `config(state, context)` to return the configuration snapshot that Paseo displays.
+Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
+Use `configure` to send changes to the agent.
+
+Publish `session.commands` to advertise slash commands and skills. Each entry carries `name`,
+`description`, and optional `argumentHint` and `kind`. The composer suggests both kinds at the
+start of a prompt. Use `kind: "skill"` if the agent accepts the skill inline as part of a normal
+message. The default kind is `"command"`.
+
+In the ACP shim, use `command(entry, context)` to return a rewritten entry for each advertised
+slash command. For example, a plugin with a vendor skill registry can set the kind with
+`return { ...entry, kind: skills.has(entry.name) ? "skill" : "command" }`.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular file that follows the
@@ -498,11 +523,54 @@ shapes is an error. **Update** appears once `inspect` reports the CLI installed 
 `update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
 offers `updateUrl` on the same terms.
 
+#### Provider troubleshooting
+
+**Requires Paseo 0.18.** Older versions ignore `docsUrl` and show only the `diagnostic` text.
+The provider's settings have a **Troubleshooting** section with a **Diagnostic report** and
+**Docs**. Users copy the report into a bug report, so put the facts
+that explain a wrong result into it.
+
+`ProviderRegistration.docsUrl` is the `http` or `https` page that **Docs** opens. Point it at the
+page that says how to set up the provider and how to fix its common problems. The plugin fails to
+start when it is another kind of URL. Paseo hides **Docs** when you declare none.
+
+The report is your provider's `label` and one `Label: value` row per line. Paseo writes these rows:
+
+| Row                                                            | Shown                                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `Command source`, `Configured command`                         | When you declare `command`                                             |
+| `Daemon PATH`, `Daemon shell`, `PATH matches`, `Resolved path` | When you declare `command`                                             |
+| `Version`                                                      | When Paseo found the executable and you declare `installation.inspect` |
+| `Models`, `Status`                                             | Always                                                                 |
+
+`status(request)` adds your rows after them. `request.launch` is the launch a session would use.
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| Answer                             | Result                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `{ available: true, diagnostic? }` | Each line of `diagnostic` is one row. Write each line as `Label: value`.       |
+| `{ available: false, diagnostic }` | The provider is unavailable. The report shows `diagnostic` in the `Error` row. |
+
+Paseo calls `status` each time it checks whether the provider is available, not only for the
+report. The report does not wrap lines, so write short rows.
+
 ### Usage sources
 
 **Requires Paseo 0.11.** Register a source from your server entry with
 `server.registerUsageSource()`. Import its contract and helpers from
 `@getpaseo/plugin/server/usage`.
+
+A source that needs its plugin's provider command may set `provider` to that provider's ID.
+The daemon supplies the resolved launch in `scope.launch` for global discovery and for that
+provider's sessions. The launch includes the trusted process environment; keep it daemon-side and
+use an opaque store locator as the input. It is absent when the provider is unavailable.
 
 A source implements two calls:
 
@@ -515,13 +583,20 @@ interface UsageAccount {
 }
 
 type UsageScope =
-  | { kind: "global" }
-  | { kind: "session"; provider: string; model?: string; env: Record<string, string> };
+  | { kind: "global"; launch?: ProviderLaunch }
+  | {
+      kind: "session";
+      provider: string;
+      model?: string;
+      env: Record<string, string>;
+      launch?: ProviderLaunch;
+    };
 
 interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
+  provider?: string;
   input: ZodType;
   discover(scope: UsageScope): Promise<UsageAccount[]>;
   fetch(input: unknown): Promise<UsageReport>;
@@ -597,7 +672,11 @@ For numeric durations, use `windowFromReportedDuration()` from
 `@getpaseo/plugin/server/usage` (Paseo 0.11+). Pass the reported seconds or `null`, a neutral
 `unknown` identity and name, and an optional stable quota `scope`. The helper derives the ID,
 label, and short label together; it accepts no duration-label override. For named API periods,
-use `windowFromUsedPct()` with names justified by that field.
+use `windowFromUsedPct()` with names justified by that field. Set `durationSeconds` when
+the period has a known fixed length. Usage Details uses it with the reset time and the
+latest reading to estimate whether the quota will last until reset. If the source returns
+a previous reading, include its measurement time as an ISO timestamp in the report’s
+`observedAt` field.
 
 A window ID identifies a quota scope and period, never its response position, utilization, or
 reset instant. Scope model-specific quotas by the provider's stable feature ID, falling back to
@@ -672,6 +751,114 @@ on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps
 for 0.10 clients and renders problems into its `error` string.
 
 The source icon is a file path with the same rules as a provider icon.
+
+## Worktree managers {#worktree-managers}
+
+**Requires Paseo 0.17.** Register a worktree manager from `index.server.ts` with
+`server.registerWorktreeManager()` when an external tool such as Worktrunk should own creating,
+removing, and restoring Git worktrees instead of Paseo running `git worktree add` and
+`git worktree remove` directly.
+
+```ts
+import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerWorktreeManager({
+    async create(request, { signal }) {
+      if (request.kind !== "branch-off") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          request.repoRoot,
+          "switch",
+          "--create",
+          request.branch,
+          "--base",
+          request.startPoint ?? request.baseRef,
+          "--no-cd",
+          request.untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path } = JSON.parse(stdout) as { path: string };
+      return { type: "created", path };
+    },
+    async remove({ repoRoot, path, force, untrusted }, { signal }) {
+      const skipHooks = untrusted || repoRoot === null;
+      await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot ?? path,
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          skipHooks ? "--no-hooks" : "--yes",
+          ...(force ? ["--force"] : []),
+          path,
+        ],
+        { signal },
+      );
+      return { type: "removed" };
+    },
+    async restore({ repoRoot, path, target, untrusted }, { signal }) {
+      if (target.type !== "branch") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot,
+          "switch",
+          target.branch,
+          "--path",
+          path,
+          "--no-cd",
+          untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path: restoredPath } = JSON.parse(stdout) as { path: string };
+      return { type: "restored", path: restoredPath };
+    },
+  });
+}
+```
+
+- **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`.
+  All managers share 120 seconds for each create request. Return `{ type: "created", path }` to
+  claim creation. If you return `undefined`, Paseo tries the next manager or uses built-in Git.
+  For branch-off, Paseo resolves `baseRef` and refreshes a remote-tracking starting ref before
+  calling the manager. If the fetch fails, Paseo uses the cached ref. When `request.untrusted` is `true` (for
+  example, a fork change request), skip repository-defined hooks. Paseo verifies that `path` is a
+  safe, newly created Git worktree of the same repository on a named branch, then records the
+  checked-out `HEAD` branch (managers may normalize or uniquely name the branch, and should create a
+  new branch for `branch-off`), writes comparison-base metadata, and seeds `paseo.json`. Paseo uses the
+  returned path to roll back a failed adoption or later creation step. If the callback throws or
+  its signal aborts before it returns, the manager is responsible for cleaning up any worktree it
+  created. First-agent branch auto-rename is skipped for manager-created worktrees.
+- **Remove** is optional and runs on workspace archive and creation rollback, after Paseo runs
+  `paseo.json` teardown and saves `refs/paseo/kept-commits/<sha>` for restore. Return
+  `{ type: "removed" }` after removing the directory, or `undefined` to fall back to Git. When
+  `untrusted` is `true` (for example, a fork change request) or `repoRoot` is `null`, skip
+  repository-defined hooks and run against `repoRoot` when available. Paseo routes removal to the
+  plugin that created the worktree and falls back to Git when that plugin is disabled or uninstalled.
+  Paseo keeps the directory if it contains another linked Git worktree. Standalone clones and
+  submodules follow normal removal. During archive, an active workspace nested inside the directory
+  also keeps it on disk. If the callback throws or times out after 120 seconds, Paseo skips Git
+  fallback. During archive, Paseo logs the callback failure and still archives the workspace.
+  Any files the callback left stay on disk.
+- **Restore** is optional and runs when unarchiving a workspace whose worktree directory was deleted.
+  It receives the recorded `path` that the recreated worktree must occupy, `target` (`branch`,
+  `commit`, or `from-base`), and `untrusted`. Return `{ type: "restored", path }` or `undefined` to
+  fall back to Git. Paseo verifies the checkout matches the requested branch, detached commit, or
+  new branch at the requested base commit. The same cleanup rules apply as for create. When
+  `restore` falls back to Git, Paseo clears the workspace's manager ownership
+  so subsequent archives also use Git.
+
+See the complete [worktrunk example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk).
 
 ## Entry point and cleanup
 
@@ -769,6 +956,16 @@ export default function contribute(client: PluginClientContext) {
 | `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
+
+If `navigation?.supportsFocusHost` is true, pass `focusHost: true` to `openAgent` or `openWorkspace`.
+Paseo selects only the destination host in the workspace sidebar, clears the project and label
+filters, and keeps the grouping mode. Omit the option to preserve the existing filters.
+
+```ts
+if (navigation?.supportsFocusHost) {
+  navigation.openAgent({ agentId, serverId, focusHost: true });
+}
+```
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
 

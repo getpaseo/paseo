@@ -23,6 +23,7 @@ export function createTestAgentMessages(params: {
         onAccepted,
       ),
     isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
+    canSteer: (agentId) => params.agentManager.canSteer(agentId),
     hasPendingPermission: (agentId) => params.agentManager.hasPendingPermissions(agentId),
     subscribe: (notify) =>
       params.agentManager.subscribe(
@@ -31,6 +32,7 @@ export function createTestAgentMessages(params: {
         },
         { replayState: false },
       ),
+    onStop: (notify) => params.agentManager.onStop(notify),
     schedule:
       params.schedule ??
       ((_delay, callback) => {
@@ -46,6 +48,7 @@ export function createTestAgentMessages(params: {
         unarchive: request.unarchive,
         activeTurnBehavior: request.activeTurnBehavior,
         idleOnly: request.idleOnly,
+        admit: request.admit,
         clearPendingPermissions: request.clearPendingPermissions,
         runOptions: { clientMessageId: request.messageIds[0] },
       });
@@ -57,6 +60,8 @@ export function createTestAgentMessages(params: {
         );
       return result.disposition;
     },
+    awaitStart: (agentId, started) =>
+      waitForAgentRunStartWithTimeout(params.agentManager, agentId, started),
     onError: (error, request) =>
       params.logger.error(
         { err: error, agentId: request.recipientId, messageIds: request.messageIds },

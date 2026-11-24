@@ -86,7 +86,7 @@ export function SettingsRowHeader({
   const handlePointerEnter = useCallback(() => setPointerOver(true), []);
   const handlePointerLeave = useCallback(() => setPointerOver(false), []);
   const hovered = pointerOver && !disabled;
-  const rowStyle = useMemo(() => [layout.controlRow, hovered && styles.hovered], [hovered, layout]);
+  const rowStyle = useMemo(() => [layout.row, hovered && styles.hovered], [hovered, layout]);
   const chevronStyle = useMemo(
     () => [styles.chevron, expanded && styles.chevronExpanded],
     [expanded],

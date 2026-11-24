@@ -1,3 +1,5 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
@@ -49,8 +51,10 @@ interface ProviderConfigClient {
   }): Promise<unknown>;
 }
 
-test("adds and removes a custom model while the provider fails", async ({ page }) => {
+test("adds and removes a custom model while the provider fails", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
+  const discoveryGate = testInfo.outputPath("hold-provider-discovery");
+  await mkdir(dirname(discoveryGate), { recursive: true });
   const client = await connectDaemonClient<ProviderConfigClient>({
     clientIdPrefix: "custom-model-failing-e2e",
   });
@@ -60,7 +64,14 @@ test("adds and removes a custom model while the provider fails", async ({ page }
         [FAILING_PROVIDER.id]: {
           extends: "acp",
           label: FAILING_PROVIDER.name,
-          command: ["node", "-e", "process.exit(1)"],
+          command: [
+            "node",
+            "-e",
+            'const { existsSync } = require("node:fs");' +
+              "const exitIfReleased = () => { if (!existsSync(process.argv[1])) process.exit(1); };" +
+              "exitIfReleased(); setInterval(exitIfReleased, 25);",
+            discoveryGate,
+          ],
         },
       },
     });
@@ -76,9 +87,15 @@ test("adds and removes a custom model while the provider fails", async ({ page }
       await expect(page.getByRole("textbox", { name: "Search models" })).toHaveCount(0);
     });
 
-    await addCustomModel(page, shortModelId);
+    await test.step("saving closes the Add sheet while provider discovery is still pending", async () => {
+      await writeFile(discoveryGate, "");
+      await addCustomModel(page, shortModelId);
+    });
+    await rm(discoveryGate);
+    await expect(page.getByTestId("provider-error")).toBeVisible({ timeout: 30_000 });
     await removeListedCustomModel(page, shortModelId);
   } finally {
+    await rm(discoveryGate, { force: true });
     await client
       .patchDaemonConfig({ removeProviders: [FAILING_PROVIDER.id] })
       .catch(() => undefined);
