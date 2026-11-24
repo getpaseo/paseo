@@ -1390,3 +1390,34 @@ test("unarchiving an old unapproved workspace onto a live approved checkout drop
   expect(unarchived.untrustedSource).toBeUndefined();
   expect((await workspaceRegistry.get(oldUntrusted.workspaceId))?.untrustedSource).toBeUndefined();
 });
+
+test("creating a directory workspace on a pre-upgrade retained unapproved checkout inherits untrustedSource when no active workspace owns the path", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-pre-upgrade-retained-dir");
+  const worktreePath = path.join(tmpDir, "worktree-pre-upgrade-retained-dir");
+  mkdirSync(sourceCwd, { recursive: true });
+  mkdirSync(worktreePath, { recursive: true });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const untrustedSource = {
+    kind: "change_request" as const,
+    forge: "github",
+    number: 60,
+    headRepository: "contributor/repo",
+  };
+  const retainedUntrusted = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "contributor/pr-60",
+    baseBranch: "main",
+    title: null,
+    untrustedSource,
+  });
+  await workspaceRegistry.archive(retainedUntrusted.workspaceId, ARCHIVED_AT);
+
+  const reopened = await provisioning.createWorkspaceForDirectory(worktreePath);
+
+  expect(reopened.untrustedSource).toEqual(untrustedSource);
+});

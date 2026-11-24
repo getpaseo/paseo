@@ -438,12 +438,20 @@ export function createWorkspaceProvisioningService(deps: {
       return metadataUntrustedSource;
     }
     const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-    const active = await workspaceRegistry.listActive();
-    return active.find(
-      (candidate) =>
-        Boolean(candidate.untrustedSource) &&
-        matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
-    )?.untrustedSource;
+    const matching = (await workspaceRegistry.listAll()).filter((candidate) =>
+      matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    );
+    const active = matching.filter((candidate) => !candidate.archivedAt);
+    if (active.length > 0) {
+      return active.find((candidate) => Boolean(candidate.untrustedSource))?.untrustedSource;
+    }
+    // No active workspace owns this existing directory yet (for example, a
+    // checkout retained on disk from before metadata persisted untrustedSource):
+    // fall back to the most recently archived record for this path.
+    const latestArchived = matching
+      .filter((candidate) => Boolean(candidate.archivedAt))
+      .sort((a, b) => (b.archivedAt ?? "").localeCompare(a.archivedAt ?? ""))[0];
+    return latestArchived?.untrustedSource;
   }
 
   async function syncUnarchivedCheckoutUntrustedSource(
