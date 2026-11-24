@@ -165,6 +165,96 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
   }
 }, 120000);
 
+test.each(["timeline", "reload", "resume"] as const)(
+  "reopens a saved Antigravity chat after model retirement through %s",
+  async (action) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-antigravity-model-resume-"));
+    const start = async (retired: boolean) => {
+      const daemon = await createTestPaseoDaemon({
+        paseoHomeRoot: root,
+        staticDir: path.join(root, "static"),
+        cleanup: false,
+        agentClients: {},
+        mcpEnabled: false,
+        builtinPlugins: new BuiltinPluginLoader(undefined, ["antigravity-provider"]),
+        providerOverrides: {
+          antigravity: {
+            command: [
+              process.execPath,
+              path.join(import.meta.dirname, "antigravity-model-resume-fixture.cjs"),
+            ],
+            env: { AGY_TEST_RETIRED: retired ? "1" : "" },
+            paseoTools: { enabled: false },
+          },
+        },
+      });
+      const client = new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+        appVersion: "0.16.0",
+      });
+      return {
+        client,
+        close: async () => {
+          await client.close();
+          await daemon.close();
+        },
+      };
+    };
+
+    try {
+      const before = await start(false);
+      let agent;
+      try {
+        await before.client.connect();
+        agent = await before.client.createAgent({
+          provider: "antigravity",
+          cwd: root,
+          model: "old-model",
+        });
+        expect(agent.model).toBe("old-model");
+      } finally {
+        await before.close();
+      }
+
+      const { client, close } = await start(true);
+      try {
+        await client.connect();
+        let agentId = agent.id;
+        if (action === "resume") {
+          const handle = agent.persistence;
+          if (!handle) throw new Error("Antigravity did not return a persistence handle");
+          agentId = (await client.resumeAgent(handle)).id;
+        } else if (action === "reload") {
+          await client.refreshAgent(agentId);
+        }
+
+        const timeline = await client.fetchAgentTimeline(agentId, { limit: 100 });
+        expect(timeline.entries.map(({ item }) => item)).toContainEqual(
+          expect.objectContaining({ type: "assistant_message", text: "A saved Antigravity reply" }),
+        );
+        expect(timeline.entries.map(({ item }) => item)).toContainEqual({
+          type: "notification",
+          level: "warning",
+          message:
+            "Saved model unavailable\nThe provider no longer offers old-model. This chat reopened with current-model.",
+        });
+        expect((await client.fetchAgent(agentId))?.agent).toMatchObject({
+          model: "old-model",
+          runtimeInfo: { model: "current-model" },
+        });
+        await expect(client.setAgentModel(agentId, "old-model")).rejects.toThrow(/old-model/);
+        await client.setAgentModel(agentId, "other-model");
+        expect((await client.fetchAgent(agentId))?.agent.model).toBe("other-model");
+      } finally {
+        await close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);
+
 test("bundled fx requires a config entry and lists models instead of its providers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-fx-optin-"));
   const record = path.join(root, "launches.txt");
