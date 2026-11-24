@@ -15,6 +15,11 @@ import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
 
 export const test = base.extend<{
   startup: { release(): Promise<void>; fail(): Promise<void> };
+  workspaceProvision: {
+    hold(): Promise<void>;
+    fail(): Promise<void>;
+    release(): Promise<void>;
+  };
   promptRejection: void;
   composerMetadata: { set(patch: Record<string, string>): Promise<void> };
   creation: Awaited<ReturnType<typeof createCreationScenario>>;
@@ -61,6 +66,57 @@ export default function contribute(server) {
         release: () => rm(gate, { force: true }),
         // Replacing the command must not expose a truncated, empty file to the hook.
         fail: () => rename(failure, gate),
+      });
+    } finally {
+      await rm(gate, { force: true });
+      await client.removePlugin("lifecycle-logger");
+      await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+      await plugin.cleanup();
+      await client.close();
+    }
+  },
+  workspaceProvision: async ({ page }, provide) => {
+    void page;
+    const client = await connectNewWorkspaceDaemonClient();
+    const plugin = await copyPluginExample("lifecycle-logger");
+    const gate = path.join(plugin.directory, "workspace-provision.txt");
+    const holdFile = path.join(plugin.directory, "workspace-provision-hold.txt");
+    const failFile = path.join(plugin.directory, "workspace-provision-fail.txt");
+    const previous = await client.getDaemonConfig();
+    try {
+      await writeFile(
+        path.join(plugin.directory, "index.server.ts"),
+        `
+import { readFile, rm } from "node:fs/promises";
+export default function contribute(server) {
+  return server.before("workspace.create", async ({ request }) => {
+    const gate = ${JSON.stringify(gate)};
+    let command = await readFile(gate, "utf8").catch(() => "release");
+    while (command === "hold") {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      command = await readFile(gate, "utf8").catch(() => "release");
+    }
+    if (command === "fail") {
+      await rm(gate, { force: true });
+      throw new Error("Workspace provisioning failed for test");
+    }
+    return request;
+  });
+}
+`,
+      );
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(plugin.directory);
+      await provide({
+        hold: async () => {
+          await writeFile(holdFile, "hold");
+          await rename(holdFile, gate);
+        },
+        fail: async () => {
+          await writeFile(failFile, "fail");
+          await rename(failFile, gate);
+        },
+        release: () => rm(gate, { force: true }),
       });
     } finally {
       await rm(gate, { force: true });

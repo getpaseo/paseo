@@ -22,6 +22,7 @@ const PaseoWorktreeMetadataV1Schema = z.object({
   baseRefName: z.string().min(1),
   baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
+  worktreeManagerPluginId: z.string().min(1).optional(),
 });
 
 const PaseoWorktreeMetadataV2Schema = z.object({
@@ -29,6 +30,7 @@ const PaseoWorktreeMetadataV2Schema = z.object({
   baseRefName: z.string().min(1),
   baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
+  worktreeManagerPluginId: z.string().min(1).optional(),
   firstAgentBranchAutoName: z
     .discriminatedUnion("status", [
       z.object({
@@ -227,6 +229,7 @@ export async function writePaseoWorktreeMetadata(
     baseRefName: string;
     baseRef?: string;
     changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
+    worktreeManagerPluginId?: string;
   },
 ): Promise<void> {
   return mutateMetadata(worktreeRoot, async (root) => {
@@ -243,6 +246,9 @@ export async function writePaseoWorktreeMetadata(
       ...(baseRef ? { baseRef } : {}),
       ...(options.changeRequestLookupTarget
         ? { changeRequestLookupTarget: options.changeRequestLookupTarget }
+        : {}),
+      ...(options.worktreeManagerPluginId
+        ? { worktreeManagerPluginId: options.worktreeManagerPluginId }
         : {}),
     };
     await writePaseoWorktreeMetadataFile(root, metadata);

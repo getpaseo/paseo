@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   cp,
@@ -236,6 +237,47 @@ function nextNotification(service: PluginService, pluginId: string): Promise<voi
 }
 
 describe("PluginService", () => {
+  it.skipIf(process.platform === "win32")(
+    "reaps compiler children after starting and reloading a client-only directory plugin",
+    async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-reaping-"));
+      roots.push(directory);
+      const id = "client-only-reaping";
+      await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id }));
+      await writeFile(
+        path.join(directory, "index.client.ts"),
+        "export default function contribute() {}",
+      );
+      const service = createService(
+        directory,
+        { [id]: { source: "directory", path: directory } },
+        { builtinPlugins: new BuiltinPluginLoader(directory, []) },
+      );
+      const compilerChildren = () =>
+        execFileSync("ps", ["-axo", "ppid=,stat=,command="], { encoding: "utf8" })
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => {
+            const [parent, state, ...command] = line.split(/\s+/);
+            return (
+              parent === String(process.pid) &&
+              (state?.startsWith("Z") || /esbuild|compiler-worker/.test(command.join(" ")))
+            );
+          });
+      try {
+        await service.start();
+        expect(service.catalog()[0]?.id).toBe(id);
+        await expect.poll(compilerChildren, { timeout: 5_000 }).toEqual([]);
+        await service.reloadPlugin(id);
+        expect(service.catalog()[0]?.id).toBe(id);
+        await expect.poll(compilerChildren, { timeout: 5_000 }).toEqual([]);
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+    20_000,
+  );
+
   it.each([
     { shadow: false, runtime: "subprocess" },
     { shadow: true, runtime: "subprocess" },
@@ -392,6 +434,7 @@ describe("PluginService", () => {
         "provider-installation",
         `export default function contribute(server) {
       server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        docsUrl: "https://example.com/docs",
         installation: {
           installUrl: "https://example.com/install",
           updateUrl: "https://example.com/update",
@@ -430,6 +473,7 @@ describe("PluginService", () => {
       try {
         if (runtime === "subprocess") await service.installDirectory({ path: directory });
         const [registration] = service.getProviderRegistrations();
+        expect(registration!.docsUrl).toBe("https://example.com/docs");
         const installation = registration!.installation!;
         expect(installation).toMatchObject({
           installUrl: "https://example.com/install",
@@ -510,6 +554,33 @@ describe("PluginService", () => {
       await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
     ).toBe("runtime:/project-b");
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("fails a plugin whose provider docs link is not an http(s) page", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-docs-link",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    docsUrl: "file:///etc/passwd",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory }).catch(() => undefined);
+
+    expect(service.getProviderRegistrations()).toEqual([]);
+    expect(await service.listPlugins()).toMatchObject([
+      { status: "failed", error: "Plugin provider plugin-agent docsUrl must be an http(s) URL" },
+    ]);
+    await service.stopAllPlugins();
   });
 
   it("publishes provider registrations only while their plugin is running", async () => {

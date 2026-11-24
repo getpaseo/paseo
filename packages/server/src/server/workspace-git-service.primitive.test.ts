@@ -80,6 +80,8 @@ function createCheckoutFacts(
     comparisonBaseRef: null,
     branchRemoteName: null,
     branchMergeRef: null,
+    upstreamStatus: { state: "none" },
+    firstPushRemote: null,
     pullRequestLookupTarget: { headRef: "main" },
     ...overrides,
   };

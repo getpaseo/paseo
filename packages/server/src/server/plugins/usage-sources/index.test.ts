@@ -179,12 +179,16 @@ test("#7142: host usage retains distinct Cursor accounts after their individual 
 
 function source(input: {
   id: string;
-  discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
+  providers?: readonly string[];
+  discover?: () => Promise<
+    Array<{ key: string; label?: string; harness?: string; provider?: string; input: unknown }>
+  >;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
     id: input.id,
     label: input.id,
+    ...(input.providers ? { providers: input.providers } : {}),
     discover: input.discover ?? (async () => []),
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
@@ -936,4 +940,120 @@ test("failed discovery preserves history until discovery confirms account remova
   expect(await registry.listReports()).toEqual([]);
   present = true;
   expect((await registry.listReports())[0]?.lastSuccessful).toBeUndefined();
+});
+
+test("uses provider activity as a defaultEnabled hint without blocking discovery", async () => {
+  const activeProviders = new Set(["claude"]);
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    isProviderActive: async (provider) => activeProviders.has(provider),
+  });
+  registry.register(
+    source({
+      id: "claude",
+      providers: ["claude", "pi"],
+      discover: async () => [
+        { key: "cli", provider: "claude", input: "cli" },
+        { key: "pi-only", provider: "pi", input: "pi" },
+      ],
+    }),
+  );
+  registry.register(
+    source({
+      id: "copilot",
+      providers: ["copilot"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "openrouter",
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+
+  const byId = (reports: Awaited<ReturnType<typeof registry.listReports>>) =>
+    Object.fromEntries(reports.map((entry) => [entry.id, entry.defaultEnabled]));
+
+  expect(byId(await registry.listReports())).toEqual({
+    "claude:cli": undefined,
+    "claude:pi-only": false,
+    "copilot:default": false,
+    "openrouter:default": undefined,
+  });
+
+  // Enabling a provider updates defaultEnabled on the next read without waiting for fetch cache expiry.
+  activeProviders.add("copilot");
+  expect(byId(await registry.listReports())).toEqual({
+    "claude:cli": undefined,
+    "claude:pi-only": false,
+    "copilot:default": undefined,
+    "openrouter:default": undefined,
+  });
+});
+
+test("streams unrelated usage reports without waiting on a slow provider check and forwards forceRefresh", async () => {
+  let resolveSlowCheck: ((active: boolean) => void) | undefined;
+  const forceRefreshSeen: Array<{ provider: string; forceRefresh?: boolean }> = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    isProviderActive: (provider, options) => {
+      forceRefreshSeen.push({ provider, forceRefresh: options?.forceRefresh });
+      if (provider === "slow") {
+        return new Promise<boolean>((resolve) => {
+          resolveSlowCheck = resolve;
+        });
+      }
+      return Promise.resolve(true);
+    },
+  });
+  registry.register(
+    source({
+      id: "slow-source",
+      providers: ["slow"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "fast-source",
+      providers: ["fast"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "unhinted",
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+
+  const streamed: string[] = [];
+  let fastStreamed!: () => void;
+  const bothFastStreamed = new Promise<void>((resolve) => {
+    fastStreamed = resolve;
+  });
+  const pending = registry.listReports({
+    forceRefresh: true,
+    onReport: (report) => {
+      streamed.push(report.id);
+      if (streamed.includes("fast-source:default") && streamed.includes("unhinted:default")) {
+        fastStreamed();
+      }
+    },
+  });
+
+  await bothFastStreamed;
+  expect(streamed).not.toContain("slow-source:default");
+  expect(forceRefreshSeen).toContainEqual({ provider: "slow", forceRefresh: true });
+  expect(forceRefreshSeen).toContainEqual({ provider: "fast", forceRefresh: true });
+
+  resolveSlowCheck?.(false);
+  const reports = await pending;
+  expect(reports.find((entry) => entry.id === "slow-source:default")?.defaultEnabled).toBe(false);
+  expect(
+    reports.find((entry) => entry.id === "fast-source:default")?.defaultEnabled,
+  ).toBeUndefined();
 });

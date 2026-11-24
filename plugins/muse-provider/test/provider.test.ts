@@ -1505,6 +1505,7 @@ for (const usage of [
       expect(report).toMatchObject({
         status: "available",
         planLabel: "Pro",
+        observedAt: new Date(usage.usage.observedAtMs).toISOString(),
         windows: [
           {
             id: "five_hour",
@@ -1800,7 +1801,10 @@ test("Muse reports belong only to the session's account and remain available glo
   for (const [index, agentId] of ["muse-home", "muse-work"].entries()) {
     const reports = await registry.listReports({ agentId });
     expect(reports.map((report) => report.id)).toEqual([accountIds[index]]);
-    expect(reports[0]!.report.status).toBe("available");
+    expect(reports[0]!.report).toMatchObject({
+      status: "available",
+      observedAt: "2023-11-14T22:13:20.000Z",
+    });
   }
   expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
   expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);

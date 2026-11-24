@@ -302,23 +302,23 @@ describe("control geometry", () => {
       trackHeight: 20,
       thumbSize: 16,
       thumbTravel: 14,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("md", true)).toEqual({
       trackWidth: 44,
       trackHeight: 26,
       thumbSize: 22,
       thumbTravel: 18,
-      reservedHeight: 44,
+      hitHeight: 44,
     });
-    // Tight chrome keeps the pointer-sized track on every layout and reserves its row's height.
+    // Tight chrome keeps the pointer-sized track on every layout and takes presses over its row's control height.
     expect(switchGeometryForLayout("sm", true)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("sm", false)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 28,
+      hitHeight: 28,
     });
   });
 
