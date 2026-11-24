@@ -57,3 +57,17 @@ export function useUsageHostSelection(): {
   );
   return { serverId: resolveUsageModalHostId(choice), connectedHosts, select };
 }
+
+/** The hosts to choose between, and which one is shown. */
+export interface UsageHostSelection {
+  hosts: UsageHost[];
+  serverId: string;
+  onSelect: (serverId: string) => void;
+}
+
+/** Whether there is more than one host to show usage for. */
+export function hasHostChoice(
+  hostSelection: UsageHostSelection | undefined,
+): hostSelection is UsageHostSelection {
+  return (hostSelection?.hosts.length ?? 0) > 1;
+}

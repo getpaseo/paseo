@@ -54,6 +54,7 @@ import { WindowSidebarMenuToggle } from "@/components/headers/sidebar-menu-toggl
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
+import { WorkspaceArchiveShortcutHandler } from "@/components/workspace-archive-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { WorkspaceArchiveUndoShortcutHost } from "@/workspace/archive-undo";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
@@ -87,7 +88,10 @@ import {
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
-import { useSettingsRouteEntry } from "@/navigation/settings-presentation";
+import {
+  useSettingsRouteEntry,
+  useSettingsSidebarPresentation,
+} from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
@@ -473,12 +477,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       viewportWidth,
     }),
   });
-  const sidebarPresentation = resolveLeftSidebarPresentation({
-    chromeEnabled,
-    isCompactLayout,
-    isFocusModeEnabled: isWorkspaceFocusModeEnabled,
-    desktopSidebarVisible,
-  });
+  const { presentation: sidebarPresentation, visible: sidebarVisible } =
+    useSettingsSidebarPresentation({
+      visible: chromeEnabled,
+      presentation: resolveLeftSidebarPresentation({
+        chromeEnabled,
+        isCompactLayout,
+        isFocusModeEnabled: isWorkspaceFocusModeEnabled,
+        desktopSidebarVisible,
+      }),
+    });
   const applyPanelLayout = usePanelStore((state) => state.applyPanelLayout);
   // Publishes the layout to the store, which owns the panel targets each layout allows.
   useLayoutEffect(() => {
@@ -530,6 +538,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
       <AddHostFlowHost />
+      <WorkspaceArchiveShortcutHandler />
       <AppearanceStyleBoundary>
         {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
           <WindowChromeRegion corners="top-left">
@@ -546,7 +555,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <DesktopWindowControls />
         <FloatingPanelPortalHost />
       </AppearanceStyleBoundary>
-      {isCompactLayout ? themedSidebarChrome : null}
+      {isCompactLayout ? (
+        <CompactSidebarHost visible={sidebarVisible} interactive={chromeEnabled}>
+          {themedSidebarChrome}
+        </CompactSidebarHost>
+      ) : null}
       <AppearanceStyleBoundary>
         <DownloadToast />
         <RosettaCalloutSource />
@@ -584,6 +597,34 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 }
 
+// Keep native scroll ranges and gesture hosts intact while Settings covers the sidebar.
+function CompactSidebarHost({
+  visible,
+  interactive,
+  children,
+}: {
+  visible: boolean;
+  interactive: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View
+      collapsable={false}
+      style={[
+        layoutStyles.compactSidebarHost,
+        { opacity: visible ? 1 : 0 },
+        // DOM descendants can override pointer-events:none.
+        isWeb && !visible && { display: "none" },
+      ]}
+      pointerEvents={interactive ? "box-none" : "none"}
+      accessibilityElementsHidden={!interactive}
+      importantForAccessibility={interactive ? "auto" : "no-hide-descendants"}
+    >
+      {children}
+    </View>
+  );
+}
+
 function AppContainerLifetime({
   children,
   sidebarGesturesEnabled,
@@ -614,14 +655,18 @@ function SidebarChrome({
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
   const overlay = presentation === "overlay";
-  const active = resolveSidebarActivity(presentation !== "hidden", overlay, isMobileActive);
+  const active = resolveSidebarActivity(
+    presentation !== "hidden" && presentation !== "suspended",
+    overlay,
+    isMobileActive,
+  );
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   return (
     <SidebarModelProvider
       active={active}
       keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
     >
-      {mounted ? (
+      {mounted || presentation === "suspended" ? (
         <LeftSidebar active={active} desktopOverlay={overlay && !isCompactLayout} />
       ) : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
@@ -864,6 +909,8 @@ const ROOT_STACK_SCREEN_OPTIONS = {
   animation: "none" as const,
 };
 const ROOT_STACK_NESTED_NAVIGATOR_SCREENS = ["h/[serverId]"] as const;
+// Settings owns reactive typography leaves; its scroll and form state survive appearance edits.
+const ROOT_STACK_SCREEN_OWNED_APPEARANCE = ["settings/[section]"] as const;
 
 function RootStack() {
   const storeReady = useStoreReady();
@@ -871,6 +918,7 @@ function RootStack() {
     <ThemedStack
       screenOptions={ROOT_STACK_SCREEN_OPTIONS}
       nestedNavigatorScreens={ROOT_STACK_NESTED_NAVIGATOR_SCREENS}
+      screenOwnedAppearance={ROOT_STACK_SCREEN_OWNED_APPEARANCE}
     >
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
@@ -885,9 +933,12 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
+      <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/[screenId]" />
+      <Stack.Screen name="settings/hosts/[serverId]/plugin-directory/[owner]/[slug]" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/index" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/[projectId]" />
+      <Stack.Screen name="settings/hosts/[serverId]/providers/[providerId]" />
     </ThemedStack>
   );
 }
@@ -1004,6 +1055,7 @@ export default function RootLayout() {
 }
 
 const layoutStyles = StyleSheet.create((theme) => ({
+  compactSidebarHost: { position: "absolute", top: 0, bottom: 0, left: 0, right: 0 },
   surfaceFill: {
     flex: 1,
     backgroundColor: theme.colors.surface0,

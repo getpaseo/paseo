@@ -1,18 +1,18 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View } from "react-native";
 import { ExternalLink, Gift } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import {
-  iconButtonChromeGlyphSize,
-  iconButtonChromeStyle,
-} from "@/components/ui/icon-button-chrome";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -28,12 +28,9 @@ import {
 const WEBSITE_CHANGELOG_URL = "https://paseo.sh/changelog";
 
 const ThemedGift = withUnistyles(Gift);
-const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const sheetLeadingIcon = <ThemedGift size={ICON_SIZE.md} uniProps={mutedColorMapping} />;
-const websiteButtonStyle = (state: PressableStateCallbackType & { hovered?: boolean }) =>
-  iconButtonChromeStyle({ size: "large", state });
 
 interface ChangelogSheetProps {
   visible: boolean;
@@ -54,19 +51,12 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
       title: t("changelog.title"),
       leading: sheetLeadingIcon,
       actions: (
-        <Pressable
+        <SheetHeaderIconButton
+          icon={ExternalLink}
+          label={t("changelog.openWebsite")}
           onPress={handleOpenWebsite}
-          hitSlop={8}
-          style={websiteButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("changelog.openWebsite")}
           testID="changelog-open-website"
-        >
-          <ThemedExternalLink
-            size={iconButtonChromeGlyphSize("large")}
-            uniProps={mutedColorMapping}
-          />
-        </Pressable>
+        />
       ),
     }),
     [handleOpenWebsite, t],

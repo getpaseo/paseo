@@ -357,15 +357,104 @@ Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、
 
 使用来自 `@getpaseo/plugin/server/provider` 的 `ProviderRegistration` 调用 `server.registerProvider()`。它的连接通过 `send()` 接收输入，并通过 `onEvent()` 发出完整的状态快照。`send()` 只报告是否接受；提示词的处理结果、轮次、配置、持久化、权限和失败都是事件。
 
-消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。
+消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。通过已完成的 `session.turn` 上的 `metrics` 和 `session.metrics` 报告测量数据，见[报告指标](/docs/plugins/providers#report-metrics)。
 
 Provider 选项是一个记录，即 `session.open` 中的 `ProviderSessionConfig.providerOptions`。它包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。在 `session.config` 中为需要在 Composer 里显示开关或选择器的顶层键报告 `controls`，并在 `providerOptions` 下报告会话正在使用的值。运行中会话的修改会以 `session.configure` 的形式到达，内容在 `changes.providerOptions` 中。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
 
 Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前的配置和持久化值打开它。Provider 在 `session.open` 期间重新读取外部状态。
 
-使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。只针对厂商在发现、配置、通知或工具调用方面的差异添加转换器钩子。
+使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。使用转换器钩子处理厂商特有的行为。参见[适配 ACP Agent](/docs/plugins/providers#adapt-an-acp-agent)。
+
+在 `discover` 和 `configure` 中，调用 `context.request(method, params)` 发送 ACP 扩展请求。
+Promise 返回 JSON 值，或以 Agent 的 JSON-RPC 错误拒绝。
+
+在 `toolCall` 中，通过 `context.mcpServerNames` 识别 Paseo 打开 ACP 会话时提供的服务器。
+兼容旧版 SDK 或处理直接在 agent 中配置的服务器时，可以回退到空列表。`toolCall.content` 包含调用的 ACP `content` 块，
+`context.previous` 是 Paseo 上一次展示的调用（经过所有转换器之后）。旧版 SDK 中两者都不存在；调用的第一次更新没有 `previous`。
+标准工具卡片见[适配 ACP Agent](/zh-CN/docs/plugins/providers#adapt-an-acp-agent)。
+
+使用 `config(state, context)` 返回 Paseo 显示的配置快照。
+Paseo 在会话就绪、收到配置通知或提交配置更改时调用此同步钩子。
+使用 `configure` 向 Agent 发送更改。
 
 `ProviderRegistration.icon` 是相对于插件目录的文件路径，例如 `icon.svg`。它必须解析到该目录内一个遵循 [SVG 图标规则](#svg-rules)的普通文件。Paseo 在插件启动时读取并校验该文件；这个字符串从不是内联 SVG 或 URL。
+
+#### Provider 安装 {#provider-installation}
+
+**需要 Paseo 0.17**。较旧的版本会忽略 `installation`。`ProviderRegistration.installation` 填充 Provider 设置中的 **安装** 部分。每个成员都是可选的。`inspect` 和 `installUrl` 都没有声明时，Paseo 会隐藏这个部分。完整示例见[报告安装与更新](/docs/plugins/providers#report-installation-and-updates)。类型从 `@getpaseo/plugin/server/provider` 导入。
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| 成员              | 调用时机                                          | 期限  | 结果保留时间                                    |
+| ----------------- | ------------------------------------------------- | ----- | ----------------------------------------------- |
+| `inspect`         | 打开 Provider 设置时                              | 20 秒 | 30 秒                                           |
+| `checkForUpdates` | `inspect` 回答 `installed` 之后，或没有 `inspect` | 25 秒 | `current` 或 `available` 为一小时，其他为 30 秒 |
+| `update`          | 用户选择 **更新** 时，每个 Provider 同一时间一个  | 无    | `succeeded` 之后 Paseo 重新读取两个结果         |
+
+Provider 设置中的 **刷新** 会跳过保留的结果，并清除失败的更新。Paseo 从不在会话开始前或按计划调用这些成员。超过期限或抛出异常会变成显示该消息的错误。
+
+`installUrl` 和 `updateUrl` 是 Paseo 在浏览器中打开的 `http` 或 `https` 页面。其中任何一个是其他类型的 URL 时，插件无法启动。
+
+上下文：
+
+| 字段               | 类型                                      | 含义                                                                                                                      |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | 会话将使用的启动配置，带有 `resolved`。注册没有声明 `command` 时不存在。                                                  |
+| `signal`           | `AbortSignal`                             | 当 Paseo 停止等待或 daemon 停止时中止。                                                                                   |
+| `installedVersion` | `string \| undefined`                     | 仅用于 `checkForUpdates`。`inspect` 报告的 `version`，按原样传入。`inspect` 没有报告版本或你没有声明 `inspect` 时不存在。 |
+| `report`           | `(event: ProviderUpdateReport) => void`   | 仅用于 `update`。按顺序向用户显示 `{ type: "stdout" \| "stderr" \| "message", text }`。                                   |
+
+`ProviderInstallationLaunch` 是 `{ command, args, env, resolved }`。`resolved: true` 时，`command` 是可执行文件的路径。`resolved: false` 时，Paseo 没有找到可执行文件，`command` 是配置中写的名称。
+
+结果：
+
+| 类型                   | 取值                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` 或 `{ status: "not_installed" }`                                                           |
+| `ProviderUpdateCheck`  | `{ status: "current" }`、`{ status: "available", versions?: string[], message?: string }` 或 `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` 或 `{ status: "failed", message: string }`                                                 |
+
+Paseo 按原样显示 `version`、`versions` 和 `message`，不解析或排序它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
+
+#### Provider 故障排查 {#provider-troubleshooting}
+
+**需要 Paseo 0.18**。较旧的版本会忽略 `docsUrl`，并且只显示 `diagnostic` 文本。Provider 设置中有一个 **故障排查** 部分，其中包含 **诊断报告** 和 **文档**。用户会把报告复制到问题反馈中，所以请把能解释错误结果的事实写进报告。
+
+`ProviderRegistration.docsUrl` 是 **文档** 打开的 `http` 或 `https` 页面。请让它指向说明如何设置该 Provider 以及如何解决常见问题的页面。它是其他类型的 URL 时，插件会启动失败。没有声明时，Paseo 会隐藏 **文档**。
+
+报告由 Provider 的 `label` 和若干行组成，每行是一个 `Label: value`。Paseo 会写入以下各行：
+
+| 行                                                             | 显示条件                                                  |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `Command source`、`Configured command`                         | 声明了 `command`                                          |
+| `Daemon PATH`、`Daemon shell`、`PATH matches`、`Resolved path` | 声明了 `command`                                          |
+| `Version`                                                      | Paseo 找到了可执行文件，且你声明了 `installation.inspect` |
+| `Models`、`Status`                                             | 始终显示                                                  |
+
+`status(request)` 会在这些行之后添加你的行。`request.launch` 是会话将使用的启动配置。
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| 结果                               | 效果                                                             |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `{ available: true, diagnostic? }` | `diagnostic` 的每一行是报告中的一行。每行请写成 `Label: value`。 |
+| `{ available: false, diagnostic }` | Provider 不可用。报告在 `Error` 行中显示 `diagnostic`。          |
+
+Paseo 每次检查 Provider 是否可用时都会调用 `status`，不只是在生成报告时。报告不会自动换行，所以每一行请写得简短。
 
 ### 用量来源 {#usage-sources}
 
@@ -489,6 +578,84 @@ export default function contribute(server: PluginServerContext) {
 不带 ID 调用 `usage.list_reports` 时会发现账号。带 ID 调用时，它会刷新已知的账号，而不重新发现身份。如果某个存储切换了账号，现有卡片会显示新登录的配额，直到下一次发现。报告会缓存五分钟；`forceRefresh` 会绕过缓存。条目携带 `id`、`account.label` 和 `fetchedAt`。失败的账号还会携带可选的 `loginErrors` 条目，其中包含 `harness` 和每个登录失败的 `report`。客户端通过 `server_info.features.usageSources` 判断是否启用此功能。较旧的 `provider.usage.list` RPC 会为 0.10 客户端映射同样的报告，并把问题渲染到它的 `error` 字符串中。
 
 来源图标是一个文件路径，规则与 Provider 图标相同。
+
+## worktree 管理器 {#worktree-managers}
+
+**需要 Paseo 0.17**。在服务端入口 `index.server.ts` 中调用 `server.registerWorktreeManager()`，可将 Git worktree 的创建、移除和恢复委托给 Worktrunk 等外部工具，而无需由 Paseo 直接运行 `git worktree add` 和 `git worktree remove`。
+
+```ts
+import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerWorktreeManager({
+    async create(request, { signal }) {
+      if (request.kind !== "branch-off") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          request.repoRoot,
+          "switch",
+          "--create",
+          request.branch,
+          "--base",
+          request.startPoint ?? request.baseRef,
+          "--no-cd",
+          request.untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path } = JSON.parse(stdout) as { path: string };
+      return { type: "created", path };
+    },
+    async remove({ repoRoot, path, force, untrusted }, { signal }) {
+      const skipHooks = untrusted || repoRoot === null;
+      await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot ?? path,
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          skipHooks ? "--no-hooks" : "--yes",
+          ...(force ? ["--force"] : []),
+          path,
+        ],
+        { signal },
+      );
+      return { type: "removed" };
+    },
+    async restore({ repoRoot, path, target, untrusted }, { signal }) {
+      if (target.type !== "branch") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot,
+          "switch",
+          target.branch,
+          "--path",
+          path,
+          "--no-cd",
+          untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path: restoredPath } = JSON.parse(stdout) as { path: string };
+      return { type: "restored", path: restoredPath };
+    },
+  });
+}
+```
+
+- **Create**：在所有 `worktree.create.before` 钩子之后、`worktree.create.after` 之前运行，超时为 120 秒。返回 `{ type: "created", path }` 表示接管创建，返回 `undefined` 表示放弃并交由下一个管理器或 Paseo 内置 Git 检出处理。创建新分支时，Paseo 会在调用管理器前解析 `baseRef`，并刷新用作起点的远程跟踪引用。如果获取失败，则使用本地缓存的引用。当 `request.untrusted` 为 `true`（例如来自 fork 变更请求）时，请跳过仓库内定义的钩子。Paseo 会验证 `path` 是同一仓库下新建且安全的命名分支 Git worktree，并记录实际检出的 `HEAD` 分支（管理器可自行规范或生成唯一分支名，但在 `branch-off` 时应创建新分支），随后写入基准元数据并生成 `paseo.json`。如果采纳或后续创建步骤失败，Paseo 会根据返回的路径回滚。回调在返回前抛出错误或收到中止信号时，由管理器清理自己创建的 worktree。由管理器创建的 worktree 会跳过首个 Agent 的分支自动重命名。
+- **Remove**：可选。在工作区归档和创建回滚时运行，位于 Paseo 执行 `paseo.json` 清理并保存 `refs/paseo/kept-commits/<sha>` 之后。删除目录后返回 `{ type: "removed" }`，或返回 `undefined` 回退到 Git。当 `untrusted` 为 `true`（例如来自 fork 变更请求）或 `repoRoot` 为 `null` 时，请跳过仓库内定义的钩子，并在可用时从 `repoRoot` 运行。Paseo 会将移除路由到创建该 worktree 的插件；若该插件已停用或移除，则回退到内置 Git。
+- **Restore**：可选。在取消归档且 worktree 目录已被删除时运行，接收必须恢复到的原路径 `path`、目标 `target`（`branch`、`commit` 或 `from-base`）以及 `untrusted`。返回 `{ type: "restored", path }`，或返回 `undefined` 回退到 Git。Paseo 会验证检出结果是否为指定的分支、分离 HEAD 的提交，或位于指定基准提交的新分支。清理规则与 Create 相同。当 `restore` 回退到 Git 时，Paseo 会清除该工作区的管理器归属，后续归档也会使用 Git。
+
+完整插件见 [worktrunk 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)。
 
 ## 入口与清理 {#entry-point-and-cleanup}
 
@@ -1060,7 +1227,9 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 | `version` | 正整数     | 是       | 选择渲染器契约的版本。                       |
 | `data`    | 兼容 JSON  | 是       | 渲染器负载，JSON 序列化后最多 64 KiB。       |
 
-daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
+daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。
+
+`kind` 以小写字母开头，只包含小写字母、数字或连字符，与 `addTimelineRenderer` 使用的规则相同。daemon 会拒绝其他任何 `kind`。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
 
 ## 主题与布局 {#theme-and-layout}
 
@@ -1109,6 +1278,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1117,16 +1292,26 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色                   | 用作                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `background`           | 应用、工作区和终端的背景                                        |
+| `foreground`           | 主要文字、终端前景色和光标                                      |
+| `raised`               | 卡片和弹出框                                                    |
+| `control`              | 输入框、次要填充，以及未设置 `sidebar` 时浅色主题的侧边栏       |
+| `border`               | 边框                                                            |
+| `accent`               | 按钮、选中和焦点。可选；省略时使用 `foreground`。               |
+| `mutedForeground`      | 次要文字                                                        |
+| `ring`                 | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
+| `sidebar`              | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
+| `sidebarHover`         | 可选的侧边栏行悬停背景                                          |
+| `sidebarSelected`      | 可选的侧边栏行选中背景                                          |
+| `surface3`             | 可选的消息气泡、次要按钮和芯片中性填充                          |
+| `surface4`             | 可选的轨道和其他状态的较强中性填充                              |
+| `foregroundExtraMuted` | 可选的三级文字颜色，包括侧边栏时间戳                            |
+
+可选覆盖颜色按原值使用。省略的状态、填充和三级文字颜色分别由调色板推导。覆盖颜色时，请确保它与对应的背景或文字有足够对比度。
+
+`sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 
@@ -1838,13 +2023,13 @@ export default function contribute(client: PluginClientContext) {
 
 `useNewWorkspace()` 返回该项所在的设置：
 
-| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                              |
-| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                                                                         |
-| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。未选择项目时会被拒绝。 |
-| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                          |
-| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                          |
+| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                                                                                    |
+| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。**已有 worktree** 读取为 `"local"`，因为工作区是该 worktree 目录上的本地工作区；调用 `setIsolation` 会离开它。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                 |
+| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。新 worktree 会从它新建分支，分支列表会切换到新建分支。未选择项目时会被拒绝。 |
+| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                                                                                |
+| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                                                                                |
 
 命令遵循 [Composer 项](#composer-items)的规则：每个命令都按界面运行时的状态执行，所以 `await newWorkspace.setBranch(name)` 之后再调用 `newWorkspace.setMetadata(patch)` 会同时生效，命令的 Promise 在更改生效后完成。命令从组件的第一个 effect 起即可使用，包括挂载时的 effect。载荷是 JSON 值。你的项针对某一台主机上的某一个项目挂载。用户更改其中任何一个时，Paseo 会重新挂载你的项并清除 `branch` 和 `metadata`，因此上一个项目的状态和 `Combobox` 结果不会保留；在挂载 effect 中做初始化的项会针对新项目再次初始化。在其项目或主机已被离开之后才调用的命令（例如用户切换项目时被放弃的查询最终返回）会以 "The New workspace screen moved to another project or host; this item belongs to the previous one." 拒绝，并且不做任何更改；为新项目挂载的项不受影响。`host`、`project`、`baseRef` 和 `metadata` 是冻结的。界面创建工作区期间会被锁定：你的字段显示为禁用，所有命令都会以 "The New workspace screen is locked while the workspace is being created." 拒绝。返回 Promise 的回调在完成之前会让控件保持禁用，被拒绝时会以错误提示向用户显示。
 

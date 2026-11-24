@@ -99,8 +99,10 @@ Register the adapter in `defaultForgeRegistry` with:
 
 Current change-request lookup matches the branch and repository for both open and
 terminal requests. Prefer an open request, then a terminal request at the local
-HEAD, then the most recently updated terminal request. A reused branch can show
-its previous request until a new one opens. Auto-archive separately requires an
+HEAD, then the most recently updated terminal request. When the forge identifies
+the checkout's branch as the origin repository's default branch, only open
+requests are eligible. A reused feature branch can show its previous request
+until a new one opens. Auto-archive separately requires an
 observed open-to-merged transition and a fresh exact match between checkout HEAD
 and the PR head, along with the existing workspace safety checks.
 

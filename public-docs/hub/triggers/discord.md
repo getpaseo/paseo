@@ -1,47 +1,71 @@
 ---
 title: Discord triggers
-description: Configure Discord mentions and replies in one workflow file.
+description: Start Hub agents from Discord mentions and reply in the channel or thread.
 nav: Discord
-order: 69
+order: 68
 category: Hub
 ---
 
 # Discord triggers
 
-`discord.mention` fires when the bot or a managed role is mentioned in a guild channel or thread.
+`discord.mention` fires when someone mentions the bot or its managed role in a Discord server channel or thread.
 
-`.paseo/workflows/discord-help.yml`:
+First connect a Discord server under **Integrations** (or configure a [Discord app](/docs/hub/self-hosting/discord-app) on a self-hosted Hub).
+
+`.paseo/triggers/discord-help.yml`:
 
 ```yaml
 name: discord-help
-on: discord.mention
-max_runtime: 1h
-filters:
-  guild: "123456789012345678"
-  channels: ["234567890123456789"]
-  from_users: ["345678901234567890"]
-steps:
-  - id: answer
-    environment: dev
-    max_runtime: 30m
-    idle_timeout: 5m
-    agent: codex
-    prompt:
-      - text: |
-          Answer with hub.reply, then call hub.finish_execution.
-          ${{ paseo.prompt }}
-    allow_outputs:
-      - { type: discord.reply, max: 1, required: true }
+on:
+  discord.mention:
+    connection: acme-discord
+    filters:
+      guild: "123456789012345678"
+      channels: ["234567890123456789"]
+      from_users: ["345678901234567890"]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/project
+  agent:
+    provider: codex
+    mode: full-access
+  continuation:
+    mode: conversation
+  max_runtime: 30m
+  idle_timeout: 5m
+  prompt: |
+    Answer the request using reply, then call finish_execution.
+
+    <user-prompt>
+    ${{ paseo.prompt }}
+    </user-prompt>
+  outputs:
+    discord.reply:
+      max: 1
+      required: true
 ```
 
-Discord filters use IDs, not server names, display names, or Hub connection slugs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
+## Filters and prompt text
 
-The reply posts in the triggering thread or channel. `discord.reply` grants `hub.reply`, but does not rewrite the prompt. A Discord trigger grants no GitHub credential; add a [`github` block](/docs/hub/github) to the step that needs one.
+Discord filters use numeric snowflake IDs, not server names, display names, or connection slugs. Quote every snowflake ID so YAML keeps it as a string.
 
-Leading declared inputs follow the mention. Hub exposes the remaining text as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).
+`from_users` is required and matches the sender, while `guild` and `channels` restrict where the mention arrived. `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior). All filters compose with AND.
+
+`${{ paseo.prompt }}` contains the full message. Hub parses leading `key=value` tokens after the mention for inputs you declare. If you declare `inputs.repo`, use `${{ paseo.inputs.repo }}` in `run.prompt` to insert its value.
+
+Include `${{ paseo.context }}` in `run.prompt` to pass the referenced message, thread history, and attachment descriptors as JSON.
+
+## Replies and continuation
+
+Hub posts replies in the triggering Discord channel or thread. Follow-up mentions in the same thread continue the same agent by default.
+
+Discord triggers automatically grant the `reply` tool (`discord.reply`). Declare `run.outputs.discord.reply` to enforce `max` or `required: true`. When Hub runs over HTTPS, replies include an **Open in Paseo** link.
+
+To read or post to Discord channels and forums from a schedule, webhook, or another trigger, use [Integration tools](/docs/hub/tools). To give the agent repository access, add a [`run.github` block](/docs/hub/github).
 
 ## Find your Discord IDs
 
-Turn on **Settings → Advanced → Developer Mode**, then right-click to **Copy Server ID** for `guild`, **Copy Channel ID** for `channels`, and **Copy User ID** for `from_users`. All three are numeric snowflakes; quote them so YAML keeps them as strings.
+In Discord, turn on **Settings → Advanced → Developer Mode**. Right-click a server and choose **Copy Server ID** for `guild`, right-click a channel and choose **Copy Channel ID** for `channels`, and right-click a user and choose **Copy User ID** for `from_users`.
 
-[Guided setup](/docs/hub/quickstart) fills `guild` from the Discord app you connected and asks you for your user ID.
+`paseo hub init` selects your connected Discord server automatically and asks for your user ID.

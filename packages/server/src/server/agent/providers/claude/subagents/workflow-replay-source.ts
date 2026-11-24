@@ -55,7 +55,9 @@ export async function observeReplayWorkflows(input: {
   >;
   convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
 }): Promise<SubagentObservation[]> {
-  const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries);
+  if (input.workflows.length === 0) return [];
+  const runIds = new Set(input.workflows.map((workflow) => workflow.runId));
+  const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries, runIds);
   const observations: SubagentObservation[] = [];
 
   for (const workflow of input.workflows) {
@@ -155,34 +157,33 @@ async function observeWorkflowTimeline(input: {
 
 async function readWorkflowLinks(
   entries: Iterable<ClaudeWorkflowParentEntry> | AsyncIterable<ClaudeWorkflowParentEntry>,
+  runIds: ReadonlySet<string>,
 ): Promise<Map<string, string>> {
   const workflowToolCallIds = new Set<string>();
-  const toolCallIdByRunId = new Map<string, string>();
+  const results: { runId: string; toolCallId: string }[] = [];
 
   for await (const entry of entries) {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
       const block = toRecord(value);
-      if (block?.type !== "tool_use" || block.name !== "Workflow") continue;
-      const id = readString(block.id);
-      if (id) workflowToolCallIds.add(id);
-    }
-  }
-
-  for await (const entry of entries) {
-    const content = entry.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toRecord(value);
+      if (block?.type === "tool_use" && block.name === "Workflow") {
+        const id = readString(block.id);
+        if (id) workflowToolCallIds.add(id);
+      }
       if (block?.type !== "tool_result") continue;
       const toolCallId = readString(block.tool_use_id);
-      if (!toolCallId || !workflowToolCallIds.has(toolCallId)) continue;
+      if (!toolCallId) continue;
       const runId = readRunId(block.content);
-      if (runId) toolCallIdByRunId.set(runId, toolCallId);
+      if (runId && runIds.has(runId)) results.push({ runId, toolCallId });
     }
   }
 
+  // Resolve IDs in result order after all calls are known, even if a result precedes its call.
+  const toolCallIdByRunId = new Map<string, string>();
+  for (const { runId, toolCallId } of results) {
+    if (workflowToolCallIds.has(toolCallId)) toolCallIdByRunId.set(runId, toolCallId);
+  }
   return toolCallIdByRunId;
 }
 

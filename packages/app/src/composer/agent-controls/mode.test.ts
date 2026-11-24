@@ -25,6 +25,7 @@ describe("resolveAgentControlsMode", () => {
         onSelectMode: () => undefined,
         models: [],
         selectedModel: "",
+        effectiveModelId: "",
         onSelectModel: () => true,
         isModelLoading: false,
         modelSelectorProviders: [],

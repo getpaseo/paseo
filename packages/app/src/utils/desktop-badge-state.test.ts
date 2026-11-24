@@ -73,6 +73,18 @@ describe("desktop-badge-state", () => {
     expect(selectMacDockBadgeCount(state)).toBe(3);
   });
 
+  it("leaves out background workspaces, which the sidebar hides", () => {
+    const hidden = { ...workspace("a", "attention"), background: true };
+    expect(selectMacDockBadgeCount(stateWith(hidden))).toBeUndefined();
+    expect(selectMacDockBadgeCount(stateWith(hidden, workspace("b", "failed")))).toBe(1);
+  });
+
+  it("counts background workspaces while Show background puts them in the sidebar", () => {
+    const hidden = { ...workspace("a", "attention"), background: true };
+    expect(selectMacDockBadgeCount(stateWith(hidden), { showBackground: true })).toBe(1);
+    expect(createMacDockBadgeCountSelector({ showBackground: true })(stateWith(hidden))).toBe(1);
+  });
+
   it("recounts only when a workspace map is replaced", () => {
     const select = createMacDockBadgeCountSelector();
     const state = stateWith(workspace("a", "attention"));

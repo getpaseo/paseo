@@ -21,6 +21,8 @@ import { ICON_SIZE } from "@/styles/theme";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { useToast } from "@/contexts/toast-api-context";
+import { Shortcut } from "@/components/ui/shortcut";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { toErrorMessage } from "@/utils/error-messages";
 
 interface ComposerControlBase {
@@ -28,7 +30,7 @@ interface ComposerControlBase {
   title: string;
   icon: AgentControlIcon;
   /** Tints the icon; muted when absent. */
-  highlight?: "blue" | "green" | "yellow";
+  highlight?: "blue" | "green" | "purple" | "yellow";
   /** Defaults to the title, or to "title: choice" on an icon-only select. */
   tooltip?: string;
   /** Defaults to the tooltip. */
@@ -106,6 +108,7 @@ interface ComposerControlProps {
   disabled?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  shortcutKeys?: ShortcutKey[][] | null;
   /** Runs after a toolbar toggle or action, so the composer can take focus back. */
   onActionComplete?: () => void;
 }
@@ -217,6 +220,7 @@ export function ComposerControl({
   open,
   onOpenChange,
   onActionComplete,
+  shortcutKeys,
 }: ComposerControlProps) {
   const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
@@ -279,7 +283,7 @@ export function ComposerControl({
             {trigger}
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{view.tooltip}</Text>
+            <ControlTooltipHint label={view.tooltip} shortcutKeys={shortcutKeys} />
           </TooltipContent>
         </Tooltip>
       )}
@@ -349,6 +353,7 @@ interface ComposerControlsProps {
   items: readonly ComposerControlItem[];
   surface: ComposerControlSurface;
   disabled?: boolean;
+  shortcutKeys?: ShortcutKey[][] | null;
   /** The id of the item whose list is open. */
   openId: string | null;
   onOpenIdChange: (id: string | null) => void;
@@ -390,9 +395,30 @@ function ComposerControlSlot({
   return <ComposerControl item={item} open={open} onOpenChange={handleOpenChange} {...rest} />;
 }
 
+export function ControlTooltipHint({
+  label,
+  shortcutKeys,
+}: {
+  label: string;
+  shortcutKeys?: ShortcutKey[][] | null;
+}) {
+  return (
+    <View style={styles.tooltipRow}>
+      <Text style={styles.tooltipText}>{label}</Text>
+      {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  tooltipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
   fieldIcon: { color: theme.colors.foregroundMuted },
   blue: { color: theme.colors.palette.blue[400] },
+  purple: { color: theme.colors.palette.purple[500] },
   green: { color: theme.colors.palette.green[400] },
   yellow: { color: theme.colors.palette.yellow[400] },
   tooltipText: {

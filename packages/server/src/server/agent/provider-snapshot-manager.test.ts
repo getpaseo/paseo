@@ -25,7 +25,9 @@ import {
   type ProviderSnapshot,
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
+import { raceProviderRefreshAbort } from "./provider-refresh-deadline.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { getClaudeModels } from "./providers/claude/models.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -215,12 +217,14 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("carries a plugin provider icon in snapshot metadata", () => {
+  test("carries a plugin provider icon and docs link in snapshot metadata", () => {
     const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const docsUrl = "https://example.com/docs";
     const registration: ProviderRegistration = {
       id: "icon-provider",
       label: "Icon Provider",
       icon: iconSvg,
+      docsUrl,
       async connect() {
         throw new Error("not opened by this test");
       },
@@ -231,7 +235,13 @@ describe("ProviderSnapshotManager public surface", () => {
       manager.replacePluginProviders([registration]);
 
       expect(manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry)).toContainEqual(
-        expect.objectContaining({ provider: "icon-provider", iconSvg }),
+        expect.objectContaining({ provider: "icon-provider", iconSvg, docsUrl }),
+      );
+      expect(manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry)).toContainEqual(
+        expect.objectContaining({
+          provider: "claude",
+          docsUrl: "https://paseo.sh/docs/supported-providers/claude-code",
+        }),
       );
     } finally {
       manager.destroy();
@@ -304,6 +314,63 @@ describe("ProviderSnapshotManager public surface", () => {
             sandbox_workspace_write: { network_access: "sometimes" },
             arbitrary: true,
           },
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("validates workspace-only models against the requested working directory", async () => {
+    const cwd = resolveSnapshotCwd("/tmp/workspace-models");
+    const model = { provider: "opencode", id: "workspace-model", label: "Workspace model" };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => ({
+            models: options.scope === "workspace" && options.cwd === cwd ? [model] : [],
+            modes: [],
+          }),
+        }),
+      },
+    });
+    const input = { provider: model.provider, model: model.id };
+    const unavailable = [
+      {
+        path: ["model"],
+        message: "Model 'workspace-model' is not available for provider 'opencode'",
+      },
+    ];
+
+    try {
+      await expect(manager.validateAgentConfiguration(input)).resolves.toEqual(unavailable);
+      await expect(manager.validateAgentConfiguration({ ...input, cwd })).resolves.toEqual([]);
+      await expect(
+        manager.validateAgentConfiguration({ ...input, cwd: "/tmp/missing-workspace" }),
+      ).resolves.toEqual(unavailable);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("accepts a legacy Ultra Code choice on a model with an independent effort catalog", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        claude: createExtraClient("claude", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: getClaudeModels("2.1.284"), modes: [] }),
+        }),
+      },
+    });
+    try {
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "claude",
+          model: "claude-opus-4-8",
+          thinkingOptionId: "ultracode",
         }),
       ).resolves.toEqual([]);
     } finally {
@@ -1008,6 +1075,40 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(result.diagnostic).toContain("Models:");
       expect(result.diagnostic).toContain("Status:");
       expect(getDiagnostic).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("getProviderDiagnostic gives the client the installation that the Installation row shows", async () => {
+    let inspections = 0;
+    const client = createExtraClient("codex", {
+      installation: {
+        async inspect() {
+          inspections += 1;
+          return { status: "installed", version: `1.0.${inspections}` };
+        },
+      },
+      async getDiagnostic(context) {
+        const inspection = await context.inspectInstallation();
+        return {
+          diagnostic: `codex ${inspection?.status === "installed" ? inspection.version : "?"}`,
+        };
+      },
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: client },
+    });
+    try {
+      const { diagnostic } = await manager.getProviderDiagnostic("codex");
+      expect(diagnostic).toContain("codex 1.0.1");
+      // The report refreshed the installation, so the Installation row reads the same answer.
+      expect((await manager.installations.inspect("codex"))?.inspection).toEqual({
+        status: "installed",
+        version: "1.0.1",
+      });
+      expect(inspections).toBe(1);
     } finally {
       manager.destroy();
     }
@@ -2818,9 +2919,9 @@ test.each(["configuration", "shutdown", "destroy"])(
           async isAvailable() {
             return true;
           },
-          async fetchCatalog(options) {
+          async fetchCatalog(options, context) {
             if (options.scope === "workspace") calls.push(options.cwd);
-            await pending;
+            await raceProviderRefreshAbort(context?.signal, pending);
             return { models: [], modes: [] };
           },
         }),
@@ -3784,6 +3885,71 @@ test("model overrides preserve negotiated plugin capabilities and connection shu
     expect(client.capabilities.supportsSessionPersistence).toBe(true);
     await manager.shutdown();
     expect(closed).toBe(1);
+  } finally {
+    await manager.shutdown();
+    manager.destroy();
+  }
+});
+
+test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real timeout deadline", async () => {
+  let codexAvailable = false;
+  let codexChecks = 0;
+  let copilotSignalAborted = false;
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      codex: createExtraClient("codex", {
+        async isAvailable() {
+          codexChecks += 1;
+          return codexAvailable;
+        },
+      }),
+      copilot: createExtraClient("copilot", {
+        isAvailable(signal) {
+          signal?.addEventListener("abort", () => {
+            copilotSignalAborted = true;
+          });
+          // Simulate a plugin provider RPC that ignores AbortSignal and hangs indefinitely.
+          return new Promise<boolean>(() => {});
+        },
+      }),
+    },
+  });
+  try {
+    // Prime the global snapshot while codex is unavailable.
+    await manager.getProvider({ provider: "codex", wait: true });
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(false);
+    const checksAfterSnapshot = codexChecks;
+
+    // Install codex externally; a forced Usage refresh re-probes and persists the fresh result.
+    codexAvailable = true;
+    expect(await manager.isProviderActiveForUsage("codex", { forceRefresh: true })).toBe(true);
+    expect(codexChecks).toBeGreaterThan(checksAfterSnapshot);
+
+    // Subsequent non-forced reads keep the fresher probe result instead of falling back to the
+    // older unavailable snapshot.
+    const checksAfterForce = codexChecks;
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(true);
+    expect(codexChecks).toBe(checksAfterForce);
+
+    // Refreshing Providers after uninstalling codex updates the shared availability reading even
+    // though an unavailable snapshot entry carries no fetchedAt.
+    codexAvailable = false;
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+    const checksAfterSettingsRefresh = codexChecks;
+    expect(await manager.isProviderActiveForUsage("codex")).toBe(false);
+    expect(codexChecks).toBe(checksAfterSettingsRefresh);
+
+    // Once the TTL elapses, a normal read re-probes automatically.
+    codexAvailable = true;
+    expect(await manager.isProviderActiveForUsage("codex", { ttlMs: 0 })).toBe(true);
+    expect(codexChecks).toBeGreaterThan(checksAfterSettingsRefresh);
+
+    // A hung non-abortable provider check resolves at the deadline instead of blocking callers.
+    const started = Date.now();
+    expect(await manager.isProviderActiveForUsage("copilot", { timeoutMs: 30 })).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(copilotSignalAborted).toBe(true);
   } finally {
     await manager.shutdown();
     manager.destroy();

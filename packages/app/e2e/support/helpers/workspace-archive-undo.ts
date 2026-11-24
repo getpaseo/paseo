@@ -162,3 +162,67 @@ export function createGatedTeardown(): GatedTeardown {
     release: () => writeFileSync(releasePath, "release\n"),
   };
 }
+
+export function archivedToast(page: Page) {
+  return page.getByTestId("workspace-archived-toast");
+}
+
+export interface SidebarListLayout {
+  /** Bottom edge of the list's visible area. */
+  listBottom: number;
+  /** Bottom edges of the visible project and workspace rows, top to bottom. */
+  rowBottoms: number[];
+  rowHeight: number;
+}
+
+const SIDEBAR_LIST = "sidebar-project-workspace-list-scroll";
+
+/** Scrolls the sidebar's workspace list to its end and reads where its rows sit. */
+export async function scrollSidebarListToEnd(page: Page): Promise<SidebarListLayout> {
+  await page.getByTestId(SIDEBAR_LIST).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  return readSidebarListLayout(page);
+}
+
+/** Reads where the sidebar list's rows sit, without scrolling it. */
+export async function readSidebarListLayout(page: Page): Promise<SidebarListLayout> {
+  return page.getByTestId(SIDEBAR_LIST).evaluate((element) => {
+    const visible = element.getBoundingClientRect();
+    const rows = Array.from(
+      element.querySelectorAll<HTMLElement>(
+        '[data-testid^="sidebar-workspace-row-"],[data-testid^="sidebar-project-row-"]',
+      ),
+    )
+      .map((row) => row.getBoundingClientRect())
+      .filter((row) => row.height > 0 && row.bottom > visible.top && row.top < visible.bottom);
+    return {
+      listBottom: visible.bottom,
+      rowBottoms: rows.map((row) => row.bottom).sort((a, b) => a - b),
+      rowHeight: Math.min(...rows.map((row) => row.height)),
+    };
+  });
+}
+
+/**
+ * Starts recording the bottom edge of the sidebar list's last row once per painted frame.
+ * Resolves with one value per frame after `frameCount` frames.
+ */
+export function recordLastRowBottomPerFrame(page: Page, frameCount: number): Promise<number[]> {
+  return page.getByTestId(SIDEBAR_LIST).evaluate(
+    (element, count) =>
+      new Promise<number[]>((resolve) => {
+        const bottoms: number[] = [];
+        const sample = () => {
+          const rows = element.querySelectorAll<HTMLElement>(
+            '[data-testid^="sidebar-workspace-row-"],[data-testid^="sidebar-project-row-"]',
+          );
+          bottoms.push(Math.max(...Array.from(rows, (row) => row.getBoundingClientRect().bottom)));
+          if (bottoms.length >= count) resolve(bottoms);
+          else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }),
+    frameCount,
+  );
+}

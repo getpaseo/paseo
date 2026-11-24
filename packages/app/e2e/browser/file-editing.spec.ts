@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  downloadFileFromPreview,
   expandFolder,
   openFileExplorer,
   openFileFromExplorer,
@@ -141,6 +142,29 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("downloads an assistant-linked binary outside the workspace", async ({ page }, testInfo) => {
+    const filePath = testInfo.outputPath("outside.bin");
+    const source = Buffer.from([0, 1, 128, 255]);
+    await writeFile(filePath, source);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "outside-binary-",
+      title: "Outside binary",
+      initialPrompt: "Show the file",
+      featureValues: { mockAssistantResponse: `[Open binary](${filePath})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "Open binary");
+      const downloaded = await downloadFileFromPreview(page);
+      expect(downloaded.suggestedFilename()).toBe("outside.bin");
+      const savedFile = testInfo.outputPath("downloaded.bin");
+      await downloaded.saveAs(savedFile);
+      expect(await readFile(savedFile)).toEqual(source);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",
@@ -753,7 +777,9 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
     await selectFileView(page, "Preview");
-    await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(
+      visibleFilePane.getByRole("heading", { name: "Saved from source", exact: true }),
+    ).toBeVisible();
     await expect(toolbar.getByLabel("Line 1, column 1")).toHaveCount(0);
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).not.toBeVisible();
@@ -840,9 +866,50 @@ test.describe("CodeMirror workspace file editing", () => {
 
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
-    await expect(preview.host).toHaveCount(0);
+    await expect(preview.host).toBeHidden();
     await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
+  });
+
+  test("shows the changed HTML page after the file changes on disk while Source shows", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-html-hidden-change-" });
+    const htmlPath = path.join(workspace.repoPath, "plan.html");
+    await writeFile(htmlPath, "<!doctype html><html><body><h1>First plan</h1></body></html>");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("heading", { name: "First plan" })).toBeVisible();
+
+    await selectFileView(page, "Source");
+    await writeFile(htmlPath, "<!doctype html><html><body><h1>Changed on disk</h1></body></html>");
+    await expect(editor(page)).toContainText("Changed on disk");
+    await selectFileView(page, "Preview");
+
+    await expect(preview.document.getByRole("heading", { name: "Changed on disk" })).toBeVisible();
+  });
+
+  test("shows the HTML page edited in Source when Preview shows again", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-html-hidden-edit-" });
+    await writeFile(
+      path.join(workspace.repoPath, "plan.html"),
+      "<!doctype html><html><body><h1>First plan</h1></body></html>",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("heading", { name: "First plan" })).toBeVisible();
+
+    await selectFileView(page, "Source");
+    await replaceEditorText(page, "<!doctype html><html><body><h1>Edited plan</h1></body></html>");
+    await selectFileView(page, "Preview");
+
+    await expect(preview.document.getByRole("heading", { name: "Edited plan" })).toBeVisible();
   });
 
   test("keeps HTML fragment links in the preview and scrolls to the target", async ({

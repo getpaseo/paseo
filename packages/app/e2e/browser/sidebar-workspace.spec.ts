@@ -206,13 +206,14 @@ async function simulateDamagedLegacyDirectoryCache(
               return;
             }
             const stored = JSON.parse(checkpoint.payload);
-            // Accept either writer so this fixture also reproduces on the unfixed client.
-            const cursors = stored.version === 1 ? stored.cursors : stored;
-            if (!cursors.workspaces?.generation) {
+            // Read the cursors from whichever version wrote them, then store them as version 1:
+            // the format whose writer could keep a checkpoint after evicting the rows it describes.
+            const cursors = typeof stored.version === "number" ? stored.cursors : stored;
+            if (!cursors?.workspaces?.generation) {
               transaction.abort();
               return;
             }
-            store.put({ ...checkpoint, payload: JSON.stringify(cursors) });
+            store.put({ ...checkpoint, payload: JSON.stringify({ version: 1, cursors }) });
             for (const row of rows) {
               if (
                 row.serverId === serverId &&

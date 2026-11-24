@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { View, type PressableStateCallbackType } from "react-native";
+import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
@@ -35,7 +35,7 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { HostStatusDot } from "@/components/host-status-dot";
+import { HostMenuItem } from "@/components/hosts/host-menu-item";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
@@ -813,50 +813,18 @@ function HostFilterPage({
         {t("sidebar.display.hostFilter.all")}
       </MenuItem>
       {hosts.map((host) => (
-        <HostFilterItem
+        <HostMenuItem
           key={host.serverId}
           serverId={host.serverId}
           label={host.label?.trim() || host.serverId}
           selected={preferences.hostFilters.includes(host.serverId)}
-          onToggle={preferences.toggleHostFilter}
+          onSelect={preferences.toggleHostFilter}
+          closeOnSelect={false}
+          testID={`sidebar-host-filter-${host.serverId}`}
+          statusTestID={`sidebar-host-filter-status-${host.serverId}`}
         />
       ))}
     </>
-  );
-}
-
-/** The one option row whose mark is live state rather than an icon. */
-function HostFilterItem({
-  serverId,
-  label,
-  selected,
-  onToggle,
-}: {
-  serverId: string;
-  label: string;
-  selected: boolean;
-  onToggle: (serverId: string) => void;
-}): ReactElement {
-  const handleSelect = useCallback(() => onToggle(serverId), [onToggle, serverId]);
-  const leading = useMemo(
-    () => (
-      <View testID={`sidebar-host-filter-status-${serverId}`}>
-        <HostStatusDot serverId={serverId} />
-      </View>
-    ),
-    [serverId],
-  );
-
-  return (
-    <MenuItem
-      selected={selected}
-      closeOnSelect={false}
-      leading={leading}
-      onSelect={handleSelect}
-      testID={`sidebar-host-filter-${serverId}`}
-    >
-      {label}
-    </MenuItem>
   );
 }
 

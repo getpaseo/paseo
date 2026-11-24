@@ -44,6 +44,8 @@ describe("the base ref a plugin reads", () => {
         project: { id: "p", name: "repo" },
         canCreateWorktree: true,
         supportsMetadata: true,
+        supportsRefActions: true,
+        worktrees: [],
       },
       { persistIsolation: () => {}, syncBaseAttachment: (item) => chosen.push(item) },
     );
@@ -72,6 +74,8 @@ describe("the metadata a plugin sets", () => {
         project: { id: "p", name: "repo" },
         canCreateWorktree: true,
         supportsMetadata: true,
+        supportsRefActions: true,
+        worktrees: [],
       },
       { persistIsolation: () => {}, syncBaseAttachment: () => {} },
     );

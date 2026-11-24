@@ -287,6 +287,21 @@ export const PASEO_TOOL_CATALOG = {
     detail: { inputOrder: ["terminalId"] },
   },
 
+  subscribe_change_request: {
+    label: "Watch change request",
+    completedLabel: "Watching change request",
+    context: field("url"),
+  },
+  unsubscribe_change_request: {
+    label: "Stop watching change request",
+    completedLabel: "Stopped watching change request",
+    context: field("url"),
+  },
+  change_request_update: {
+    label: "Change request update",
+    completedLabel: "Change request update",
+  },
+
   // Schedules and heartbeats
   create_schedule: {
     label: "Create schedule",
@@ -375,6 +390,7 @@ export const PASEO_TOOL_CATALOG = {
   },
 
   // Browser
+  browser_list_hosts: browser("List browser hosts", "Listed browser hosts"),
   browser_list_tabs: browser("List browser tabs", "Listed browser tabs"),
   browser_new_tab: browser("Open browser tab", "Opened browser tab", field("url")),
   browser_close_tab: browser("Close browser tab", "Closed browser tab", field("browserId")),

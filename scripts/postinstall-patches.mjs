@@ -14,14 +14,6 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/expo-modules-core",
     patchPrefix: "expo-modules-core+",
   },
-  // Backport https://github.com/software-mansion/enriched-markdown/pull/924: preserve settled
-  // Android measurements across parent clones. Remove those hunks when upgrading past
-  // 1.2.0-nightly-20261019-926ef06f0; reconcile the other local patch hunks separately.
-  {
-    nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
-    patchPrefix: "react-native-enriched-markdown+",
-    cwd: "packages/app",
-  },
   // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
@@ -48,6 +40,10 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@legendapp/list",
     patchPrefix: "@legendapp+list+",
   },
+  // Native sidebar lists. Besides gesture sessions and panel-gesture arbitration, the drop gives
+  // each moved cell a fresh transform host. Reanimated re-applies a view's last animated
+  // transform to every React commit, so a reused host painted one frame of new order plus old
+  // drag translate (upstream computerjazz/react-native-draggable-flatlist#621, open).
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
@@ -78,9 +74,26 @@ const patchedPackages = [
     patchPrefix: "react-native-svg+",
     cwd: "packages/app",
   },
+  // Reconcile ResponderEventPlugin trackedTouchCount and ResponderTouchHistoryStore touchBank with
+  // nativeEvent.touches.length so an unmatched touch start or single-pointer synthetic cancel
+  // (e.g. Modal dismiss while touching, RNGH pinch takeover, or double ACTION_DOWN in
+  // ReactRootView/ReactModalHostView) self-heals instead of leaving trackedTouchCount > 0 or stale
+  // active contacts in touchBank. Remove once upstream React/React Native reconciles both.
+  {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  // Keep Android PasteTextInput aligned with RN AndroidTextInput (omit iOS-only
+  // onSelectionChangeShouldSetResponder), plus ref/eventCount/trailing-newline fixes.
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
     patchPrefix: "@mattermost+react-native-paste-input+",
+  },
+  // Backport of https://github.com/mermaid-js/mermaid/pull/8459 (lexer half): a flowchart label
+  // with an "@" parses. The patch header has the details. Remove when the app uses mermaid 12.
+  {
+    nodeModulesPath: "node_modules/mermaid",
+    patchPrefix: "mermaid+",
   },
   {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",
