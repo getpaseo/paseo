@@ -1,3 +1,4 @@
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 export { ComposerDockBackground } from "./internal/background";
 export { ComposerFullscreenBody, ComposerFullscreenFooter } from "./internal/fullscreen";
 import { ScrollView } from "@/components/ui/scroll-view";
@@ -26,7 +27,10 @@ export function ComposerDock({
   const surfaceRef = useRef<View>(null);
   const fullscreenFrame = useFullscreenSlotFrame(fullscreen, surfaceRef, surfaceSize);
   const constraint = useMemo(
-    () => ({ maxHeight: resolveInlineComposerCapacity(surfaceSize?.height, compact) }),
+    () =>
+      inlineUnistylesStyle({
+        maxHeight: resolveInlineComposerCapacity(surfaceSize?.height, compact),
+      }),
     [surfaceSize?.height, compact],
   );
   const measureViewport = useCallback((event: import("react-native").LayoutChangeEvent) => {

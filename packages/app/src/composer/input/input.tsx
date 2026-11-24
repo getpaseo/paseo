@@ -1,3 +1,4 @@
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { useKeyboardFocusSurface } from "@/keyboard";
 import type { SendShortcut } from "@/hooks/use-settings";
 import {
@@ -10,7 +11,6 @@ import {
   View,
   Platform,
   Text,
-  useWindowDimensions,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
@@ -1354,11 +1354,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
-    const { height: windowHeight } = useWindowDimensions();
+
     const editingSession = useComposerEditingSession(inputMode, props.editingSession);
     const isFullscreen = useComposerFullscreen(editingSession);
     const [renderedLines, setRenderedLines] = useState(1);
-    const maxInputHeight = resolveMaxInputHeight(windowHeight, isCompact);
+    const maxInputHeight = useWindowMetric(({ height }) =>
+      resolveMaxInputHeight(height, isCompact),
+    );
     const controlSizing = controlSizingForLayout(isCompact);
     const toolbarGlyph = toolbarGlyphsFor(controlSizing).icon;
     const discGlyphSize = TOOLBAR_DISC_GLYPH_SIZES[controlSizing];
