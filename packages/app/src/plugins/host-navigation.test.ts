@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { createPluginHostNavigation } from "./host-navigation-model";
+import { bindTimelineBrowser, createPluginHostNavigation } from "./host-navigation-model";
 import { useSidebarViewStore } from "../stores/sidebar-view-store";
 
 describe("plugin host navigation", () => {
@@ -223,5 +223,26 @@ describe("plugin host navigation", () => {
       "workspaceId",
     );
     expect(browsers).toEqual([]);
+  });
+
+  it("binds a timeline row's browser opener to the stream's workspace", () => {
+    const { navigation, destinations, browsers } = setup();
+    const openBrowser = bindTimelineBrowser(navigation.openBrowser, "one");
+    openBrowser!({ url: "http://127.0.0.1:8731/preview.html" });
+    expect(browsers).toEqual(["http://127.0.0.1:8731/preview.html"]);
+    expect(destinations).toEqual([
+      {
+        serverId: "selected",
+        workspaceId: "one",
+        target: { kind: "browser", browserId: "browser-1" },
+      },
+    ]);
+    expect(() => openBrowser!({ url: "file:///etc/passwd" })).toThrow("HTTP(S)");
+  });
+
+  it("leaves the timeline browser opener absent without Electron or a workspace", () => {
+    expect(bindTimelineBrowser(setup(false).navigation.openBrowser, "one")).toBeUndefined();
+    expect(bindTimelineBrowser(setup().navigation.openBrowser, undefined)).toBeUndefined();
+    expect(bindTimelineBrowser(setup().navigation.openBrowser, "")).toBeUndefined();
   });
 });
