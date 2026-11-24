@@ -637,6 +637,9 @@ export async function createPaseoDaemon(
   rootLogger: Logger,
   dependencies: PaseoDaemonDependencies = {},
 ): Promise<PaseoDaemon> {
+  // Start hardware detection at the beginning of bootstrap so it overlaps with disk/registry init
+  // and does not hold up the listener when probes are slow.
+  const hostMachineKindReady = primeHostMachineKind();
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
   const obsoleteTimelineDirectory = path.join(config.paseoHome, "agent-timelines");
@@ -1806,9 +1809,18 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
+      let machineKindTimeout: ReturnType<typeof setTimeout> | null = null;
       const [nextLocalCredential] = await Promise.all([
         writeLocalCredential(config.paseoHome),
-        primeHostMachineKind(),
+        Promise.race([
+          hostMachineKindReady,
+          new Promise<void>((resolve) => {
+            machineKindTimeout = setTimeout(resolve, 150);
+            machineKindTimeout.unref();
+          }),
+        ]).finally(() => {
+          if (machineKindTimeout) clearTimeout(machineKindTimeout);
+        }),
       ]);
       localCredential = nextLocalCredential;
       if (serviceProxyListenTarget) {
