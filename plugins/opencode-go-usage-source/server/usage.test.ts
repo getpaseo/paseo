@@ -583,6 +583,51 @@ test("reports a key on the opencode integration without Go as the absent subscri
   });
 });
 
+// The auth.json key stands in for a Go login that OpenCode 2 never imported.
+test.each<[string, Credential, Record<string, () => Response>]>([
+  [
+    "key",
+    consoleKey("workspace-key"),
+    { [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 403 }) },
+  ],
+  [
+    "sign-in",
+    consoleSignIn(),
+    { [`${CONSOLE_STATUS_URL} Bearer console-token`]: () => Response.json(goStatus(null)) },
+  ],
+])(
+  "reads the auth.json Go key when the workspace of OpenCode 2's opencode %s has no Go",
+  async (_name, login, refusal) => {
+    await openCode2([login]);
+    const [found] = await discover(install);
+    const { requests, fetchApi } = upstream({
+      ...refusal,
+      [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+    });
+    const report = await fetchUsage(inputSchema.parse(found!.input), fetchApi, install);
+    expect(report.status).toBe("available");
+    expect(requests.at(-1)).toMatchObject({ url: USAGE_URL, authorization: "Bearer file-key" });
+  },
+);
+
+test("keeps the card on OpenCode 2's opencode key ahead of the auth.json Go key", async () => {
+  await openCode2([consoleKey("workspace-key")]);
+  const [found] = await discover(install);
+  const input = inputSchema.parse(found!.input);
+  const served = upstream({
+    [`${CONSOLE_STATUS_URL} Bearer workspace-key`]: () => Response.json(goStatus()),
+    [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+  });
+  expect((await fetchUsage(input, served.fetchApi, install)).status).toBe("available");
+  const failing = upstream({
+    [`${USAGE_URL} Bearer workspace-key`]: () => new Response(null, { status: 503 }),
+    [`${USAGE_URL} Bearer file-key`]: () => Response.json(upstreamResponse),
+  });
+  await expect(fetchUsage(input, failing.fetchApi, install)).rejects.toThrow("returned 503");
+  const asked = [...served.requests, ...failing.requests].map((request) => request.authorization);
+  expect(asked).not.toContain("Bearer file-key");
+});
+
 test("keeps the card on the opencode key through a temporary failure", async () => {
   const input = await storeWith([consoleKey("workspace-key"), goKey("go-key")]);
   const { requests, fetchApi } = upstream({
