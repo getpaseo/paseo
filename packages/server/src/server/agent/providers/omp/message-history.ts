@@ -186,7 +186,14 @@ export class OmpHistoryMapper {
         continue;
       }
       if (content.type === "toolCall") {
-        const tracked = parseToolArgs(content.name, content.arguments);
+        const legacyIntent =
+          typeof content.arguments === "object" && content.arguments !== null
+            ? Reflect.get(content.arguments, "i")
+            : undefined;
+        const storedIntent = typeof content.intent === "string" ? content.intent : undefined;
+        const intent =
+          storedIntent ?? (typeof legacyIntent === "string" ? legacyIntent : undefined);
+        const tracked = parseToolArgs(content.name, content.arguments, intent);
         this.pendingToolCalls.set(content.id, tracked);
         const detail = this.mapToolDetail(content.id, tracked, null);
         if (!detail) {

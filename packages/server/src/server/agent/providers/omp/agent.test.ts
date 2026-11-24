@@ -1012,6 +1012,20 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("does not treat a live tool argument named i as intent", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "ordinary-i",
+        toolName: "bash",
+        args: { command: "echo hello", i: "ordinary input" },
+      }),
+    );
+    expect(omp.timeline().find((item) => item.type === "tool_call")).not.toHaveProperty("intent");
+  });
+
   test("shows a concise error for a failed tool while keeping shell output", async () => {
     const omp = new OmpHarness();
     await omp.start();

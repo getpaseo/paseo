@@ -320,13 +320,14 @@ export function isOmpToolFailure(
   );
 }
 
-export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
-  const intent =
-    typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)
-      ? Reflect.get(rawArgs, "i")
-      : undefined;
+export function parseToolArgs(
+  toolName: string,
+  rawArgs: unknown,
+  intent?: string,
+): OmpTrackedToolCall {
   const tracked = parseToolArgsWithoutIntent(toolName, rawArgs);
-  return typeof intent === "string" ? { ...tracked, intent } : tracked;
+  if (intent !== undefined) tracked.intent = intent;
+  return tracked;
 }
 
 function parseToolArgsWithoutIntent(toolName: string, rawArgs: unknown): OmpTrackedToolCall {

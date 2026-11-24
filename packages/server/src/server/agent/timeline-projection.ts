@@ -103,9 +103,6 @@ export function mergeToolCallItems(
   const merged: Extract<AgentTimelineItem, { type: "tool_call" }> = {
     ...existing,
     ...incoming,
-    ...((incoming.intent ?? existing.intent) !== undefined
-      ? { intent: incoming.intent ?? existing.intent }
-      : {}),
     detail: mergedDetail,
     metadata: mergedMetadata,
   };

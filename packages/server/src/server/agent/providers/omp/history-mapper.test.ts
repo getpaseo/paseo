@@ -71,13 +71,15 @@ describe("OMP history mapper", () => {
             type: "toolCall",
             id: "intent-1",
             name: "read",
-            arguments: { path: "file", i: "Inspect file" },
+            arguments: { path: "file" },
+            intent: "Inspect file",
           },
           {
             type: "toolCall",
             id: "intent-2",
             name: "bash",
-            arguments: { command: "false", i: "Check failure" },
+            arguments: { command: "false", i: "Legacy intent" },
+            intent: "Check failure",
           },
           { type: "toolCall", id: "intent-3", name: "read", arguments: { path: "file", i: 42 } },
         ],
@@ -112,6 +114,23 @@ describe("OMP history mapper", () => {
     ]);
     expect(events[2]?.item).not.toHaveProperty("intent");
     expect(events[5]?.item).not.toHaveProperty("intent");
+  });
+
+  test("replays legacy intent embedded in tool arguments", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "legacy",
+            name: "read",
+            arguments: { path: "file", i: "Inspect file" },
+          },
+        ],
+      },
+    ]);
+    expect(events[0]?.item).toMatchObject({ type: "tool_call", intent: "Inspect file" });
   });
 
   test("replays a web search details error as failed when OMP sets isError false", async () => {
@@ -212,6 +231,69 @@ describe("OMP history mapper", () => {
       status: "failed",
       error: "No browser automation host is connected.",
     });
+  });
+
+  test("rejects non-string persisted tool intents during journal replay", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omp-intent-history-"));
+    try {
+      const sessionFile = join(dir, "session.jsonl");
+      await writeFile(
+        sessionFile,
+        [
+          { type: "session", id: "root" },
+          {
+            type: "message",
+            id: "assistant",
+            parentId: "root",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "valid",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: "Read file",
+                },
+                {
+                  type: "toolCall",
+                  id: "number",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: 42,
+                },
+                {
+                  type: "toolCall",
+                  id: "object",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: { text: "invalid" },
+                },
+                {
+                  type: "toolCall",
+                  id: "legacy",
+                  name: "read",
+                  arguments: { path: "file", i: "Legacy intent" },
+                  intent: 42,
+                },
+              ],
+            },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n"),
+      );
+      const items: AgentStreamEvent["item"][] = [];
+      for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
+        items.push(event.item);
+      expect(items).toHaveLength(4);
+      expect(items[0]).toMatchObject({ callId: "valid", intent: "Read file" });
+      expect(items[1]).not.toHaveProperty("intent");
+      expect(items[2]).not.toHaveProperty("intent");
+      expect(items[3]).toMatchObject({ callId: "legacy", intent: "Legacy intent" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("restores blocked and abandoned todo state from a session file", async () => {

@@ -26,6 +26,7 @@ export const OmpToolCallContentSchema = z
     id: z.string(),
     name: z.string(),
     arguments: z.unknown(),
+    intent: z.string().optional(),
   })
   .passthrough();
 
