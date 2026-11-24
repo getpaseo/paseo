@@ -208,6 +208,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
   "agent-input": [
     "focus-message-input",
+    "toggle-model-picker",
+    "cycle-effort",
     "cycle-agent-mode",
     "voice-toggle",
     "dictation-toggle",
@@ -255,6 +257,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
+  "toggle-model-picker": "settings.shortcuts.help.toggleModelPicker",
+  "cycle-effort": "settings.shortcuts.help.cycleEffort",
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
@@ -1238,6 +1242,33 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "focus-message-input",
       section: "agent-input",
       label: "Focus message input",
+    },
+  },
+  {
+    id: "message-input-model-toggle-mod-slash",
+    action: "message-input.action",
+    combo: "Mod+/",
+    repeat: false,
+    // The handler checks that its composer or its own picker has focus.
+    when: { commandCenter: false, focusScope: ["message-input", "editable", "other"] },
+    payload: { type: "message-input", kind: "model-toggle" },
+    help: {
+      id: "toggle-model-picker",
+      section: "agent-input",
+      label: "Toggle model picker",
+    },
+  },
+  {
+    id: "message-input-effort-cycle-mod-shift-slash",
+    action: "message-input.action",
+    combo: "Mod+Shift+/",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "effort-cycle" },
+    help: {
+      id: "cycle-effort",
+      section: "agent-input",
+      label: "Cycle effort",
     },
   },
   {

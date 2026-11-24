@@ -86,7 +86,12 @@ type WaitFinishState = Awaited<
   ReturnType<Awaited<ReturnType<typeof connectToDaemon>>["waitForFinish"]>
 >;
 
-function buildWaitResult(args: {
+/**
+ * Turn the daemon's wait reply into the command result. Throws AGENT_NOT_FOUND when the
+ * daemon resolved no agent: it answers an unknown identifier with an error and no agent
+ * payload, while an agent that finished in error always comes with its payload.
+ */
+export function buildWaitResult(args: {
   state: WaitFinishState;
   resolvedAgentId: string;
   recentActivity: string | null;
@@ -117,6 +122,13 @@ function buildWaitResult(args: {
   }
 
   if (state.status === "error") {
+    if (state.final === null) {
+      throw {
+        code: "AGENT_NOT_FOUND",
+        message: state.error ?? `Agent not found: ${resolvedAgentId}`,
+        details: "Use `paseo ls` to list available agents",
+      } satisfies CommandError;
+    }
     return {
       agentId: resolvedAgentId,
       status: "error",
@@ -155,6 +167,7 @@ export async function runWaitCommand(
 
   const client = await connectToDaemon({ target: options.daemonTarget });
 
+  let reply: Omit<Parameters<typeof buildWaitResult>[0], "timeoutLabel">;
   try {
     try {
       const state = await client.waitForFinish(agentIdArg, timeoutMs);
@@ -166,11 +179,7 @@ export async function runWaitCommand(
 
       await client.close();
 
-      return {
-        type: "single",
-        data: buildWaitResult({ state, resolvedAgentId, recentActivity, timeoutLabel }),
-        schema: agentWaitSchema,
-      };
+      reply = { state, resolvedAgentId, recentActivity };
     } catch (waitErr) {
       await client.close().catch(() => {});
 
@@ -198,4 +207,10 @@ export async function runWaitCommand(
     };
     throw error;
   }
+
+  return {
+    type: "single",
+    data: buildWaitResult({ ...reply, timeoutLabel }),
+    schema: agentWaitSchema,
+  };
 }

@@ -29,7 +29,7 @@ export class SessionAuthorization {
     this.permissions = new Set(permissions);
   }
 
-  allowsInbound(message: SessionInboundMessage): boolean {
+  allowsInbound(message: Pick<SessionInboundMessage, "type">): boolean {
     return this.allows(requiredPermissionForInbound(message.type));
   }
 

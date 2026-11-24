@@ -63,9 +63,11 @@ function seedFeatureCheckout(): {
       branchRemoteName: "origin",
       branchMergeRef: "refs/heads/main",
       upstreamStatus: {
+        state: "tracked",
         ref: "refs/remotes/origin/main",
         aheadBehind: { ahead: 0, behind: 0 },
       },
+      firstPushRemote: "origin",
       pullRequestLookupTarget: { headRef: "feature" },
     },
   };
@@ -105,9 +107,11 @@ function seedMainCheckout(): {
       branchRemoteName: "origin",
       branchMergeRef: "refs/heads/main",
       upstreamStatus: {
+        state: "tracked",
         ref: "refs/remotes/origin/main",
         aheadBehind: { ahead: 1, behind: 0 },
       },
+      firstPushRemote: "origin",
       pullRequestLookupTarget: { headRef: "main" },
     },
   };
@@ -127,6 +131,7 @@ test("one comparison refresh updates a shared base and upstream ref", async () =
 
   expect(result.aheadBehind).toEqual({ ahead: 1, behind: 0 });
   expect(result.upstreamStatus).toEqual({
+    state: "tracked",
     ref: "refs/remotes/origin/main",
     aheadBehind: { ahead: 1, behind: 0 },
   });
@@ -154,6 +159,7 @@ test("an upstream move refreshes the main checkout shortstat", async () => {
     aheadBehind: null,
     diffStat: null,
     upstreamStatus: {
+      state: "tracked",
       ref: "refs/remotes/origin/main",
       aheadBehind: { ahead: 0, behind: 0 },
     },
@@ -166,7 +172,7 @@ test("an origin move refreshes an untracked main checkout shortstat", async () =
     ...seeded.facts,
     branchRemoteName: null,
     branchMergeRef: null,
-    upstreamStatus: null,
+    upstreamStatus: { state: "none" as const },
   };
   git(seeded.cwd, [
     "update-ref",
@@ -181,5 +187,5 @@ test("an origin move refreshes an untracked main checkout shortstat", async () =
       { aheadBehind: null, diffStat: { additions: 1, deletions: 0 } },
       new Set(["origin/main"]),
     ),
-  ).toEqual({ aheadBehind: null, diffStat: null, upstreamStatus: null });
+  ).toEqual({ aheadBehind: null, diffStat: null, upstreamStatus: { state: "none" } });
 });

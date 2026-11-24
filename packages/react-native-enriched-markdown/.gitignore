@@ -1,0 +1,10 @@
+# Native assets the postinstall script downloads (see postinstall.mjs).
+/cpp/highlight/vendor/grammars/
+/cpp/highlight/vendor/tree-sitter/
+/ios/vendor/
+/ios/vendor.staging/
+/ios/vendor.backup/
+
+# Android build output when Gradle builds this library from source.
+/android/.cxx/
+/android/.gradle/

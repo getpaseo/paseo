@@ -366,6 +366,27 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "dictation-toggle" },
     },
     {
+      name: "toggles the model picker from the composer",
+      event: { key: "/", code: "Slash", metaKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "model-toggle" },
+    },
+    {
+      name: "toggles the model picker while its search field has focus",
+      event: { key: "/", code: "Slash", metaKey: true },
+      context: { isMac: true, focusScope: "editable" },
+      action: "message-input.action",
+      payload: { kind: "model-toggle" },
+    },
+    {
+      name: "cycles effort with the shifted slash character",
+      event: { key: "?", code: "Slash", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "effort-cycle" },
+    },
+    {
       name: "routes Shift+Tab to cycle agent mode from the message input",
       event: { key: "Tab", code: "Tab", shiftKey: true },
       context: { focusScope: "message-input" },
@@ -811,6 +832,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
         "cycle-agent-mode": ["shift", "Tab"],
+        "toggle-model-picker": ["mod", "/"],
+        "cycle-effort": ["mod", "shift", "/"],
       },
     },
     {
