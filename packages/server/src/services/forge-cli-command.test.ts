@@ -275,6 +275,49 @@ describe.skipIf(isPlatform("win32"))("createForgeCliRunner", () => {
 
     await expect(runner.run(["status"], { cwd: tempDir })).rejects.toThrow("forge-cli-missing");
   });
+
+  it("re-resolves and retries once when the cached executable is removed from PATH", async () => {
+    const originalPath = process.env.PATH;
+    const firstDir = join(tempDir, "first-bin");
+    const secondDir = join(tempDir, "second-bin");
+    mkdirSync(firstDir);
+    mkdirSync(secondDir);
+
+    const firstCli = join(firstDir, "forge-cli-fallback");
+    writeFileSync(firstCli, "#!/bin/sh\necho from-first\n");
+    chmodSync(firstCli, 0o755);
+
+    const secondCli = join(secondDir, "forge-cli-fallback");
+    writeFileSync(secondCli, "#!/bin/sh\necho from-second\n");
+    chmodSync(secondCli, 0o755);
+
+    const runner = createForgeCliRunner({
+      binary: "forge-cli-fallback",
+      envOverlay: {},
+      timeoutMs: 2_000,
+      isAuthFailureText: () => false,
+      errorClasses: {
+        isAlreadyClassified: () => false,
+        isCommandError: (error): error is FakeCommandError => error instanceof FakeCommandError,
+        createAuthError: (stderr) => new Error(`auth: ${stderr}`),
+        createMissingError: () => new Error("missing"),
+        createCommandError: (params) => new FakeCommandError(params),
+      },
+    });
+
+    process.env.PATH = [firstDir, secondDir, originalPath].filter(Boolean).join(delimiter);
+    try {
+      await expect(runner.run(["status"], { cwd: tempDir })).resolves.toMatchObject({
+        stdout: "from-first\n",
+      });
+      rmSync(firstCli);
+      await expect(runner.run(["status"], { cwd: tempDir })).resolves.toMatchObject({
+        stdout: "from-second\n",
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
 
 describe.runIf(isPlatform("win32"))("createForgeCliRunner (Windows)", () => {
@@ -384,5 +427,22 @@ describe("createCachedCliPathResolver", () => {
 
     await Promise.all([resolveCliPath(), resolveCliPath(), resolveCliPath()]);
     expect(calls).toBe(1);
+  });
+
+  it("re-resolves after invalidate matches the cached path and ignores mismatched paths", async () => {
+    let calls = 0;
+    const resolveCliPath = createCachedCliPathResolver(async () => {
+      calls += 1;
+      return calls === 1 ? "/first/bin/forge-cli" : "/second/bin/forge-cli";
+    });
+
+    await expect(resolveCliPath()).resolves.toBe("/first/bin/forge-cli");
+    resolveCliPath.invalidate("/other/bin/forge-cli");
+    await expect(resolveCliPath()).resolves.toBe("/first/bin/forge-cli");
+    expect(calls).toBe(1);
+
+    resolveCliPath.invalidate("/first/bin/forge-cli");
+    await expect(resolveCliPath()).resolves.toBe("/second/bin/forge-cli");
+    expect(calls).toBe(2);
   });
 });

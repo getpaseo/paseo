@@ -9,6 +9,7 @@ import {
   defaultResolveRemoteUrl,
   parseCliJsonOutput,
   probeHostViaCliAuthStatus,
+  runWithResolvedCliPath,
   ForgeCommandError,
   type ForgeCommandFailureParams,
 } from "./forge-cli-command.js";
@@ -934,12 +935,12 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     args: string[],
     runOptions: GlabCommandRunnerOptions,
   ): Promise<GlabCommandResult> {
-    const glabPath = await resolveGlab();
-    if (!glabPath) {
-      throw new GlabCliMissingError();
-    }
     try {
-      return await runner(args, { ...runOptions, executablePath: glabPath });
+      return await runWithResolvedCliPath({
+        resolvePath: resolveGlab,
+        createMissingError: () => new GlabCliMissingError(),
+        run: (glabPath) => runner(args, { ...runOptions, executablePath: glabPath }),
+      });
     } catch (error) {
       throw glabCliRunner.normalizeError(error, { args, cwd: runOptions.cwd });
     }
@@ -1192,9 +1193,14 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         return false;
       }
       try {
-        await runner(["auth", "status", "--hostname", host], {
-          cwd: input.cwd,
-          executablePath: glabPath,
+        await runWithResolvedCliPath({
+          resolvePath: resolveGlab,
+          createMissingError: () => new GlabCliMissingError(),
+          run: (resolvedPath) =>
+            runner(["auth", "status", "--hostname", host], {
+              cwd: input.cwd,
+              executablePath: resolvedPath,
+            }),
         });
         return true;
       } catch {

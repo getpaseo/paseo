@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { z } from "zod";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
@@ -101,6 +102,37 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
+function isWindowsBatchScript(executablePath: string): boolean {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const lower = executablePath.toLowerCase();
+  return lower.endsWith(".cmd") || lower.endsWith(".bat");
+}
+
+async function isDisappearedExecutableError(
+  error: unknown,
+  executablePath: string,
+): Promise<boolean> {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  ) {
+    return true;
+  }
+  if (!isWindowsBatchScript(executablePath)) {
+    return false;
+  }
+  try {
+    await access(executablePath);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Shared shape behind the gh/glab/tea CLI adapters: an exec wrapper (10MB
  * maxBuffer, per-call env overlay merged over the binary's defaults, a
@@ -112,27 +144,36 @@ export function createForgeCliRunner(options: CreateForgeCliRunnerOptions): Forg
     options.resolveExecutablePath ?? (() => findExecutable(options.binary)),
   );
 
-  async function resolveCommandPath(requestedPath: string | undefined): Promise<string> {
-    const candidate = requestedPath ?? options.binary;
-    if (hasPathSeparator(candidate)) {
-      return candidate;
-    }
-    const resolved =
-      candidate === options.binary ? await resolveBinaryPath() : await findExecutable(candidate);
-    if (!resolved) {
-      throw options.errorClasses.createMissingError();
-    }
-    return resolved;
-  }
-
-  const run: ForgeCliRunner = async (args, runOptions) => {
-    const command = await resolveCommandPath(runOptions.executablePath);
+  function execResolved(
+    command: string,
+    args: string[],
+    runOptions: ForgeCliRunnerOptions,
+  ): Promise<ForgeCliRunnerResult> {
     return execCommand(command, args, {
       cwd: runOptions.cwd,
       envOverlay: { ...options.envOverlay, ...runOptions.envOverlay },
       maxBuffer: 10 * 1024 * 1024,
       timeout: options.timeoutMs,
     });
+  }
+
+  const run: ForgeCliRunner = async (args, runOptions) => {
+    const candidate = runOptions.executablePath ?? options.binary;
+    if (hasPathSeparator(candidate)) {
+      return execResolved(candidate, args, runOptions);
+    }
+    if (candidate === options.binary) {
+      return runWithResolvedCliPath({
+        resolvePath: resolveBinaryPath,
+        createMissingError: options.errorClasses.createMissingError,
+        run: (command) => execResolved(command, args, runOptions),
+      });
+    }
+    const resolved = await findExecutable(candidate);
+    if (!resolved) {
+      throw options.errorClasses.createMissingError();
+    }
+    return execResolved(resolved, args, runOptions);
   };
 
   function normalizeError(
@@ -204,37 +245,88 @@ export class ForgeCommandError extends Error {
   }
 }
 
+export interface CachedCliPathResolver {
+  (): Promise<string | null>;
+  invalidate(expectedPath?: string): void;
+}
+
 /**
  * Memoize a CLI path resolver (`findExecutable`) for the lifetime of a service
- * instance. A found path is cached permanently; a miss (or a rejected probe)
- * evicts the cache so a CLI installed after the daemon started is picked up
- * on the next call instead of requiring a restart. Concurrent callers during
- * resolution share the same in-flight promise.
+ * instance. A found path stays cached until invalidated (for example, when the
+ * binary disappears at launch time); a miss or rejected probe evicts the cache
+ * so a CLI installed after the daemon started is picked up on the next call.
+ * Concurrent callers during resolution share the same in-flight promise.
  */
 export function createCachedCliPathResolver(
   resolve: () => Promise<string | null>,
-): () => Promise<string | null> {
+): CachedCliPathResolver {
   let pending: Promise<string | null> | null = null;
-  return function resolveCliPath(): Promise<string | null> {
+  let resolvedPath: string | null = null;
+
+  const resolveCliPath = function resolveCliPath(): Promise<string | null> {
     if (pending) {
       return pending;
     }
     const current: Promise<string | null> = resolve()
       .then((path) => {
-        if (path === null && pending === current) {
-          pending = null;
+        if (pending === current) {
+          resolvedPath = path;
+          if (path === null) {
+            pending = null;
+          }
         }
         return path;
       })
       .catch((error: unknown) => {
         if (pending === current) {
+          resolvedPath = null;
           pending = null;
         }
         throw error;
       });
     pending = current;
     return current;
+  } as CachedCliPathResolver;
+
+  resolveCliPath.invalidate = (expectedPath?: string) => {
+    if (expectedPath === undefined || resolvedPath === expectedPath) {
+      resolvedPath = null;
+      pending = null;
+    }
   };
+
+  return resolveCliPath;
+}
+
+/**
+ * Execute an operation with a cached CLI executable path, invalidating and
+ * re-resolving once if the previously resolved executable disappeared from disk.
+ */
+export async function runWithResolvedCliPath<T>(options: {
+  resolvePath: CachedCliPathResolver;
+  createMissingError: () => Error;
+  run: (executablePath: string) => Promise<T>;
+}): Promise<T> {
+  const executablePath = await options.resolvePath();
+  if (!executablePath) {
+    throw options.createMissingError();
+  }
+  try {
+    return await options.run(executablePath);
+  } catch (error) {
+    if (!(await isDisappearedExecutableError(error, executablePath))) {
+      throw error;
+    }
+    options.resolvePath.invalidate(executablePath);
+    const refreshedPath = await options.resolvePath();
+    if (!refreshedPath) {
+      throw options.createMissingError();
+    }
+    if (refreshedPath === executablePath) {
+      throw error;
+    }
+    return options.run(refreshedPath);
+  }
 }
 
 export function bufferOrStringToString(value: unknown): string {

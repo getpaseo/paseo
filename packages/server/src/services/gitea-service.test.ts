@@ -3326,6 +3326,35 @@ describe("Gitea CLI executable resolution", () => {
     expect(seenExecutablePaths).toEqual(["/opt/tea-cli/bin/tea"]);
   });
 
+  it("re-resolves tea and retries when the previously cached executable disappears", async () => {
+    let availablePath = "/first/bin/tea";
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGiteaService({
+      resolveTeaPath: async () => availablePath,
+      resolveRemoteUrl: async () => "https://gitea.com/example-user/sample-repo.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        if (options.executablePath !== availablePath) {
+          const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return ok("[]");
+      },
+    });
+
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-pr"] });
+    availablePath = "/second/bin/tea";
+    const secondResult = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "second",
+      kinds: ["github-pr"],
+    });
+
+    expect(secondResult.featuresEnabled).toBe(true);
+    expect(seenExecutablePaths).toEqual(["/first/bin/tea", "/first/bin/tea", "/second/bin/tea"]);
+  });
+
   it.skipIf(isPlatform("win32"))(
     "probeGiteaHost and detectGiteaFamilySoftware invoke the resolved tea executable",
     async () => {

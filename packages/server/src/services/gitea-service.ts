@@ -18,6 +18,7 @@ import {
   CLI_AUTH_PROBE_TIMEOUT_MS,
   defaultResolveRemoteUrl,
   parseCliJsonOutput,
+  runWithResolvedCliPath,
   ForgeCommandError,
   type ForgeCommandFailureParams,
 } from "./forge-cli-command.js";
@@ -1216,12 +1217,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     args: string[],
     runOptions: TeaCommandRunnerOptions,
   ): Promise<TeaCommandResult> {
-    const teaPath = await resolveTea();
-    if (!teaPath) {
-      throw new TeaCliMissingError();
-    }
     try {
-      return await runner(args, { ...runOptions, executablePath: teaPath });
+      return await runWithResolvedCliPath({
+        resolvePath: resolveTea,
+        createMissingError: () => new TeaCliMissingError(),
+        run: (teaPath) => runner(args, { ...runOptions, executablePath: teaPath }),
+      });
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });
     }
