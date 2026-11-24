@@ -152,7 +152,7 @@ describe("normalizeStoredHostProfile", () => {
     });
   });
 
-  it("gives a host stored before appearance existed the default appearance", () => {
+  it("gives a host stored before appearance existed the default appearance without an icon key", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_old",
       connections: [
@@ -160,7 +160,8 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "none", icon: null, badgeDisplay: null });
+    expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect(profile && "icon" in profile.appearance).toBe(false);
   });
 
   it("loads a stored appearance the user chose", () => {
@@ -175,7 +176,7 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.appearance).toEqual({ color: "teal", icon: "laptop", badgeDisplay: "icon" });
   });
 
-  it("falls back an unknown stored icon to auto without dropping the saved host", () => {
+  it("preserves an unknown stored icon intact without dropping the saved host", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_future_icon",
       appearance: { color: "violet", icon: "future-device", badgeDisplay: "name" },
@@ -184,7 +185,11 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "violet", icon: null, badgeDisplay: "name" });
+    expect(profile?.appearance).toEqual({
+      color: "violet",
+      icon: "future-device",
+      badgeDisplay: "name",
+    });
   });
 
   it("normalizes stored Remote SSH connection parameters", () => {
@@ -351,7 +356,8 @@ describe("upsertHostConnectionInProfiles", () => {
       connection,
     });
 
-    expect(profile.appearance).toEqual({ color: "none", icon: null, badgeDisplay: null });
+    expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect("icon" in profile.appearance).toBe(false);
   });
 
   it("keeps the appearance the user chose when the host reconnects", () => {

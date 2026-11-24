@@ -17,32 +17,41 @@ function host(
 }
 
 describe("normalizeStoredHostAppearance", () => {
-  it("defaults when the stored registry predates the field or holds junk", () => {
-    const expected = { color: "none", icon: null, badgeDisplay: null };
+  it("defaults without writing an icon field so untouched records stay downgrade-safe", () => {
+    const expected = { color: "none", badgeDisplay: null };
     expect(normalizeStoredHostAppearance(undefined)).toEqual(expected);
     expect(normalizeStoredHostAppearance(null)).toEqual(expected);
     expect(normalizeStoredHostAppearance("x")).toEqual(expected);
     expect(normalizeStoredHostAppearance({})).toEqual(expected);
     expect(normalizeStoredHostAppearance({ color: "chartreuse" })).toEqual(expected);
     expect(normalizeStoredHostAppearance({ badgeDisplay: "loud" })).toEqual(expected);
+    expect("icon" in defaultHostAppearance()).toBe(false);
   });
 
-  it("falls back an unknown stored icon to auto (null) without discarding color or badge display", () => {
-    expect(
-      normalizeStoredHostAppearance({ color: "teal", icon: "spaceship", badgeDisplay: "icon" }),
-    ).toEqual({
+  it("preserves an unknown stored icon on disk while falling back at render time", () => {
+    const normalized = normalizeStoredHostAppearance({
       color: "teal",
-      icon: null,
+      icon: "spaceship",
       badgeDisplay: "icon",
     });
+    expect(normalized).toEqual({
+      color: "teal",
+      icon: "spaceship",
+      badgeDisplay: "icon",
+    });
+    expect(resolveHostIcon({ appearance: normalized })).toBe("server");
+    expect(resolveHostIcon({ appearance: normalized, detectedMachineKind: "laptop" })).toBe(
+      "laptop",
+    );
   });
 
-  it("defaults missing icon on stored entries that predate host icons to auto (null)", () => {
-    expect(normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" })).toEqual({
+  it("keeps icon absent on stored entries that predate host icons", () => {
+    const normalized = normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" });
+    expect(normalized).toEqual({
       color: "teal",
-      icon: null,
       badgeDisplay: "icon",
     });
+    expect("icon" in normalized).toBe(false);
   });
 
   it("round-trips a value the user actually chose", () => {

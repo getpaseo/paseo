@@ -1147,6 +1147,73 @@ describe("HostRuntimeController", () => {
     });
   });
 
+  it("keeps an on-demand active latency sample when a slower probe on another connection finishes", async () => {
+    useHostRuntimeClock();
+    const initialClient = new FakeDaemonClient();
+    initialClient.setConnectionState({ status: "connected" });
+    initialClient.ping = async () => ({ rttMs: 14 });
+    const relayProbeStarted = createDeferred<void>();
+    const slowRelayProbe = createDeferred<{
+      client: DaemonClient;
+      serverId: string;
+      hostname: string | null;
+    }>();
+    const relayClient = new FakeDaemonClient();
+    relayClient.setConnectionState({ status: "connected" });
+    relayClient.ping = async () => ({ rttMs: 90 });
+
+    const controller = new HostRuntimeController({
+      host: makeHost(),
+      deps: {
+        ...makeDeps({}, []),
+        connectToDaemon: async ({ host, connection }) => {
+          if (connection.id === "relay:relay.paseo.sh:443") {
+            relayProbeStarted.resolve();
+            return slowRelayProbe.promise;
+          }
+          return {
+            client: initialClient as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: null,
+          };
+        },
+      },
+    });
+
+    // Startup runs the first probe cycle immediately; wait until the slower relay probe is in
+    // flight, then measure active latency on demand before the relay probe resolves.
+    const startPromise = controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: "direct:lan:6767",
+        existingClient: initialClient as unknown as DaemonClient,
+      },
+    });
+    await relayProbeStarted.promise;
+
+    await controller.refreshActiveLatency();
+    expect(controller.getSnapshot().probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "available",
+      latencyMs: 14,
+    });
+
+    slowRelayProbe.resolve({
+      client: relayClient as unknown as DaemonClient,
+      serverId: "srv_test",
+      hostname: null,
+    });
+    await startPromise;
+
+    expect(controller.getSnapshot().probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "available",
+      latencyMs: 14,
+    });
+    expect(controller.getSnapshot().probeByConnectionId.get("relay:relay.paseo.sh:443")).toEqual({
+      status: "available",
+      latencyMs: 90,
+    });
+  });
+
   it.each([12, null])(
     "falls back to relay when the direct client disconnects with heartbeat RTT %s",
     async (heartbeatRtt) => {
@@ -3401,9 +3468,9 @@ describe("HostRuntimeStore", () => {
 
     expect(store.getHosts()[0]?.appearance).toEqual({
       color: "none",
-      icon: null,
       badgeDisplay: null,
     });
+    expect("icon" in (store.getHosts()[0]?.appearance ?? {})).toBe(false);
 
     store.syncHosts([]);
   });
@@ -3427,13 +3494,13 @@ describe("HostRuntimeStore", () => {
     await hostListChanged;
 
     const updated = store.getHosts()[0];
-    expect(updated?.appearance).toEqual({ color: "teal", icon: null, badgeDisplay: null });
+    expect(updated?.appearance).toEqual({ color: "teal", badgeDisplay: null });
+    expect("icon" in (updated?.appearance ?? {})).toBe(false);
     expect(updated?.updatedAt).not.toBe(host.updatedAt);
 
     const persisted = await storage.getItem("@paseo:daemon-registry");
     expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
       color: "teal",
-      icon: null,
       badgeDisplay: null,
     });
 
@@ -3443,7 +3510,7 @@ describe("HostRuntimeStore", () => {
   it("records a chosen host icon and resets to auto without disturbing color or badge display", async () => {
     const host = makeHost({
       serverId: "srv_appearance",
-      appearance: { color: "violet", icon: null, badgeDisplay: "icon" },
+      appearance: { color: "violet", badgeDisplay: "icon" },
     });
     const storage = createMemoryHostRuntimeStorage();
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -3476,16 +3543,16 @@ describe("HostRuntimeStore", () => {
 
     const resetToAuto = onceHostListMatches(
       store,
-      () => store.getHosts()[0]?.appearance.icon === null,
+      () => store.getHosts()[0]?.appearance.icon === undefined,
     );
     await store.setHostIcon("srv_appearance", null);
     await resetToAuto;
 
     expect(store.getHosts()[0]?.appearance).toEqual({
       color: "violet",
-      icon: null,
       badgeDisplay: "icon",
     });
+    expect("icon" in (store.getHosts()[0]?.appearance ?? {})).toBe(false);
 
     store.syncHosts([]);
   });

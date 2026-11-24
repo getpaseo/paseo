@@ -174,12 +174,16 @@ function AllHostsOption({
   );
 }
 
-function FooterActionRow({
+function ActionOptionRow({
   kind,
+  active,
+  showDivider,
   onPress,
   testID,
 }: {
   kind: "add" | "enableBuiltInDaemon";
+  active: boolean;
+  showDivider: boolean;
   onPress: () => void;
   testID?: string;
 }): ReactElement {
@@ -190,30 +194,33 @@ function FooterActionRow({
   const label = kind === "add" ? t("settings.addHost") : t("settings.enableBuiltInDaemon");
 
   return (
-    <View
-      style={styles.rowEnvelope}
-      onPointerEnter={handlePointerEnter}
-      onPointerLeave={handlePointerLeave}
-    >
-      <PressHighlight
-        testID={testID}
-        onPress={onPress}
-        highlightStyle={styles.rowHighlighted}
-        style={[styles.actionRow, hovered && styles.rowHighlighted]}
-        accessibilityRole="button"
-        accessibilityLabel={label}
+    <View>
+      {showDivider ? <View style={styles.actionSectionDivider} /> : null}
+      <View
+        style={styles.rowEnvelope}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       >
-        <View style={styles.leadingRailSlot}>
-          {kind === "add" ? (
-            <ThemedPlus size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
-          ) : (
-            <ThemedServer size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
-          )}
-        </View>
-        <Text style={styles.actionLabel} numberOfLines={1}>
-          {label}
-        </Text>
-      </PressHighlight>
+        <PressHighlight
+          testID={testID}
+          onPress={onPress}
+          highlightStyle={styles.rowHighlighted}
+          style={[styles.actionRow, (hovered || active) && styles.rowHighlighted]}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+        >
+          <View style={styles.leadingRailSlot}>
+            {kind === "add" ? (
+              <ThemedPlus size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
+            ) : (
+              <ThemedServer size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
+            )}
+          </View>
+          <Text style={styles.actionLabel} numberOfLines={1}>
+            {label}
+          </Text>
+        </PressHighlight>
+      </View>
     </View>
   );
 }
@@ -286,29 +293,45 @@ export function HostPicker({
     if (includeAllHost) {
       hostOptions.unshift({ id: ALL_HOSTS_OPTION_ID, label: t("sidebar.display.hostFilter.all") });
     }
+    if (includeAddHost) {
+      hostOptions.push({ id: ADD_HOST_OPTION_ID, label: t("settings.addHost") });
+    }
+    if (includeEnableBuiltInDaemon) {
+      hostOptions.push({
+        id: ENABLE_BUILT_IN_DAEMON_OPTION_ID,
+        label: t("settings.enableBuiltInDaemon"),
+      });
+    }
     return hostOptions;
-  }, [orderedHosts, includeAllHost, t]);
+  }, [orderedHosts, includeAllHost, includeAddHost, includeEnableBuiltInDaemon, t]);
+
+  let firstActionOptionId: string | null = null;
+  if (includeAddHost) {
+    firstActionOptionId = ADD_HOST_OPTION_ID;
+  } else if (includeEnableBuiltInDaemon) {
+    firstActionOptionId = ENABLE_BUILT_IN_DAEMON_OPTION_ID;
+  }
 
   const isSearchable = searchable === true && orderedHosts.length > SEARCHABLE_THRESHOLD;
   const resolvedTitle = title ?? t("sidebar.actions.hosts");
 
   const handleSelect = useCallback(
     (id: string) => {
+      if (id === ADD_HOST_OPTION_ID) {
+        onOpenChange(false);
+        onAddHost?.();
+        return;
+      }
+      if (id === ENABLE_BUILT_IN_DAEMON_OPTION_ID) {
+        onOpenChange(false);
+        onEnableBuiltInDaemon?.();
+        return;
+      }
       onSelect(id);
       onOpenChange(false);
     },
-    [onOpenChange, onSelect],
+    [onAddHost, onEnableBuiltInDaemon, onOpenChange, onSelect],
   );
-
-  const handleAddHost = useCallback(() => {
-    onOpenChange(false);
-    onAddHost?.();
-  }, [onAddHost, onOpenChange]);
-
-  const handleEnableBuiltInDaemon = useCallback(() => {
-    onOpenChange(false);
-    onEnableBuiltInDaemon?.();
-  }, [onEnableBuiltInDaemon, onOpenChange]);
 
   const renderOption = useCallback<RenderHostOption>(
     ({ option, selected, active, onPress }) => {
@@ -319,6 +342,29 @@ export function HostPicker({
             selected={selected}
             onPress={onPress}
             testID={hostOptionTestID?.(option.id)}
+          />
+        );
+      }
+      if (option.id === ADD_HOST_OPTION_ID) {
+        return (
+          <ActionOptionRow
+            kind="add"
+            active={active}
+            showDivider={firstActionOptionId === ADD_HOST_OPTION_ID && orderedHosts.length > 0}
+            onPress={onPress}
+            testID={addHostTestID}
+          />
+        );
+      }
+      if (option.id === ENABLE_BUILT_IN_DAEMON_OPTION_ID) {
+        return (
+          <ActionOptionRow
+            kind="enableBuiltInDaemon"
+            active={active}
+            showDivider={
+              firstActionOptionId === ENABLE_BUILT_IN_DAEMON_OPTION_ID && orderedHosts.length > 0
+            }
+            onPress={onPress}
           />
         );
       }
@@ -335,28 +381,14 @@ export function HostPicker({
         />
       );
     },
-    [appearanceByServerId, hostOptionTestID],
+    [
+      addHostTestID,
+      appearanceByServerId,
+      firstActionOptionId,
+      hostOptionTestID,
+      orderedHosts.length,
+    ],
   );
-
-  const footer = useMemo(() => {
-    if (!includeAddHost && !includeEnableBuiltInDaemon) return undefined;
-    return (
-      <View style={styles.footerGroup}>
-        {includeAddHost ? (
-          <FooterActionRow kind="add" onPress={handleAddHost} testID={addHostTestID} />
-        ) : null}
-        {includeEnableBuiltInDaemon ? (
-          <FooterActionRow kind="enableBuiltInDaemon" onPress={handleEnableBuiltInDaemon} />
-        ) : null}
-      </View>
-    );
-  }, [
-    addHostTestID,
-    handleAddHost,
-    handleEnableBuiltInDaemon,
-    includeAddHost,
-    includeEnableBuiltInDaemon,
-  ]);
 
   return (
     <>
@@ -369,7 +401,6 @@ export function HostPicker({
         searchable={isSearchable}
         searchPlaceholder={t("sidebar.host.searchPlaceholder")}
         title={resolvedTitle}
-        footer={footer}
         open={open}
         onOpenChange={onOpenChange}
         anchorRef={anchorRef}
@@ -442,8 +473,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     flexShrink: 0,
   },
-  footerGroup: {
-    paddingVertical: theme.spacing[1],
+  actionSectionDivider: {
+    height: theme.borderWidth[1],
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[1],
   },
   actionRow: {
     flexDirection: "row",

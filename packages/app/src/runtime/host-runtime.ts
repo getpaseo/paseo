@@ -989,11 +989,15 @@ export class HostRuntimeController {
     }
   }
 
+  private setConnectionProbe(connectionId: string, probe: ConnectionProbeState): void {
+    const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
+    probeByConnectionId.set(connectionId, probe);
+    this.updateSnapshot({ probeByConnectionId });
+  }
+
   private recordActiveLatencySample(connectionId: string, rttMs: number): void {
     this.recordActiveRttSample(rttMs, performance.now());
-    const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
-    probeByConnectionId.set(connectionId, { status: "available", latencyMs: rttMs });
-    this.updateSnapshot({ probeByConnectionId });
+    this.setConnectionProbe(connectionId, { status: "available", latencyMs: rttMs });
   }
 
   async runProbeCycleNow(): Promise<void> {
@@ -1052,30 +1056,32 @@ export class HostRuntimeController {
       return;
     }
 
-    const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
+    const initialProbes = new Map(this.snapshot.probeByConnectionId);
     for (const connection of connectionsToProbe) {
       this.connectionLastProbedAt.set(connection.id, performance.now());
-      const existingProbe = probeByConnectionId.get(connection.id);
+      const existingProbe = initialProbes.get(connection.id);
       const shouldPreserveActiveLatency =
         isOnline && connection.id === activeConnectionId && existingProbe?.status === "available";
       if (!shouldPreserveActiveLatency) {
-        probeByConnectionId.set(connection.id, {
+        initialProbes.set(connection.id, {
           status: "pending",
           latencyMs: null,
         });
       }
     }
-    this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
+    this.updateSnapshot({ probeByConnectionId: initialProbes });
 
     let remaining = connectionsToProbe.length;
     let probeAuthFailure: "password_required" | "incorrect_password" | null = null;
     let activationLock: Promise<void> | null = null;
 
-    const publishProbeState = (): void => {
+    // Merge each connection result into the live snapshot map so a slow probe on another
+    // connection cannot overwrite a fresher sample (e.g. from refreshActiveLatency) on the active one.
+    const publishConnectionProbe = (connectionId: string, probe: ConnectionProbeState): void => {
       if (!this.isCurrentProbeRequest(requestVersion)) {
         return;
       }
-      this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
+      this.setConnectionProbe(connectionId, probe);
     };
 
     const maybeActivateFirstAvailable = async (
@@ -1104,6 +1110,7 @@ export class HostRuntimeController {
         return;
       }
 
+      const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
       const currentActiveConnectionId = this.snapshot.activeConnectionId;
       if (currentActiveConnectionId) {
         this.reconcileActiveProbeWithClient(currentActiveConnectionId, probeByConnectionId);
@@ -1259,11 +1266,10 @@ export class HostRuntimeController {
 
             if (activeClient) {
               if (activeClient.getConnectionState().status !== "connected") {
-                probeByConnectionId.set(connection.id, {
+                publishConnectionProbe(connection.id, {
                   status: "unavailable",
                   latencyMs: null,
                 });
-                publishProbeState();
                 return;
               }
               const rttMs = activeClient.getLastLivenessRttMs();
@@ -1272,11 +1278,10 @@ export class HostRuntimeController {
               }
               if (rttMs !== null) {
                 this.recordActiveRttSample(rttMs, performance.now());
-                probeByConnectionId.set(connection.id, {
+                publishConnectionProbe(connection.id, {
                   status: "available",
                   latencyMs: rttMs,
                 });
-                publishProbeState();
               }
               return;
             }
@@ -1286,11 +1291,10 @@ export class HostRuntimeController {
               return;
             }
 
-            probeByConnectionId.set(connection.id, {
+            publishConnectionProbe(connection.id, {
               status: "available",
               latencyMs: rttMs,
             });
-            publishProbeState();
           } catch (error) {
             if (this.isCurrentProbeRequest(requestVersion)) {
               const authFailure = getConnectionAuthFailureReason(error);
@@ -1298,11 +1302,10 @@ export class HostRuntimeController {
                 this.authRejectedConnectionIds.add(connection.id);
                 probeAuthFailure = authFailure;
               }
-              probeByConnectionId.set(connection.id, {
+              publishConnectionProbe(connection.id, {
                 status: "unavailable",
                 latencyMs: null,
               });
-              publishProbeState();
             }
           } finally {
             if (connectedClient && shouldCloseClient) {
@@ -2488,10 +2491,13 @@ export class HostRuntimeStore {
   }
 
   async setHostIcon(serverId: string, icon: HostIcon | null): Promise<void> {
-    await this.updateHostAppearance(serverId, (host) => ({
-      ...host,
-      appearance: { ...host.appearance, icon },
-    }));
+    await this.updateHostAppearance(serverId, (host) => {
+      const { icon: _previousIcon, ...rest } = host.appearance;
+      return {
+        ...host,
+        appearance: icon ? { ...rest, icon } : rest,
+      };
+    });
   }
 
   async setHostBadgeDisplay(serverId: string, badgeDisplay: HostBadgeDisplay): Promise<void> {

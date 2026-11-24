@@ -366,6 +366,7 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
     (state) => state.sessions[host.serverId]?.serverInfo?.machineKind ?? null,
   );
   const detectedIcon = normalizeDetectedHostIcon(detectedMachineKind);
+  const selectedIcon = normalizeDetectedHostIcon(host.appearance.icon);
   const resolvedIcon = resolveHostIcon({ appearance: host.appearance, detectedMachineKind });
   const isLocalHost = localDaemon.status === "resolved" && localDaemon.serverId === host.serverId;
   const badgeDisplay = resolveHostBadgeDisplay({
@@ -420,7 +421,7 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
           </View>
         </View>
         <IconRow
-          icon={host.appearance.icon}
+          icon={selectedIcon}
           detectedIcon={detectedIcon}
           resolvedIcon={resolvedIcon}
           color={host.appearance.color}

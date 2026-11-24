@@ -37,34 +37,40 @@ export type HostBadgeDisplay = "name" | "icon" | "hidden";
 export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon", "hidden"];
 
 /**
- * Per-device host presentation. Both `icon` and `badgeDisplay` are null while untouched so
- * runtime defaults apply (daemon-detected machine kind for icon; hidden for local / name for
- * remote on badgeDisplay) without baking runtime facts at parse time.
+ * Per-device host presentation.
+ * - `icon` is omitted while untouched ("Auto") so existing records stay byte-for-byte compatible
+ *   with older builds whose stored appearance schema is strict. An unknown icon string written by
+ *   a newer build is preserved on disk and falls back at render time via `resolveHostIcon`.
+ * - `badgeDisplay` is null while untouched so runtime defaults apply (hidden for local / name for
+ *   remote) without baking runtime facts at parse time.
  */
 export interface HostAppearance {
   color: HostColor;
-  icon: HostIcon | null;
+  icon?: string;
   badgeDisplay: HostBadgeDisplay | null;
 }
 
 const StoredHostAppearanceSchema = z.strictObject({
   color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
-  // Loose string on disk so an icon added by a newer build falls back to auto ("null") instead of
-  // failing the strict host parse and hiding the saved host.
+  // Optional loose string on disk so untouched hosts stay readable after a downgrade and an icon
+  // added by a newer build survives read/write instead of being dropped or overwritten.
   icon: z.string().nullable().optional(),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
 });
 
 export const HostAppearanceSchema = StoredHostAppearanceSchema.transform(
-  (value): HostAppearance => ({
-    color: value.color,
-    icon: normalizeDetectedHostIcon(value.icon),
-    badgeDisplay: value.badgeDisplay,
-  }),
+  (value): HostAppearance => {
+    const icon = value.icon?.trim();
+    return {
+      color: value.color,
+      ...(icon ? { icon } : {}),
+      badgeDisplay: value.badgeDisplay,
+    };
+  },
 );
 
 export function defaultHostAppearance(): HostAppearance {
-  return { color: "none", icon: null, badgeDisplay: null };
+  return { color: "none", badgeDisplay: null };
 }
 
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
@@ -76,10 +82,11 @@ export function resolveHostIcon(input: {
   appearance: HostAppearance;
   detectedMachineKind?: string | null;
 }): HostIcon {
-  if (input.appearance.icon) {
-    return input.appearance.icon;
-  }
-  return normalizeDetectedHostIcon(input.detectedMachineKind) ?? DEFAULT_HOST_ICON;
+  return (
+    normalizeDetectedHostIcon(input.appearance.icon) ??
+    normalizeDetectedHostIcon(input.detectedMachineKind) ??
+    DEFAULT_HOST_ICON
+  );
 }
 
 export function resolveHostBadgeDisplay(input: {

@@ -155,3 +155,30 @@ test("customizes a host badge and preserves its appearance after reload", async 
     });
   });
 });
+
+base(
+  "activates Add host from the sidebar host picker via focus+Enter and Arrow+Enter",
+  async ({ page }) => {
+    await gotoAppShell(page);
+    const trigger = page.getByTestId("sidebar-hosts-trigger");
+    await expect(trigger).toBeVisible();
+
+    // Focus + Enter on Add host must open the Add connection dialog rather than selecting the active host.
+    const addConnectionDialog = page.getByRole("dialog").filter({ hasText: "Add connection" });
+    await trigger.click();
+    const addHostButton = page.getByRole("button", { name: "Add host", exact: true });
+    await expect(addHostButton).toBeVisible();
+    await addHostButton.focus();
+    await page.keyboard.press("Enter");
+    await expect(addConnectionDialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(addConnectionDialog).toBeHidden();
+
+    // ArrowDown + Enter must also reach Add host from the host list.
+    await trigger.click();
+    await expect(addHostButton).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(addConnectionDialog).toBeVisible();
+  },
+);
