@@ -12,9 +12,11 @@ const OPENCODE_CLI = `
 import { appendFileSync, readFileSync } from "node:fs";
 const state = JSON.parse(readFileSync(new URL("./opencode-state.json", import.meta.url), "utf8"));
 const command = process.argv.slice(2).join(" ");
+const colors = process.env.FORCE_COLOR && !process.env.NO_COLOR;
 appendFileSync(new URL("./opencode-calls.log", import.meta.url), command + "\\n");
 if (command === "--version" && state.hangs) setInterval(() => {}, 60_000);
-else if (command === "--version" && state.version) console.log(state.version);
+else if (command === "--version" && state.version)
+  console.log(colors && state.coloredVersion ? state.coloredVersion : state.version);
 else if (command === "auth export --standalone" && state.exported !== undefined)
   process.stdout.write(state.exported);
 else {
@@ -32,7 +34,12 @@ let fixtureDirectory: string;
 let authFile: string;
 let install: OpenCodeInstall;
 
-function installState(state: { version?: string; exported?: string; hangs?: boolean }) {
+function installState(state: {
+  version?: string;
+  coloredVersion?: string;
+  exported?: string;
+  hangs?: boolean;
+}) {
   return writeFile(join(fixtureDirectory, "opencode-state.json"), JSON.stringify(state));
 }
 /** OpenCode 1 keeps logins in auth.json and has no `auth export`. */
@@ -47,7 +54,11 @@ function openCode2(credentials: Credential[]) {
     active: true,
     ...credential,
   }));
-  return installState({ version: "opencode v2.4.1", exported: JSON.stringify(exported) });
+  return installState({
+    version: "opencode v2.4.1",
+    coloredVersion: "\u001b[1mopencode\u001b[0m \u001b[2mv\u001b[0m\u001b[1m2.4.1\u001b[0m",
+    exported: JSON.stringify(exported),
+  });
 }
 async function openCodeCalls() {
   const log = await readFile(join(fixtureDirectory, "opencode-calls.log"), "utf8");
@@ -181,6 +192,14 @@ test("uses the Go key OpenCode 2 marks active instead of a stale auth.json key",
     "auth export --standalone",
     "auth export --standalone",
   ]);
+});
+
+// OpenCode 2 colors its version when the environment forces colors, even into a pipe.
+test("recognizes OpenCode 2 when the daemon's environment forces terminal colors", async () => {
+  await openCode2([goKey("listed-key")]);
+  const { NO_COLOR: _unset, ...env } = process.env;
+  const colored = { ...install, env: { ...env, FORCE_COLOR: "1" } };
+  expect(await discover(colored)).toEqual([account("credentials")]);
 });
 
 test("discovers OpenCode 2 Go usage without an auth.json", async () => {

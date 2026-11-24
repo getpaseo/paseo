@@ -63,10 +63,7 @@ export function installedOpenCode(env: NodeJS.ProcessEnv = process.env): OpenCod
 export async function loginStore(install: OpenCodeInstall): Promise<Input["store"]> {
   let version: string;
   try {
-    const { stdout } = await execCommand(install.command, [...install.args, "--version"], {
-      env: install.env,
-      timeout: 5_000,
-    });
+    const { stdout } = await run(install, ["--version"], { timeout: 5_000 });
     version = stdout.trim();
   } catch (error) {
     // A check that was cut off does not show which store OpenCode uses.
@@ -92,6 +89,18 @@ export async function readLogins(install: OpenCodeInstall, store: Input["store"]
   return { opencode: selected("opencode"), go: selected("opencode-go") };
 }
 
+/** Runs OpenCode for plain output. OpenCode 2 colors it when the environment forces colors. */
+function run(
+  install: OpenCodeInstall,
+  args: string[],
+  options: { timeout: number; maxBuffer?: number },
+) {
+  return execCommand(install.command, [...install.args, ...args], {
+    ...options,
+    env: { ...install.env, NO_COLOR: "1" },
+  });
+}
+
 async function readFileKey(path: string): Promise<string | null> {
   try {
     const auth = fileSchema.parse(JSON.parse(await readFile(path, "utf8")));
@@ -103,12 +112,11 @@ async function readFileKey(path: string): Promise<string | null> {
 
 async function exportCredentials(install: OpenCodeInstall) {
   try {
-    const { stdout } = await execCommand(
-      install.command,
-      // Without --standalone the command starts OpenCode's background service and leaves it running.
-      [...install.args, "auth", "export", "--standalone"],
-      { env: install.env, timeout: 10_000, maxBuffer: 16 * 1024 * 1024 },
-    );
+    // Without --standalone the command starts OpenCode's background service and leaves it running.
+    const { stdout } = await run(install, ["auth", "export", "--standalone"], {
+      timeout: 10_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
     return exportSchema.parse(JSON.parse(stdout));
   } catch {
     // The command's output holds every secret, so its error is not passed on.
