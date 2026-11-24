@@ -354,7 +354,10 @@ async function resolveArchiveTarget(
     return {
       backing: {
         ...backing,
-        untrustedSource: firstUntrustedSource(backing.untrustedSource, activeOnCheckout),
+        untrustedSource: firstUntrustedSource(
+          isArchived ? null : backing.untrustedSource,
+          activeOnCheckout,
+        ),
       },
       teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
       checkoutWorkspaceIds,
@@ -384,7 +387,7 @@ async function resolveArchiveTarget(
   return {
     backing: {
       ...resolvedBacking,
-      untrustedSource: firstUntrustedSource(resolvedBacking.untrustedSource, targetWorkspaces),
+      untrustedSource: firstUntrustedSource(null, targetWorkspaces),
     },
     teardownTargets: targetWorkspaces.map((workspace) => ({
       workspaceId: workspace.workspaceId,
@@ -659,9 +662,10 @@ async function resolveCheckoutTeardownPlan(
   const teardownGate = checkoutUntrusted
     ? { allowed: [] as Array<{ workspaceId: string; cwd: string }>, blockedSource: null }
     : await filterAllowedTeardownTargets(dependencies, teardownTargets, checkoutWorkspaceIds);
-  const untrustedSourceToPersist = metadataUntrustedSource
-    ? null
-    : (backing.untrustedSource ?? teardownGate.blockedSource);
+  const untrustedSourceToPersist =
+    teardownTargets.length === 0 || metadataUntrustedSource
+      ? null
+      : (backing.untrustedSource ?? teardownGate.blockedSource);
   if (untrustedSourceToPersist) {
     // Backfill checkout metadata before removal so pre-upgrade unapproved
     // checkouts keep their block if the directory is retained on disk.

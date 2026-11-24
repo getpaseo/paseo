@@ -275,7 +275,7 @@ export function createWorkspaceProvisioningService(deps: {
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
       const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
-      const inheritedUntrustedSource = await resolveDirectoryUntrustedSource(
+      const inheritedUntrustedSource = await resolveCheckoutUntrustedSource(
         checkoutRoot,
         baseMetadata?.untrustedSource,
       );
@@ -427,15 +427,19 @@ export function createWorkspaceProvisioningService(deps: {
     ).workspaceId;
   }
 
-  async function resolveDirectoryUntrustedSource(
+  async function resolveCheckoutUntrustedSource(
     checkoutRoot: string,
-    metadataUntrustedSource: UntrustedWorkspaceSource | undefined,
+    knownMetadataUntrustedSource?: UntrustedWorkspaceSource,
   ): Promise<UntrustedWorkspaceSource | undefined> {
+    const metadataUntrustedSource =
+      knownMetadataUntrustedSource ??
+      (await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null))?.untrustedSource;
     if (metadataUntrustedSource) {
       return metadataUntrustedSource;
     }
     const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-    return (await workspaceRegistry.listAll()).find(
+    const active = await workspaceRegistry.listActive();
+    return active.find(
       (candidate) =>
         Boolean(candidate.untrustedSource) &&
         matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
@@ -448,20 +452,9 @@ export function createWorkspaceProvisioningService(deps: {
     if (workspace.untrustedSource) {
       return workspace;
     }
-    const checkoutRoot = workspace.worktreeRoot ?? workspace.cwd;
-    const metadataUntrustedSource = (
-      await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null)
-    )?.untrustedSource;
-    if (metadataUntrustedSource) {
-      return { ...workspace, untrustedSource: metadataUntrustedSource };
-    }
-    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-    const active = await workspaceRegistry.listActive();
-    const inheritedUntrustedSource = active.find(
-      (candidate) =>
-        Boolean(candidate.untrustedSource) &&
-        matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
-    )?.untrustedSource;
+    const inheritedUntrustedSource = await resolveCheckoutUntrustedSource(
+      workspace.worktreeRoot ?? workspace.cwd,
+    );
     return inheritedUntrustedSource
       ? { ...workspace, untrustedSource: inheritedUntrustedSource }
       : workspace;

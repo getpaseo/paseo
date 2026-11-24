@@ -1307,3 +1307,43 @@ test("unarchiving an approved workspace onto a retained unapproved checkout inhe
   expect(restored.archivedAt).toBeNull();
   expect(restored.untrustedSource).toEqual(untrustedSource);
 });
+
+test("creating a directory workspace on a fresh checkout ignores archived unapproved records on the same path", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-dir-reused-path");
+  const worktreePath = path.join(tmpDir, "worktree-dir-reused-path");
+  mkdirSync(sourceCwd, { recursive: true });
+  mkdirSync(worktreePath, { recursive: true });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const oldUntrusted = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "contributor/pr-58",
+    baseBranch: "main",
+    title: null,
+    untrustedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 58,
+      headRepository: "contributor/repo",
+    },
+  });
+  await workspaceRegistry.archive(oldUntrusted.workspaceId, ARCHIVED_AT);
+
+  await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "feature/fresh-approved",
+    baseBranch: "main",
+    title: null,
+  });
+
+  const extra = await provisioning.createWorkspaceForDirectory(worktreePath);
+
+  expect(extra.untrustedSource).toBeUndefined();
+});

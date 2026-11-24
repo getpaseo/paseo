@@ -588,6 +588,85 @@ describe("archiveByScope", () => {
     expect(readFileSync(marker, "utf8")).toBe("ran");
   });
 
+  test("retrying archive on an already-archived unapproved workspace does not mark a fresh worktree at the same path", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const markerName = "retry-archived-reused-path.log";
+    const marker = path.join(repoDir, markerName);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry archived"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "reused-after-retry");
+    const oldArchivedId = "ws-old-archived-unapproved";
+    const freshWorkspaceId = "ws-fresh-approved";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId: freshWorkspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.getWorkspace = async (workspaceId) =>
+      workspaceId === oldArchivedId
+        ? {
+            workspaceId: oldArchivedId,
+            projectId: "proj-1",
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            worktreeRoot: worktree.worktreePath,
+            isPaseoOwnedWorktree: true,
+            mainRepoRoot: repoDir,
+            untrustedSource: {
+              kind: "change_request",
+              forge: "github",
+              number: 42,
+              headRepository: "contributor/paseo",
+            },
+            archivedAt: "2026-11-24T00:00:00.000Z",
+            createdAt: "2026-11-24T00:00:00.000Z",
+            updatedAt: "2026-11-24T00:00:00.000Z",
+          }
+        : null;
+    deps.isCheckoutUntrusted = async () => true;
+
+    const retry = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: oldArchivedId },
+      requestId: "req-retry-archived",
+    });
+    expect(retry.archivedWorkspaceIds).toEqual([]);
+    expect(retry.removedDirectory).toBe(false);
+    expect(
+      (await readPaseoWorktreeMetadata(worktree.worktreePath))?.untrustedSource,
+    ).toBeUndefined();
+
+    const fresh = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: freshWorkspaceId },
+      requestId: "req-archive-fresh",
+    });
+    expect(fresh.archivedWorkspaceIds).toEqual([freshWorkspaceId]);
+    expect(fresh.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(readFileSync(marker, "utf8")).toBe("ran");
+  });
+
   test("workspace scope skips teardown when retained checkout metadata carries untrustedSource", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const markerName = "retained-metadata-teardown.log";
