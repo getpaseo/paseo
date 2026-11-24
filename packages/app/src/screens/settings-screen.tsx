@@ -1168,6 +1168,7 @@ function SettingsDetailPane({
   isCompactLayout,
   detailTitle,
   detailActions,
+  keyboardAware,
   detailWidth,
   onBack,
   onRegisterBeforeLeave,
@@ -1177,6 +1178,7 @@ function SettingsDetailPane({
   isCompactLayout: boolean;
   detailTitle: string | undefined;
   detailActions: React.ReactNode;
+  keyboardAware: boolean;
   detailWidth: React.ComponentProps<typeof PageLayout>["width"];
   onBack: () => void;
   onRegisterBeforeLeave: (guard: SettingsBeforeLeaveGuard | null) => void;
@@ -1207,6 +1209,7 @@ function SettingsDetailPane({
             title={pageTitle}
             onBack={isCompactLayout ? onBack : undefined}
             actions={detailActions}
+            keyboardAware={keyboardAware}
             width={detailWidth}
             titleTestID={isCompactLayout ? undefined : "settings-detail-header-title"}
             testID={isCompactLayout ? undefined : "settings-detail-scroll-body"}
@@ -1618,6 +1621,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           isCompactLayout={isCompactLayout}
           detailTitle={detailTitle}
           detailActions={detailActions}
+          keyboardAware={pluginPage !== null}
           detailWidth={detailWidth}
           onBack={handleBackFromDetail}
           onRegisterBeforeLeave={registerBeforeLeave}
