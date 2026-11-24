@@ -5341,3 +5341,47 @@ it("skips pagination after the last exact observer releases its PR", async () =>
     vi.useRealTimers();
   }
 });
+
+it("forwards the resolved gh executablePath to the command runner", async () => {
+  const seenExecutablePaths: Array<string | undefined> = [];
+  const service = createGitHubService({
+    resolveGhPath: async () => "/opt/github-cli/bin/gh",
+    resolveRepoHost: async () => null,
+    runner: async (_args, options) => {
+      seenExecutablePaths.push(options.executablePath);
+      return { stdout: "[]", stderr: "" };
+    },
+  });
+
+  await service.searchIssuesAndPrs({ cwd: "/repo", query: "test", kinds: ["github-issue"] });
+  expect(seenExecutablePaths).toEqual(["/opt/github-cli/bin/gh"]);
+});
+
+it("re-resolves gh and retries when the previously cached executable disappears", async () => {
+  let availablePath = "/first/bin/gh";
+  const seenExecutablePaths: Array<string | undefined> = [];
+  const service = createGitHubService({
+    resolveGhPath: async () => availablePath,
+    resolveRepoHost: async () => null,
+    runner: async (_args, options) => {
+      seenExecutablePaths.push(options.executablePath);
+      if (options.executablePath !== availablePath) {
+        const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { stdout: "[]", stderr: "" };
+    },
+  });
+
+  await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-issue"] });
+  availablePath = "/second/bin/gh";
+  const secondResult = await service.searchIssuesAndPrs({
+    cwd: "/repo",
+    query: "second",
+    kinds: ["github-issue"],
+  });
+
+  expect(secondResult.featuresEnabled).toBe(true);
+  expect(seenExecutablePaths).toEqual(["/first/bin/gh", "/first/bin/gh", "/second/bin/gh"]);
+});
