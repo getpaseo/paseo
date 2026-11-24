@@ -18,6 +18,8 @@ import { pathToFileURL } from "node:url";
 import pino from "pino";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
+import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
+import { buildProviderRegistry } from "../agent/provider-registry.js";
 import { PluginService } from "./index.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
 import { ManagedPluginSources } from "./managed-source.js";
@@ -554,6 +556,94 @@ describe("PluginService", () => {
       await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
     ).toBe("runtime:/project-b");
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("keeps plugin catalog_key IPC valid through buildProviderRegistry with absent and configured options", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-catalog-key-strict",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    async getCatalogCacheKey(options) {
+      if (Object.hasOwn(options, "providerOptions")) {
+        throw new Error("Unexpected providerOptions key");
+      }
+      return options.scope === "workspace" ? "runtime:" + options.cwd : "global";
+    },
+    async connect() {
+      let listener = null;
+      return {
+        version: 1,
+        capabilities: [],
+        async send(input) {
+          if (input.type !== "catalog") return;
+          listener?.({
+            type: "catalog",
+            requestId: input.requestId,
+            catalog: {
+              models: [{ id: "plugin-model", label: "Plugin model" }],
+              modes: [],
+            },
+          });
+        },
+        onEvent(next) {
+          listener = next;
+          return () => {
+            listener = null;
+          };
+        },
+        async close() {},
+      };
+    },
+  });
+  return () => {};
+}`,
+    );
+    const logger = pino({ level: "silent" });
+    const service = createService(home);
+    const pluginClients = new PluginAgentClientRegistry(logger);
+    await service.start();
+    try {
+      await service.installDirectory({ path: directory });
+      pluginClients.replace(service.getProviderRegistrations());
+
+      for (const providerOverrides of [
+        {},
+        { "plugin-agent": { options: { sharedCatalog: true, customFlag: "on" } } },
+      ]) {
+        const registry = buildProviderRegistry(logger, {
+          pluginProviders: pluginClients.definitions(),
+          providerOverrides,
+        });
+        const client = registry["plugin-agent"]!.createClient(logger);
+        expect(
+          await client.getCatalogCacheKey!({
+            scope: "workspace",
+            cwd: "/project-a",
+            force: false,
+          }),
+        ).toBe("runtime:/project-a");
+        expect(await client.getCatalogCacheKey!({ scope: "global", force: false })).toBe("global");
+        const catalog = await client.fetchCatalog({
+          scope: "workspace",
+          cwd: "/project-a",
+          force: false,
+        });
+        expect(catalog.models.map((model) => model.id)).toEqual(["plugin-model"]);
+      }
+      expect(service.catalog()).toEqual([
+        expect.objectContaining({ id: "provider-catalog-key-strict" }),
+      ]);
+      expect(await service.listPlugins()).toMatchObject([
+        expect.objectContaining({ id: "provider-catalog-key-strict", status: "running" }),
+      ]);
+    } finally {
+      await pluginClients.shutdown();
+      await service.stopAllPlugins();
+    }
   });
 
   it("fails a plugin whose provider docs link is not an http(s) page", async () => {

@@ -3,7 +3,7 @@ import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { homedir } from "node:os";
@@ -1216,6 +1216,18 @@ export class ACPAgentClient implements AgentClient {
     });
     await session.initializeResumedSession();
     return session;
+  }
+
+  async getCatalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
+    // Opt-in: the operator declares this agent's models and modes do not depend on the
+    // project directory. The key covers the launch command and env names, never env values.
+    if (options.providerOptions?.sharedCatalog !== true) return undefined;
+    const launch = JSON.stringify([
+      this.defaultCommand,
+      this.runtimeSettings?.command ?? null,
+      Object.keys(this.runtimeSettings?.env ?? {}).sort(),
+    ]);
+    return `launch:${createHash("sha256").update(launch).digest("hex")}`;
   }
 
   async fetchCatalog(

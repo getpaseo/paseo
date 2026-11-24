@@ -562,6 +562,27 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
+Paseo discovers an ACP provider's models and modes separately for each workspace, because an agent can read project settings that change them. Each discovery starts the agent once, so a config change or catalogue refresh starts one agent per open workspace. If the agent's models and modes do not depend on the project directory, set `options.sharedCatalog: true` to discover once and share the result across workspaces:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "acp"],
+        "options": {
+          "sharedCatalog": true
+        }
+      }
+    }
+  }
+}
+```
+
+Only the cached catalogue (availability, models, modes, and default selection) is shared. Sessions still start in their own workspace, and a refresh of one workspace still probes that workspace. Changing the provider's config discards the shared catalogue.
+
 ACP agents execute filesystem operations in their own environment by default,
 while terminal operations run through Paseo on the host. To customize which
 operations Paseo handles, configure client capabilities in provider options:

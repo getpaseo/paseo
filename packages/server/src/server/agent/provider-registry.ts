@@ -142,6 +142,7 @@ interface ResolvedProvider {
   enabled: boolean;
   derivedFromProviderId: string | null;
   providerOptions?: ProviderOptions;
+  forwardCatalogKeyOptions?: boolean;
   createBaseClient: (logger: Logger) => AgentClient;
   contract: ProviderContract;
 }
@@ -491,6 +492,23 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   } satisfies ForwardedAgentSession;
 }
 
+function wrapCatalogCacheKey(
+  inner: AgentClient,
+  configuredDefaults: () => ProviderOptions | undefined,
+  forwardCatalogKeyOptions: boolean,
+): AgentClient["getCatalogCacheKey"] {
+  const getCatalogCacheKey = inner.getCatalogCacheKey?.bind(inner);
+  if (!getCatalogCacheKey || !forwardCatalogKeyOptions) {
+    return getCatalogCacheKey;
+  }
+  return async (options) => {
+    const providerOptions = configuredDefaults();
+    return await getCatalogCacheKey(
+      providerOptions === undefined ? options : { ...options, providerOptions },
+    );
+  };
+}
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
@@ -498,6 +516,7 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   configuredOptions: ProviderOptions | undefined,
+  forwardCatalogKeyOptions = false,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -626,7 +645,7 @@ function wrapClientProvider(
       ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
       : undefined,
     resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
-    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    getCatalogCacheKey: wrapCatalogCacheKey(inner, configuredDefaults, forwardCatalogKeyOptions),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
     installation: inner.installation,
@@ -747,6 +766,7 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.forwardCatalogKeyOptions,
   );
 }
 
@@ -855,6 +875,7 @@ function addDerivedProviders(
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerOptions: configuredProviderOptions(override),
+        forwardCatalogKeyOptions: true,
         createBaseClient: (logger) => {
           const acpOptions = {
             logger,

@@ -5,6 +5,8 @@ export const ACPProviderOptionsSchema = z
     // Composer control: approves permission prompts without asking.
     auto_accept: z.boolean().optional(),
     supportsMcpServers: z.boolean().optional(),
+    // Share one model and mode catalogue across workspaces instead of probing each directory.
+    sharedCatalog: z.boolean().optional(),
     clientCapabilities: z
       .object({
         fs: z

@@ -1,6 +1,8 @@
 import pino from "pino";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import type {
   ProviderEvent,
@@ -28,6 +30,7 @@ import {
 import { raceProviderRefreshAbort } from "./provider-refresh-deadline.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { getClaudeModels } from "./providers/claude/models.js";
+import { PluginProcessRequestSchema } from "../plugins/plugin-process-protocol.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -3954,4 +3957,183 @@ test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real time
     await manager.shutdown();
     manager.destroy();
   }
+});
+
+describe("ACP shared catalogue opt-in", () => {
+  const fakeAgentPath = fileURLToPath(
+    new URL("./providers/test-utils/fake-acp-agent.mjs", import.meta.url),
+  );
+
+  function fixtureWorkspace(folderCount: number) {
+    const root = mkdtempSync(join(tmpdir(), "acp-shared-catalogue-"));
+    const log = join(root, "agent.log");
+    writeFileSync(log, "");
+    const folders = Array.from({ length: folderCount }, (_, index) => {
+      const folder = join(root, `project-${index}`);
+      mkdirSync(folder);
+      return folder;
+    });
+    const row = (extra: { options?: Record<string, unknown>; env?: Record<string, string> }) => ({
+      extends: "acp",
+      label: "Fixture ACP",
+      command: [
+        process.execPath,
+        fakeAgentPath,
+        JSON.stringify({
+          log,
+          models: {
+            currentModelId: "fixture-model",
+            availableModels: [{ modelId: "fixture-model", name: "Fixture model" }],
+          },
+        }),
+      ] as [string, ...string[]],
+      ...extra,
+    });
+    const takeLog = () => {
+      const lines = readFileSync(log, "utf8").split("\n").filter(Boolean);
+      writeFileSync(log, "");
+      return lines;
+    };
+    return { root, folders, row, takeLog };
+  }
+
+  async function listEverywhere(manager: ProviderSnapshotManager, folders: string[]) {
+    return await Promise.all(
+      folders.map(async (cwd) => {
+        const models = await manager.listModels({ provider: "fixture", cwd, wait: true });
+        return models.map((model) => model.id);
+      }),
+    );
+  }
+
+  test("an opted-in row discovers once across folders, on reload and on global refresh", async () => {
+    const { root, folders, row, takeLog } = fixtureWorkspace(12);
+    const shared = { sharedCatalog: true };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { fixture: row({ options: shared }) },
+    });
+    try {
+      const models = await listEverywhere(manager, folders);
+      expect(models).toEqual(folders.map(() => ["fixture-model"]));
+      expect(takeLog().filter((line) => line === "start")).toHaveLength(1);
+
+      const reloadStartedAt = Date.now();
+      manager.applyMutableProviderConfig(
+        { fixture: row({ options: shared, env: { FIXTURE_PROFILE: "second" } }) },
+        { replace: true },
+      );
+      await expect(listEverywhere(manager, folders)).resolves.toEqual(models);
+      expect(Date.now() - reloadStartedAt).toBeLessThan(120_000);
+      expect(takeLog().filter((line) => line === "start")).toHaveLength(1);
+
+      await manager.refreshSettingsSnapshot({ providers: ["fixture"] });
+      await listEverywhere(manager, folders);
+      expect(takeLog().filter((line) => line === "start")).toHaveLength(1);
+
+      await manager.refreshSnapshotForCwd({ cwd: folders[3]!, providers: ["fixture"] });
+      expect(takeLog()).toEqual(["start", `session ${folders[3]}`]);
+    } finally {
+      await manager.shutdown();
+      manager.destroy();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a row without the opt-in discovers in each folder", async () => {
+    const { root, folders, row, takeLog } = fixtureWorkspace(3);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { fixture: row({}) },
+    });
+    try {
+      await listEverywhere(manager, folders);
+      const sessions = takeLog().filter((line) => line.startsWith("session "));
+      expect(sessions.sort()).toEqual(folders.map((cwd) => `session ${cwd}`).sort());
+    } finally {
+      await manager.shutdown();
+      manager.destroy();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { label: "absent options", pluginOverride: undefined },
+    {
+      label: "configured options",
+      pluginOverride: { options: { sharedCatalog: true, customFlag: "on" } },
+    },
+  ])(
+    "plugin getCatalogCacheKey receives legacy IPC-valid options with $label",
+    async ({ pluginOverride }) => {
+      let listener: ((event: ProviderEvent) => void) | null = null;
+      const seenOptions: unknown[] = [];
+      const registration: ProviderRegistration = {
+        id: "strict-ipc-plugin",
+        label: "Strict IPC plugin",
+        async getCatalogCacheKey(options) {
+          seenOptions.push(options);
+          expect(Object.hasOwn(options, "providerOptions")).toBe(false);
+          PluginProcessRequestSchema.parse(
+            structuredClone({
+              type: "provider.catalog_key",
+              requestId: "req-1",
+              providerId: "strict-ipc-plugin",
+              options,
+            }),
+          );
+          return options.scope === "workspace" ? `ws:${options.cwd}` : "global";
+        },
+        async connect() {
+          return {
+            version: 1,
+            capabilities: [],
+            async send(input) {
+              if (input.type !== "catalog") return;
+              listener?.({
+                type: "catalog",
+                requestId: input.requestId,
+                catalog: {
+                  models: [{ id: "plugin-model", label: "Plugin model" }],
+                  modes: [],
+                },
+              });
+            },
+            onEvent(next) {
+              listener = next;
+              return () => {
+                listener = null;
+              };
+            },
+            async close() {},
+          };
+        },
+      };
+      const manager = new ProviderSnapshotManager({
+        logger: createTestLogger(),
+        providerOverrides: {
+          codex: { enabled: false },
+          claude: { enabled: false },
+          copilot: { enabled: false },
+          opencode: { enabled: false },
+          pi: { enabled: false },
+          ...(pluginOverride ? { [registration.id]: pluginOverride } : {}),
+        },
+      });
+      try {
+        manager.replacePluginProviders([registration]);
+        const entry = await manager.getProvider({
+          provider: registration.id,
+          cwd: resolveSnapshotCwd("/tmp/strict-plugin-ws"),
+          wait: true,
+        });
+        expect(entry.status).toBe("ready");
+        expect(entry.models?.map((model) => model.id)).toEqual(["plugin-model"]);
+        expect(seenOptions.length).toBeGreaterThan(0);
+      } finally {
+        await manager.shutdown();
+        manager.destroy();
+      }
+    },
+  );
 });

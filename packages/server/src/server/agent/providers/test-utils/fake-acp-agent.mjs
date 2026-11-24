@@ -6,11 +6,15 @@
 //   moves:   { [configId]: { [id]: value } } writes that also move another select, announced
 //            by a config_option_update after the write is answered
 //   adds:    { [configId]: option[] } writes that make more selects appear, announced the same way
+//   models:  the session/new models answer
+//   log:     a file that gets a "start" line per process and a "session <cwd>" line per session/new
+import { appendFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 
 const scenario = JSON.parse(process.argv[2] ?? "{}");
 let options = scenario.options ?? [];
+if (scenario.log) appendFileSync(scenario.log, "start\n");
 
 function set(id, value) {
   options = options.map((option) =>
@@ -24,8 +28,14 @@ export const connection = new AgentSideConnection(
     async initialize() {
       return { protocolVersion: 1, agentCapabilities: {} };
     },
-    async newSession() {
-      return { sessionId: "session-1", modes: null, models: null, configOptions: options };
+    async newSession({ cwd }) {
+      if (scenario.log) appendFileSync(scenario.log, `session ${cwd}\n`);
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: scenario.models ?? null,
+        configOptions: options,
+      };
     },
     async setSessionConfigOption({ sessionId, configId, value }) {
       set(configId, scenario.answers?.[configId] ?? value);
