@@ -1074,6 +1074,20 @@ export const es: TranslationResources = {
           addAllToChat: "Añadir todo al chat",
           addingToChat: "Añadiendo...",
         },
+        watch: {
+          action: "Seguir {{abbreviation}}",
+          recipient: "Enviar novedades a",
+          noAgents: "Abre un agente en este espacio de trabajo para iniciar el seguimiento.",
+          untitledAgent: "Agente sin título",
+          starting: "Iniciando seguimiento…",
+          started:
+            "Seguimiento iniciado. Puedes gestionarlo en las tareas en segundo plano del agente.",
+          failed: "No se pudo iniciar el seguimiento. Inténtalo de nuevo.",
+          closed: "Esta {{abbreviation}} ya se cerró.",
+          updateHost:
+            "Actualiza el host para iniciar el seguimiento desde aquí. En Paseo 0.17.1 o posterior, puedes pedirle al agente en el chat que siga la URL.",
+          disconnected: "Vuelve a conectarte al host e inténtalo de nuevo.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "Algunas comprobaciones requieren tu atención",

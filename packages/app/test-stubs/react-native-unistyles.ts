@@ -176,11 +176,12 @@ export const withUnistyles = <T>(Component: T, mapping?: UniPropsMapping): T => 
   return ThemedComponent as T;
 };
 
-export const useUnistyles = () => ({
-  theme: testTheme,
-  rt: {},
-  breakpoint: undefined,
-});
+export const useUnistyles = () => {
+  const width = typeof window === "undefined" ? undefined : window.innerWidth;
+  const breakpoint =
+    width === undefined ? undefined : BREAKPOINTS.find(([, min]) => width >= min)?.[0];
+  return { theme: testTheme, rt: { breakpoint }, breakpoint };
+};
 
 export const UnistylesRuntime = {
   setTheme: () => undefined,

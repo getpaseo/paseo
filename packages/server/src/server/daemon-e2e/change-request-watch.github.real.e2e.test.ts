@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -169,6 +170,9 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   });
   const all = [primary, ...quiet];
   const before = await fixture.limits();
+  await expect(
+    client.subscribeAgentChangeRequest({ agentId: idle.id, url: primary.html_url }),
+  ).resolves.toBe(true);
   const initial = await Promise.all(all.map(({ html_url }) => call(mcp, subscribe, html_url)));
   for (const [index, pr] of all.entries()) {
     expect(initial[index]).toMatchObject({
@@ -218,7 +222,9 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     expect(await backgroundWorkCount(client, idle.id)).toBe(all.length);
     expect(await backgroundWorkCount(client, busy.id)).toBe(all.length);
 
-    await call(mcp, subscribe, primary.html_url);
+    await expect(
+      client.subscribeAgentChangeRequest({ agentId: idle.id, url: primary.html_url }),
+    ).resolves.toBe(true);
     expect(await client.listAgentBackgroundWork(idle.id)).toEqual(idleWork);
     const quietPr = quiet[0]!;
     const stopped = busyWork.find((row) => row.description === description(quietPr));
@@ -381,8 +387,15 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   await expect.poll(() => updates(lateDir).at(-1)?.text, waitForGitHub).toContain(discarded);
   const retainedChildReport = "QA child report that stays queued after unsubscribe.";
   await sendFromChild(retainedChildReport);
-  const nativeRemoval = await native.executeTool(unsubscribe, { url });
-  expect(nativeRemoval.structuredContent).toMatchObject({ url, removed: true });
+  const activeWatch = (await client.listAgentBackgroundWork(busy.id)).find(
+    (row) => row.description === description(primary),
+  );
+  assert(activeWatch, "The primary PR has no background work row");
+  await client.stopAgentBackgroundWork(busy.id, activeWatch);
+  expect((await native.executeTool(unsubscribe, { url })).structuredContent).toMatchObject({
+    url,
+    removed: false,
+  });
   expect(await backgroundWorkCount(client, busy.id)).toBe(all.length - 1);
   expect(
     (await client.listAgentBackgroundWork(busy.id)).map((row) => row.description),

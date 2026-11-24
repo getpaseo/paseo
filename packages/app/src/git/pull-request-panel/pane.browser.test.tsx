@@ -1,4 +1,12 @@
 import React, { act } from "react";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { page } from "vitest/browser";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { getHostRuntimeStore, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { agent as agentFixture } from "@/plugins/client-state/fixtures";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
@@ -15,6 +23,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 beforeEach(() => vi.stubGlobal("React", React));
 
 const PANE_HEIGHT = 600;
+const FILL_STYLE = { flex: 1 } as const;
 
 const silentToasts: ToastApi = {
   show: () => () => {},
@@ -30,6 +39,7 @@ afterEach(() => {
   container?.remove();
   root = null;
   container = null;
+  vi.restoreAllMocks();
 });
 
 function successfulChecks(count: number): PrPaneCheck[] {
@@ -63,27 +73,38 @@ const HOME_INDICATOR_INSETS = { top: 0, right: 0, bottom: 34, left: 0 };
 
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
 
-function renderPane(data: PrPaneData, insets = NO_INSETS) {
+function renderPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
   act(() =>
     root?.render(
       <SafeAreaInsetsContext.Provider value={insets}>
         <ToastApiProvider api={silentToasts}>
-          <PullRequestPane serverId="server-1" cwd="/repo" data={data} activityLoading={false} />
+          <GestureHandlerRootView style={FILL_STYLE}>
+            <BottomSheetModalProvider>
+              <PullRequestPane
+                serverId="server-1"
+                workspaceId={workspaceId}
+                cwd="/repo"
+                data={data}
+                activityLoading={false}
+              />
+            </BottomSheetModalProvider>
+          </GestureHandlerRootView>
         </ToastApiProvider>
       </SafeAreaInsetsContext.Provider>,
     ),
   );
 }
 
-function mountPane(data: PrPaneData, insets = NO_INSETS) {
+function mountPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
   container = document.createElement("div");
   container.style.height = `${PANE_HEIGHT}px`;
   container.style.width = "600px";
+  container.style.maxWidth = "100%";
   container.style.display = "flex";
   container.style.flexDirection = "column";
   document.body.appendChild(container);
   root = createRoot(container);
-  renderPane(data, insets);
+  renderPane(data, insets, workspaceId);
   const pane = container.querySelector<HTMLElement>('[data-testid="pr-pane"]');
   if (!pane) throw new Error("The pull request pane did not render");
   return pane;
@@ -227,5 +248,125 @@ describe("pull request pane layout", () => {
     dragSeparator(pane, 120);
 
     await expect.poll(() => Math.round(checksRegionBottom(pane) - before)).toBe(120);
+  });
+});
+
+describe("Watch PR", () => {
+  const serverId = "server-1";
+  const workspaceId = "watch-tests";
+  const pr = pullRequest([]);
+  const agent = (id: string, fields: Partial<Agent> = {}): Agent => ({
+    ...agentFixture,
+    id,
+    serverId,
+    workspaceId,
+    status: "idle",
+    title: id,
+    ...fields,
+  });
+  const subscribe =
+    vi.fn<NonNullable<HostRuntimeSnapshot["client"]>["subscribeAgentChangeRequest"]>();
+
+  function showPane(agents: Agent[], supported = true, focusedId?: string) {
+    subscribe.mockReset().mockResolvedValue(true);
+    const runtime = getHostRuntimeStore();
+    const snapshot = runtime.getSnapshot.bind(runtime);
+    const client = new DaemonClient({ url: "ws://daemon.test", clientId: "watch-tests" });
+    vi.spyOn(client, "subscribeAgentChangeRequest").mockImplementation(subscribe);
+    const fixtureSnapshot: HostRuntimeSnapshot = {
+      serverId,
+      client,
+      activeConnectionId: null,
+      activeConnection: null,
+      connectionStatus: "online",
+      lastError: null,
+      lastOnlineAt: null,
+      agentDirectoryStatus: "ready",
+      agentDirectoryError: null,
+      hasEverLoadedAgentDirectory: true,
+      probeByConnectionId: new Map(),
+      clientGeneration: 1,
+      connectionEpoch: 1,
+    };
+    vi.spyOn(runtime, "getSnapshot").mockImplementation((hostId) =>
+      hostId === serverId ? fixtureSnapshot : snapshot(hostId),
+    );
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "0.17.4",
+      features: supported ? { agentChangeRequestSubscribe: true } : {},
+    });
+    store.setAgents(serverId, new Map(agents.map((item) => [item.id, item])));
+    const layout = useWorkspaceLayoutStore.getState();
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
+    if (focusedId) {
+      layout.openTab({
+        workspaceKey: `${serverId}:${workspaceId}`,
+        target: { kind: "agent", agentId: focusedId },
+        intent: "reveal",
+      });
+    }
+    mountPane(pr, NO_INSETS, workspaceId);
+  }
+
+  it("preselects the focused workspace agent and preserves selection after an error", async () => {
+    await page.viewport(1150, 780);
+    showPane(
+      [agent("first"), agent("focused"), agent("archived", { archivedAt: new Date() })],
+      true,
+      "focused",
+    );
+    subscribe.mockRejectedValueOnce(new Error("Reconnect and try again."));
+    await act(() => page.getByTestId("pr-pane-watch").click());
+    await expect
+      .element(page.getByTestId("pr-watch-agent-focused"))
+      .toHaveAttribute("aria-checked", "true");
+    await expect.element(page.getByTestId("pr-watch-agent-archived")).not.toBeInTheDocument();
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    await expect
+      .element(page.getByRole("alert").filter({ hasText: "Reconnect and try again." }))
+      .toBeVisible();
+    await expect
+      .element(page.getByTestId("pr-watch-agent-focused"))
+      .toHaveAttribute("aria-checked", "true");
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    expect(subscribe.mock.calls).toEqual([
+      [{ agentId: "focused", url: pr.url }],
+      [{ agentId: "focused", url: pr.url }],
+    ]);
+  });
+
+  it("preselects the sole workspace agent and reports a closed PR in a compact sheet", async () => {
+    await page.viewport(390, 760);
+    showPane([agent("only"), agent("other", { workspaceId: "another-workspace" })]);
+    subscribe.mockResolvedValueOnce(false);
+    await act(() => page.getByTestId("pr-pane-watch").click());
+    await expect
+      .element(page.getByTestId("pr-watch-agent-only"))
+      .toHaveAttribute("aria-checked", "true");
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    await expect.element(page.getByText("This PR has already closed.")).toBeVisible();
+  });
+
+  it("requires a recipient on compact layouts when neither agent is focused", async () => {
+    await page.viewport(390, 760);
+    showPane([agent("first"), agent("second")]);
+    await act(() => page.getByTestId("pr-pane-watch").click());
+    await expect.element(page.getByTestId("pr-watch-confirm")).toBeDisabled();
+    await act(() => page.getByTestId("pr-watch-agent-second").click());
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    expect(subscribe).toHaveBeenCalledExactlyOnceWith({ agentId: "second", url: pr.url });
+  });
+
+  it("offers host upgrade guidance without starting a watch on an older daemon", async () => {
+    await page.viewport(1150, 780);
+    showPane([agent("only")], false);
+    await act(() => page.getByTestId("pr-pane-watch").click());
+    await expect.element(page.getByText(/Update the host to start watches here/)).toBeVisible();
+    await expect.element(page.getByTestId("pr-watch-confirm")).not.toBeInTheDocument();
+    expect(subscribe).not.toHaveBeenCalled();
   });
 });

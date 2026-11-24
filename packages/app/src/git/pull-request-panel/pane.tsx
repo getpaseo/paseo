@@ -46,6 +46,7 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { getForgePresentation } from "@/git/forge";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
 import type { PaneNativeContribution } from "@/git/client-forge-module";
+import { PullRequestWatchAction } from "./watch-action";
 import { PrActivitySkeleton } from "./activity-skeleton";
 import {
   collapseActivity,
@@ -188,12 +189,14 @@ function removeLoadingCheck(current: ReadonlySet<string>, checkKey: string): Rea
 
 export function PullRequestPane({
   serverId,
+  workspaceId,
   cwd,
   data,
   activityLoading,
   workspaceAttachmentScopeKey,
 }: {
   serverId: string;
+  workspaceId?: string | null;
   cwd: string;
   data: PrPaneData;
   activityLoading: boolean;
@@ -493,6 +496,16 @@ export function PullRequestPane({
             >
               {t("workspace.git.pr.actions.viewPullRequest")}
             </Button>
+            <PullRequestWatchAction
+              key={JSON.stringify([serverId, workspaceId, data.url])}
+              serverId={serverId}
+              workspaceId={workspaceId}
+              url={data.url}
+              title={data.title}
+              state={data.state}
+              abbreviation={forgePresentation.changeRequestAbbrev}
+              style={styles.viewButton}
+            />
           </View>
           {refreshSupported ? (
             <Pressable

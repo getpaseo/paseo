@@ -1051,6 +1051,19 @@ export const en = {
           addAllToChat: "Add all to chat",
           addingToChat: "Adding...",
         },
+        watch: {
+          action: "Watch {{abbreviation}}",
+          recipient: "Send updates to",
+          noAgents: "Open an agent in this workspace to start a watch.",
+          untitledAgent: "Untitled agent",
+          starting: "Starting watch…",
+          started: "Watch started. Manage it in the agent’s Background work.",
+          failed: "Could not start the watch. Try again.",
+          closed: "This {{abbreviation}} has already closed.",
+          updateHost:
+            "Update the host to start watches here. On Paseo 0.17.1 or later, you can ask the agent to watch the URL in chat.",
+          disconnected: "Reconnect to the host and try again.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "Some checks need your attention",

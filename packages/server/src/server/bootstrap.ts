@@ -1978,6 +1978,7 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               workspaceArchiveOperations,
+              changeRequestWatches,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
