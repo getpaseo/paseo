@@ -4001,6 +4001,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.closed) {
       throw this.createClosedError();
     }
+    if (this.interruptRecovery) {
+      throw new Error("The previous Codex runtime has not stopped. Try Stop again.");
+    }
     if (this.connectionState !== "disconnected") return;
     if (this.connectionPromise) {
       await this.connectionPromise;

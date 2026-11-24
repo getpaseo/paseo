@@ -636,6 +636,61 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
   }
 });
 
+test("runtime info cannot reconnect after Stop fails to retire an in-flight reconnect", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-stop-reconnect-"));
+  const initial = createFakeCodexAppServer();
+  const stalled = createFakeCodexAppServer({ "model/list": () => new Promise(() => {}) });
+  stalled.child.kill = () => true;
+  const replacement = createFakeCodexAppServer();
+  const session = await new ProcessExitCodexClient([initial, stalled, replacement]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  try {
+    const first = session.run("save the thread");
+    await initial.waitForTurnStart();
+    initial.startsTurn({ threadId: "thread-1", turnId: "first-turn" });
+    initial.completeTurn();
+    await expect(first).resolves.toMatchObject({ sessionId: "thread-1" });
+    initial.disconnect();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const starting = expect(session.startTurn("reconnect to the saved thread")).rejects.toThrow(
+      "canceled before starting",
+    );
+    await stalled.waitForRequest("model/list");
+    const stopping = expect(session.interrupt()).rejects.toThrow(
+      "did not report exit after SIGKILL",
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await stopping;
+    await starting;
+
+    await expect(session.getRuntimeInfo()).rejects.toThrow("Try Stop again");
+    expect(replacement.requests()).toEqual([]);
+
+    stalled.child.exitCode = 0;
+    stalled.child.emit("exit", 0, null);
+    await session.interrupt();
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(replacement.requests()).toContainEqual(
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ threadId: "thread-1" }),
+      }),
+    );
+    await session.startTurn("use the recovered runtime");
+    await expect(replacement.waitForTurnStart()).resolves.toMatchObject({ threadId: "thread-1" });
+  } finally {
+    vi.useRealTimers();
+    stalled.child.exitCode = 0;
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("session close disposes a provider that arrives from an in-flight reconnect", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-process-close-reconnect-"));
   const initialAppServer = createFakeCodexAppServer();
