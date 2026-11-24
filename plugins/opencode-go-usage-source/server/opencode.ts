@@ -36,6 +36,8 @@ const fileSchema = z.object({
 const exportSchema = z.array(
   z.object({ integrationID: z.string(), active: z.boolean(), value: z.unknown() }),
 );
+/** The error of a process that Node stopped at its timeout. */
+const stoppedSchema = z.object({ killed: z.literal(true) });
 const metadataSchema = z
   .object({ server: z.string().optional(), orgID: z.string().optional() })
   .optional();
@@ -66,8 +68,11 @@ export async function loginStore(install: OpenCodeInstall): Promise<Input["store
       timeout: 5_000,
     });
     version = stdout.trim();
-  } catch {
-    // The daemon treats an OpenCode that does not answer as OpenCode 1 too.
+  } catch (error) {
+    // A check that was cut off does not show which store OpenCode uses.
+    if (stoppedSchema.safeParse(error).success)
+      throw new Error("OpenCode did not report its version in time.", { cause: error });
+    // The daemon treats a missing or failing OpenCode as OpenCode 1 too.
     return "file";
   }
   return Number(VERSION.exec(version)?.[1] ?? 1) >= 2 ? "credentials" : "file";

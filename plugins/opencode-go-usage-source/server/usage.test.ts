@@ -13,7 +13,8 @@ import { appendFileSync, readFileSync } from "node:fs";
 const state = JSON.parse(readFileSync(new URL("./opencode-state.json", import.meta.url), "utf8"));
 const command = process.argv.slice(2).join(" ");
 appendFileSync(new URL("./opencode-calls.log", import.meta.url), command + "\\n");
-if (command === "--version") console.log(state.version);
+if (command === "--version" && state.hangs) setInterval(() => {}, 60_000);
+else if (command === "--version" && state.version) console.log(state.version);
 else if (command === "auth export --standalone" && state.exported !== undefined)
   process.stdout.write(state.exported);
 else {
@@ -31,7 +32,7 @@ let fixtureDirectory: string;
 let authFile: string;
 let install: OpenCodeInstall;
 
-function installState(state: { version: string; exported?: string }) {
+function installState(state: { version?: string; exported?: string; hangs?: boolean }) {
   return writeFile(join(fixtureDirectory, "opencode-state.json"), JSON.stringify(state));
 }
 /** OpenCode 1 keeps logins in auth.json and has no `auth export`. */
@@ -140,10 +141,22 @@ test.each([
   expect(await openCodeCalls()).toEqual(["--version"]);
 });
 
-test("reads auth.json when no OpenCode answers", async () => {
+test("reads auth.json when OpenCode is not installed", async () => {
   const absent = { ...install, command: join(fixtureDirectory, "absent-opencode"), args: [] };
   expect(await discover(absent)).toEqual([account("file")]);
 });
+
+test("reads auth.json when OpenCode fails its version check", async () => {
+  await installState({});
+  expect(await discover(install)).toEqual([account("file")]);
+});
+
+// A check that is cut off does not show which store OpenCode uses. Reading auth.json here would
+// drop the card of a login that only OpenCode 2 has.
+test("fails instead of reading auth.json when OpenCode does not answer its version check", async () => {
+  await installState({ hangs: true });
+  await expect(discover(install)).rejects.toThrow("OpenCode did not report its version in time");
+}, 15_000);
 
 test("uses the Go key OpenCode 2 marks active instead of a stale auth.json key", async () => {
   await openCode2([goKey("inactive-key", false), goKey("active-key")]);
