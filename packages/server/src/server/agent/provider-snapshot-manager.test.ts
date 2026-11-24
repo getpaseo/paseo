@@ -1,6 +1,7 @@
 import pino from "pino";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type {
   ProviderEvent,
@@ -28,6 +29,17 @@ import {
 import { raceProviderRefreshAbort } from "./provider-refresh-deadline.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { getClaudeModels } from "./providers/claude/models.js";
+
+// Settings refreshes skip workspace cwds that no longer exist, so tests that
+// exercise them need real directories.
+function createExistingCwds(names: string[]): string[] {
+  const root = mkdtempSync(join(tmpdir(), "paseo-snapshot-"));
+  return names.map((name) => {
+    const dir = join(root, name);
+    mkdirSync(dir);
+    return resolveSnapshotCwd(dir);
+  });
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -2765,6 +2777,41 @@ test("late key resolution cannot restore an old identity and concurrent readers 
   }
 });
 
+test("settings refresh drops workspace targets whose cwd no longer exists", async () => {
+  const [liveCwd] = createExistingCwds(["live"]);
+  const deadCwd = resolveSnapshotCwd(join(tmpdir(), "paseo-snapshot-missing", "deleted-worktree"));
+  const probed: string[] = [];
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      pi: createExtraClient("pi", {
+        async isAvailable() {
+          return true;
+        },
+        async fetchCatalog(options) {
+          if (options.scope === "workspace") probed.push(options.cwd);
+          return { models: [], modes: [] };
+        },
+      }),
+    },
+  });
+  try {
+    await manager.warmUpSnapshotForCwd({ cwd: liveCwd, providers: ["pi"] });
+    await manager.warmUpSnapshotForCwd({ cwd: deadCwd, providers: ["pi"] });
+    probed.length = 0;
+
+    await manager.refreshSettingsSnapshot({ providers: ["pi"] });
+    expect(probed).toContain(liveCwd);
+    expect(probed).not.toContain(deadCwd);
+
+    probed.length = 0;
+    await manager.refreshSettingsSnapshot({ providers: ["pi"] });
+    expect(probed).not.toContain(deadCwd);
+  } finally {
+    manager.destroy();
+  }
+});
+
 test("settings refresh starts independent workspace discoveries together and shares equivalent catalogues", async () => {
   let release!: () => void;
   const pending = new Promise<void>((finish) => {
@@ -2773,7 +2820,7 @@ test("settings refresh starts independent workspace discoveries together and sha
   let refreshing = false;
   const started: string[] = [];
   let sharedFetches = 0;
-  const cwds = [resolveSnapshotCwd("/refresh-a"), resolveSnapshotCwd("/refresh-b")];
+  const cwds = createExistingCwds(["refresh-a", "refresh-b"]);
   const manager = new ProviderSnapshotManager({
     logger: createTestLogger(),
     extraClients: {
@@ -2831,7 +2878,7 @@ test("bounds each provider across workspaces without blocking another provider",
   let peak = 0;
   const started = new Set<string>();
   const updated = new Set<string>();
-  const cwds = Array.from({ length: 16 }, (_, index) => resolveSnapshotCwd(`/bounded-${index}`));
+  const cwds = createExistingCwds(Array.from({ length: 16 }, (_, index) => `bounded-${index}`));
   const manager = new ProviderSnapshotManager({
     logger: createTestLogger(),
     extraClients: {

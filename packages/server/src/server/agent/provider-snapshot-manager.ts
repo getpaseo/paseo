@@ -1,6 +1,7 @@
 import { normalizeAgentModelCatalog, type ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -381,9 +382,18 @@ export class ProviderSnapshotManager {
     await this.refreshProviders(target, providers, reason);
     await Promise.all(
       [...this.targets.keys()]
-        .filter((cwd) => cwd !== homeCwd)
+        .filter((cwd) => cwd !== homeCwd && this.isLiveTargetCwd(cwd))
         .map((cwd) => this.warmUp(createWorkspaceSnapshotTarget(cwd), providers)),
     );
+  }
+
+  // Drop workspace targets whose directory is gone (e.g. a deleted worktree of an
+  // archived agent) so refreshes stop probing providers against a missing cwd.
+  private isLiveTargetCwd(cwd: string): boolean {
+    if (existsSync(cwd)) return true;
+    this.targets.delete(cwd);
+    this.logger.debug({ cwd }, "Dropping provider snapshot target for missing cwd");
+    return false;
   }
 
   async warmUpSnapshotForCwd(options: ProviderSnapshotWarmUpOptions): Promise<void> {
