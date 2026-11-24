@@ -16407,6 +16407,27 @@ test("turn capture serializes Stop behind an in-flight terminal snapshot", async
   }
 });
 
+test.skipIf(process.platform === "win32").each([" ", "\t"])(
+  "turn capture preserves checkout root suffix %j",
+  async (suffix) => {
+    const scratch = mkdtempSync(join(tmpdir(), "paseo-turn-path-"));
+    try {
+      const cwd = join(scratch, `repo${suffix}`);
+      const nested = join(cwd, "nested");
+      mkdirSync(nested, { recursive: true });
+      const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+      git("init", "-b", "main");
+      writeFileSync(join(cwd, "root.txt"), "captured from the checkout root\n");
+
+      const snapshot = await turnChanges.captureTurnTree(nested);
+
+      expect(git("show", `${snapshot}:root.txt`)).toBe("captured from the checkout root\n");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
   "turn capture includes synchronous provider edits on %s and persists the settled turn",
   async (type) => {

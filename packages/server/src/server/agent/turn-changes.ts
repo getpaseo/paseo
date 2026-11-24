@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTurnChanges } from "@getpaseo/protocol/messages";
+import { parseGitRevParsePath } from "../../utils/git-rev-parse-path.js";
 import { createRunGitCommand } from "../../utils/run-git-command.js";
 
 const git = createRunGitCommand("turn-changes");
@@ -21,18 +22,19 @@ export async function captureTurnTree(cwd: string): Promise<string | null> {
     timeout: 2_000,
   });
   if (worktree.exitCode !== 0) return null;
-  cwd = worktree.stdout.trimEnd();
+  const root = parseGitRevParsePath(worktree.stdout);
+  if (root === null) return null;
 
   const directory = await mkdtemp(join(tmpdir(), "paseo-turn-changes-"));
   const readEnv = { ...env };
   const snapshot = {
-    cwd,
+    cwd: root,
     envOverlay: { ...env, GIT_INDEX_FILE: join(directory, "index") },
     timeout: 2_000,
   };
   try {
     const indexed = await git(["ls-files", "--stage", "-z"], {
-      cwd,
+      cwd: root,
       envOverlay: readEnv,
       timeout: 2_000,
     });
