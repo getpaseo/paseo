@@ -908,6 +908,7 @@ export const zhCN: TranslationResources = {
           pushNoRemote: "此处无法 push，因为此分支尚未连接到 remote",
           pushBehind: "暂时无法 push，因为需要先拉取更新的变更",
           pushNothing: "无法 push，因为没有新的内容可发送",
+          pushUpstreamGone: "无法 push，因为此分支跟踪的分支已不存在",
           pullAndPushNoRemote: "此处无法 pull 并 push，因为此分支尚未连接到 remote",
           pullAndPushDirty: "有本地变更时无法 pull 并 push，请先 commit 或 stash",
           pullAndPushNoIncoming: "无法 pull 并 push，因为没有需要先 pull 的传入变更",

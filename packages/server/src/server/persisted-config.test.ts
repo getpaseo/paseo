@@ -1091,29 +1091,28 @@ describe("speech provider config normalization", () => {
 });
 
 test.each([
-  ["goose", "acp"],
-  ["/opt/bin/goose", "acp"],
-])(
-  "migrates the legacy goose entry and preserves command overrides (%s %s)",
-  (binary, subcommand) => {
-    const command = [binary, subcommand];
-    const overrides = {
-      enabled: false,
-      label: "My goose",
-      env: { GOOSE_PROVIDER: "openai" },
-      models: [{ id: "primary", label: "Primary" }],
-      additionalModels: [{ id: "secondary", label: "Secondary" }],
-    };
-    const parsed = PersistedConfigSchema.parse({
-      agents: {
-        providers: {
-          goose: { ...overrides, extends: "acp", description: "Old description", command },
-        },
+  ["goose", "goose"],
+  ["goose", "/opt/bin/goose"],
+  ["hermes", "hermes"],
+  ["hermes", "/opt/bin/hermes"],
+])("migrates the legacy %s entry and preserves command overrides (%s acp)", (provider, binary) => {
+  const command = [binary, "acp"];
+  const overrides = {
+    enabled: false,
+    label: `My ${provider}`,
+    env: { PROVIDER_ENV: "value" },
+    models: [{ id: "primary", label: "Primary" }],
+    additionalModels: [{ id: "secondary", label: "Secondary" }],
+  };
+  const parsed = PersistedConfigSchema.parse({
+    agents: {
+      providers: {
+        [provider]: { ...overrides, extends: "acp", description: "Old description", command },
       },
-    });
-    expect(parsed.agents?.providers?.goose).toEqual({
-      ...overrides,
-      ...(command[0] === "goose" ? {} : { command }),
-    });
-  },
-);
+    },
+  });
+  expect(parsed.agents?.providers?.[provider]).toEqual({
+    ...overrides,
+    ...(binary === provider ? {} : { command }),
+  });
+});

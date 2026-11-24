@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite, fx, goose, and Hermes use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -583,8 +583,12 @@ daemon launch from `connect` and the per-session env and MCP servers from `sessi
 no provider reload input.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
-`@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
-whole provider event stream. The shim uses the resolved launch for every probe and session, overlaying
+`@getpaseo/plugin/server/acp`. The shim builds the standard row for each ACP tool `kind`
+(`acp-internal/tool-call-detail.ts`). Its transformer hooks cover narrow vendor differences; do not translate the
+whole provider event stream. A `toolCall` transformer sees the raw `input`, `output` and `content`, and a
+`detail` it sets replaces the standard row. Parse vendor display text defensively and return the call
+unchanged when the shape does not match, so an upstream format change falls back to the standard row
+(`plugins/hermes-provider/server/terminal-command.ts`). The shim uses the resolved launch for every probe and session, overlaying
 only the supplied per-session env for sessions. The direct and ACP examples live in
 `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.

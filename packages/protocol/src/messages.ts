@@ -3465,6 +3465,7 @@ export const HubExecutionAgentValidateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.validate.request"),
   requestId: z.string(),
   provider: z.string(),
+  cwd: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -4167,6 +4168,8 @@ export const ServerInfoStatusPayloadSchema = z
         fxProvider: z.boolean().optional(),
         // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
         gooseProvider: z.boolean().optional(),
+        // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once host floor includes the bundled adapter.
+        hermesProvider: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
@@ -5815,6 +5818,17 @@ const CheckoutStatusCommonSchema = z.object({
   // upstream branch name is not necessarily currentBranch, so composing one is wrong.
   // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
+  // How currentBranch relates to its upstream: "tracked" (upstreamRef and the counts are set),
+  // "none" (never pushed; Push does a first push), "gone" (the upstream's remote-tracking ref no
+  // longer exists, as after the remote branch is deleted), or "unknown" (the daemon cannot tell,
+  // as when the clone keeps no remote-tracking ref for the upstream). Absent from daemons that
+  // predate it, which report all but "tracked" as a null upstreamRef.
+  upstreamState: z.enum(["tracked", "none", "gone", "unknown"]).optional(),
+  // The remote a first push publishes currentBranch to, when the daemon can confirm git would
+  // push the branch there too. Null when there is no such remote, as when origin is missing or
+  // git is set to push the branch to another remote (branch.<name>.pushRemote,
+  // remote.pushDefault). Absent from daemons that predate it.
+  firstPushRemote: z.string().nullable().optional(),
   forgeWeb: ForgeWebSchema.optional(),
 });
 

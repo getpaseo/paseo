@@ -913,6 +913,8 @@ export const en = {
             "Push isn't available here because this branch is not connected to a remote yet",
           pushBehind: "Push isn't available yet because there are newer changes to bring in first",
           pushNothing: "Push isn't available because there is nothing new to send",
+          pushUpstreamGone:
+            "Push isn't available because the branch this one tracks no longer exists",
           pullAndPushNoRemote:
             "Pull and push isn't available here because this branch is not connected to a remote yet",
           pullAndPushDirty:

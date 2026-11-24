@@ -321,6 +321,40 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("validates workspace-only models against the requested working directory", async () => {
+    const cwd = resolveSnapshotCwd("/tmp/workspace-models");
+    const model = { provider: "opencode", id: "workspace-model", label: "Workspace model" };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => ({
+            models: options.scope === "workspace" && options.cwd === cwd ? [model] : [],
+            modes: [],
+          }),
+        }),
+      },
+    });
+    const input = { provider: model.provider, model: model.id };
+    const unavailable = [
+      {
+        path: ["model"],
+        message: "Model 'workspace-model' is not available for provider 'opencode'",
+      },
+    ];
+
+    try {
+      await expect(manager.validateAgentConfiguration(input)).resolves.toEqual(unavailable);
+      await expect(manager.validateAgentConfiguration({ ...input, cwd })).resolves.toEqual([]);
+      await expect(
+        manager.validateAgentConfiguration({ ...input, cwd: "/tmp/missing-workspace" }),
+      ).resolves.toEqual(unavailable);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("accepts a legacy Ultra Code choice on a model with an independent effort catalog", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

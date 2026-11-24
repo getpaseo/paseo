@@ -14,8 +14,13 @@ export type CopyResult =
   | { kind: "no-include-file" }
   | { kind: "copied"; copied: string[]; skipped: string[] };
 
+// `core.fsmonitor=false` prevents repository config from launching a command.
+// `safe.bareRepository=explicit` stops git from adopting a directory that only
+// looks like a bare repository.
+const GIT_CONFIG_ARGS = ["-c", "core.fsmonitor=false", "-c", "safe.bareRepository=explicit"];
+
 async function git(cwd: string, args: string[], input?: string): Promise<string> {
-  const child = exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024 });
+  const child = exec("git", [...GIT_CONFIG_ARGS, ...args], { cwd, maxBuffer: 64 * 1024 * 1024 });
   if (input !== undefined) {
     child.child.stdin?.end(input);
   }
