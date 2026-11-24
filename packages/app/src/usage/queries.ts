@@ -20,6 +20,7 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useUsageSetting } from "./setting";
 import { usageCopy } from "./copy";
 import {
+  markUsageRefreshFailure,
   replaceReport,
   resolveAgentUsageView,
   resolveUsageRefresh,
@@ -43,6 +44,11 @@ function hostUsageQueryKey(serverId: string) {
   return ["usage", serverId] as const;
 }
 
+/**
+ * A host's own reports. The key differs only by host, so it is read with `dataShape: "value"`:
+ * a list shape keeps the previous key's data while the next one loads, which would show one host's
+ * reports as another's.
+ */
 function usageReportsQueryKey(serverId: string) {
   return [...hostUsageQueryKey(serverId), "reports"] as const;
 }
@@ -92,17 +98,32 @@ async function streamReports(input: {
   return settleReports(queryClient.getQueryData<UsageReportEntry[]>(queryKey), reports);
 }
 
-function listReports(
+async function listReports(
   queryClient: QueryClient,
   serverId: string,
   forceRefresh = false,
 ): Promise<UsageReportEntry[]> {
-  return streamReports({
-    queryClient,
-    queryKey: usageReportsQueryKey(serverId),
-    serverId,
-    forceRefresh,
-  });
+  const queryKey = usageReportsQueryKey(serverId);
+  const attempted = queryClient.getQueryData<UsageReportEntry[]>(queryKey) ?? [];
+  try {
+    return await streamReports({ queryClient, queryKey, serverId, forceRefresh });
+  } catch (error) {
+    recordUsageRefreshFailure(queryClient, queryKey, attempted);
+    throw error;
+  }
+}
+
+function recordUsageRefreshFailure(
+  queryClient: QueryClient,
+  queryKey: QueryKey,
+  attempted: readonly UsageReportEntry[],
+): void {
+  const { dataUpdatedAt } = queryClient.getQueryState(queryKey) ?? {};
+  queryClient.setQueryData<UsageReportEntry[]>(
+    queryKey,
+    (current) => markUsageRefreshFailure(current, attempted),
+    { updatedAt: dataUpdatedAt },
+  );
 }
 
 async function getReport(
@@ -150,12 +171,15 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     queryKey: usageReportsQueryKey(serverId),
     queryFn: () => listReports(queryClient, serverId),
     enabled: isConnected && isSupported && setting.enabled,
-    dataShape: "list",
+    dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  const refresh = useCallback(() => {
-    void refreshReports(queryClient, serverId).catch(() => undefined);
-  }, [queryClient, serverId]);
+  const mutation = useMutation({
+    mutationKey: [...usageReportsQueryKey(serverId), "refresh"],
+    mutationFn: (hostId: string) => refreshReports(queryClient, hostId),
+  });
+  const { mutate, variables } = mutation;
+  const refresh = useCallback(() => mutate(serverId), [mutate, serverId]);
   const { t } = useTranslation();
   const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
   const view = resolveUsageView(
@@ -165,6 +189,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
       isConnected,
       supportsUsage: isSupported,
       query: toQueryState(query),
+      refreshState: variables === serverId ? resolveUsageRefresh(mutation) : "idle",
     },
     t,
   );
@@ -189,7 +214,7 @@ export function useUsageHostReports({
     enabled: setting.enabled,
     queryKey: usageReportsQueryKey(serverId ?? ""),
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
-    dataShape: "list",
+    dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
     refetchInterval: shouldPoll ? REPORTS_REFETCH_INTERVAL_MS : false,
   });
@@ -260,23 +285,26 @@ export function useUsageHosts(): UsageHost[] {
  */
 export function useReportRefresh(
   serverId: string,
-  reportId: string,
+  entry: UsageReportEntry,
   agentId?: string,
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
   const usageScopeKey = useAgentUsageScopeKey(serverId, agentId);
+  const queryKey =
+    agentId === undefined
+      ? usageReportsQueryKey(serverId)
+      : agentUsageQueryKey(serverId, agentId, usageScopeKey);
   const mutation = useMutation({
-    mutationFn: () => getReport(serverId, reportId, true, agentId),
-    onSuccess: (report) => {
-      queryClient.setQueryData<UsageReportEntry[]>(
-        agentId === undefined
-          ? usageReportsQueryKey(serverId)
-          : agentUsageQueryKey(serverId, agentId, usageScopeKey),
-        (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
+    mutationKey: [...queryKey, "refresh", entry.id],
+    mutationFn: (attempted: UsageReportEntry) => getReport(serverId, attempted.id, true, agentId),
+    onSuccess: (report, attempted) => {
+      queryClient.setQueryData<UsageReportEntry[]>(queryKey, (reports) =>
+        reports ? replaceReport(reports, attempted.id, report) : reports,
       );
     },
+    onError: (_error, attempted) => recordUsageRefreshFailure(queryClient, queryKey, [attempted]),
   });
   const { mutate } = mutation;
-  const refresh = useCallback(() => mutate(), [mutate]);
+  const refresh = useCallback(() => mutate(entry), [mutate, entry]);
   return { refresh, refreshState: resolveUsageRefresh(mutation) };
 }

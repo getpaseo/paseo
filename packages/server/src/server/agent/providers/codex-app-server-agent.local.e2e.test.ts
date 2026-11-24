@@ -22,6 +22,18 @@ function isCodexInstalled(): boolean {
   }
 }
 
+function supportsInstructionSnapshots(): boolean {
+  try {
+    const match = execFileSync("codex", ["--version"], { encoding: "utf8" }).match(
+      /(\d+)\.(\d+)\.(\d+)/,
+    );
+    if (!match) return false;
+    return Number(match[1]) > 0 || Number(match[2]) >= 121;
+  } catch {
+    return false;
+  }
+}
+
 function sse(events: unknown[]): string {
   return events
     .map((event) => {
@@ -133,7 +145,7 @@ async function startMockResponsesServer(sequence: string[]): Promise<{
 }> {
   const requestBodies: string[] = [];
   let index = 0;
-  const server = createServer((req, res) => {
+  const server = createServer({ maxHeaderSize: 1024 * 1024 }, (req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
     req.on("end", () => {
@@ -221,6 +233,85 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 }
 
 describe("Codex app-server provider (local e2e)", () => {
+  test.runIf(supportsInstructionSnapshots())(
+    "delivers changed and removed instructions to the model across process restarts",
+    async () => {
+      const artifactDir = path.resolve(process.cwd(), "../../.artifacts");
+      mkdirSync(artifactDir, { recursive: true });
+      const cwd = mkdtempSync(path.join(artifactDir, "codex-snapshot-cwd-"));
+      const codexHome = mkdtempSync(path.join(artifactDir, "codex-snapshot-home-"));
+      const server = await startMockResponsesServer([]);
+      const client = new CodexAppServerAgentClient(createTestLogger());
+      const base = { provider: "codex" as const, cwd, modeId: "auto", model: "mock-model" };
+      const launch = { env: { CODEX_HOME: codexHome } };
+      const run = async (session: Awaited<ReturnType<typeof client.createSession>>) => {
+        const finished = waitForEvent({
+          session,
+          timeoutMs: 20_000,
+          label: "turn completion",
+          predicate: (
+            event,
+          ): event is Extract<
+            AgentStreamEvent,
+            { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+          > =>
+            event.type === "turn_completed" ||
+            event.type === "turn_failed" ||
+            event.type === "turn_canceled",
+        });
+        await session.startTurn("continue");
+        const result = await finished;
+        if (result.type !== "turn_completed") throw new Error(JSON.stringify(result));
+        const handle = session.describePersistence();
+        if (!handle) throw new Error("Expected persisted Codex thread");
+        await session.close();
+        return handle;
+      };
+      try {
+        writeMockCodexConfig(codexHome, server.url);
+        let handle = await run(
+          await client.createSession(
+            { ...base, pluginAppendSystemPrompt: ["old snapshot"] },
+            launch,
+          ),
+        );
+        expect(server.requestBodies.at(-1)).toContain("old snapshot");
+        expect(server.requestBodies.at(-1)).not.toContain("paseo_instruction_snapshot");
+        handle = await run(
+          await client.resumeSession(
+            handle,
+            { ...base, pluginAppendSystemPrompt: ["new snapshot"] },
+            launch,
+          ),
+        );
+        expect(server.requestBodies.at(-1)).toContain("new snapshot");
+        expect(server.requestBodies.at(-1)?.match(/paseo_instruction_snapshot/g)).toHaveLength(2);
+        handle = await run(
+          await client.resumeSession(
+            handle,
+            { ...base, pluginAppendSystemPrompt: ["new snapshot"] },
+            launch,
+          ),
+        );
+        expect(server.requestBodies.at(-1)?.match(/paseo_instruction_snapshot/g)).toHaveLength(2);
+        await run(
+          await client.resumeSession(
+            handle,
+            { ...base, pluginAppendSystemPrompt: undefined },
+            launch,
+          ),
+        );
+        expect(server.requestBodies.at(-1)).toContain('\\"instructions\\":\\"\\"');
+        expect(server.requestBodies.at(-1)?.match(/paseo_instruction_snapshot/g)).toHaveLength(4);
+      } finally {
+        await server.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
   test.runIf(isCodexInstalled())(
     "concurrent import scans initialize successfully in a fresh shared Codex home",
     async () => {

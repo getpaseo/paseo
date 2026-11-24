@@ -25,6 +25,7 @@ export interface ComposerInput {
    */
   revealed: boolean;
   isRevealed: () => boolean;
+  isFocused: () => boolean;
   focus: (options?: ComposerFocusOptions) => Promise<void>;
   textSource: ComposerTextSource;
   setText: (text: string) => void;

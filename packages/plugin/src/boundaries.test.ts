@@ -393,6 +393,7 @@ describe("lifecycle hook SDK types", () => {
     expect(
       typeErrors(`
       import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
           if (request.kind === "checkout-branch") {
@@ -426,8 +427,17 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
-        server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
+        server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
+          const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
+          // @ts-expect-error Turn payloads carry no history; read it from the agent's timeline.
+          event.timeline;
+          const turn = await paseo.agents
+            .ref(agent.id)
+            .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+          const items: readonly AgentTimelineItem[] = turn.entries
+            .filter((entry) => entry.turnId === event.turnId)
+            .map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });
@@ -574,6 +584,78 @@ describe("sidebar data SDK boundary", () => {
         }
         const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
         return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("worktree manager SDK boundary", () => {
+  it("types create, remove, and restore handlers with discriminated results and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        WorktreeManagerRegistration,
+        PluginWorktreeCreateInput,
+        PluginWorktreeCreateResult,
+        PluginWorktreeRemoveRequest,
+        PluginWorktreeRemoveResult,
+        PluginWorktreeRestoreRequest,
+        PluginWorktreeRestoreResult,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const manager: WorktreeManagerRegistration = {
+          async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
+            const untrusted: boolean = request.untrusted;
+            const headSha: string | undefined = request.headSha;
+            void headSha;
+            // @ts-expect-error untrusted is read-only
+            request.untrusted = true;
+            // @ts-expect-error headSha is read-only
+            request.headSha = "deadbeef";
+            if (request.kind === "branch-off") {
+              const start: string = request.startPoint ?? request.baseRef;
+              // @ts-expect-error startPoint is read-only
+              request.startPoint = "other";
+              if (!start || untrusted) return;
+            }
+            if (signal.aborted) return;
+            void paseo;
+            const result: PluginWorktreeCreateResult = { type: "created", path: request.path };
+            return result;
+          },
+          async remove(request: PluginWorktreeRemoveRequest, { signal }) {
+            const reason: "archive" | "rollback" = request.reason;
+            const force: boolean = request.force;
+            const untrusted: boolean = request.untrusted;
+            // @ts-expect-error remove request fields are read-only
+            request.path = "/other";
+            if (!reason || !force || untrusted || signal.aborted) return;
+            const result: PluginWorktreeRemoveResult = { type: "removed" };
+            return result;
+          },
+          async restore(request: PluginWorktreeRestoreRequest) {
+            const untrusted: boolean = request.untrusted;
+            void untrusted;
+            if (request.target.type === "commit") return;
+            if (request.target.type === "from-base") {
+              const base: string = request.target.baseRef;
+              void base;
+            }
+            const result: PluginWorktreeRestoreResult = { type: "restored", path: request.path };
+            return result;
+          },
+        };
+        const dispose: () => void = server.registerWorktreeManager(manager);
+        server.registerWorktreeManager({
+          // @ts-expect-error create result requires discriminant
+          async create() {
+            return { path: "/tmp/wt" };
+          },
+        });
+        return dispose;
       }
     `),
     ).toEqual([]);

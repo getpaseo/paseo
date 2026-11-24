@@ -150,12 +150,29 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
 
-Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch. The module keeps one ordered queue per recipient, and the recipient reads its prompts in the order the daemon admitted them. Nothing overtakes an older queued message. A prompt takes its place when the daemon admits it, even while the provider is still starting an earlier turn, and a message stays in the queue until the turn that carries it starts. The turn has started when the agent manager acknowledges the run start; a turn that fails after that point is not delivered again.
 
-The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
-crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
+An agent sender picks `queue`, `steer`, or `interrupt` with `activeTurnBehavior`. `steer` and `interrupt` mean what they mean for a person. A person's send has no `queue`. Each kind of prompt is released this way:
+
+- **`queue`** (the agent default) waits. An idle recipient gets the queue after two quiet seconds; steady arrivals cannot hold that window open past ten seconds. While the recipient has a running or starting turn (including compaction), the queue waits and is delivered together when that turn ends on its own or fails. The daemon releases it when it observes the recipient settle; a two-second timer also retries. Finish notifications and change-request updates always queue.
+- **`steer`** waits for neither the quiet window nor the turn. It is dispatched at admission as one prompt that enters the running turn: the messages queued before it, then the steer. A provider that cannot steer, or that refuses this steer, gets the prompt as a replacing turn instead, the same as a person's steer.
+- **`interrupt`** is dispatched at admission the same way, as one prompt that replaces the running turn. An older queued message cannot start a turn after the newer `interrupt` that countermands it.
+- **A person's prompt** (app, CLI, top-level MCP) is dispatched directly with its existing steer or interrupt behavior and takes the queue along the same way: the messages admitted before it first, then the person's text, in one provider prompt. Messages admitted after it follow it. The person's text keeps its own transcript row. When the turn does not start, the messages return to the queue in their place. That covers a start the provider rejects and a start that is not acknowledged within 60 seconds; a provider that starts the turn after those 60 seconds receives the messages twice.
+- **Stop** (the stop button, Escape, `cancel_agent`, a Hub interrupt) starts nothing. Messages admitted before the Stop are held, not dropped, including an interrupt whose turn had not started yet. They go ahead of the recipient's next prompt, in that prompt's turn: a person's prompt, or an agent message or notification admitted after the Stop. A held steer or interrupt no longer enters the turn; it waits like a queued message. A queue step or dispatch decided before the Stop is void, and the queue is held again when the message that reopened it is withdrawn. A replacing prompt, a reload, and a rewind are not a Stop. Neither is `cancel_agent` on a recipient with no running or starting turn: it stops nothing, reports that it canceled no run, and a queued message keeps its quiet window.
+
+The queued receipt carries the applied behavior and guidance text for the sender. The text comes from two facts known at admission: whether the recipient has a running turn, and whether its provider can steer (`AgentManager.canSteer`, which is true when the session offers `steerActiveTurn`). It does not wait for the outcome. Guidance for a message queued behind a running turn tells the sender to send a short `steer` or `interrupt` follow-up instead of resending, because the follow-up carries the queued message ahead of it and a resend would be read twice. The MCP tool, the WebSocket `send_agent_message_response`, the CLI, and the connected-host path all relay this one text.
+
+Older CLIs and connected hosts send an explicit `steer` for every default agent send. The daemon reads an agent sender's `steer` as `queue` unless the client advertises the `agent_active_turn_behaviors` capability. A new client talking to a daemon without `server_info.features.agentActiveTurnBehaviors` sends no behavior for `queue` and refuses a `steer`.
+
+A command the provider accepts out of band is the one exception to admission order: it runs alone without ending the turn. A queued command runs ahead of older messages, and a `steer` or `interrupt` that runs this way takes no queued message along. A person's command leaves the queue where it is. A prompt is a command when it starts with a slash and a name that has no second slash, so `/compact` is one and `/tmp/build.log is stale` is plain text.
+
+One provider prompt has one session mode. A batch released by a steer, an interrupt, or a person's prompt uses the latest explicit choice in it, the person's own first. Queued messages with conflicting choices keep separate ordered dispatches.
+
+The pending message window is in memory. Clean shutdown flushes it, held messages included, before
+closing agents; an abrupt crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
 acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
-admission within their original timeout and cancellation scope.
+admission within their original timeout and cancellation scope, and return at permission
+checkpoints and when a Stop holds the queue.
 
 Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
 persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses

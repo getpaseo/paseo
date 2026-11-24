@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { View } from "react-native";
+import { useCallback, useState } from "react";
+import { View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   FileExplorerCloseGestureContext,
@@ -20,8 +20,12 @@ function ExplorerFrameBase({
   isOpen,
   isWorkspaceActive,
   persistenceKey,
-  containerWidth,
 }: ExplorerFrameProps) {
+  const [containerWidth, setContainerWidth] = useState(0);
+  const measureContainer = useCallback(({ nativeEvent }: LayoutChangeEvent) => {
+    const { width, height } = nativeEvent.layout;
+    if (width > 0 && height > 0) setContainerWidth(width);
+  }, []);
   const overlay = presentation === "overlay";
   const settledOpen = useIsMobilePanelActive("file-explorer");
   const active = isWorkspaceActive && (overlay ? settledOpen : isOpen);
@@ -59,10 +63,15 @@ function ExplorerFrameBase({
           </View>
         </MobilePanelOverlay>
       </FileExplorerCloseGestureContext>
+      <View pointerEvents="none" style={styles.measurement} onLayout={measureContainer} />
     </RetainedPanelActivity>
   );
 }
 export const ExplorerFrame = withUnistyles(ExplorerFrameBase, (theme) => ({
   surfaceColor: theme.colors.surfaceSidebar,
 }));
-const styles = StyleSheet.create({ content: { flex: 1, minHeight: 0 } });
+const styles = StyleSheet.create({
+  content: { flex: 1, minHeight: 0 },
+  // Measure the workspace row even when the dock is closed. The gesture host stays in its slot.
+  measurement: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+});

@@ -427,6 +427,206 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report metrics
+
+Report what your provider measured as `label` and `value` pairs. Paseo shows each value as given,
+so format it for reading: `12.4s`, not `12431`. You choose which metrics make sense for your agent.
+
+Add `metrics` to the `completed` turn event. Paseo shows them from the footer of that turn:
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+Publish `session.metrics` for totals that cover the whole session. Paseo shows them in the context
+window details. Each event replaces the previous list, and an empty list clears it. Add
+`session.metrics` to your supported capabilities and publish the event only when it was negotiated:
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+A Paseo from before session metrics does not offer the capability and closes a connection that
+sends the event. It ignores `metrics` on a turn, so turn metrics need no check.
+
+Set `tone` to `"ok"`, `"warning"`, or `"danger"` to color a value. When a completed turn has no
+`Model` metric, Paseo adds the session's model.
+
+When `history` is `"replay"`, publish each old turn's `completed` event after that turn's items.
+Paseo puts the metrics back on the turn's footer.
+
+## Report installation and updates
+
+Add `installation` to your registration and the provider's settings show an **Installation**
+section. Users see whether your CLI is installed and which version, whether an update is
+available, and an **Update** button that runs your updater and shows its output. Every member is
+optional, so declare only what your CLI supports:
+
+| Member            | Users see                                                               | Declare it when                                        |
+| ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| `installUrl`      | **Install instructions**, and **Install** while not installed           | Users install a CLI                                    |
+| `updateUrl`       | **Update instructions** while installed, when you declare no `update`   | Your docs say how to update                            |
+| `inspect`         | **Version**, or **Not installed**                                       | The CLI reports its version                            |
+| `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
+| `update`          | **Update** while installed, then the updater's output                   | The CLI updates itself with a command                  |
+
+This `example-agent` prints its version, asks `self-update --check --json` for the release its
+updater installs, and updates with `self-update`:
+
+```ts
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import type {
+  ProviderInstallation,
+  ProviderInstallationLaunch,
+} from "@getpaseo/plugin/server/provider";
+
+async function run(launch: ProviderInstallationLaunch, args: string[], signal: AbortSignal) {
+  const { stdout } = await execCommand(launch.command, [...launch.args, ...args], {
+    env: launch.env,
+    timeout: 20_000,
+    signal,
+  });
+  return stdout.trim();
+}
+
+export const installation: ProviderInstallation = {
+  installUrl: "https://example.com/docs/install",
+  updateUrl: "https://example.com/docs/update",
+
+  async inspect({ launch, signal }) {
+    if (!launch?.resolved) return { status: "not_installed" };
+    // `example-agent --version` prints `1.4.2`.
+    return { status: "installed", version: await run(launch, ["--version"], signal) };
+  },
+
+  async checkForUpdates({ launch, installedVersion, signal }) {
+    if (!launch) return { status: "unknown" };
+    // Prints `{"latest":"1.5.0"}`; `self-update` installs any release that differs.
+    const { latest } = JSON.parse(
+      await run(launch, ["self-update", "--check", "--json"], signal),
+    ) as { latest: string };
+    return latest === installedVersion
+      ? { status: "current" }
+      : { status: "available", versions: [latest] };
+  },
+
+  async update({ launch, signal, report }) {
+    if (!launch?.resolved) return { status: "failed", message: "example-agent is not installed" };
+    const child = spawnProcess(launch.command, [...launch.args, "self-update"], {
+      env: launch.env,
+      stdio: "pipe",
+    });
+    child.stdin.end();
+    child.stdout.on("data", (chunk: Buffer) => report({ type: "stdout", text: chunk.toString() }));
+    child.stderr.on("data", (chunk: Buffer) => report({ type: "stderr", text: chunk.toString() }));
+    const stop = () => void terminateProcess(child);
+    signal.addEventListener("abort", stop, { once: true });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => signal.removeEventListener("abort", stop));
+    if (code !== 0) return { status: "failed", message: `self-update exited with code ${code}` };
+    return { status: "succeeded", message: "New sessions use the new version." };
+  },
+};
+```
+
+Add it to the registration next to `command`:
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    installation,
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+Each callback receives the launch a session would use. When `launch.resolved` is `false`, Paseo did
+not find the executable and `command` is the configured name, so report `not_installed` without
+running it. `launch` is absent when the registration declares no `command`. `checkForUpdates` runs
+only after `inspect` reports the CLI installed, and receives the `version` it reported as
+`installedVersion`, so compare that instead of reading the version again. For an ACP provider,
+spread `runAcpProvider()` into the registration and add `installation` beside it. Run version and
+update probes with the launch's arguments before your session subcommand, such as `hoplite
+--version` for a provider that runs `hoplite acp`.
+
+Paseo treats versions as text. It shows `version` and `versions` as written and never parses
+them, so your check decides what counts as newer. Ask the source your CLI's own updater asks, and
+leave `checkForUpdates` out when you cannot. A check that returns `unknown`, throws, or misses its
+deadline shows **Couldn't check for updates** with your message and never shows **Up to date**.
+
+`update` runs only when a user selects **Update**, and Paseo runs one update per provider at a
+time. Pass the updater's output to `report` unchanged; Paseo keeps the last 65,536 characters. Paseo adds no
+verification of its own, so the update does what your command does in a terminal. Return
+`succeeded` with a message that says when the new version takes effect, or `failed` with the reason.
+A failed update shows until the user refreshes the provider. Without `update`, **Update instructions** opens `updateUrl` instead.
+
+**Update** and **Update instructions** appear whenever `inspect` reports the CLI installed. The
+check only says what it knows beside them, so declare `update` even when you cannot check.
+
+Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It keeps a
+`current` or `available` answer from `checkForUpdates` for an hour while `inspect` reports the same
+version, so a CLI updated outside Paseo is checked again once the inspection expires. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
+`update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
+See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
+
+## Help users fix problems
+
+A user who gets a wrong result opens the provider's settings before they ask for help. Give that
+page what they need: declare `docsUrl`, and return the facts that explain a wrong result from
+`status`.
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**Docs** opens `docsUrl`. **Diagnostic report** shows the command, the path of the executable and
+the version that Paseo found, then your `Profile` row. Report what the CLI reads from its
+environment, such as the account, the profile, or the configuration file in use. Those differ
+between the daemon and the user's terminal, and the user cannot see them from the app.
+See the [troubleshooting reference](/docs/plugins/reference#provider-troubleshooting) for the rows
+that Paseo writes and for the rules of `status`.
+
 ## Adapt an ACP agent
 
 Use the ACP shim when the agent already speaks ACP:
@@ -451,7 +651,12 @@ export default function contribute(server: PluginServerContext) {
 The shim owns the ACP process, capability mapping, session lifecycle, prompts, permissions, and
 timeline conversion. Do not copy that machinery into the plugin.
 
-Use `transformers` only for vendor differences ACP cannot describe. Validate vendor payloads with
+Use `transformers` for vendor differences ACP cannot describe. The
+[goose model transformer](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+uses `context.request` to read the agent's model inventory and `config` to prefix session model IDs
+with the active provider. See the [ACP adapter reference](/docs/plugins/reference#providers).
+
+Validate vendor payloads with
 Zod and leave malformed or unrelated values unchanged:
 
 ```ts
@@ -481,6 +686,45 @@ export const vendorEdits: AcpTransformer = {
   },
 };
 ```
+
+Paseo builds a standard tool card from each call's ACP `kind`: Shell for `execute`, Read for `read`,
+Edit for `edit` and `delete`, Search for `search`, and Fetch for `fetch`. The card reads the call's
+`input` (ACP `rawInput`), `output` (`rawOutput`), `content`, and `locations`. A call of another kind
+shows its raw input and output, or its text content when the agent sends neither.
+
+Set `detail` on the returned tool call to replace the standard card. For example, an agent can
+report a new file as an ACP edit, while the plugin returns a `write` detail with the file path and
+contents. Return `{ type: "unknown", input, output }` to show the raw values.
+
+`toolCall` runs on every update of a call, with the updates merged so far. An update that sends
+`content` replaces the earlier content, as ACP defines. When an agent sends a value only in an
+early update, read it from `context.previous`, the call as Paseo last presented it. The
+[Hermes terminal transformer](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)
+keeps the command from Hermes's first update this way.
+
+Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
+The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
+Return `metadata` to add fields to the session request's `_meta`.
+If your plugin previously saved a different persistence format, return its native `sessionId`.
+Paseo gives its own saved session ID precedence and writes the ACP persistence format after opening.
+
+A `configure` transformer can inspect the agent's current choices with `catalog()` and pass a
+translated change to `apply(change)`. Applying a change this way uses the shared ACP configuration
+mapping and skips the transformers for that change.
+
+Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after its `session/load`
+response. Paseo publishes the session as ready once that interval passes without a history update.
+Non-history state and metadata updates (such as commands, configuration, mode, usage, and session
+info) do not extend the wait.
+
+Set `acpOptions.autoAcceptMode` to offer an unattended mode backed by a specific native mode.
+The adapter selects an unambiguous ACP `allow_once` action without opening a Paseo approval.
+Set `default: true` to make this the default for new sessions. The adapter requires an idle
+session without pending approvals before it switches to or from this mode.
+
+Set `acpOptions.perModelThinkingOptions` for an agent that lists `thought_level` choices only for
+the selected model. Catalog discovery selects each model in turn and gives it the thinking options
+the agent lists for it. A model without a `thought_level` option gets no thinking picker.
 
 ## Test and publish
 

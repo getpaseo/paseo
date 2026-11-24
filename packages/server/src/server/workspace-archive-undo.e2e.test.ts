@@ -1,6 +1,14 @@
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -126,6 +134,55 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "an undo during a teardown that never exits returns once the deadline stops it",
+  async () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-archive-undo-hang-"));
+    tempRoots.push(tempRoot);
+    const repoDir = path.join(tempRoot, "repo");
+    const pidFile = path.join(tempRoot, "sleep.pid");
+    execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+    git(repoDir, ["config", "user.email", "test@getpaseo.local"]);
+    git(repoDir, ["config", "user.name", "Paseo Test"]);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+          teardownTimeoutMs: 2000,
+        },
+      }),
+    );
+    git(repoDir, ["add", "paseo.json"]);
+    git(repoDir, ["-c", "commit.gpgsign=false", "commit", "-m", "hanging teardown"]);
+    const { workspaceId, directory, agentId } = await createWorktreeWorkspaceWithAgent(
+      repoDir,
+      "undo-during-hanging-teardown",
+    );
+    try {
+      const archive = ctx.client.archiveWorkspace(workspaceId);
+      await expect.poll(() => existsSync(pidFile), { timeout: 15000 }).toBe(true);
+      await Promise.all([archive, ctx.client.undoWorkspaceArchive(workspaceId)]);
+
+      expect({
+        workspaceActive: await isWorkspaceActive(workspaceId),
+        directoryExists: existsSync(directory),
+        agentArchived: await isAgentArchived(agentId),
+      }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
+    } finally {
+      if (existsSync(pidFile)) {
+        const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+        try {
+          process.kill(sleepPid, "SIGKILL");
+        } catch {
+          // Already stopped by the teardown deadline.
+        }
+      }
+    }
+  },
+  30000,
+);
+
+test.skipIf(process.platform === "win32")(
   "an undo after the archive finished recreates the worktree and its agents",
   async () => {
     const repo = createRepoWithGatedTeardown();
@@ -147,6 +204,40 @@ test.skipIf(process.platform === "win32")(
       directoryExists: existsSync(directory),
       agentArchived: await isAgentArchived(agentId),
     }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32").each([
+  ["branch", "restore"],
+  ["branch", "undo"],
+  ["detached", "restore"],
+  ["detached", "undo"],
+] as const)(
+  "%s checkout survives archive and %s",
+  async (checkout, action) => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      `keep-${checkout}-${action}`,
+    );
+    if (checkout === "detached") git(directory, ["switch", "--detach"]);
+    writeFileSync(path.join(directory, "change.txt"), `${checkout}\n`);
+    git(directory, ["add", "change.txt"]);
+    git(directory, ["-c", "commit.gpgsign=false", "commit", "-m", "workspace commit"]);
+    const readHead = (args: string[]) =>
+      execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
+    const commit = readHead(["rev-parse", "HEAD"]);
+    const branch = readHead(["rev-parse", "--abbrev-ref", "HEAD"]);
+    expect((await ctx.client.archiveWorkspace(workspaceId)).error).toBeNull();
+    expect(existsSync(directory)).toBe(false);
+    git(repo.repoDir, ["reflog", "expire", "--expire=now", "--all"]);
+    git(repo.repoDir, ["gc", "--prune=now"]);
+    if (action === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
+    else await ctx.client.restoreWorkspace(workspaceId);
+    expect(readHead(["rev-parse", "HEAD"])).toBe(commit);
+    expect(readHead(["rev-parse", "--abbrev-ref", "HEAD"])).toBe(branch);
   },
   60000,
 );

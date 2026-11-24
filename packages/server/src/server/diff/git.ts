@@ -12,8 +12,7 @@ import {
   type CheckoutDiffCompare,
 } from "../../utils/checkout-git.js";
 import { lstat, readFile, readlink } from "node:fs/promises";
-import type { BigIntStats } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { DiffEndpoint, DiffSubscribeRequest } from "@getpaseo/protocol/messages";
 import type { DiffEntry, DiffBody } from "@getpaseo/protocol/binary-frames/index";
 import { runGitCommand, type GitCommandOptions } from "../../utils/run-git-command.js";
@@ -22,10 +21,29 @@ import { parseDiff, highlightDiffWithFileContent } from "../utils/diff-highlight
 export type Compare = Omit<DiffSubscribeRequest, "type" | "requestId"> & {
   checkoutBase?: { compare: CheckoutDiffCompare; paseoHome: string };
 };
+export interface ComparisonRevisions {
+  refs: Map<string, string | null>;
+  checkoutBase?: string | null;
+}
+
+export function isMovingRevision(rev: string): boolean {
+  return !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(rev);
+}
+
 export interface ListedFile {
   entry: DiffEntry;
   identity: string;
   source: { kind: "tracked" } | { kind: "untracked"; size: number };
+}
+interface WorktreeInput {
+  /** Comparison-side mode, or null when the file is added/untracked on this side. */
+  oldMode: string | null;
+  /** Comparison-side blob, or null when the file is added/untracked on this side. */
+  oldBlob: string | null;
+  /** A regular file whose bytes readGitInputs blob-hashes. */
+  hashed: boolean;
+  /** Content Git cannot read as a regular file, such as a symlink target or submodule state. */
+  literal: string | null;
 }
 interface ResolvedComparison {
   baseSha: string;
@@ -81,6 +99,7 @@ async function resolveEndpoint(
   cwd: string,
   endpoint: DiffEndpoint,
   indexFile: string | null,
+  revisions?: ComparisonRevisions,
 ): Promise<string> {
   if (endpoint.kind === "empty") return EMPTY;
   if (endpoint.kind === "index") {
@@ -99,7 +118,9 @@ async function resolveEndpoint(
       acceptExitCodes: [0, 128],
     },
   );
-  if (result.exitCode === 0) return result.stdout.trim();
+  const sha = result.exitCode === 0 ? result.stdout.trim() : null;
+  if (isMovingRevision(ref)) revisions?.refs.set(ref, sha);
+  if (sha !== null) return sha;
   if (ref === "HEAD") {
     const unborn = await runGitCommand(["rev-parse", "--verify", "HEAD"], {
       cwd,
@@ -133,11 +154,16 @@ function parseStats(
   }
   return stats;
 }
-export async function listComparison(compare: Compare): Promise<Comparison> {
+export async function listComparison(
+  compare: Compare,
+  revisions?: ComparisonRevisions,
+): Promise<Comparison> {
   if (compare.checkoutBase) {
+    if (revisions) revisions.checkoutBase = null;
     const selected = await resolveCheckoutDiffBase(compare.cwd, compare.checkoutBase.compare, {
       paseoHome: compare.checkoutBase.paseoHome,
     });
+    if (revisions) revisions.checkoutBase = selected;
     if (!selected) throw new DiffReadError("REF_NOT_FOUND", "Comparison base is unavailable");
     compare = { ...compare, base: { kind: "rev", rev: selected } };
   }
@@ -148,14 +174,14 @@ export async function listComparison(compare: Compare): Promise<Comparison> {
     if (compare.base.kind === "index" || compare.head.kind === "index")
       privateIndex = await snapshotComparisonIndex(cwd);
     const indexFile = privateIndex ? privateIndex.indexFile : null;
-    const baseSha = await resolveEndpoint(cwd, compare.base, indexFile);
-    const headSha = await resolveEndpoint(cwd, compare.head, indexFile);
+    const baseSha = await resolveEndpoint(cwd, compare.base, indexFile, revisions);
+    const headSha = await resolveEndpoint(cwd, compare.head, indexFile, revisions);
     let mergeBaseSha = "";
     let comparisonBaseSha = baseSha;
     if (compare.mergeBase) {
       const headCommit =
         compare.head.kind === "index"
-          ? await resolveEndpoint(cwd, { kind: "rev", rev: "HEAD" }, indexFile)
+          ? await resolveEndpoint(cwd, { kind: "rev", rev: "HEAD" }, indexFile, revisions)
           : headSha;
       if (headCommit === EMPTY) comparisonBaseSha = EMPTY;
       else if (baseSha !== EMPTY) {
@@ -195,20 +221,47 @@ async function readComparisonList(
       ...(privateIndex ? { GIT_INDEX_FILE: privateIndex.indexFile } : {}),
     },
   };
-  const { files, worktreeFiles, interpretationPaths } = await readTrackedFiles(
-    compare,
-    args,
-    options,
-  );
-  if (compare.head.kind === "worktree") files.push(...(await listUntrackedFiles(options)));
+  const tracked = await readTrackedFiles(compare, args, options);
+  const files = tracked.files;
+  const worktreeInputs = tracked.worktreeInputs;
+  if (compare.head.kind === "worktree") {
+    const untracked = await listUntrackedFiles(options);
+    files.push(...untracked.files);
+    for (const [path, input] of untracked.worktreeInputs) worktreeInputs.set(path, input);
+  }
   files.sort((a, b) => a.entry.path.localeCompare(b.entry.path));
-  for (const file of files) interpretationPaths.add(file.entry.path);
-  const gitInputs = await readGitInputs([...interpretationPaths].sort(), worktreeFiles, options);
-  for (const file of files)
+  for (const file of files) tracked.interpretationPaths.add(file.entry.path);
+  const hashedPaths = new Set(
+    [...worktreeInputs].filter(([, input]) => input.hashed).map(([path]) => path),
+  );
+  const literalContent = new Map(
+    [...worktreeInputs].flatMap(([path, input]) =>
+      input.literal === null ? [] : [[path, input.literal] as const],
+    ),
+  );
+  const gitInputs = await readGitInputs({
+    paths: [...tracked.interpretationPaths].sort(),
+    hashedPaths,
+    options,
+    literalContent,
+  });
+  for (const file of files) {
+    if (compare.head.kind === "worktree") {
+      const input = worktreeInputs.get(file.entry.path);
+      if (!input) throw new Error(`Missing worktree identity for ${file.entry.path}`);
+      file.identity = JSON.stringify([
+        input.oldMode,
+        input.oldBlob,
+        gitInputs.identities.get(file.entry.path) ?? null,
+        gitInputs.identities.get(file.entry.oldPath ?? file.entry.path) ?? null,
+      ]);
+      continue;
+    }
     file.identity += JSON.stringify([
       gitInputs.identities.get(file.entry.path),
       gitInputs.identities.get(file.entry.oldPath ?? file.entry.path),
     ]);
+  }
   const metrics = { highlightCalls: 0 };
   const patches = new Patches(args, options, files);
   const sources = new HighlightSources({
@@ -237,7 +290,15 @@ async function readComparisonList(
       const result =
         file.source.kind === "untracked"
           ? await runGitCommand(
-              ["diff", "--no-index", ...GIT_PATCH_FORMAT_ARGS, "--", "/dev/null", file.entry.path],
+              [
+                "diff",
+                "--no-index",
+                "--no-textconv",
+                ...GIT_PATCH_FORMAT_ARGS,
+                "--",
+                "/dev/null",
+                file.entry.path,
+              ],
               {
                 ...options,
                 acceptExitCodes: [0, 1],
@@ -293,7 +354,11 @@ async function readTrackedFiles(
   compare: Compare,
   args: string[],
   options: GitCommandOptions,
-): Promise<{ files: ListedFile[]; worktreeFiles: Set<string>; interpretationPaths: Set<string> }> {
+): Promise<{
+  files: ListedFile[];
+  worktreeInputs: Map<string, WorktreeInput>;
+  interpretationPaths: Set<string>;
+}> {
   const [raw, stat] = await Promise.all([
     runGitCommand([...args.filter((arg) => arg !== "-w"), "--raw", "--no-abbrev", "-z"], options),
     runGitCommand([...args, "--numstat", "-z"], options),
@@ -303,7 +368,7 @@ async function readTrackedFiles(
   const stats = parseStats(stat.stdout);
   const fields = raw.stdout.split("\0");
   const files: ListedFile[] = [];
-  const worktreeFiles = new Set<string>();
+  const worktreeInputs = new Map<string, WorktreeInput>();
   const interpretationPaths = new Set<string>();
   for (let index = 0; index < fields.length - 1; index++) {
     const header = fields[index].split(" ");
@@ -325,10 +390,25 @@ async function readTrackedFiles(
     else if (code === "D") change = "deleted";
     else if (oldPath !== null) change = "renamed";
     let identity = header.join(" ");
-    if (compare.head.kind === "worktree" && code !== "D") {
-      const worktree = await readWorktreeIdentity(path, header, options);
-      identity += `:${worktree.identity}`;
-      if (worktree.regular && !counts.binary) worktreeFiles.add(path);
+    if (compare.head.kind === "worktree") {
+      const input: WorktreeInput = {
+        oldMode: code === "A" ? null : header[0],
+        oldBlob: code === "A" ? null : absentBlob(header[2]),
+        hashed: false,
+        literal: null,
+      };
+      if (code !== "D") {
+        const worktree = await readWorktreeContent({
+          path,
+          header,
+          text: !counts.binary,
+          options,
+        });
+        input.hashed = worktree.hashed;
+        input.literal = worktree.literal;
+      }
+      worktreeInputs.set(path, input);
+      identity = "";
     }
 
     files.push({
@@ -345,24 +425,53 @@ async function readTrackedFiles(
       source: { kind: "tracked" },
     });
   }
-  return { files, worktreeFiles, interpretationPaths };
+  return { files, worktreeInputs, interpretationPaths };
 }
 
-async function readWorktreeIdentity(
-  path: string,
-  header: string[],
-  options: GitCommandOptions,
-): Promise<{ identity: string; regular: boolean }> {
-  const value = await lstat(resolve(options.cwd, path), { bigint: true });
-  let identity = fileStatIdentity(value);
+async function readWorktreeContent({
+  path,
+  header,
+  text,
+  options,
+}: {
+  path: string;
+  header: string[];
+  text: boolean;
+  options: GitCommandOptions;
+}): Promise<{ hashed: boolean; literal: string | null }> {
+  const absolutePath = resolve(options.cwd, path);
+  const value = await lstat(absolutePath, { bigint: true });
+  if (value.isSymbolicLink())
+    return { hashed: false, literal: `symlink:${await readlink(absolutePath)}` };
   if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
-    const submodule = await runGitCommand(
-      ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
-      { cwd: resolve(options.cwd, path), envOverlay: { GIT_OPTIONAL_LOCKS: "0" } },
-    );
-    identity += `:${submodule.stdout}`;
+    return { hashed: false, literal: await readSubmoduleIdentity(path, absolutePath, options) };
   }
-  return { identity, regular: value.isFile() };
+  return { hashed: value.isFile() && text, literal: null };
+}
+
+// An uninitialized submodule has no `.git`; running git there would discover
+// whichever repository sits above it. Its content is the commit the index
+// records. Pinning GIT_DIR keeps an initialized submodule's status on its own `.git`.
+async function readSubmoduleIdentity(
+  path: string,
+  submodulePath: string,
+  options: GitCommandOptions,
+): Promise<string> {
+  try {
+    await lstat(join(submodulePath, ".git"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const recorded = await runGitCommand(["rev-parse", "--verify", "--quiet", `:0:${path}`], {
+      ...options,
+      acceptExitCodes: [0, 1],
+    });
+    return `submodule-uninitialized:${recorded.stdout.trim()}`;
+  }
+  const status = await runGitCommand(
+    ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
+    { cwd: submodulePath, envOverlay: { GIT_DIR: ".git", GIT_OPTIONAL_LOCKS: "0" } },
+  );
+  return `submodule:${status.stdout}`;
 }
 
 function diffArguments(compare: Compare, baseSha: string, headSha: string): string[] {
@@ -385,9 +494,12 @@ async function readUntrackedText(
   return readFile(path);
 }
 
-async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFile[]> {
+async function listUntrackedFiles(
+  options: GitCommandOptions,
+): Promise<{ files: ListedFile[]; worktreeInputs: Map<string, WorktreeInput> }> {
   const cwd = options.cwd;
   const files: ListedFile[] = [];
+  const worktreeInputs = new Map<string, WorktreeInput>();
   const untracked = await runGitCommand(
     ["ls-files", "--others", "--exclude-standard", "-z"],
     options,
@@ -408,6 +520,12 @@ async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFil
       binary || content.length === 0
         ? 0
         : content.toString("utf8").split("\n").length - Number(content.at(-1) === 10);
+    worktreeInputs.set(path, {
+      oldMode: null,
+      oldBlob: null,
+      hashed: !symlink && !binary && !omitted,
+      literal: symlink ? `symlink:${content.toString("utf8")}` : null,
+    });
     files.push({
       entry: {
         path,
@@ -418,14 +536,13 @@ async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFil
         deletions: 0,
         body: !binary,
       },
-      identity: fileStatIdentity(value),
+      identity: "",
       source: { kind: "untracked", size: Number(value.size) },
     });
   }
-  return files;
+  return { files, worktreeInputs };
 }
 
-function fileStatIdentity(value: BigIntStats): string {
-  // Timestamp-preserving copies still change file status or replace the inode.
-  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`;
+function absentBlob(value: string): string | null {
+  return /^0+$/.test(value) ? null : value;
 }

@@ -10,8 +10,8 @@ import { createHostBackgroundWorkModel } from "./host";
 import { backgroundWorkText } from "./presentation";
 export { createHostBackgroundWorkModel } from "./host";
 
-function kindKey(kind: string): "shell" | "monitor" | "other" {
-  if (kind === "shell" || kind === "monitor") return kind;
+function kindKey(kind: string): "shell" | "monitor" | "heartbeat" | "other" {
+  if (kind === "shell" || kind === "monitor" || kind === "heartbeat") return kind;
   return "other";
 }
 
