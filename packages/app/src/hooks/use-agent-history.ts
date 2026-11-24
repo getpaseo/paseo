@@ -3,7 +3,7 @@ import type {
   FetchAgentHistoryOptions,
   FetchAgentHistoryPageInfo,
 } from "@getpaseo/client/internal/daemon-client";
-import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { CancelledError, keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/shallow";
@@ -168,6 +168,7 @@ export async function fetchAgentHistoryBatch(input: {
   hosts: readonly AgentHistoryHost[];
   cursorByServerId: AgentHistoryCursorByServerId | null;
   search?: string;
+  signal?: AbortSignal;
 }): Promise<AgentHistoryBatchPage> {
   const cursorByServerId = input.cursorByServerId ?? {};
   const hasCursorFilter = Object.keys(cursorByServerId).length > 0;
@@ -186,6 +187,7 @@ export async function fetchAgentHistoryBatch(input: {
       return { host, page };
     }),
   );
+  if (input.signal?.aborted) throw new CancelledError();
   const pages = settledPages.flatMap((result) =>
     result.status === "fulfilled" ? [result.value] : [],
   );
@@ -317,6 +319,8 @@ export function useAgentHistory(options: {
   >({
     queryKey,
     enabled: queryEnabled,
+    // A disabled search observer would keep an abandoned History read alive.
+    subscribed: queryEnabled,
     staleTime: 30_000,
     ...(options.refreshOnMount ? { refetchOnMount: "always" } : {}),
     // Previous results stand in only until the next query's arrive. With no host to search,
@@ -324,13 +328,14 @@ export function useAgentHistory(options: {
     ...(options.keepPreviousResults && queryEnabled ? { placeholderData: keepPreviousData } : {}),
     initialPageParam: null,
     getNextPageParam: getNextAgentHistoryPageParam,
-    queryFn: async ({ pageParam }) => {
+    queryFn: async ({ pageParam, signal }) => {
       if (targetHosts.length === 0) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return fetchAgentHistoryBatch({
         hosts: targetHosts,
         cursorByServerId: pageParam,
+        signal,
         ...(search ? { search } : {}),
       });
     },
@@ -355,11 +360,9 @@ export function useAgentHistory(options: {
   }, [enabled, refetch, targetHosts.length]);
 
   const loadMore = useCallback(() => {
-    if (!enabled || targetHosts.length === 0 || !hasNextPage || isFetchingNextPage) {
-      return;
-    }
-    void fetchNextPage();
-  }, [enabled, fetchNextPage, hasNextPage, isFetchingNextPage, targetHosts.length]);
+    if (!queryEnabled || !hasNextPage) return;
+    void fetchNextPage({ cancelRefetch: false });
+  }, [fetchNextPage, hasNextPage, queryEnabled]);
 
   const agents = useMemo(() => {
     const pages = data?.pages ?? [];

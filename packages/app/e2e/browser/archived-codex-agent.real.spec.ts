@@ -11,6 +11,7 @@ import {
   openSessions,
 } from "../support/helpers/archive-tab";
 import { expectComposerEditable } from "../support/helpers/composer";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   assertChatTranscript,
   cleanupRewindFlow,
@@ -54,6 +55,23 @@ async function unarchiveOpenAgent(page: Page): Promise<void> {
     timeout: 60_000,
   });
   await expectComposerEditable(page);
+}
+
+async function installHistoryReadGate(page: Page) {
+  const gate = await installDaemonWebSocketGate(page);
+  const response = "fetch_agent_history_response";
+  return {
+    hold: () => gate.holdNextServerMessage(response),
+    wait: () =>
+      test.step(
+        "Wait for the pending History reply",
+        () => gate.waitForHeldServerMessage(response),
+        {
+          timeout: 30_000,
+        },
+      ),
+    release: () => gate.releaseHeldServerMessage(response),
+  };
 }
 
 test.describe("archived Codex agent recovery", () => {
@@ -142,6 +160,7 @@ test.describe("archived Codex agent recovery", () => {
     const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-unarchive-history-")));
     let handle: AgentHandle | undefined;
     try {
+      const historyRead = await installHistoryReadGate(page);
       handle = await launchAgent({
         page,
         provider: "codex",
@@ -158,8 +177,14 @@ test.describe("archived Codex agent recovery", () => {
       await openSessions(page);
       await expectSessionRowArchived(page, "rewind-flow-codex-");
       await clickSessionRow(page, "rewind-flow-codex-");
+
+      historyRead.hold();
+      await openSessions(page);
+      await historyRead.wait();
+      await clickSessionRow(page, "rewind-flow-codex-");
       await unarchiveOpenAgent(page);
       await openSessions(page);
+      historyRead.release();
       await expectSessionRowNotArchived(page, "rewind-flow-codex-");
       await clickSessionRow(page, "rewind-flow-codex-");
       await expectComposerEditable(page);
