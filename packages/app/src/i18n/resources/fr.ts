@@ -926,6 +926,7 @@ export const fr: TranslationResources = {
           pushBehind:
             "Push indisponible pour l’instant : des modifications plus récentes doivent d’abord être récupérées",
           pushNothing: "Push indisponible : il n’y a rien de nouveau à pousser",
+          pushUpstreamGone: "Push indisponible : la branche suivie par cette branche n’existe plus",
           pullAndPushNoRemote:
             "Pull et push indisponibles : cette branche n’est pas encore liée à un dépôt distant",
           pullAndPushDirty:
@@ -2866,6 +2867,23 @@ export const fr: TranslationResources = {
         name: {
           label: "Nom",
         },
+        icon: {
+          label: "Icône",
+          accessibilityLabel: "Icône, {{value}}",
+          auto: "Auto",
+          autoDetected: "Auto ({{icon}})",
+          options: {
+            server: "Serveur",
+            laptop: "Portable",
+            desktop: "Bureau",
+            mini: "Mini",
+            workstation: "Station de travail",
+            cloud: "Cloud",
+            container: "Conteneur",
+            board: "Ordinateur monocarte",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Couleur",
           accessibilityLabel: "Couleur, {{value}}",
@@ -2901,6 +2919,14 @@ export const fr: TranslationResources = {
         relay: "Relais",
         local: "Local",
         remoteSsh: "SSH distant",
+      },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relais",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Direct",
+        routed: "Via",
       },
       connections: {
         title: "Connexions",

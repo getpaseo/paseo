@@ -573,6 +573,12 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
+Paseo 根据每个调用的 ACP `kind` 生成标准工具卡片：`execute` 显示为 Shell，`read` 显示为 Read，`edit` 和 `delete` 显示为 Edit，`search` 显示为 Search，`fetch` 显示为 Fetch。卡片读取调用的 `input`（ACP `rawInput`）、`output`（`rawOutput`）、`content` 和 `locations`。其他类型的调用显示原始输入和输出；如果 Agent 两者都没有发送，则显示文本内容。
+
+在返回的工具调用上设置 `detail` 可以替换标准卡片。例如，Agent 可能把新建文件报告为 ACP 编辑，而插件返回带有文件路径和内容的 `write` detail。返回 `{ type: "unknown", input, output }` 可以显示原始值。
+
+`toolCall` 会在调用的每次更新时运行，参数是到目前为止合并后的调用。按照 ACP 的定义，发送了 `content` 的更新会替换之前的内容。如果 Agent 只在较早的更新中发送某个值，请从 `context.previous` 读取，它是 Paseo 上一次展示的调用。[Hermes 终端转换器](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)就是这样保留 Hermes 第一次更新中的命令。
+
 如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
 
 ## 测试与发布 {#test-and-publish}

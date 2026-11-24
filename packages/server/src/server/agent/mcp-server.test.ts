@@ -24,6 +24,8 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -1248,14 +1250,16 @@ describe("browser MCP tools", () => {
       expect(toolNames).not.toContain("list_agents");
       expect(toolNames).not.toContain("browser_list_tabs");
       expect(toolNames).toEqual(expect.arrayContaining(["create_agent", "browser_snapshot"]));
-      await expect(client.callTool({ name: "list_agents", arguments: {} })).resolves.toEqual({
-        content: [{ type: "text", text: "MCP error -32602: Tool list_agents not found" }],
-        isError: true,
-      });
-      await expect(client.callTool({ name: "browser_list_tabs", arguments: {} })).resolves.toEqual({
-        content: [{ type: "text", text: "MCP error -32602: Tool browser_list_tabs not found" }],
-        isError: true,
-      });
+      // Calling a tool that is not registered is a JSON-RPC error (-32602) on the
+      // wire, not a tool result. The v1 SDK server folded it into an `isError`
+      // result; the v2 server surfaces it as the protocol error it is, so assert
+      // the rejection here.
+      await expect(client.callTool({ name: "list_agents", arguments: {} })).rejects.toThrow(
+        /Tool list_agents not found/,
+      );
+      await expect(client.callTool({ name: "browser_list_tabs", arguments: {} })).rejects.toThrow(
+        /Tool browser_list_tabs not found/,
+      );
       expect(broker.calls).toEqual([]);
     } finally {
       await client.close();
@@ -2523,6 +2527,8 @@ describe("create_agent MCP tool", () => {
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
         clearWorkspaceArchiving,
+        assertWorkspaceAutomationAllowed: async () => {},
+        isCheckoutUntrusted: async () => false,
         github: createGitHubServiceStub(),
         logger,
       });
@@ -2639,6 +2645,8 @@ describe("create_agent MCP tool", () => {
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
+        assertWorkspaceAutomationAllowed: async () => {},
+        isCheckoutUntrusted: async () => false,
         github: createGitHubServiceStub(),
         logger,
       });
@@ -2666,6 +2674,117 @@ describe("create_agent MCP tool", () => {
       expect(archivedWorkspaceIds).toContain("ws-mcp-A");
       expect(archivedWorkspaceIds).not.toContain("ws-mcp-B");
       await expect(access(worktreePath)).resolves.toBeUndefined();
+    } finally {
+      await removeTempDir(tempDir);
+    }
+  });
+
+  it("skips teardown commands when archiving a worktree with blocked repository automation", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const tempDir = realpathSync.native(
+      await mkdtemp(join(tmpdir(), "paseo-mcp-archive-worktree-blocked-")),
+    );
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+    const markerName = "mcp-blocked-teardown.log";
+    const markerPath = join(repoDir, markerName);
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            teardown: [
+              `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+            ],
+          },
+        }),
+      );
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      const workspaceGitService = {
+        getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
+        resolveRepoRoot: vi.fn(async () => repoDir),
+        invalidateWorktrees: vi.fn(),
+      };
+      const archivedWorkspaceIds: string[] = [];
+      const activeWorkspaces: Array<{
+        workspaceId: string;
+        cwd: string;
+        kind: "worktree" | "local_checkout" | "directory";
+      }> = [];
+      const listActiveWorkspaces = vi.fn(async () => activeWorkspaces);
+      const archiveWorkspaceRecord = createArchiveWorkspaceRecordMutator(
+        activeWorkspaces,
+        archivedWorkspaceIds,
+      );
+      const { WorkspaceAutomationBlockedError } = await import("../workspace-automation-gate.js");
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
+        workspaceGitService: workspaceGitService as unknown as Pick<
+          WorkspaceGitService,
+          "getSnapshot" | "listWorktrees" | "resolveRepoRoot" | "invalidateWorktrees"
+        >,
+        findWorkspaceIdForCwd: vi.fn(async () => "ws-mcp-blocked"),
+        listActiveWorkspaces,
+        archiveWorkspaceRecord,
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        assertWorkspaceAutomationAllowed: async () => {
+          throw new WorkspaceAutomationBlockedError({
+            kind: "change_request",
+            forge: "github",
+            number: 77,
+            headRepository: "contributor/repo",
+          });
+        },
+        isCheckoutUntrusted: async () => false,
+        github: createGitHubServiceStub(),
+        logger,
+      });
+      const createTool = registeredTool(server, "create_workspace");
+      const archiveTool = registeredTool(server, "archive_workspace");
+      const created = await createTool.handler({
+        isolation: "worktree",
+        path: repoDir,
+        worktreeSlug: "archive-blocked-worktree",
+        baseBranch: "main",
+      });
+      const worktreePath = z.string().parse(created.structuredContent.cwd);
+      activeWorkspaces.push({
+        workspaceId: "ws-mcp-blocked",
+        cwd: worktreePath,
+        kind: "worktree",
+      });
+
+      const archived = await archiveTool.handler({
+        workspaceId: "ws-mcp-blocked",
+      });
+
+      expect(archived.structuredContent).toMatchObject({
+        workspaceId: "ws-mcp-blocked",
+        removedDirectory: true,
+      });
+      await expect(access(worktreePath)).rejects.toThrow();
+      await expect(access(markerPath)).rejects.toThrow();
     } finally {
       await removeTempDir(tempDir);
     }
@@ -3507,6 +3626,7 @@ class HeldTurnAgentSession implements AgentSession {
   private turnStartGate: Promise<void> | null = null;
   private cancelHeldStart: (() => void) | null = null;
   private interruptGate: Promise<void> | null = null;
+  private closeGate?: { signalStart: () => void; waitForRelease: Promise<void> };
   private nextStartError: Error | null = null;
 
   constructor(
@@ -3698,7 +3818,19 @@ class HeldTurnAgentSession implements AgentSession {
     });
   }
 
-  async close(): Promise<void> {}
+  holdClose(): { started: Promise<void>; release: () => void } {
+    const started = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    this.closeGate = { signalStart: started.resolve, waitForRelease: released.promise };
+    return { started: started.promise, release: released.resolve };
+  }
+
+  async close(): Promise<void> {
+    if (this.closeGate) {
+      this.closeGate.signalStart();
+      await this.closeGate.waitForRelease;
+    }
+  }
 }
 
 class HeldTurnAgentClient implements AgentClient {
@@ -3852,6 +3984,91 @@ describe("send_agent_prompt MCP tool", () => {
           outcome === "steered",
         );
       } finally {
+        await removeAgentStateDir(manager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    { activeTurnBehavior: "interrupt", history: "closed" },
+    { activeTurnBehavior: "steer", history: "closed" },
+    { activeTurnBehavior: "queue", history: "closed" },
+    { activeTurnBehavior: "interrupt", history: "open" },
+    { activeTurnBehavior: "interrupt", history: "restoring" },
+  ] as const)(
+    "an agent-scoped $activeTurnBehavior send starts a turn on an archived agent (history: $history)",
+    async ({ activeTurnBehavior, history }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-send-archived-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const client = new HeldTurnAgentClient("codex", true);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      let mcpClient: Client | undefined;
+      let restore: Promise<boolean> | undefined;
+      let releaseHistoryClose: (() => void) | undefined;
+      try {
+        const sender = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const recipient = await manager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        await manager.archiveAgent(recipient.id);
+        if (history !== "closed") {
+          await ensureAgentLoaded(recipient.id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+        }
+        const openedSessions = client.sessions.length;
+
+        const server = await createAgentMcpServer({
+          agentManager: manager,
+          agentStorage: storage,
+          callerAgentId: sender.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        mcpClient = await connectInMemoryMcpClient(server);
+        if (history === "restoring") {
+          const closing = client.sessions.at(-1)!.holdClose();
+          releaseHistoryClose = closing.release;
+          restore = manager.unarchiveSnapshot(recipient.id);
+          await closing.started;
+        }
+        const response = await mcpClient.callTool({
+          name: "send_agent_prompt",
+          arguments: {
+            agentId: recipient.id,
+            prompt: "Start work",
+            notifyOnFinish: false,
+            activeTurnBehavior,
+          },
+        });
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior,
+        });
+        const dispatch = serverDeliveries
+          .get(server)!
+          .waitForDispatch(recipient.id, AbortSignal.timeout(5_000));
+        releaseHistoryClose?.();
+        await Promise.all([restore, dispatch]);
+        expect((await storage.get(recipient.id))?.archivedAt).toBeNull();
+        expect(manager.getAgent(recipient.id)?.lifecycle).toBe("running");
+        expect(client.sessions).toHaveLength(openedSessions + 1);
+        expect(client.sessions.at(-1)?.prompts.map(parseAgentMessage)).toEqual([
+          expect.objectContaining({ text: "Start work" }),
+        ]);
+      } finally {
+        releaseHistoryClose?.();
+        await restore?.catch(() => undefined);
+        await mcpClient?.close();
         await removeAgentStateDir(manager, storage, workdir);
       }
     },
@@ -7519,6 +7736,61 @@ describe("local durable finish subscription MCP wiring", () => {
     } finally {
       await mcp?.close();
       await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
+
+describe("modern MCP protocol (2026-07-28)", () => {
+  // 2026-07-28 clients skip initialize and carry the protocol version and
+  // capabilities on every request. Drive createMcpHandler directly so this
+  // covers the modern path: widening the accepted version list alone would
+  // keep the legacy tests green without serving it.
+  const modernRequest = (id: number, method: string): Request =>
+    new Request("http://localhost/mcp/agents", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2026-07-28",
+        // SEP-2243: modern requests must also repeat the method in a header.
+        "mcp-method": method,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method,
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": { name: "test-client", version: "1.0.0" },
+          },
+        },
+      }),
+    });
+
+  it("answers a per-request modern envelope and lists catalog tools", async () => {
+    const server = await createAgentMcpServerWithDependencies({
+      agentManager: new BoundaryAgentManagerFake() as unknown as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as unknown as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const handler = createMcpHandler(() => server, { legacy: "stateless" });
+
+    try {
+      const response = await handler.fetch(modernRequest(1, "tools/list"));
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        result?: { tools?: Array<{ name: string }> };
+      };
+      const names = (payload.result?.tools ?? []).map((tool) => tool.name);
+      expect(names.length).toBeGreaterThan(0);
+      expect(names).toContain("list_agents");
+    } finally {
+      await handler.close();
+      await server.close();
     }
   });
 });

@@ -912,6 +912,7 @@ export const ar: TranslationResources = {
           pushNoRemote: "الدفع غير متاح هنا لأن هذا الفرع غير متصل بجهاز التحكم عن بعد بعد",
           pushBehind: "الدفع غير متاح حتى الآن نظرًا لوجود تغييرات أحدث يجب إدخالها أولاً",
           pushNothing: "خدمة الدفع غير متاحة لأنه لا يوجد شيء جديد لإرساله",
+          pushUpstreamGone: "الدفع غير متاح لأن الفرع الذي يتتبعه هذا الفرع لم يعد موجودًا",
           pullAndPushNoRemote:
             "السحب والدفع غير متاح هنا لأن هذا الفرع غير متصل بجهاز التحكم عن بعد بعد",
           pullAndPushDirty:
@@ -2840,6 +2841,23 @@ export const ar: TranslationResources = {
         name: {
           label: "الاسم",
         },
+        icon: {
+          label: "الأيقونة",
+          accessibilityLabel: "الأيقونة، {{value}}",
+          auto: "تلقائي",
+          autoDetected: "تلقائي ({{icon}})",
+          options: {
+            server: "خادم",
+            laptop: "حاسوب محمول",
+            desktop: "حاسوب مكتبي",
+            mini: "حاسوب مصغّر",
+            workstation: "محطة عمل",
+            cloud: "سحابي",
+            container: "حاوية",
+            board: "حاسوب أحادي اللوحة",
+            terminal: "طرفية",
+          },
+        },
         color: {
           label: "اللون",
           accessibilityLabel: "اللون، {{value}}",
@@ -2875,6 +2893,14 @@ export const ar: TranslationResources = {
         relay: "تتابع",
         local: "محلي",
         remoteSsh: "SSH عن بُعد",
+      },
+      connectionKinds: {
+        local: "محلي",
+        relay: "تتابع",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "مباشر",
+        routed: "عبر",
       },
       connections: {
         title: "اتصالات",

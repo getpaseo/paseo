@@ -190,7 +190,7 @@ async function withAuthenticatedRemote(
       { cwd },
     );
     await run(["clone", "--bare", cwd, remote], { cwd: root });
-    await run(["update-server-info"], { cwd: remote });
+    await run(["--git-dir", remote, "update-server-info"], { cwd: root });
     await run(["config", "credential.helper", ""], { cwd });
     await run(["config", "core.askPass", askpassCommand], { cwd });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

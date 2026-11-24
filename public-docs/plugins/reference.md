@@ -442,7 +442,10 @@ request. The promise returns a JSON value or rejects with the agent's JSON-RPC e
 
 In `toolCall`, use `context.mcpServerNames` to recognize servers that Paseo supplied when it opened
 the ACP session. Include an empty-list fallback for older SDK versions or servers configured
-directly in the agent.
+directly in the agent. `toolCall.content` holds the call's ACP `content` blocks, and
+`context.previous` is the call as Paseo last presented it, after every transformer. Both are absent
+on older SDK versions, and `previous` is absent on a call's first update. See
+[Adapt an ACP agent](/docs/plugins/providers#adapt-an-acp-agent) for the standard tool cards.
 
 Use `config(state, context)` to return the configuration snapshot that Paseo displays.
 Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.

@@ -340,7 +340,15 @@ export class AgentStorage {
 
     if (previousPath && previousPath !== nextPath) {
       try {
-        await fs.unlink(previousPath);
+        // Compare the entries after the atomic replacement. On a case-insensitive
+        // volume both spellings can now address the file we just wrote.
+        const [previous, next] = await Promise.all([
+          fs.lstat(previousPath, { bigint: true }),
+          fs.lstat(nextPath, { bigint: true }),
+        ]);
+        if (previous.dev !== next.dev || previous.ino !== next.ino) {
+          await fs.unlink(previousPath);
+        }
       } catch {
         // ignore cleanup errors
       }

@@ -1,0 +1,70 @@
+{
+  "name": "react-native-enriched-markdown",
+  "version": "0.17.4",
+  "private": true,
+  "description": "Markdown-based Rich Text solution for React Native",
+  "main": "./lib/module/index",
+  "module": "./lib/module/index",
+  "source": "./src/index.tsx",
+  "types": "./lib/typescript/src/index.d.ts",
+  "scripts": {
+    "postinstall": "node postinstall.mjs"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "ios",
+    "android",
+    "macos",
+    "web",
+    "markdown",
+    "rich-editor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/software-mansion/enriched-markdown.git",
+    "directory": "packages/react-native-enriched-markdown"
+  },
+  "author": "Gregory Moskaliuk <mosckalyuck@gmail.com> (https://github.com/hryhoriiK97)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/software-mansion/enriched-markdown/issues"
+  },
+  "homepage": "https://enriched.swmansion.com/markdown",
+  "peerDependencies": {
+    "katex": ">=0.16.0",
+    "react": "*",
+    "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "katex": {
+      "optional": true
+    }
+  },
+  "codegenConfig": {
+    "name": "EnrichedMarkdownTextSpec",
+    "type": "components",
+    "jsSrcsDir": "src",
+    "outputDir": {
+      "ios": "ios/generated",
+      "android": "android/generated"
+    },
+    "android": {
+      "javaPackageName": "com.swmansion.enriched.markdown"
+    },
+    "ios": {
+      "components": {
+        "EnrichedMarkdownText": {
+          "className": "EnrichedMarkdownText"
+        },
+        "EnrichedMarkdown": {
+          "className": "EnrichedMarkdown"
+        },
+        "EnrichedMarkdownTextInput": {
+          "className": "EnrichedMarkdownTextInput"
+        }
+      }
+    },
+    "includesGeneratedCode": true
+  }
+}
