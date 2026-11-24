@@ -31,6 +31,8 @@ export interface PaneFocusContextValue {
   focusPane: () => void;
 }
 
+export const WorkspaceActiveAgentContext = createContext<string | null>(null);
+
 const PaneContext = createContext<PaneContextValue | null>(null);
 const PaneFocusContext = createContext<PaneFocusContextValue | null>(null);
 const noopFocusPane = () => {};

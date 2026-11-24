@@ -1851,6 +1851,9 @@ export default function contribute(client: PluginClientContext) {
 Every panel receives `PluginPanelProps<Params>` with `theme`, `host`, `layout`, `navigation`,
 `workspaceId`, read-only `params`, `revision`, and `tab`. Workspace panels have empty
 `PluginWorkspacePanelParams`; agent panels have `PluginAgentPanelParams` containing `agentId`.
+Workspace panels receive `activeAgentId` for the selected agent tab in the last focused main
+workspace pane. The field updates with tab selection and is `null` when that pane has no current
+agent. Older clients omit the field.
 `revision` increments whenever params are re-sent to the same tab, including an identical request.
 
 `tab.setModified(boolean)` marks unsaved work and asks before closing. `tab.state` is opaque

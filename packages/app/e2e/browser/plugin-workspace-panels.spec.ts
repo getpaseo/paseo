@@ -9,7 +9,7 @@ import { openCommandCenter } from "../support/helpers/command-center";
 import { submitMessage } from "../support/helpers/composer";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
-import { buildAgentRoute } from "../support/helpers/mock-agent";
+import { buildAgentRoute, openAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -259,6 +259,92 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
 
 test.describe("plugin workspace panels and Command Center", () => {
   test.describe.configure({ timeout: 240_000 });
+
+  test("Explorer workspace panels receive the active main-pane chat", async ({
+    page,
+  }, testInfo) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-active-agent-panel-e2e-"));
+    const workspace = await seedWorkspace({ repoPrefix: "plugin-explorer-active-agent-" });
+    const { client, workspaceId, repoPath } = workspace;
+    const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    const previousConfig = await pluginClient.getDaemonConfig();
+
+    try {
+      const chats = [];
+      for (const title of ["First Explorer chat", "Second Explorer chat"]) {
+        chats.push(
+          await client.createAgent({
+            provider: "mock",
+            cwd: repoPath,
+            workspaceId,
+            title,
+            model: "ten-second-stream",
+            modeId: "load-test",
+          }),
+        );
+      }
+      await writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({
+          id: PLUGIN_ID,
+          requirements: pluginRequirements,
+        }),
+      );
+      await writeFile(
+        path.join(directory, "index.client.tsx"),
+        `import React from "react";
+import { Text } from "react-native";
+
+export default function contribute(client) {
+  return client.addWorkspacePanel({
+    id: "active-chat",
+    title: "Active chat inspector",
+    icon: "Inbox",
+    locations: ["explorer"],
+    Component: ({ activeAgentId }) => <Text>Active chat: {activeAgentId ?? "none"}</Text>,
+  });
+}`,
+      );
+      await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
+      await pluginClient.installDirectoryPlugin(directory);
+      await page.setViewportSize(WIDE_VIEWPORT);
+      await openAgentRoute(page, { workspaceId, agentId: chats[0].id });
+      const main = page.getByTestId("workspace-pane-main");
+      await expect(main.getByTestId(`workspace-tab-agent_${chats[0].id}`)).toBeVisible();
+      const explorer = page.getByTestId("workspace-explorer-sidebar");
+      if (!(await explorer.isVisible())) {
+        await page.getByTestId("workspace-explorer-toggle").first().click();
+      }
+      await explorer.getByTestId("workspace-new-tab-button").click();
+      await page.getByRole("menuitem", { name: "Active chat inspector" }).click();
+      const firstChat = explorer.getByText(`Active chat: ${chats[0].id}`, { exact: true });
+      await expect(firstChat).toBeVisible();
+      await firstChat.click();
+      await expect(firstChat).toBeVisible();
+
+      await openAgentRoute(page, { workspaceId, agentId: chats[1].id });
+      await expect(
+        explorer.getByText(`Active chat: ${chats[1].id}`, { exact: true }),
+      ).toBeVisible();
+      await main.getByTestId(`workspace-tab-agent_${chats[0].id}`).click();
+      await expect(firstChat).toBeVisible();
+
+      await main.getByTestId("workspace-new-tab-button").click();
+      await page.getByTestId("workspace-new-tab-menu-terminal").click();
+      await expect(explorer.getByText("Active chat: none", { exact: true })).toBeVisible();
+      await main.getByTestId(`workspace-tab-agent_${chats[0].id}`).click();
+      await expect(firstChat).toBeVisible();
+      await capture(page, testInfo, "explorer-workspace-panel-active-chat");
+    } finally {
+      await pluginClient.removePlugin(PLUGIN_ID).catch(() => undefined);
+      await pluginClient.patchDaemonConfig({
+        pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
+      });
+      await pluginClient.close();
+      await workspace.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   test("follows workspace, agent, host, compact, and unavailable state", async ({
     page,

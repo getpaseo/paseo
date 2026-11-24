@@ -187,6 +187,7 @@ import { SheetPaneHostProvider, type SheetPaneHost } from "@/screens/workspace/s
 import { SheetTabs } from "@/screens/workspace/sheet-tabs";
 import type { PaneHost } from "@/panels/panel-manifest";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
+import { WorkspaceActiveAgentContext } from "@/panels/pane-context";
 import { DiffDocumentWorkspaceCacheProvider } from "@/git/diff-document/workspace-cache";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import {
@@ -776,17 +777,21 @@ function WorkspaceContentProviders({
   children,
   workspaceKey,
   sheetPaneHost,
+  activeAgentId,
 }: {
   children: ReactNode;
   workspaceKey: string | null;
   sheetPaneHost: SheetPaneHost | null;
+  activeAgentId: string | null;
 }) {
   return (
-    <WorkspaceFocusProvider workspaceKey={workspaceKey}>
-      <DiffDocumentWorkspaceCacheProvider>
-        <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
-      </DiffDocumentWorkspaceCacheProvider>
-    </WorkspaceFocusProvider>
+    <WorkspaceActiveAgentContext.Provider value={activeAgentId}>
+      <WorkspaceFocusProvider workspaceKey={workspaceKey}>
+        <DiffDocumentWorkspaceCacheProvider>
+          <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+        </DiffDocumentWorkspaceCacheProvider>
+      </WorkspaceFocusProvider>
+    </WorkspaceActiveAgentContext.Provider>
   );
 }
 
@@ -1341,6 +1346,11 @@ function WorkspaceScreenContent({
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
     [workspaceLayout],
   );
+  const activeMainAgentId = useMemo(() => {
+    const pane = workspaceLayout && findPaneById(workspaceLayout.root, lastMainPaneId);
+    const target = uiTabs.find((tab) => tab.tabId === pane?.focusedTabId)?.target;
+    return target?.kind === "agent" ? target.agentId : null;
+  }, [lastMainPaneId, uiTabs, workspaceLayout]);
   useOpenAgentTabLabels({
     client,
     serverId: normalizedServerId,
@@ -3830,6 +3840,7 @@ function WorkspaceScreenContent({
       key={persistenceKey}
       workspaceKey={persistenceKey}
       sheetPaneHost={sheetPaneHost}
+      activeAgentId={activeMainAgentId}
     >
       <WorkspaceMarkdownLinks
         workspace={workspaceDescriptor}

@@ -6,12 +6,12 @@ import type {
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { CircleAlert } from "lucide-react-native";
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { usePaneContext } from "@/panels/pane-context";
+import { usePaneContext, WorkspaceActiveAgentContext } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -59,6 +59,18 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
     );
   });
+  const mainPaneAgentId = useContext(WorkspaceActiveAgentContext);
+  const activeAgentId = useSessionStore((state) => {
+    if (contribution?.context !== "workspace" || !mainPaneAgentId) return null;
+    const session = state.sessions[serverId];
+    const agent =
+      session?.agents.get(mainPaneAgentId) ?? session?.agentDetails.get(mainPaneAgentId);
+    return agent &&
+      !agent.archivedAt &&
+      normalizeWorkspaceOpaqueId(agent.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
+      ? mainPaneAgentId
+      : null;
+  });
   const client = useHostRuntimeClient(serverId);
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();
@@ -80,6 +92,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
     const props: PluginWorkspacePanelProps = {
       // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       context: "workspace",
+      activeAgentId,
       params: {},
       revision: panelRevision ?? 0,
       tab,

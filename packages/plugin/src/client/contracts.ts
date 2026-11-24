@@ -191,6 +191,8 @@ export interface PluginFilePanelParams {
   readonly lineEnd?: number;
 }
 export interface PluginWorkspacePanelProps extends PluginPanelProps<PluginWorkspacePanelParams> {
+  /** Active agent in the workspace’s main pane, or null when that pane has no agent tab. */
+  readonly activeAgentId?: string | null;
   // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
   /** @deprecated Use the panel registration to select the context. */
   context: "workspace";
