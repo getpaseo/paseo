@@ -40,6 +40,17 @@ export class SortablePager<TItem, K extends string> {
 
   sorted(items: readonly TItem[], sort: readonly SortSpec<K>[]): TItem[] {
     // Date parsing and status projection are paid once per row for the entire sort.
+    if (sort.length === 1) {
+      const { key, direction } = sort[0]!;
+      const sign = direction === "asc" ? 1 : -1;
+      const rows = items.map((item) => ({ item, value: this.config.getSortValue(item, key) }));
+      rows.sort(
+        (left, right) =>
+          sign * compareValues(left.value, right.value) ||
+          this.config.getId(left.item).localeCompare(this.config.getId(right.item)),
+      );
+      return rows.map(({ item }) => item);
+    }
     const rows = items.map((item) => ({
       item,
       values: sort.map(({ key }) => this.config.getSortValue(item, key)),

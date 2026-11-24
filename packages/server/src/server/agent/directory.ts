@@ -161,11 +161,12 @@ export class AgentDirectory {
 
     const backgroundWorkspaceIds = new Set<string>();
     if (visibility !== true) {
-      const workspaceIds = new Set(
-        [...selectedLive, ...records].flatMap((agent) =>
-          agent.workspaceId ? [agent.workspaceId] : [],
-        ),
-      );
+      const workspaceIds = new Set<string>();
+      for (const agents of [selectedLive, records]) {
+        for (const agent of agents) {
+          if (agent.workspaceId) workspaceIds.add(agent.workspaceId);
+        }
+      }
       for (const id of workspaceIds) {
         if ((await this.deps.workspaces.get(id))?.background) backgroundWorkspaceIds.add(id);
       }
