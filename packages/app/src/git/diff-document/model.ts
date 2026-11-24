@@ -764,18 +764,38 @@ function measureGraphemeSlice(
   };
 }
 
+function firstGraphemeAtOrAfter(fragment: DiffFragment, offset: number): number {
+  "worklet";
+  let low = 0;
+  let high = fragment.graphemes.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (fragment.graphemes[middle]!.start < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 export function fragmentTextForRange(fragment: DiffFragment, start: number, end: number): string {
   "worklet";
-  return fragment.graphemes
-    .filter((grapheme) => grapheme.start >= start && grapheme.end <= end)
-    .map((grapheme) => grapheme.text)
-    .join("");
+  if (start <= fragment.start && end >= fragment.end) return fragment.text;
+  let text = "";
+  for (let i = firstGraphemeAtOrAfter(fragment, start); i < fragment.graphemes.length; i++) {
+    const grapheme = fragment.graphemes[i]!;
+    if (grapheme.end > end) break;
+    text += grapheme.text;
+  }
+  return text;
 }
 
 export function fragmentWidthForRange(fragment: DiffFragment, start: number, end: number): number {
-  return fragment.graphemes
-    .filter((grapheme) => grapheme.start >= start && grapheme.end <= end)
-    .reduce((width, grapheme) => width + grapheme.width, 0);
+  let width = 0;
+  for (let i = firstGraphemeAtOrAfter(fragment, start); i < fragment.graphemes.length; i++) {
+    const grapheme = fragment.graphemes[i]!;
+    if (grapheme.end > end) break;
+    width += grapheme.width;
+  }
+  return width;
 }
 
 export function graphemeBoundaries(text: string): number[] {
@@ -820,13 +840,10 @@ function maximumLineNumber(file: BuildDiffDocumentModelInput["files"][number]): 
   return maximum;
 }
 
-export function visibleRowRange(
-  rows: readonly DiffRow[],
-  viewportTop: number,
-  viewportHeight: number,
-): { start: number; end: number } {
+type VerticalSpan = Pick<DiffRow, "top" | "height">;
+
+function firstSpanEndingAfter(rows: readonly VerticalSpan[], viewportTop: number): number {
   "worklet";
-  const viewportBottom = viewportTop + viewportHeight;
   let low = 0;
   let high = rows.length;
   while (low < high) {
@@ -835,8 +852,19 @@ export function visibleRowRange(
     if (row && row.top + row.height <= viewportTop) low = middle + 1;
     else high = middle;
   }
-  const start = low;
-  high = rows.length;
+  return low;
+}
+
+export function visibleRowRange(
+  rows: readonly VerticalSpan[],
+  viewportTop: number,
+  viewportHeight: number,
+): { start: number; end: number } {
+  "worklet";
+  const viewportBottom = viewportTop + viewportHeight;
+  const start = firstSpanEndingAfter(rows, viewportTop);
+  let low = start;
+  let high = rows.length;
   while (low < high) {
     const middle = (low + high) >>> 1;
     const row = rows[middle];
@@ -867,9 +895,8 @@ export function captureScrollAnchor(
 ): DiffScrollAnchor | null {
   const file = fileAtDocumentOffset(model.files, scrollTop);
   if (!file) return null;
-  const row = model.rows
-    .slice(file.rowStart, file.rowEnd)
-    .find((candidate) => candidate.top + candidate.height > scrollTop);
+  const rowIndex = Math.max(file.rowStart, firstSpanEndingAfter(model.rows, scrollTop));
+  const row = rowIndex < file.rowEnd ? model.rows[rowIndex] : undefined;
   if (!row || row.kind !== "line") {
     return { kind: "header", path: file.path, viewportDelta: file.top - scrollTop };
   }
@@ -932,20 +959,24 @@ export function resolveRelayoutScrollTop(
   next: DiffDocumentModel,
   scrollTop: number,
 ): number {
-  const changedFiles = previous.files.filter((file) => {
-    const nextFile = next.files.find((candidate) => candidate.path === file.path);
-    return nextFile && nextFile.isCollapsed !== file.isCollapsed;
-  });
-  if (changedFiles.length === 1) {
-    const previousFile = changedFiles[0]!;
-    const nextFile = next.files.find((candidate) => candidate.path === previousFile.path);
-    if (nextFile) {
-      const headerDelta =
-        previousFile.top <= scrollTop && scrollTop < previousFile.bottom
-          ? 0
-          : previousFile.top - scrollTop;
-      return Math.max(0, nextFile.top - headerDelta);
+  const byPath = new Map<string, DiffFileSection>();
+  for (const file of next.files) {
+    if (!byPath.has(file.path)) byPath.set(file.path, file);
+  }
+  let changed: DiffFileSection | undefined;
+  for (const file of previous.files) {
+    const nextFile = byPath.get(file.path);
+    if (!nextFile || nextFile.isCollapsed === file.isCollapsed) continue;
+    if (changed) {
+      changed = undefined;
+      break;
     }
+    changed = file;
+  }
+  if (changed) {
+    const headerDelta =
+      changed.top <= scrollTop && scrollTop < changed.bottom ? 0 : changed.top - scrollTop;
+    return Math.max(0, byPath.get(changed.path)!.top - headerDelta);
   }
   const anchor = captureScrollAnchor(previous, scrollTop);
   return anchor ? resolveScrollAnchor(next, anchor) : scrollTop;

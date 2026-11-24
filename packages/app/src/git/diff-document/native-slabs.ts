@@ -1,3 +1,4 @@
+import { visibleRowRange } from "./model";
 import type { DiffDocumentModel } from "./types";
 
 export interface NativeCanvasSlab {
@@ -13,8 +14,8 @@ export function buildNativeCanvasSlabs(
   viewportHeight: number,
 ): NativeCanvasSlab[] {
   const slabHeight = Math.max(768, viewportHeight);
-  return model.files.flatMap((file) => {
-    const slabs: NativeCanvasSlab[] = [];
+  const slabs: NativeCanvasSlab[] = [];
+  for (const file of model.files) {
     let slabIndex = 0;
     for (let top = file.bodyTop; top < file.bottom; top += slabHeight, slabIndex += 1) {
       const height = Math.min(slabHeight, file.bottom - top);
@@ -26,8 +27,8 @@ export function buildNativeCanvasSlabs(
         height,
       });
     }
-    return slabs;
-  });
+  }
+  return slabs;
 }
 
 export function nativeCanvasSlabsForViewport(
@@ -37,7 +38,8 @@ export function nativeCanvasSlabsForViewport(
 ): NativeCanvasSlab[] {
   const top = Math.max(0, scrollTop - viewportHeight / 2);
   const bottom = scrollTop + viewportHeight * 1.5;
-  return slabs.filter((slab) => slab.top < bottom && slab.top + slab.height > top);
+  const { start, end } = visibleRowRange(slabs, top, bottom - top);
+  return slabs.slice(start, end);
 }
 
 export function nativeCanvasWindowBucket(scrollTop: number, viewportHeight: number): number {

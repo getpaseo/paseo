@@ -5,6 +5,8 @@ import {
   captureScrollAnchor,
   FILE_HEADER_HEIGHT,
   graphemeBoundaries,
+  fragmentTextForRange,
+  fragmentWidthForRange,
   measureFragments,
   resolveScrollAnchor,
   resolveRelayoutScrollTop,
@@ -71,6 +73,20 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
 }
 
 describe("diff document model", () => {
+  it("uses only whole graphemes and preserves displayed tabs in source ranges", () => {
+    const [fragment] = measureFragments({
+      text: "ab\téz",
+      availableWidth: 300,
+      wrapLines: false,
+      lineHeight: 18,
+      measureText: measurer,
+    });
+    expect(fragmentTextForRange(fragment!, 1, 4)).toBe("b  ");
+    expect(fragmentTextForRange(fragment!, 4, 6)).toBe("z");
+    expect(fragmentWidthForRange(fragment!, 4, 6)).toBe(10);
+    expect(fragmentWidthForRange(fragment!, 4, 3)).toBe(0);
+  });
+
   it("preserves shaped wrap breaks when joining makes a longer prefix narrower", () => {
     const measure = (text: string) => {
       if (text === "لا") return 30;
