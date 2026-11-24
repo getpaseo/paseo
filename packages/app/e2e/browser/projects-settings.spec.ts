@@ -59,6 +59,8 @@ import {
 } from "@/utils/host-routes";
 import { getServerId } from "../support/helpers/server-id";
 import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
+import { installLocalDesktopHost } from "../support/helpers/local-desktop-host";
+import type { OpenDesktopTargetInput } from "@/workspace/desktop-open-targets";
 
 const updatedSetup = ["npm install", "npm run build"];
 
@@ -175,6 +177,33 @@ function blockClipboardWrites(): void {
   };
 }
 
+async function installFinderTarget(
+  page: Page,
+  open: (input: OpenDesktopTargetInput) => void,
+): Promise<void> {
+  await page.exposeFunction("openTestFinderTarget", open);
+  await page.evaluate(() => {
+    const desktop = window.paseoDesktop;
+    if (!desktop) throw new Error("Test desktop bridge is missing");
+    const openTarget = (
+      window as typeof window & {
+        openTestFinderTarget: (input: OpenDesktopTargetInput) => Promise<void>;
+      }
+    ).openTestFinderTarget;
+    desktop.editor = {
+      listTargets: async () => [
+        {
+          id: "finder",
+          label: "Finder",
+          kind: "file-manager",
+          icon: { kind: "symbol", name: "folder" },
+        },
+      ],
+      openTarget,
+    };
+  });
+}
+
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
   await openAddProjectFlow(page);
   await chooseAddProjectMethod(page, "directory-search");
@@ -209,6 +238,57 @@ async function openProjectSettingsFromSidebar(page: Page, projectId: string): Pr
 }
 
 test.describe("Projects settings", () => {
+  test("opens the source directory in Finder on the local desktop", async ({
+    page,
+    editableProject,
+  }) => {
+    const opened: OpenDesktopTargetInput[] = [];
+    let failOpen = false;
+    await installLocalDesktopHost(page, editableProject.path);
+    await openProjects(page);
+    await installFinderTarget(page, (target) => {
+      if (failOpen) throw new Error("Unable to open directory");
+      opened.push(target);
+    });
+    await openProjectSettings(page, editableProject.name);
+
+    const details = page.getByTestId("project-details-section");
+    const worktreeHeading = page.getByText("Worktree lifecycle hooks", { exact: true });
+    const groupFontSize = await worktreeHeading.evaluate((heading) => {
+      return getComputedStyle(heading).fontSize;
+    });
+    await expect(details.getByText("Project details", { exact: true })).toHaveCSS(
+      "font-size",
+      groupFontSize,
+    );
+
+    const open = details.getByRole("button", { name: "Open in Finder" });
+    await open.click();
+    await expect
+      .poll(() => opened)
+      .toEqual([{ editorId: "finder", workspacePath: editableProject.path }]);
+
+    failOpen = true;
+    await open.click();
+    await expect(page.getByText("Couldn't open folder", { exact: true })).toBeVisible();
+  });
+
+  test("keeps only the copy action for a project on another host", async ({
+    page,
+    editableProject,
+  }) => {
+    await installLocalDesktopHost(page, editableProject.path, "srv_other_desktop");
+    await openProjects(page);
+    await installFinderTarget(page, () => {
+      throw new Error("Should not open a path from a remote host");
+    });
+    await openProjectSettings(page, editableProject.name);
+
+    const details = page.getByTestId("project-details-section");
+    await expect(details.getByRole("button", { name: "Copy source directory" })).toBeVisible();
+    await expect(details.getByRole("button", { name: "Open in Finder" })).toHaveCount(0);
+  });
+
   test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
     page,
   }) => {

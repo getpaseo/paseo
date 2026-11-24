@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
 
-// Poses as the desktop app running the e2e daemon as its own managed daemon, so
-// `useIsLocalDaemon` reports the host as this machine. `directory` is where the
-// desktop bridge claims dropped files live on disk.
-export async function installLocalDesktopHost(page: Page, directory: string): Promise<void> {
-  const serverId = process.env.E2E_SERVER_ID;
+// Defaults to the e2e daemon as the desktop app's managed daemon.
+// `directory` is where the desktop bridge claims dropped files live on disk.
+export async function installLocalDesktopHost(
+  page: Page,
+  directory: string,
+  serverId = process.env.E2E_SERVER_ID,
+): Promise<void> {
   if (!serverId) {
     throw new Error("E2E_SERVER_ID is not set");
   }

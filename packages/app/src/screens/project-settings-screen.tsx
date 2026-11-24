@@ -40,6 +40,7 @@ import {
 } from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
@@ -51,6 +52,7 @@ import { buildForgeRepositoryUrl } from "@/git/forge-url";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import {
   applyDraftToConfig,
   configToDraft,
@@ -303,7 +305,7 @@ function ProjectSettingsBody({
         trailing={editButton}
       />
 
-      <ProjectDetailsSection selectedHost={selectedHost} />
+      <ProjectDetailsGroup selectedHost={selectedHost} />
 
       <ProjectEditSheet
         // A new instance per open seeds the form from the project as it stands now.
@@ -335,14 +337,21 @@ function ProjectSettingsBody({
   );
 }
 
-function ProjectDetailsSection({ selectedHost }: { selectedHost: ProjectHostEntry }) {
+function ProjectDetailsGroup({ selectedHost }: { selectedHost: ProjectHostEntry }) {
   const { t } = useTranslation();
   const toast = useToast();
   const { serverId, serverName, repoRoot } = selectedHost;
+  const isLocalExecution = useIsLocalDaemon(serverId);
+  const { targets } = useDesktopOpenTargets({ isLocalExecution });
+  const fileManager = targets.find((target) => target.kind === "file-manager");
   const { status } = useCheckoutStatusQuery({ serverId, cwd: repoRoot });
   const repositoryUrl = status?.isGit
     ? buildForgeRepositoryUrl(forgeFromRemoteUrl(status.remoteUrl), status)
     : null;
+  const { mutate: openFileManager, isPending: isOpeningSourceDirectory } = useMutation({
+    mutationFn: (editorId: string) => openDesktopTarget({ editorId, workspacePath: repoRoot }),
+    onError: () => toast.error(t("sidebar.project.actions.openFolderFailed")),
+  });
 
   const copySourceDirectory = useCallback(async () => {
     try {
@@ -356,6 +365,12 @@ function ProjectDetailsSection({ selectedHost }: { selectedHost: ProjectHostEntr
     toast.error(t("common.errors.unableToCopy"));
   }, [repoRoot, t, toast]);
 
+  const openSourceDirectory = useCallback(() => {
+    if (fileManager) {
+      openFileManager(fileManager.id);
+    }
+  }, [fileManager, openFileManager]);
+
   const openRepository = useCallback(() => {
     if (repositoryUrl) {
       void openExternalUrl(repositoryUrl).catch(() =>
@@ -365,17 +380,28 @@ function ProjectDetailsSection({ selectedHost }: { selectedHost: ProjectHostEntr
   }, [repositoryUrl, t, toast]);
 
   return (
-    <SettingsSection title={t("settings.project.details.title")} testID="project-details-section">
+    <SettingsGroup title={t("settings.project.details.title")} testID="project-details-section">
       <SettingsCard>
         <SettingsRow label={t("settings.groups.host")} hint={serverName} />
         <SettingsRow label={t("settings.project.details.sourceDirectory")} hint={repoRoot}>
-          <Button
-            variant="outline"
-            accessibilityLabel={t("settings.project.details.copySourceDirectory")}
-            onPress={copySourceDirectory}
-          >
-            {t("common.actions.copy")}
-          </Button>
+          <View style={styles.sourceDirectoryActions}>
+            <Button
+              variant="outline"
+              accessibilityLabel={t("settings.project.details.copySourceDirectory")}
+              onPress={copySourceDirectory}
+            >
+              {t("common.actions.copy")}
+            </Button>
+            {fileManager ? (
+              <Button
+                variant="outline"
+                loading={isOpeningSourceDirectory}
+                onPress={openSourceDirectory}
+              >
+                {t("workspace.fileActions.openIn", { target: fileManager.label })}
+              </Button>
+            ) : null}
+          </View>
         </SettingsRow>
         {repositoryUrl ? (
           <SettingsDetailRow
@@ -386,7 +412,7 @@ function ProjectDetailsSection({ selectedHost }: { selectedHost: ProjectHostEntr
           />
         ) : null}
       </SettingsCard>
-    </SettingsSection>
+    </SettingsGroup>
   );
 }
 
@@ -1159,6 +1185,11 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 }
 
 const styles = StyleSheet.create((theme) => ({
+  sourceDirectoryActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+  },
   noTargetContainer: {
     padding: theme.spacing[4],
     alignItems: "flex-start",
