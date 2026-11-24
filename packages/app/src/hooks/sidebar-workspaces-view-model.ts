@@ -462,13 +462,14 @@ export function buildSidebarProjectsFromHostProjects(input: {
 // across the visible projects (not all connected hosts) keeps labels off when a host
 // filter pins the view to a single host.
 export function shouldShowSidebarHostLabels(projects: SidebarProjectEntry[]): boolean {
-  const serverIds = new Set<string>();
+  let firstServerId: string | undefined;
   for (const project of projects) {
     for (const host of project.hosts) {
-      serverIds.add(host.serverId);
+      firstServerId ??= host.serverId;
+      if (host.serverId !== firstServerId) return true;
     }
   }
-  return serverIds.size >= 2;
+  return false;
 }
 
 export function applyStoredOrdering<T>(input: {
