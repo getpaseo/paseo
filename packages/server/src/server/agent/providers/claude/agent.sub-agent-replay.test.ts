@@ -612,24 +612,30 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       form = "user",
       includeToolUseId = true,
       taskIds = [AGENT_ID],
+      quoted = false,
     }: {
       status: string;
       form?: string;
       includeToolUseId?: boolean;
       taskIds?: string[];
+      quoted?: boolean;
     }): string {
       const toolUseTag = includeToolUseId ? `<tool-use-id>${TOOL_USE_ID}</tool-use-id>\n` : "";
       const taskTags = taskIds.map((id) => `<task-id>${id}</task-id>`).join("\n");
-      const text = `<task-notification>\n${taskTags}\n${toolUseTag}<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      const notification = `<task-notification>\n${taskTags}\n${toolUseTag}<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      const text = quoted ? `Explain this log.\n${notification}` : notification;
       const records = {
-        user: { message: { role: "user", content: [{ type: "text", text }] } },
+        user: {
+          ...(quoted ? {} : { origin: { kind: "task-notification" } }),
+          message: { role: "user", content: [{ type: "text", text }] },
+        },
         system: {
           subtype: "task_notification",
           task_id: AGENT_ID,
           ...(includeToolUseId ? { tool_use_id: TOOL_USE_ID } : {}),
           status,
         },
-        "queue-operation": { operation: "enqueue", content: text },
+        "queue-operation": { operation: quoted ? "remove" : "enqueue", content: text },
       };
       return JSON.stringify({
         type: form,
@@ -750,6 +756,22 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       });
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "canceled" });
     });
+
+    test.each(["user", "queue-operation"])(
+      "keeps a completed child when a later %s record quotes a stopped notification",
+      async (form) => {
+        writeSession({
+          parentLines: [
+            ...backgroundLaunch(),
+            taskNotification({ status: "completed" }),
+            taskNotification({ status: "stopped", form, includeToolUseId: false, quoted: true }),
+          ],
+          meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+          sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+      },
+    );
 
     test("does not apply an unrelated task's stopped outcome to a child", async () => {
       writeSession({

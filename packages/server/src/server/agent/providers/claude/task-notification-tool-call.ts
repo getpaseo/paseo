@@ -44,6 +44,10 @@ const TaskNotificationHistoryRecordSchema = z
     message_id: z.string().optional(),
     task_id: z.string().optional(),
     tool_use_id: z.string().optional(),
+    origin: z
+      .object({ kind: z.literal("task-notification") })
+      .optional()
+      .catch(undefined),
     status: z.string().optional(),
     summary: z.string().optional(),
     output_file: z.string().optional(),
@@ -418,18 +422,38 @@ export function mapTaskNotificationSystemRecordToToolCall(
 }
 
 export function readTaskNotificationToolUseIdFromHistoryRecord(record: unknown): string | null {
-  return readTaskNotificationFromHistoryRecord(record)?.toolUseId ?? null;
+  const parsedRecord = TaskNotificationHistoryRecordSchema.safeParse(record);
+  return parsedRecord.success
+    ? (parseTaskNotificationHistoryRecord(parsedRecord.data)?.toolUseId ?? null)
+    : null;
 }
 
-export function readTaskNotificationFromHistoryRecord(
+export function readTaskNotificationOutcomeFromHistoryRecord(
   record: unknown,
 ): TaskNotificationEnvelope | null {
   const parsedRecord = TaskNotificationHistoryRecordSchema.safeParse(record);
   if (!parsedRecord.success) return null;
-  if (parsedRecord.data.type === "user" && parsedRecord.data.message) {
+  const entry = parsedRecord.data;
+  if (entry.type === "user" && entry.origin?.kind !== "task-notification") return null;
+  if (entry.type === "queue-operation") {
+    const content = entry.content?.trim();
+    if (
+      !content?.startsWith(TASK_NOTIFICATION_MARKER) ||
+      !content.endsWith("</task-notification>")
+    ) {
+      return null;
+    }
+  }
+  return parseTaskNotificationHistoryRecord(entry);
+}
+
+function parseTaskNotificationHistoryRecord(
+  record: TaskNotificationHistoryRecord,
+): TaskNotificationEnvelope | null {
+  if (record.type === "user" && record.message) {
     return parseTaskNotificationFromUserContent({
-      content: parsedRecord.data.message.content,
-      messageId: parsedRecord.data.uuid ?? parsedRecord.data.message_id,
+      content: record.message.content,
+      messageId: record.uuid ?? record.message_id,
     });
   }
   return parseTaskNotificationFromSystemRecord(record);

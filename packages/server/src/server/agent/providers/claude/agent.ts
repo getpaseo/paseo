@@ -39,7 +39,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
+  readTaskNotificationOutcomeFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -6806,7 +6806,7 @@ function* readClaudeReplayNotificationOutcomes(
   entry: ClaudeHistoryEntry,
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
 ): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
-  const notification = readTaskNotificationFromHistoryRecord(entry);
+  const notification = readTaskNotificationOutcomeFromHistoryRecord(entry);
   if (!notification) return;
   const status = mapTaskStatus(notification.status ?? undefined);
   if (!status) return;
