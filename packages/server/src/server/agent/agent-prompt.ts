@@ -301,18 +301,11 @@ export interface StartCreatedAgentInitialPromptParams {
 }
 
 /**
- * Outer bound on a run reaching "started" after dispatch.
- *
- * This wraps provider startup, so it MUST stay larger than the slowest provider's own
- * startup budget — otherwise it aborts a start the provider was still allowed to be
- * working on, and the provider's budget can never apply. OpenCode is the slowest today:
- * up to 30s for the server to boot (OPENCODE_SERVER_STARTUP_TIMEOUT_MS) and then a
- * session.create on the same budget, so this is deliberately set well above 30s.
- *
- * Not derived from the provider constant on purpose: this module is provider-agnostic
- * and must not depend on a specific provider's internals.
+ * 派发后等待运行开始的上限，须覆盖 Codex 的 90 秒 turn/start 期限并留出准备余量。
+ * DaemonClient.sendAgentMessage 的等待还须更长，才能收到这里返回的具体错误。
+ * 保留独立常量，避免通用发送逻辑依赖某个 provider 的实现。
  */
-const AGENT_RUN_START_TIMEOUT_MS = 60_000;
+const AGENT_RUN_START_TIMEOUT_MS = 120_000;
 
 export async function waitForAgentRunStartWithTimeout(
   agentManager: Pick<AgentManager, "getAgent">,

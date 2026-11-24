@@ -1172,6 +1172,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+// 服务端最多等待 120 秒启动运行，再留出响应传输的余量。
+const SEND_AGENT_MESSAGE_TIMEOUT_MS = 150_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -4304,6 +4306,7 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
+      timeout: SEND_AGENT_MESSAGE_TIMEOUT_MS,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "send_agent_message_response") {
