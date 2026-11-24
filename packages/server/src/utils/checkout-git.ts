@@ -4466,7 +4466,13 @@ async function resolvePushWithoutOrigin(
       reason: `Push did not send '${storedBranchName}' to '${upstreamName}' because the branch names differ. Push it from a terminal instead.`,
     };
   }
-  if (!(await doesGitPushUpdateUpstream(cwd, storedBranchName, context))) {
+  const gitPushUpdatesUpstream = await doesGitPushUpdateUpstream({
+    cwd,
+    storedBranchName,
+    upstreamRemoteName: upstream.remoteName,
+    context,
+  });
+  if (!gitPushUpdatesUpstream) {
     return {
       kind: "refused",
       reason: `Git is not set to push '${storedBranchName}' to '${upstreamName}', so Push did not send it there. Push it from a terminal instead.`,
@@ -4476,19 +4482,27 @@ async function resolvePushWithoutOrigin(
 }
 
 // Whether plain `git push` on this branch updates the branch's upstream. Git resolves its push
-// destination from its own settings and reports none when it cannot name a single one.
-async function doesGitPushUpdateUpstream(
-  cwd: string,
-  storedBranchName: string,
-  context?: CheckoutContext,
-): Promise<boolean> {
+// destination from its own settings and reports none when it cannot name a single one. The
+// remote is compared by name as well, because two remotes can map onto one remote-tracking ref.
+async function doesGitPushUpdateUpstream(input: {
+  cwd: string;
+  storedBranchName: string;
+  upstreamRemoteName: string;
+  context?: CheckoutContext;
+}): Promise<boolean> {
   try {
-    const { stdout } = await getRunGitCommand(context)(
-      ["for-each-ref", "--format=%(push)%00%(upstream)", `refs/heads/${storedBranchName}`],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    const { stdout } = await getRunGitCommand(input.context)(
+      [
+        "for-each-ref",
+        "--format=%(push:remotename)%00%(push)%00%(upstream)",
+        `refs/heads/${input.storedBranchName}`,
+      ],
+      { cwd: input.cwd, envOverlay: READ_ONLY_GIT_ENV },
     );
-    const [pushRef, upstreamRef] = stdout.trim().split("\0");
-    return Boolean(pushRef) && pushRef === upstreamRef;
+    const [pushRemoteName, pushRef, upstreamRef] = stdout.trim().split("\0");
+    return (
+      pushRemoteName === input.upstreamRemoteName && Boolean(pushRef) && pushRef === upstreamRef
+    );
   } catch {
     return false;
   }

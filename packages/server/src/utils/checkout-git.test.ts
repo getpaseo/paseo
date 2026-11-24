@@ -1422,6 +1422,13 @@ const x = 1;
         name: "the upstream remote has a push refspec",
         config: [["remote.upstream.push", "HEAD:refs/heads/other"]],
       },
+      {
+        name: "the push remote shares the upstream's remote-tracking refs",
+        config: [
+          ["branch.main.pushRemote", "fork"],
+          ["remote.fork.fetch", "+refs/heads/*:refs/remotes/upstream/*"],
+        ],
+      },
       { name: "push.default is nothing", config: [["push.default", "nothing"]] },
     ])("does not push when $name", async ({ config }) => {
       const { remoteDir } = setupRemoteTrackingMain(repoDir, tempDir, "upstream");
