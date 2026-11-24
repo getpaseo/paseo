@@ -2346,18 +2346,20 @@ export const ko: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "여러 호스트의 프로젝트",
+        linkProjects: "프로젝트 연결",
         matches: "검토할 확인된 일치 항목 {{count}}개",
         matches_one: "검토할 확인된 일치 항목 {{count}}개",
         matches_other: "검토할 확인된 일치 항목 {{count}}개",
         savedLinks: "이 기기에 저장된 링크",
         linkAction: "프로젝트 연결…",
         manageAction: "프로젝트 링크…",
-        hint: "일치하는 프로젝트를 검토하고 이 기기에서 링크를 관리합니다.",
+        hint: "같은 Git 저장소의 복사본을 사이드바에서 그룹으로 묶습니다.",
       },
       sheet: {
-        title: "프로젝트 연결",
+        title: "호스트 간 프로젝트 연결",
         deviceOnly:
-          "연결은 이 기기에만 저장됩니다. 워크스페이스, 설정 또는 파일은 이동하지 않습니다.",
+          "연결하면 이 기기의 사이드바에서 프로젝트가 그룹으로 묶입니다. 작업 공간, 설정, 파일은 각 호스트에 그대로 남습니다.",
         matchesTitle: "확인된 일치 항목",
         matchesDescription:
           "이 항목들은 같은 Git 원격 저장소와 프로젝트 하위 디렉터리를 가지지만 아직 분리되어 있습니다.",

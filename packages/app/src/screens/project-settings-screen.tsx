@@ -310,14 +310,6 @@ function ProjectSettingsBody({
         trailing={editButton}
       />
 
-      <ProjectLinksEntry
-        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
-        serverId={selectedHost.serverId}
-        projectId={selectedHost.projectId}
-        placements={projectLinkPlacements}
-        suggestions={projectLinkSuggestions}
-      />
-
       <ProjectEditSheet
         // A new instance per open seeds the form from the project as it stands now.
         key={`${selectedHost.serverId}:${selectedHost.projectId}:${editSessionId}`}
@@ -345,6 +337,20 @@ function ProjectSettingsBody({
         onBackToProjects,
         showBackToProjects,
       })}
+
+      <SettingsGroup
+        title={t("settings.projectLinks.entry.sectionTitle")}
+        testID="project-links-group"
+        style={styles.projectLinksGroup}
+      >
+        <ProjectLinksEntry
+          key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
+          serverId={selectedHost.serverId}
+          projectId={selectedHost.projectId}
+          placements={projectLinkPlacements}
+          suggestions={projectLinkSuggestions}
+        />
+      </SettingsGroup>
     </View>
   );
 }
@@ -1137,6 +1143,9 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     padding: theme.spacing[4],
     gap: theme.spacing[2],
+  },
+  projectLinksGroup: {
+    marginTop: theme.spacing[6],
   },
   editButton: {
     padding: theme.spacing[1],

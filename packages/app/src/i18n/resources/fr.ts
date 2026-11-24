@@ -2385,18 +2385,20 @@ export const fr: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "Projets sur plusieurs hôtes",
+        linkProjects: "Associer des projets",
         matches: "{{count}} correspondances vérifiées à examiner",
         matches_one: "{{count}} correspondance vérifiée à examiner",
         matches_other: "{{count}} correspondances vérifiées à examiner",
         savedLinks: "Liens enregistrés sur cet appareil",
         linkAction: "Associer des projets…",
         manageAction: "Liens entre projets…",
-        hint: "Passez en revue les correspondances et gérez les liens sur cet appareil.",
+        hint: "Regroupez les copies du même dépôt Git dans la barre latérale.",
       },
       sheet: {
-        title: "Liens de projets",
+        title: "Associer des projets entre hôtes",
         deviceOnly:
-          "Les liens sont enregistrés uniquement sur cet appareil. Ils ne déplacent ni espaces de travail, ni réglages, ni fichiers.",
+          "L’association regroupe les projets dans la barre latérale sur cet appareil. Les espaces de travail, les paramètres et les fichiers restent sur leurs hôtes.",
         matchesTitle: "Correspondances vérifiées",
         matchesDescription:
           "Ces entrées ont le même dépôt distant Git et le même sous-répertoire de projet, mais restent séparées.",

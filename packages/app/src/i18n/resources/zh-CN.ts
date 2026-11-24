@@ -2312,17 +2312,19 @@ export const zhCN: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "跨主机的项目",
+        linkProjects: "关联项目",
         matches: "有 {{count}} 个已验证的匹配项待查看",
         matches_one: "有 {{count}} 个已验证的匹配项待查看",
         matches_other: "有 {{count}} 个已验证的匹配项待查看",
         savedLinks: "关联已保存在此设备上",
         linkAction: "关联项目…",
         manageAction: "项目关联…",
-        hint: "查看匹配的项目并管理此设备上的关联。",
+        hint: "在侧边栏中归组同一 Git 仓库的副本。",
       },
       sheet: {
-        title: "项目链接",
-        deviceOnly: "链接仅存储在此设备上，不会移动工作区、设置或文件。",
+        title: "跨主机关联项目",
+        deviceOnly: "关联后，项目会在此设备的侧边栏中归组。工作区、设置和文件仍留在各自的主机上。",
         matchesTitle: "已验证的匹配项",
         matchesDescription: "这些条目具有相同的 Git 远程仓库和项目子目录，但仍然是分开的。",
         linkedTitle: "已链接的项目",

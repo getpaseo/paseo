@@ -2369,18 +2369,20 @@ export const ptBR: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "Projetos em vários hosts",
+        linkProjects: "Vincular projetos",
         matches: "{{count}} correspondências verificadas para revisar",
         matches_one: "{{count}} correspondência verificada para revisar",
         matches_other: "{{count}} correspondências verificadas para revisar",
         savedLinks: "Vínculos salvos neste dispositivo",
         linkAction: "Vincular projetos…",
         manageAction: "Vínculos de projetos…",
-        hint: "Revise as correspondências e gerencie os vínculos neste dispositivo.",
+        hint: "Agrupe cópias do mesmo repositório Git na barra lateral.",
       },
       sheet: {
-        title: "Vínculos de projetos",
+        title: "Vincular projetos entre hosts",
         deviceOnly:
-          "Os vínculos são armazenados somente neste dispositivo. Eles não movem espaços de trabalho, configurações nem arquivos.",
+          "O vínculo agrupa os projetos na barra lateral deste dispositivo. Espaços de trabalho, configurações e arquivos permanecem em seus hosts.",
         matchesTitle: "Correspondências verificadas",
         matchesDescription:
           "Estas entradas têm o mesmo remoto do Git e subdiretório do projeto, mas ainda estão separadas.",

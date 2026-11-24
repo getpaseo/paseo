@@ -2358,18 +2358,20 @@ export const ja: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "ホスト間のプロジェクト",
+        linkProjects: "プロジェクトをリンク",
         matches: "確認済みの候補 {{count}} 件",
         matches_one: "確認済みの候補 {{count}} 件",
         matches_other: "確認済みの候補 {{count}} 件",
         savedLinks: "このデバイスに保存済みのリンク",
         linkAction: "プロジェクトをリンク…",
         manageAction: "プロジェクトのリンク…",
-        hint: "一致するプロジェクトを確認し、このデバイス上のリンクを管理します。",
+        hint: "同じ Git リポジトリのコピーをサイドバーでまとめます。",
       },
       sheet: {
-        title: "プロジェクトリンク",
+        title: "ホスト間でプロジェクトをリンク",
         deviceOnly:
-          "リンクはこのデバイスにのみ保存されます。ワークスペース、設定、ファイルは移動しません。",
+          "リンクすると、このデバイスのサイドバーでプロジェクトがまとまります。ワークスペース、設定、ファイルは各ホストに残ります。",
         matchesTitle: "確認済みの一致",
         matchesDescription:
           "これらのエントリは同じ Git リモートとプロジェクトサブディレクトリを持ちますが、まだ別々です。",

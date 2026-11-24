@@ -488,7 +488,7 @@ test.describe("Sidebar project grouping", () => {
       projectName: GROUPED_PROJECT_NAME,
     });
 
-    const entry = page.getByRole("button", { name: "Project links", exact: true });
+    const entry = page.getByRole("button", { name: "Link projects", exact: true });
     await entry.click();
 
     const sheet = page.getByTestId("project-links-sheet");
@@ -526,7 +526,7 @@ test.describe("Sidebar project grouping", () => {
     await openProjectsSettings(page, getServerId());
 
     await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Project links", exact: true }).click();
+    await page.getByRole("button", { name: "Link projects across hosts", exact: true }).click();
 
     const sheet = page.getByTestId("project-links-sheet");
     await expect(sheet).toBeVisible();

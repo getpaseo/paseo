@@ -49,7 +49,11 @@ export function ProjectLinksEntry({
   return (
     <View style={settingsStyles.card}>
       <SettingsDetailRow
-        label={t("settings.projectLinks.sheet.title")}
+        label={t(
+          projectId === undefined
+            ? "settings.projectLinks.sheet.title"
+            : "settings.projectLinks.entry.linkProjects",
+        )}
         hint={hint}
         onPress={open}
         testID="project-links-entry"

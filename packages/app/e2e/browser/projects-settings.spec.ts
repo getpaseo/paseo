@@ -215,7 +215,9 @@ test.describe("Projects settings", () => {
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
-      await page.getByRole("button", { name: "Project links", exact: true }).click();
+      const linksGroup = page.getByTestId("project-links-group");
+      await expect(linksGroup.getByText("Projects across hosts", { exact: true })).toBeVisible();
+      await linksGroup.getByRole("button", { name: "Link projects", exact: true }).click();
       await expect(page.getByTestId("project-links-no-matches")).toBeVisible();
       await page.getByTestId("project-links-close").click();
       await expectProjectSettingsFormVisible(page);

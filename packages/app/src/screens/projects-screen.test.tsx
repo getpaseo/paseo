@@ -381,7 +381,7 @@ describe("ProjectsScreen", () => {
     render();
 
     expect(container?.textContent).toContain("No projects yet");
-    expect(container?.querySelector('[aria-label="Project links"]')).not.toBeNull();
+    expect(container?.querySelector('[aria-label="Link projects across hosts"]')).not.toBeNull();
     expect(container?.textContent).not.toContain("Non-GitHub remote projects aren't supported yet");
   });
 

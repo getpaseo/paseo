@@ -2384,18 +2384,20 @@ export const es: TranslationResources = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "Proyectos en varios hosts",
+        linkProjects: "Vincular proyectos",
         matches: "{{count}} coincidencias verificadas para revisar",
         matches_one: "{{count}} coincidencia verificada para revisar",
         matches_other: "{{count}} coincidencias verificadas para revisar",
         savedLinks: "Vínculos guardados en este dispositivo",
         linkAction: "Vincular proyectos…",
         manageAction: "Vínculos de proyectos…",
-        hint: "Revisa coincidencias y gestiona los vínculos en este dispositivo.",
+        hint: "Agrupa copias del mismo repositorio Git en la barra lateral.",
       },
       sheet: {
-        title: "Enlaces de proyectos",
+        title: "Vincular proyectos entre hosts",
         deviceOnly:
-          "Los enlaces se guardan solo en este dispositivo. No mueven espacios de trabajo, ajustes ni archivos.",
+          "La vinculación agrupa los proyectos en la barra lateral de este dispositivo. Los espacios de trabajo, la configuración y los archivos permanecen en sus hosts.",
         matchesTitle: "Coincidencias verificadas",
         matchesDescription:
           "Estas entradas tienen el mismo remoto de Git y subdirectorio del proyecto, pero aún están separadas.",

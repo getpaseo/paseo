@@ -2363,18 +2363,20 @@ export const en = {
     },
     projectLinks: {
       entry: {
+        sectionTitle: "Projects across hosts",
+        linkProjects: "Link projects",
         matches: "{{count}} verified matches to review",
         matches_one: "{{count}} verified match to review",
         matches_other: "{{count}} verified matches to review",
         savedLinks: "Links saved on this device",
         linkAction: "Link projects…",
         manageAction: "Project links…",
-        hint: "Review matches and manage links on this device.",
+        hint: "Group copies of the same Git repository in your sidebar.",
       },
       sheet: {
-        title: "Project links",
+        title: "Link projects across hosts",
         deviceOnly:
-          "Links are stored only on this device. They do not move workspaces, settings, or files.",
+          "Linking groups projects in the sidebar on this device. Workspaces, settings, and files stay on their hosts.",
         matchesTitle: "Verified matches",
         matchesDescription:
           "These entries have the same Git remote and project subdirectory, but are still separate.",
