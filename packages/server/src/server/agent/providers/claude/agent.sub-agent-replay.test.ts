@@ -449,12 +449,12 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   describe("a background subagent", () => {
     // Shapes recorded from Claude Code 2.1.x: the launch returns at once with an async result,
     // and a child stopped by an interrupt ends on the interrupt placeholder, not an end_turn.
-    function backgroundLaunch(): string[] {
+    function backgroundLaunch({ toolUseId = TOOL_USE_ID, agentId = AGENT_ID } = {}): string[] {
       return [
         parentEntry([
           {
             type: "tool_use",
-            id: TOOL_USE_ID,
+            id: toolUseId,
             name: "Agent",
             input: {
               subagent_type: "general-purpose",
@@ -472,17 +472,17 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
             content: [
               {
                 type: "tool_result",
-                tool_use_id: TOOL_USE_ID,
+                tool_use_id: toolUseId,
                 content: [
                   {
                     type: "text",
-                    text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                    text: `Async agent launched successfully.\nagentId: ${agentId}`,
                   },
                 ],
               },
             ],
           },
-          toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+          toolUseResult: { isAsync: true, status: "async_launched", agentId },
         }),
       ];
     }
@@ -611,13 +611,16 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       status,
       form = "user",
       includeToolUseId = true,
+      taskIds = [AGENT_ID],
     }: {
       status: string;
       form?: string;
       includeToolUseId?: boolean;
+      taskIds?: string[];
     }): string {
       const toolUseTag = includeToolUseId ? `<tool-use-id>${TOOL_USE_ID}</tool-use-id>\n` : "";
-      const text = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n${toolUseTag}<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      const taskTags = taskIds.map((id) => `<task-id>${id}</task-id>`).join("\n");
+      const text = `<task-notification>\n${taskTags}\n${toolUseTag}<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
       const records = {
         user: { message: { role: "user", content: [{ type: "text", text }] } },
         system: {
@@ -678,6 +681,48 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         });
       });
     }
+
+    test.each([
+      ["user", false, "canceled"],
+      ["queue-operation", false, "canceled"],
+      ["user", true, "running"],
+    ])(
+      "restores a shared %s notification with explicit tool-use ID present = %s",
+      async (form, includeToolUseId, secondStatus) => {
+        const secondAgentId = "a2222222222222222";
+        const secondToolUseId = "toolu_second";
+        const subagentDir = writeParentSession([
+          ...backgroundLaunch(),
+          ...backgroundLaunch({ agentId: secondAgentId, toolUseId: secondToolUseId }),
+          taskNotification({
+            status: "stopped",
+            form,
+            includeToolUseId,
+            taskIds: [AGENT_ID, "unrelated-task", secondAgentId],
+          }),
+        ]);
+        writeSubagent({
+          subagentDir,
+          sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        writeSubagent({
+          subagentDir,
+          agentId: secondAgentId,
+          sidechainLines: [sidechainEntry({ agentId: secondAgentId, stopReason: "tool_use" })],
+        });
+
+        const statuses = new Map();
+        for (const { id, status } of upserts(await replayDescriptors())) {
+          statuses.set(id, status);
+        }
+        expect(statuses).toEqual(
+          new Map([
+            [TOOL_USE_ID, "canceled"],
+            [secondToolUseId, secondStatus],
+          ]),
+        );
+      },
+    );
 
     test("keeps the latest outcome across task-only and tool-linked notifications", async () => {
       writeSession({

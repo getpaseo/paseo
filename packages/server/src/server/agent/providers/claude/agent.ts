@@ -6769,8 +6769,7 @@ async function readClaudeReplayParentFacts(
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notificationOutcome = readClaudeReplayNotificationOutcome(entry, linksByAgentId);
-    if (notificationOutcome) {
+    for (const notificationOutcome of readClaudeReplayNotificationOutcomes(entry, linksByAgentId)) {
       outcomes.set(notificationOutcome.toolCallId, { status: notificationOutcome.status });
     }
     const content = toObjectRecord(entry.message)?.content;
@@ -6803,17 +6802,24 @@ async function readClaudeReplayParentFacts(
   };
 }
 
-function readClaudeReplayNotificationOutcome(
+function* readClaudeReplayNotificationOutcomes(
   entry: ClaudeHistoryEntry,
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
-): { toolCallId: string; status: ProviderSubagentStatus } | null {
+): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
   const notification = readTaskNotificationFromHistoryRecord(entry);
-  const status = mapTaskStatus(notification?.status ?? undefined);
-  // Stopped tasks can omit tool-use-id; their launch result already links the native ID.
-  const toolCallId =
-    notification?.toolUseId ??
-    (notification?.taskId ? linksByAgentId.get(notification.taskId)?.toolCallId : undefined);
-  return toolCallId && status ? { toolCallId, status } : null;
+  if (!notification) return;
+  const status = mapTaskStatus(notification.status ?? undefined);
+  if (!status) return;
+
+  if (notification.toolUseId) {
+    yield { toolCallId: notification.toolUseId, status };
+    return;
+  }
+  // Stopped tasks can omit tool-use-id; their launch results already link the native IDs.
+  for (const taskId of notification.taskIds) {
+    const link = linksByAgentId.get(taskId);
+    if (link) yield { toolCallId: link.toolCallId, status };
+  }
 }
 
 function readClaudeReplayTaskDeclaration(

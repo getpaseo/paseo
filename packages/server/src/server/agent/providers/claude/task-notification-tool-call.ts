@@ -14,7 +14,7 @@ const OptionalNonEmptyTrimmedStringSchema = z.preprocess(
 const TaskNotificationEnvelopeSchema = z.object({
   notificationId: z.string().optional(),
   messageId: z.string().nullable(),
-  taskId: z.string().nullable(),
+  taskIds: z.array(z.string()),
   toolUseId: z.string().nullable(),
   status: z.string().nullable(),
   summary: z.string().nullable(),
@@ -145,6 +145,19 @@ function readTaskNotificationTagValue(input: ReadTaskNotificationTagInput): stri
   return toNonEmptyString(match[1]);
 }
 
+function readTaskNotificationTaskIds(rawText: string | null, structuredTaskId?: string): string[] {
+  const taskIds = [];
+  const taskId = toNonEmptyString(structuredTaskId);
+  if (taskId) taskIds.push(taskId);
+  if (rawText) {
+    for (const match of rawText.matchAll(/<task-id>([\s\S]*?)<\/task-id>/gi)) {
+      const taggedTaskId = toNonEmptyString(match[1]);
+      if (taggedTaskId) taskIds.push(taggedTaskId);
+    }
+  }
+  return [...new Set(taskIds)];
+}
+
 function parseTaskNotificationFromUserContent(
   input: MapTaskNotificationUserContentToToolCallInput,
 ): TaskNotificationEnvelope | null {
@@ -161,7 +174,7 @@ function parseTaskNotificationFromUserContent(
   return TaskNotificationEnvelopeSchema.parse({
     notificationId: parsedInput.data.notificationId,
     messageId: toNonEmptyString(parsedInput.data.messageId),
-    taskId: readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }),
+    taskIds: readTaskNotificationTaskIds(rawText),
     toolUseId:
       readTaskNotificationTagValue({ text: rawText, tagName: "tool-use-id" }) ??
       readTaskNotificationTagValue({ text: rawText, tagName: "tool_use_id" }),
@@ -193,9 +206,7 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
   return TaskNotificationEnvelopeSchema.parse({
     notificationId: systemRecord.notificationId,
     messageId: toNonEmptyString(systemRecord.uuid) ?? toNonEmptyString(systemRecord.message_id),
-    taskId:
-      toNonEmptyString(systemRecord.task_id) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }) : null),
+    taskIds: readTaskNotificationTaskIds(rawText, systemRecord.task_id),
     toolUseId:
       toNonEmptyString(systemRecord.tool_use_id) ??
       (rawText
@@ -236,7 +247,7 @@ export async function* assignTaskNotificationReplayIds<T>(
       data.type === "user"
         ? parseTaskNotificationFromUserContent({ content: data.message?.content })
         : parseTaskNotificationFromSystemRecord(data);
-    if (!envelope?.taskId || !data.type) {
+    if (!envelope?.taskIds.length || !data.type) {
       yield entry;
       continue;
     }
@@ -263,7 +274,7 @@ function taskNotificationReplaySignature(envelope: TaskNotificationEnvelope): st
   return createHash("sha1")
     .update(
       JSON.stringify([
-        envelope.taskId,
+        envelope.taskIds.length > 1 ? envelope.taskIds : (envelope.taskIds[0] ?? null),
         envelope.toolUseId,
         envelope.status,
         envelope.summary,
@@ -286,9 +297,8 @@ function buildTaskNotificationCallId(envelope: TaskNotificationEnvelope): string
     : null;
   if (messageSegment) return `task_notification_${messageSegment}`;
 
-  const taskSegment = envelope.taskId
-    ? normalizeTaskNotificationCallIdSegment(envelope.taskId)
-    : null;
+  const [taskId] = envelope.taskIds;
+  const taskSegment = taskId ? normalizeTaskNotificationCallIdSegment(taskId) : null;
   if (taskSegment) return `task_notification_${taskSegment}`;
 
   const seed =
@@ -334,10 +344,11 @@ function toTaskNotificationToolCall(
   });
   const label = buildTaskNotificationLabel(envelope);
   const detailText = envelope.rawText ?? envelope.summary ?? undefined;
+  const [taskId] = envelope.taskIds;
   const metadata: Record<string, unknown> = {
     synthetic: true,
     source: "claude_task_notification",
-    ...(envelope.taskId ? { taskId: envelope.taskId } : {}),
+    ...(taskId ? { taskId } : {}),
     ...(envelope.toolUseId ? { toolUseId: envelope.toolUseId } : {}),
     ...(envelope.status ? { status: envelope.status } : {}),
     ...(envelope.outputFile ? { outputFile: envelope.outputFile } : {}),
@@ -442,11 +453,12 @@ export function coerceTaskNotificationHistoryRecordToSystemMessage(
     status = "completed";
   }
 
+  const [taskId] = parsed.taskIds;
   return {
     type: "system",
     subtype: "task_notification",
     ...(parsed.messageId ? { uuid: parsed.messageId } : {}),
-    ...(parsed.taskId ? { task_id: parsed.taskId } : {}),
+    ...(taskId ? { task_id: taskId } : {}),
     status,
     ...(parsed.summary ? { summary: parsed.summary } : {}),
     ...(parsed.outputFile ? { output_file: parsed.outputFile } : {}),
