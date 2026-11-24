@@ -2844,6 +2844,8 @@ export const ar: TranslationResources = {
         icon: {
           label: "الأيقونة",
           accessibilityLabel: "الأيقونة، {{value}}",
+          auto: "تلقائي",
+          autoDetected: "تلقائي ({{icon}})",
           options: {
             server: "خادم",
             laptop: "حاسوب محمول",
@@ -2851,6 +2853,8 @@ export const ar: TranslationResources = {
             mini: "حاسوب مصغّر",
             workstation: "محطة عمل",
             cloud: "سحابي",
+            container: "حاوية",
+            board: "حاسوب أحادي اللوحة",
             terminal: "طرفية",
           },
         },

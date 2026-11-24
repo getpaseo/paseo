@@ -2487,7 +2487,7 @@ export class HostRuntimeStore {
     }));
   }
 
-  async setHostIcon(serverId: string, icon: HostIcon): Promise<void> {
+  async setHostIcon(serverId: string, icon: HostIcon | null): Promise<void> {
     await this.updateHostAppearance(serverId, (host) => ({
       ...host,
       appearance: { ...host.appearance, icon },
@@ -3364,7 +3364,7 @@ export interface HostMutations {
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
-  setHostIcon: (serverId: string, icon: HostIcon) => Promise<void>;
+  setHostIcon: (serverId: string, icon: HostIcon | null) => Promise<void>;
   setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;

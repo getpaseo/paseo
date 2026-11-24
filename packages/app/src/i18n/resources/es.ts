@@ -2868,6 +2868,8 @@ export const es: TranslationResources = {
         icon: {
           label: "Icono",
           accessibilityLabel: "Icono, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
           options: {
             server: "Servidor",
             laptop: "Portátil",
@@ -2875,6 +2877,8 @@ export const es: TranslationResources = {
             mini: "Mini",
             workstation: "Estación de trabajo",
             cloud: "Nube",
+            container: "Contenedor",
+            board: "PC de placa única",
             terminal: "Terminal",
           },
         },

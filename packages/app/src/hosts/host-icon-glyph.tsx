@@ -1,6 +1,16 @@
 import type { ReactElement } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { Cloud, Computer, Laptop, Monitor, PcCase, Server, Terminal } from "lucide-react-native";
+import {
+  Cloud,
+  Computer,
+  Container,
+  Cpu,
+  Laptop,
+  Monitor,
+  PcCase,
+  Server,
+  Terminal,
+} from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { DEFAULT_HOST_ICON, HOST_COLORS, type HostColor, type HostIcon } from "@/hosts/appearance";
 import { identityForeground } from "@/styles/identity-colors";
@@ -12,6 +22,8 @@ const ThemedMonitor = withUnistyles(Monitor);
 const ThemedComputer = withUnistyles(Computer);
 const ThemedPcCase = withUnistyles(PcCase);
 const ThemedCloud = withUnistyles(Cloud);
+const ThemedContainer = withUnistyles(Container);
+const ThemedCpu = withUnistyles(Cpu);
 const ThemedTerminal = withUnistyles(Terminal);
 
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -53,6 +65,10 @@ export function HostIconGlyph({
       return <ThemedPcCase size={size} style={style} uniProps={uniProps} />;
     case "cloud":
       return <ThemedCloud size={size} style={style} uniProps={uniProps} />;
+    case "container":
+      return <ThemedContainer size={size} style={style} uniProps={uniProps} />;
+    case "board":
+      return <ThemedCpu size={size} style={style} uniProps={uniProps} />;
     case "terminal":
       return <ThemedTerminal size={size} style={style} uniProps={uniProps} />;
     case "server":

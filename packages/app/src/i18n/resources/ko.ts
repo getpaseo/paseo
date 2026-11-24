@@ -2822,6 +2822,8 @@ export const ko: TranslationResources = {
         icon: {
           label: "아이콘",
           accessibilityLabel: "아이콘, {{value}}",
+          auto: "자동",
+          autoDetected: "자동 ({{icon}})",
           options: {
             server: "서버",
             laptop: "노트북",
@@ -2829,6 +2831,8 @@ export const ko: TranslationResources = {
             mini: "미니",
             workstation: "워크스테이션",
             cloud: "클라우드",
+            container: "컨테이너",
+            board: "싱글보드 PC",
             terminal: "터미널",
           },
         },

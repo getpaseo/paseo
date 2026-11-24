@@ -4,6 +4,7 @@ import {
   defaultHostAppearance,
   normalizeStoredHostAppearance,
   resolveHostBadgeDisplay,
+  resolveHostIcon,
   selectHostBadges,
 } from "@/hosts/appearance";
 
@@ -17,7 +18,7 @@ function host(
 
 describe("normalizeStoredHostAppearance", () => {
   it("defaults when the stored registry predates the field or holds junk", () => {
-    const expected = { color: "none", icon: "server", badgeDisplay: null };
+    const expected = { color: "none", icon: null, badgeDisplay: null };
     expect(normalizeStoredHostAppearance(undefined)).toEqual(expected);
     expect(normalizeStoredHostAppearance(null)).toEqual(expected);
     expect(normalizeStoredHostAppearance("x")).toEqual(expected);
@@ -26,20 +27,20 @@ describe("normalizeStoredHostAppearance", () => {
     expect(normalizeStoredHostAppearance({ badgeDisplay: "loud" })).toEqual(expected);
   });
 
-  it("falls back an unknown stored icon to server without discarding color or badge display", () => {
+  it("falls back an unknown stored icon to auto (null) without discarding color or badge display", () => {
     expect(
       normalizeStoredHostAppearance({ color: "teal", icon: "spaceship", badgeDisplay: "icon" }),
     ).toEqual({
       color: "teal",
-      icon: "server",
+      icon: null,
       badgeDisplay: "icon",
     });
   });
 
-  it("defaults missing icon on stored entries that predate host icons", () => {
+  it("defaults missing icon on stored entries that predate host icons to auto (null)", () => {
     expect(normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" })).toEqual({
       color: "teal",
-      icon: "server",
+      icon: null,
       badgeDisplay: "icon",
     });
   });
@@ -52,6 +53,42 @@ describe("normalizeStoredHostAppearance", () => {
       icon: "laptop",
       badgeDisplay: "icon",
     });
+  });
+});
+
+describe("resolveHostIcon", () => {
+  it("prefers an explicit user icon over daemon auto-detection", () => {
+    expect(
+      resolveHostIcon({
+        appearance: { color: "none", icon: "workstation", badgeDisplay: null },
+        detectedMachineKind: "laptop",
+      }),
+    ).toBe("workstation");
+  });
+
+  it("uses the daemon-detected machine kind while the user icon is auto (null)", () => {
+    expect(
+      resolveHostIcon({
+        appearance: defaultHostAppearance(),
+        detectedMachineKind: "laptop",
+      }),
+    ).toBe("laptop");
+    expect(
+      resolveHostIcon({
+        appearance: defaultHostAppearance(),
+        detectedMachineKind: "container",
+      }),
+    ).toBe("container");
+  });
+
+  it("falls back to server when the detected machine kind is absent or unknown", () => {
+    expect(resolveHostIcon({ appearance: defaultHostAppearance() })).toBe("server");
+    expect(
+      resolveHostIcon({ appearance: defaultHostAppearance(), detectedMachineKind: null }),
+    ).toBe("server");
+    expect(
+      resolveHostIcon({ appearance: defaultHostAppearance(), detectedMachineKind: "future-kind" }),
+    ).toBe("server");
   });
 });
 
@@ -172,5 +209,22 @@ describe("selectHostBadges", () => {
       enabled: true,
     });
     expect(badges.size).toBe(0);
+  });
+
+  it("applies daemon-detected machine kind for auto icons while respecting explicit overrides", () => {
+    const badges = selectHostBadges({
+      hosts: [
+        host("alpha", "Alpha"),
+        host("beta", "Beta", { color: "sky", icon: "workstation", badgeDisplay: "name" }),
+      ],
+      localServerId: null,
+      detectedMachineKindByServerId: new Map([
+        ["alpha", "laptop"],
+        ["beta", "cloud"],
+      ]),
+      enabled: true,
+    });
+    expect(badges.get("alpha")?.icon).toBe("laptop");
+    expect(badges.get("beta")?.icon).toBe("workstation");
   });
 });

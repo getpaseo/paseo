@@ -124,7 +124,9 @@ export function HostConnectionLine({ serverId }: { serverId: string }): ReactEle
 
   return (
     <View style={styles.connectionRow}>
-      <ConnectionKindGlyph kind={described.kind} />
+      <View style={styles.linkIconSlot}>
+        <ConnectionKindGlyph kind={described.kind} />
+      </View>
       <Text style={styles.connectionKind} numberOfLines={1}>
         {t(`settings.host.connectionKinds.${described.kind}`)}
       </Text>
@@ -171,8 +173,15 @@ const styles = StyleSheet.create((theme) => ({
   connectionRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 6,
     minWidth: 0,
+  },
+  // Matches the 14px host icon width on the row above so connection text aligns on the same rail.
+  linkIconSlot: {
+    width: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   linkIcon: {
     flexShrink: 0,

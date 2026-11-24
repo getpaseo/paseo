@@ -2778,6 +2778,8 @@ export const zhCN: TranslationResources = {
         icon: {
           label: "图标",
           accessibilityLabel: "图标，{{value}}",
+          auto: "自动",
+          autoDetected: "自动 ({{icon}})",
           options: {
             server: "服务器",
             laptop: "笔记本电脑",
@@ -2785,6 +2787,8 @@ export const zhCN: TranslationResources = {
             mini: "迷你主机",
             workstation: "工作站",
             cloud: "云端",
+            container: "容器",
+            board: "单板机",
             terminal: "终端",
           },
         },

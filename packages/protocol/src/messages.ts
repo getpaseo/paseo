@@ -3970,6 +3970,9 @@ export const ServerInfoStatusPayloadSchema = z
     serverId: z.string().trim().min(1),
     hostname: ServerInfoHostnameSchema.optional(),
     version: ServerInfoVersionSchema.optional(),
+    // Best-effort machine kind detected by the daemon (e.g. "laptop", "mini", "cloud").
+    // Loose string so unknown future kinds stay parseable across versions.
+    machineKind: z.string().nullable().optional(),
     // Authenticated producer for host registration ownership, separate from admission authority.
     sourceId: z.string().optional(),
     // COMPAT(sessionPermissions): optional while clients support older daemons.

@@ -236,6 +236,34 @@ describe("wire schema compatibility", () => {
     });
   });
 
+  test("server info accepts optional machineKind and older clients drop it cleanly", () => {
+    const legacyServerInfo = z.object({
+      status: z.literal("server_info"),
+      serverId: z.string().trim().min(1),
+      hostname: z.string().nullable().optional(),
+      version: z.string().nullable().optional(),
+    });
+    const withKind = {
+      status: "server_info",
+      serverId: "macbook-server",
+      hostname: "mbp.local",
+      version: "0.9.5",
+      machineKind: "laptop",
+    };
+
+    expect(ServerInfoStatusPayloadSchema.parse(withKind).machineKind).toBe("laptop");
+    expect(
+      ServerInfoStatusPayloadSchema.parse({ ...withKind, machineKind: null }).machineKind,
+    ).toBeNull();
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "older-server",
+      }).machineKind,
+    ).toBeUndefined();
+    expect(legacyServerInfo.parse(withKind)).not.toHaveProperty("machineKind");
+  });
+
   test("assistant timeline message ids are optional on the wire", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

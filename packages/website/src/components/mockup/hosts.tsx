@@ -97,20 +97,22 @@ function HostRow({ host, highlighted }: { host: ConnectedHost; highlighted?: boo
     <div
       className={`mx-[4px] flex items-start gap-[8px] rounded-[6px] px-[8px] py-[8px] ${highlighted ? "bg-mock-surface2" : ""}`}
     >
-      <span className="flex h-[18px] shrink-0 items-center gap-[4px]">
-        <span className="flex size-[16px] shrink-0 items-center justify-center">
-          <span className="size-[8px] rounded-full bg-mock-dot-success" />
-        </span>
-        <span className={`flex size-[16px] shrink-0 items-center justify-center ${host.tone}`}>
-          <Device size={16} />
-        </span>
+      <span className="flex h-[18px] w-[16px] shrink-0 items-center justify-center">
+        <span className="size-[8px] rounded-full bg-mock-dot-success" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13.5px] leading-[18px] text-mock-fg">
-          {host.name}
+        <span className="flex items-center gap-[6px]">
+          <span className={`shrink-0 ${host.tone}`}>
+            <Device size={14} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] leading-[18px] text-mock-fg">
+            {host.name}
+          </span>
         </span>
-        <span className="mt-[2px] flex items-center gap-[5px] text-[12px] leading-[16px] text-mock-fg-muted">
-          <LinkIcon size={11} className="shrink-0 opacity-70" />
+        <span className="mt-[2px] flex items-center gap-[6px] text-[12px] leading-[16px] text-mock-fg-muted">
+          <span className="flex w-[14px] shrink-0 items-center justify-center">
+            <LinkIcon size={11} className="shrink-0 opacity-70" />
+          </span>
           <span className="shrink-0">{t(`landing.mockup.app.hostLinks.${host.link}`)}</span>
           {host.endpoint ? (
             <span className="min-w-0 truncate opacity-70">{host.endpoint}</span>

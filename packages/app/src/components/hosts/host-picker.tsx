@@ -14,13 +14,14 @@ import { HostStatusDot } from "@/components/host-status-dot";
 import { Combobox, type ComboboxProps } from "@/components/ui/combobox";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import { defaultHostAppearance, type HostAppearance } from "@/hosts/appearance";
+import { defaultHostAppearance, resolveHostIcon, type HostAppearance } from "@/hosts/appearance";
 import { HostConnectionLine, HostIconGlyph, HostLatencyLabel } from "@/hosts/host-icon";
 import {
   getHostRuntimeStore,
   useHostRuntimeConnectionStatus,
   useHosts,
 } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { orderHostsLocalFirst } from "@/types/host-connection";
 import {
@@ -39,7 +40,8 @@ export {
 
 const SEARCHABLE_THRESHOLD = 10;
 const DEFAULT_DESKTOP_MIN_WIDTH = 328;
-const HOST_ROW_ICON_SIZE = 16;
+const LEADING_RAIL_SIZE = 16;
+const HOST_ROW_ICON_SIZE = 14;
 type RenderHostOption = NonNullable<ComboboxProps["renderOption"]>;
 
 const ThemedCheck = withUnistyles(Check);
@@ -80,6 +82,10 @@ export function HostPickerOption({
   testID,
 }: HostPickerOptionProps): ReactElement {
   const status = useHostRuntimeConnectionStatus(serverId);
+  const detectedMachineKind = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const resolvedIcon = resolveHostIcon({ appearance, detectedMachineKind });
   const [hovered, setHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
@@ -99,20 +105,21 @@ export function HostPickerOption({
         accessibilityRole="button"
         accessibilityLabel={label}
       >
-        <View style={styles.leadingCluster}>
-          <View style={styles.leadingRailSlot}>
-            <HostStatusDot serverId={serverId} />
-          </View>
-          <HostIconGlyph
-            icon={appearance.icon}
-            color={appearance.color}
-            size={HOST_ROW_ICON_SIZE}
-          />
+        <View style={styles.leadingRailSlot}>
+          <HostStatusDot serverId={serverId} />
         </View>
         <View style={styles.hostBody}>
-          <Text style={[styles.hostName, isOffline && styles.hostNameMuted]} numberOfLines={1}>
-            {label}
-          </Text>
+          <View style={styles.hostHeaderRow}>
+            <HostIconGlyph
+              icon={resolvedIcon}
+              color={appearance.color}
+              size={HOST_ROW_ICON_SIZE}
+              style={styles.hostGlyph}
+            />
+            <Text style={[styles.hostName, isOffline && styles.hostNameMuted]} numberOfLines={1}>
+              {label}
+            </Text>
+          </View>
           <HostConnectionLine serverId={serverId} />
         </View>
         <View style={styles.hostTrailing}>
@@ -156,7 +163,7 @@ function AllHostsOption({
         accessibilityLabel={label}
       >
         <View style={styles.leadingRailSlot}>
-          <ThemedServer size={HOST_ROW_ICON_SIZE} uniProps={mutedIconMapping} />
+          <ThemedServer size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
         </View>
         <Text style={styles.actionLabel} numberOfLines={1}>
           {label}
@@ -198,9 +205,9 @@ function FooterActionRow({
       >
         <View style={styles.leadingRailSlot}>
           {kind === "add" ? (
-            <ThemedPlus size={HOST_ROW_ICON_SIZE} uniProps={mutedIconMapping} />
+            <ThemedPlus size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
           ) : (
-            <ThemedServer size={HOST_ROW_ICON_SIZE} uniProps={mutedIconMapping} />
+            <ThemedServer size={LEADING_RAIL_SIZE} uniProps={mutedIconMapping} />
           )}
         </View>
         <Text style={styles.actionLabel} numberOfLines={1}>
@@ -383,20 +390,13 @@ const styles = StyleSheet.create((theme) => ({
   rowEnvelope: {
     position: "relative",
   },
-  // Shared leading rail: the status dot on host rows and the '+' / All hosts glyph share the
-  // exact same 16px centered column.
+  // Shared leading rail: the status dot on host rows and the '+' / All hosts glyph share one
+  // centered 16px column aligned to the first line's 18px line-height.
   leadingRailSlot: {
-    width: HOST_ROW_ICON_SIZE,
-    height: HOST_ROW_ICON_SIZE,
+    width: LEADING_RAIL_SIZE,
+    height: 18,
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
-  },
-  leadingCluster: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 18,
-    gap: theme.spacing[1],
     flexShrink: 0,
   },
   hostRow: {
@@ -416,7 +416,18 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     gap: 2,
   },
+  hostHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+  },
+  hostGlyph: {
+    flexShrink: 0,
+  },
   hostName: {
+    flex: 1,
+    minWidth: 0,
     fontSize: theme.fontSize.base,
     lineHeight: 18,
     color: theme.colors.foreground,

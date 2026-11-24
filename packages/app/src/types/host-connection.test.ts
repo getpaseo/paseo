@@ -160,7 +160,7 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "none", icon: "server", badgeDisplay: null });
+    expect(profile?.appearance).toEqual({ color: "none", icon: null, badgeDisplay: null });
   });
 
   it("loads a stored appearance the user chose", () => {
@@ -175,7 +175,7 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.appearance).toEqual({ color: "teal", icon: "laptop", badgeDisplay: "icon" });
   });
 
-  it("falls back an unknown stored icon without dropping the saved host", () => {
+  it("falls back an unknown stored icon to auto without dropping the saved host", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_future_icon",
       appearance: { color: "violet", icon: "future-device", badgeDisplay: "name" },
@@ -184,7 +184,7 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "violet", icon: "server", badgeDisplay: "name" });
+    expect(profile?.appearance).toEqual({ color: "violet", icon: null, badgeDisplay: "name" });
   });
 
   it("normalizes stored Remote SSH connection parameters", () => {
@@ -351,7 +351,7 @@ describe("upsertHostConnectionInProfiles", () => {
       connection,
     });
 
-    expect(profile.appearance).toEqual({ color: "none", icon: "server", badgeDisplay: null });
+    expect(profile.appearance).toEqual({ color: "none", icon: null, badgeDisplay: null });
   });
 
   it("keeps the appearance the user chose when the host reconnects", () => {

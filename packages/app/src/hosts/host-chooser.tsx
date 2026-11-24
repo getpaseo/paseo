@@ -12,9 +12,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { resolveHostIcon } from "@/hosts/appearance";
 import { HostConnectionLine, HostIconGlyph, HostLatencyLabel } from "@/hosts/host-icon";
 import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 
 type HostFilter = (host: HostProfile) => boolean;
@@ -101,6 +103,10 @@ function HostChooserRow({
   active: boolean;
   onChooseHost: (serverId: string) => void;
 }) {
+  const detectedMachineKind = useSessionStore(
+    (state) => state.sessions[host.serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const resolvedIcon = resolveHostIcon({ appearance: host.appearance, detectedMachineKind });
   const [hovered, setHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
@@ -121,16 +127,21 @@ function HostChooserRow({
         style={rowStyle}
         testID={`host-chooser-row-${host.serverId}`}
       >
-        <View style={styles.rowLeading}>
-          <View style={styles.rowIconSlot}>
-            <HostStatusDot serverId={host.serverId} />
-          </View>
-          <HostIconGlyph icon={host.appearance.icon} color={host.appearance.color} size={16} />
+        <View style={styles.rowIconSlot}>
+          <HostStatusDot serverId={host.serverId} />
         </View>
         <View style={styles.rowText}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {host.label}
-          </Text>
+          <View style={styles.rowHeader}>
+            <HostIconGlyph
+              icon={resolvedIcon}
+              color={host.appearance.color}
+              size={14}
+              style={styles.rowGlyph}
+            />
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {host.label}
+            </Text>
+          </View>
           <HostConnectionLine serverId={host.serverId} />
         </View>
         <View style={styles.rowTrailing}>
@@ -345,13 +356,6 @@ const styles = StyleSheet.create((theme) => ({
   rowActive: {
     backgroundColor: theme.colors.surface1,
   },
-  rowLeading: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 20,
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
   rowTrailing: {
     flexDirection: "row",
     alignItems: "center",
@@ -360,18 +364,31 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowIconSlot: {
     width: 16,
-    height: 16,
+    height: 20,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   rowText: {
     flex: 1,
     minWidth: 0,
     gap: theme.spacing[1],
   },
+  rowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+  },
+  rowGlyph: {
+    flexShrink: 0,
+  },
   rowTitle: {
+    flex: 1,
+    minWidth: 0,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+    lineHeight: 20,
   },
   rowSubtitle: {
     color: theme.colors.foregroundMuted,

@@ -2870,6 +2870,8 @@ export const fr: TranslationResources = {
         icon: {
           label: "Icône",
           accessibilityLabel: "Icône, {{value}}",
+          auto: "Auto",
+          autoDetected: "Auto ({{icon}})",
           options: {
             server: "Serveur",
             laptop: "Portable",
@@ -2877,6 +2879,8 @@ export const fr: TranslationResources = {
             mini: "Mini",
             workstation: "Station de travail",
             cloud: "Cloud",
+            container: "Conteneur",
+            board: "Ordinateur monocarte",
             terminal: "Terminal",
           },
         },

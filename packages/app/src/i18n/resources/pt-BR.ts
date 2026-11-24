@@ -2849,6 +2849,8 @@ export const ptBR: TranslationResources = {
         icon: {
           label: "Ícone",
           accessibilityLabel: "Ícone, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
           options: {
             server: "Servidor",
             laptop: "Notebook",
@@ -2856,6 +2858,8 @@ export const ptBR: TranslationResources = {
             mini: "Mini",
             workstation: "Estação de trabalho",
             cloud: "Nuvem",
+            container: "Contêiner",
+            board: "PC de placa única",
             terminal: "Terminal",
           },
         },

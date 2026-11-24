@@ -13,6 +13,8 @@ export const HOST_ICONS = [
   "mini",
   "workstation",
   "cloud",
+  "container",
+  "board",
   "terminal",
 ] as const;
 
@@ -20,53 +22,64 @@ export type HostIcon = (typeof HOST_ICONS)[number];
 
 export const DEFAULT_HOST_ICON: HostIcon = "server";
 
+const HOST_ICON_SET = new Set<string>(HOST_ICONS);
+
+export function normalizeDetectedHostIcon(value: string | null | undefined): HostIcon | null {
+  const trimmed = value?.trim();
+  if (trimmed && HOST_ICON_SET.has(trimmed)) {
+    return trimmed as HostIcon;
+  }
+  return null;
+}
+
 export type HostBadgeDisplay = "name" | "icon" | "hidden";
 
 export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon", "hidden"];
 
 /**
- * Per-device host presentation. `badgeDisplay` is null while the user has not chosen,
- * because the default differs by host (local hides, remote shows) and local-ness is only
- * knowable from a desktop-only async query — never at parse time.
+ * Per-device host presentation. Both `icon` and `badgeDisplay` are null while untouched so
+ * runtime defaults apply (daemon-detected machine kind for icon; hidden for local / name for
+ * remote on badgeDisplay) without baking runtime facts at parse time.
  */
 export interface HostAppearance {
   color: HostColor;
-  icon: HostIcon;
+  icon: HostIcon | null;
   badgeDisplay: HostBadgeDisplay | null;
-}
-
-const HOST_ICON_SET = new Set<string>(HOST_ICONS);
-
-function normalizeHostIcon(value: string | undefined): HostIcon {
-  if (value && HOST_ICON_SET.has(value)) {
-    return value as HostIcon;
-  }
-  return DEFAULT_HOST_ICON;
 }
 
 const StoredHostAppearanceSchema = z.strictObject({
   color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
-  // Loose string on disk so an icon added by a newer build falls back to "server" instead of
+  // Loose string on disk so an icon added by a newer build falls back to auto ("null") instead of
   // failing the strict host parse and hiding the saved host.
-  icon: z.string().optional(),
+  icon: z.string().nullable().optional(),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
 });
 
 export const HostAppearanceSchema = StoredHostAppearanceSchema.transform(
   (value): HostAppearance => ({
     color: value.color,
-    icon: normalizeHostIcon(value.icon),
+    icon: normalizeDetectedHostIcon(value.icon),
     badgeDisplay: value.badgeDisplay,
   }),
 );
 
 export function defaultHostAppearance(): HostAppearance {
-  return { color: "none", icon: DEFAULT_HOST_ICON, badgeDisplay: null };
+  return { color: "none", icon: null, badgeDisplay: null };
 }
 
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
   const result = HostAppearanceSchema.safeParse(value);
   return result.success ? result.data : defaultHostAppearance();
+}
+
+export function resolveHostIcon(input: {
+  appearance: HostAppearance;
+  detectedMachineKind?: string | null;
+}): HostIcon {
+  if (input.appearance.icon) {
+    return input.appearance.icon;
+  }
+  return normalizeDetectedHostIcon(input.detectedMachineKind) ?? DEFAULT_HOST_ICON;
 }
 
 export function resolveHostBadgeDisplay(input: {
@@ -102,6 +115,7 @@ export function selectHostBadges(input: {
   hosts: readonly HostAppearanceSource[];
   localServerId: string | null;
   localHostResolutionPending?: boolean;
+  detectedMachineKindByServerId?: ReadonlyMap<string, string | null>;
   enabled: boolean;
 }): ReadonlyMap<string, HostBadgeModel> {
   const badges = new Map<string, HostBadgeModel>();
@@ -121,7 +135,10 @@ export function selectHostBadges(input: {
       serverId: host.serverId,
       label: host.label.trim() || host.serverId,
       color: host.appearance.color,
-      icon: host.appearance.icon,
+      icon: resolveHostIcon({
+        appearance: host.appearance,
+        detectedMachineKind: input.detectedMachineKindByServerId?.get(host.serverId) ?? null,
+      }),
       showLabel: display === "name",
     });
   }

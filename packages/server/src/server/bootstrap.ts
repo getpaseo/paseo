@@ -16,6 +16,7 @@ import { createServer as createHTTPServer, type IncomingMessage, type ServerResp
 import { constants, existsSync, unlinkSync } from "fs";
 import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
+import { getCachedHostMachineKind, primeHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
 import path from "node:path";
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -874,11 +875,13 @@ export async function createPaseoDaemon(
   });
 
   app.get("/api/status", (_req, res) => {
+    const machineKind = getCachedHostMachineKind();
     res.json({
       status: "server_info",
       serverId,
       hostname: getHostName(),
       version: daemonVersion,
+      ...(machineKind ? { machineKind } : {}),
       listen: formatListenTarget(boundListenTarget ?? listenTarget),
     });
   });
@@ -1803,7 +1806,11 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
-      localCredential = await writeLocalCredential(config.paseoHome);
+      const [nextLocalCredential] = await Promise.all([
+        writeLocalCredential(config.paseoHome),
+        primeHostMachineKind(),
+      ]);
+      localCredential = nextLocalCredential;
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,

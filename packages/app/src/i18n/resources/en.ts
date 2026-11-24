@@ -2939,6 +2939,8 @@ export const en = {
         icon: {
           label: "Icon",
           accessibilityLabel: "Icon, {{value}}",
+          auto: "Auto",
+          autoDetected: "Auto ({{icon}})",
           options: {
             server: "Server",
             laptop: "Laptop",
@@ -2946,6 +2948,8 @@ export const en = {
             mini: "Mini",
             workstation: "Workstation",
             cloud: "Cloud",
+            container: "Container",
+            board: "Single-board PC",
             terminal: "Terminal",
           },
         },

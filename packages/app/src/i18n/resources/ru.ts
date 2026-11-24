@@ -2857,6 +2857,8 @@ export const ru: TranslationResources = {
         icon: {
           label: "Значок",
           accessibilityLabel: "Значок, {{value}}",
+          auto: "Авто",
+          autoDetected: "Авто ({{icon}})",
           options: {
             server: "Сервер",
             laptop: "Ноутбук",
@@ -2864,6 +2866,8 @@ export const ru: TranslationResources = {
             mini: "Мини-ПК",
             workstation: "Рабочая станция",
             cloud: "Облако",
+            container: "Контейнер",
+            board: "Одноплатный ПК",
             terminal: "Терминал",
           },
         },

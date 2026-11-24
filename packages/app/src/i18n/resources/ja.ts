@@ -2836,6 +2836,8 @@ export const ja: TranslationResources = {
         icon: {
           label: "アイコン",
           accessibilityLabel: "アイコン、{{value}}",
+          auto: "自動",
+          autoDetected: "自動 ({{icon}})",
           options: {
             server: "サーバー",
             laptop: "ノート PC",
@@ -2843,6 +2845,8 @@ export const ja: TranslationResources = {
             mini: "ミニ PC",
             workstation: "ワークステーション",
             cloud: "クラウド",
+            container: "コンテナ",
+            board: "シングルボード PC",
             terminal: "ターミナル",
           },
         },
