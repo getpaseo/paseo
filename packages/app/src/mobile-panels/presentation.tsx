@@ -1,3 +1,4 @@
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { useId, useMemo, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet } from "react-native";
 import { GestureDetector, type GestureType } from "react-native-gesture-handler";
@@ -29,14 +30,14 @@ export function MobilePanelOverlay({
   dockVisible = false,
   frameStyle,
 }: MobilePanelOverlayProps) {
-  const { leftPanelWidth, position, windowWidth } = useMobilePanelsRuntime();
+  const { leftPanelWidth, position } = useMobilePanelsRuntime();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const overlayOpen = useIsMobilePanelActive(panel);
   const docked = presentation === "dock";
   const isOpen = docked ? dockVisible : overlayOpen;
   const hostId = useId();
   const isLeft = panel === "agent-list";
-  const width = isLeft ? leftPanelWidth : windowWidth;
+  const width = useWindowMetric((size) => (isLeft ? leftPanelWidth : size.width));
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => {
     if (docked) return { transform: [{ translateX: 0 }] };

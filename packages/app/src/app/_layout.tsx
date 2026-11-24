@@ -4,10 +4,10 @@ import {
   WindowLayoutActionsHost,
   WindowLayoutSurface,
   WindowLayoutDivisionGap,
-  useWindowLayout,
-  resolveDesktopDivisionLayout,
+  useDesktopDivisionLayout,
 } from "@/window-layout";
 import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -30,7 +30,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { AppState, useWindowDimensions, View } from "react-native";
+import { AppState, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -400,16 +400,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const viewportWidth = windowWidth - insets.left - insets.right;
-  const divisionLayout = resolveDesktopDivisionLayout({
-    geometry: useWindowLayout(),
-    windowWidth,
-    windowHeight,
-    leftInset: insets.left,
-    rightInset: insets.right,
-  });
+  const divisionLayout = useDesktopDivisionLayout(insets);
 
   const cycleTheme = useCallback(() => {
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
@@ -464,6 +456,13 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     explorerVisible: isWorkspaceRoute && explorerVisible,
     isSettingsRoute: pathname.includes("/settings"),
   });
+  const canShare = useWindowMetric(({ width }) =>
+    canDesktopAppSidebarShare({
+      contentMinimumWidth: appContentMinimumWidth,
+      requestedSidebarWidth: sidebarWidth,
+      viewportWidth: width - insets.left - insets.right,
+    }),
+  );
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({
     chromeEnabled,
@@ -471,11 +470,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isMounted: desktopSidebarMounted,
     isOpen: isDesktopAgentListOpen,
     divisionLayout,
-    canShare: canDesktopAppSidebarShare({
-      contentMinimumWidth: appContentMinimumWidth,
-      requestedSidebarWidth: sidebarWidth,
-      viewportWidth,
-    }),
+    canShare,
   });
   const { presentation: sidebarPresentation, visible: sidebarVisible } =
     useSettingsSidebarPresentation({

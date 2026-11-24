@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WindowInsetsContext } from "./context";
 
-export { useWindowLayout } from "./context";
+export { useWindowLayout, useDesktopDivisionLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
 export { useTopBand } from "./context";

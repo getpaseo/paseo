@@ -24,7 +24,6 @@ import {
   ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
-  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -46,7 +45,7 @@ import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { useTopBand, useDesktopDivisionLayout } from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -98,7 +97,7 @@ import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
-import { useLeftPanelWidth } from "@/mobile-panels/provider";
+import { useMobilePanelsRuntime } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -754,17 +753,10 @@ function DesktopSidebar({
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const viewportWidth = windowWidth - insets.left - insets.right;
-  const divisionLayout = resolveDesktopDivisionLayout({
-    geometry: useWindowLayout(),
-    windowWidth,
-    windowHeight,
-    leftInset: insets.left,
-    rightInset: insets.right,
-  });
-  const visibleSidebarWidth = useLeftPanelWidth();
+  const divisionLayout = useDesktopDivisionLayout(insets);
+  const horizontalInsets = insets.left + insets.right;
+  const { leftPanelWidth: visibleSidebarWidth, windowWidth } = useMobilePanelsRuntime();
 
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
@@ -801,7 +793,7 @@ function DesktopSidebar({
           const newWidth = startWidth.value + event.translationX;
           resizeWidth.value = resolveDesktopSidebarWidth({
             requestedWidth: newWidth,
-            viewportWidth,
+            viewportWidth: windowWidth.value - horizontalInsets,
           });
         })
         .onEnd((_event, success) => {
@@ -817,7 +809,8 @@ function DesktopSidebar({
       setSidebarWidth,
       showResizeGrip,
       startWidth,
-      viewportWidth,
+      windowWidth,
+      horizontalInsets,
       visibleSidebarWidth,
     ],
   );

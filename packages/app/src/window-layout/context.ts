@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
-import { useWindowDimensions } from "react-native";
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import type { EdgeInsets } from "react-native-safe-area-context";
-import type { TopBand, WindowLayout } from "./model";
+import { resolveDesktopDivisionLayout, type TopBand, type WindowLayout } from "./model";
 
 export const WindowLayoutContext = createContext<WindowLayout | null>(null);
 
@@ -16,12 +16,28 @@ export const WindowInsetsContext = createContext<EdgeInsets | null>(null);
 
 export function useWindowLayout(): WindowLayout | null {
   const layout = useContext(WindowLayoutContext);
-  const { width, height } = useWindowDimensions();
-  return layout &&
+  return useWindowMetric(({ width, height }) =>
+    layout &&
     Math.abs(layout.bounds.width - width) <= 0.5 &&
     Math.abs(layout.bounds.height - height) <= 0.5
-    ? layout
-    : null;
+      ? layout
+      : null,
+  );
+}
+
+export function useDesktopDivisionLayout(insets: EdgeInsets) {
+  const geometry = useContext(WindowLayoutContext);
+  const window = useWindowMetric((size) => (geometry ? size : null));
+  return (
+    window &&
+    resolveDesktopDivisionLayout({
+      geometry,
+      windowWidth: window.width,
+      windowHeight: window.height,
+      leftInset: insets.left,
+      rightInset: insets.right,
+    })
+  );
 }
 
 /** The top band beside the system's status region, or null where the window has none. */

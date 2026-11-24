@@ -113,7 +113,9 @@ export function useOpenAgentListGesture(enabled: boolean) {
             deltaY,
             direction: 1,
             openGesturesBlocked: openGesturesBlocked.value,
-            openEdge: openFromEdgeOnly ? { startX: touchStartX.value, windowWidth } : null,
+            openEdge: openFromEdgeOnly
+              ? { startX: touchStartX.value, windowWidth: windowWidth.value }
+              : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
@@ -321,7 +323,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
             deltaY,
             direction: -1,
             openGesturesBlocked: openGesturesBlocked.value,
-            openEdge: isWeb ? { startX: touchStartX.value, windowWidth } : null,
+            openEdge: isWeb ? { startX: touchStartX.value, windowWidth: windowWidth.value } : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
@@ -340,10 +342,10 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, -event.translationX / windowWidth);
+          updateGesture(startedRevision.value, -event.translationX / windowWidth.value);
         })
         .onEnd((event, success) => {
-          const shouldOpen = event.translationX < -windowWidth / 3 || event.velocityX < -500;
+          const shouldOpen = event.translationX < -windowWidth.value / 3 || event.velocityX < -500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldOpen ? "file-explorer" : "agent",
@@ -436,10 +438,10 @@ export function useCloseFileExplorerGesture(enabled = true) {
           });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, 1 - event.translationX / windowWidth);
+          updateGesture(startedRevision.value, 1 - event.translationX / windowWidth.value);
         })
         .onEnd((event, success) => {
-          const shouldClose = event.translationX > windowWidth / 3 || event.velocityX > 500;
+          const shouldClose = event.translationX > windowWidth.value / 3 || event.velocityX > 500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldClose ? "agent" : "file-explorer",
