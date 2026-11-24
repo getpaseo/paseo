@@ -514,7 +514,7 @@ interface ClaudeAgentSessionOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   independentUltracode: boolean;
-  mcpServersDelivery: ClaudeMcpServersDelivery;
+  resolveMcpServersDelivery: () => Promise<ClaudeMcpServersDelivery>;
   rewindSdk?: ClaudeRewindSdk;
 }
 
@@ -1704,7 +1704,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      mcpServersDelivery: await this.resolveMcpServersDelivery(claudeConfig.mcpServers),
+      resolveMcpServersDelivery: () => this.resolveMcpServersDelivery(),
       rewindSdk: this.rewindSdk,
     });
   }
@@ -1735,7 +1735,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      mcpServersDelivery: await this.resolveMcpServersDelivery(claudeConfig.mcpServers),
+      resolveMcpServersDelivery: () => this.resolveMcpServersDelivery(),
       rewindSdk: this.rewindSdk,
     });
     await session.ensureHistoryReady();
@@ -1833,15 +1833,13 @@ export class ClaudeAgentClient implements AgentClient {
     return supportsIndependentClaudeUltracode(await this.version);
   }
 
-  private async resolveMcpServersDelivery(
-    mcpServers: ClaudeAgentConfig["mcpServers"],
-  ): Promise<ClaudeMcpServersDelivery> {
-    this.version ??= this.resolveVersion().catch(() => undefined);
-    const version = await this.version;
+  private async resolveMcpServersDelivery(): Promise<ClaudeMcpServersDelivery> {
+    // The installed version can change between SDK launches in the same session.
+    const version = await this.resolveVersion().catch(() => undefined);
     if (supportsClaudeMcpServersViaInitialize(version)) {
       return "initialize";
     }
-    if (!mcpServers || Object.keys(mcpServers).length === 0 || this.warnedMcpServersOnArgv) {
+    if (this.warnedMcpServersOnArgv) {
       return "argv";
     }
     this.warnedMcpServersOnArgv = true;
@@ -2450,7 +2448,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly independentUltracode: boolean;
-  private readonly mcpServersDelivery: ClaudeMcpServersDelivery;
+  private readonly resolveMcpServersDelivery: () => Promise<ClaudeMcpServersDelivery>;
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
   private readonly backgroundStops = new Map<string, (outcome: string) => void>();
@@ -2590,7 +2588,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.independentUltracode = options.independentUltracode;
-    this.mcpServersDelivery = options.mcpServersDelivery;
+    this.resolveMcpServersDelivery = options.resolveMcpServersDelivery;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       getClaudeContextWindowMaxTokens(this.config.model),
@@ -4076,9 +4074,9 @@ class ClaudeAgentSession implements AgentSession {
 
     if (this.config.mcpServers) {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
-      // Off argv, so the Paseo MCP bearer token and any user server headers or env are not
-      // readable by other local accounts through ps or /proc/<pid>/cmdline.
-      base.mcpServersDelivery = this.mcpServersDelivery;
+      if (Object.keys(base.mcpServers).length > 0) {
+        base.mcpServersDelivery = await this.resolveMcpServersDelivery();
+      }
     }
 
     if (this.config.model) {

@@ -1133,25 +1133,74 @@ describe("ClaudeAgentSession features", () => {
     },
   );
 
-  test("warns about argv delivery only after a session configures MCP servers", async () => {
+  test("uses stdin on new launches and relaunches after Claude Code upgrades", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    let version = "2.1.325";
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => version,
+    });
+    const config = {
+      provider: "claude",
+      cwd: process.cwd(),
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    const existing = await client.createSession(config);
+    try {
+      await existing.setModel?.("claude-sonnet-4-6");
+      expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+
+      version = "2.1.326";
+      const fresh = await client.createSession(config);
+      try {
+        await fresh.setModel?.("claude-sonnet-4-6");
+        await existing.setThinkingOption?.("high");
+        await existing.setModel?.("claude-sonnet-4-6");
+
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual([
+          "argv",
+          "initialize",
+          "initialize",
+        ]);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await existing.close();
+    }
+  });
+
+  test("warns about argv delivery only on launches with MCP servers", async () => {
     const messages: string[] = [];
+    const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger: pino({}, { write: (message: string) => messages.push(JSON.parse(message).msg) }),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
       resolveVersion: async () => "2.1.325",
     });
     const warnings = () => messages.filter((message) => message.includes("MCP server headers"));
     const config = { provider: "claude", cwd: process.cwd() } as const;
-
-    await (await client.createSession(config)).close();
-    await (await client.createSession({ ...config, mcpServers: {} })).close();
+    const launch = async (sessionConfig: Parameters<typeof client.createSession>[0]) => {
+      const session = await client.createSession(sessionConfig);
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+      } finally {
+        await session.close();
+      }
+    };
+    await launch(config);
+    await launch({ ...config, mcpServers: {} });
     expect(warnings()).toEqual([]);
 
     const withMcp = {
       ...config,
       mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
     } as const;
-    await (await client.createSession(withMcp)).close();
-    await (await client.createSession(withMcp)).close();
+    await launch(withMcp);
+    await launch(withMcp);
     expect(warnings()).toEqual([
       "Claude Code is too old or reports no version; MCP server headers go on its command line",
     ]);
