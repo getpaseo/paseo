@@ -52,6 +52,7 @@ export async function isCheckoutUntrusted(
 export async function clearWorkspaceAutomationBlock(
   registry: Pick<WorkspaceRegistry, "update" | "listAll">,
   workspaceId: string,
+  options?: { checkoutPath?: string | null },
 ): Promise<boolean> {
   let cleared = false;
   const timestamp = new Date().toISOString();
@@ -62,7 +63,7 @@ export async function clearWorkspaceAutomationBlock(
     return { ...trusted, updatedAt: timestamp };
   });
   if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-  const checkoutPath = workspace.worktreeRoot ?? workspace.cwd;
+  const checkoutPath = options?.checkoutPath ?? workspace.worktreeRoot ?? workspace.cwd;
   const matchesCheckout = createRealpathAwarePathMatcher(checkoutPath);
   const siblings = await registry.listAll();
   for (const sibling of siblings) {

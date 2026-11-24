@@ -17,6 +17,7 @@ import { createWorktree, listPaseoWorktrees, type WorktreeConfig } from "../util
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
 import {
   archiveByScope,
   unarchiveWorkspaceAgents,
@@ -26,7 +27,16 @@ import {
   resolveWorkspaceIdAtPath,
   WorkspaceArchiveCanceledError,
 } from "./workspace-archive-service.js";
-import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import {
+  assertWorkspaceAutomationAllowedForWorkspace,
+  clearWorkspaceAutomationBlock,
+  isCheckoutUntrusted,
+  WorkspaceAutomationBlockedError,
+} from "./workspace-automation-gate.js";
+import {
+  createPersistedWorkspaceRecord,
+  FileBackedWorkspaceRegistry,
+} from "./workspace-registry.js";
 
 const cleanupPaths: string[] = [];
 
@@ -641,6 +651,156 @@ describe("archiveByScope", () => {
       expect(existsSync(fixture.worktreePath)).toBe(false);
       expect(existsSync(fixture.marker)).toBe(false);
     });
+
+    test("workspace scope backfills checkout metadata when archiving a pre-upgrade unapproved worktree whose directory stays on disk", async () => {
+      const fixture = await createTeardownWorktree("pre-upgrade-retained");
+      expect(
+        (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
+      ).toBeUndefined();
+      const untrustedSource = sampleBlockedSource(91);
+      const blockedWorkspaceId = "ws-pre-upgrade-blocked";
+      const keptSiblingId = "ws-pre-upgrade-sibling";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [
+          makeWorktreeWorkspace(blockedWorkspaceId, fixture, { untrustedSource }),
+          makeWorktreeWorkspace(keptSiblingId, fixture),
+        ],
+      });
+
+      const first = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: blockedWorkspaceId },
+        requestId: "req-pre-upgrade-first",
+      });
+      expect(first.removedDirectory).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+      expect((await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource).toEqual(
+        untrustedSource,
+      );
+
+      const second = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: keptSiblingId },
+        requestId: "req-pre-upgrade-second",
+      });
+      expect(second.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test.each(["approval-first", "archive-first"] as const)(
+      "serializing archive and setup approval through withCheckout preserves completed approval (%s)",
+      async (order) => {
+        const fixture = await createTeardownWorktree(`serialized-${order}`);
+        const untrustedSource = sampleBlockedSource(92);
+        const registry = new FileBackedWorkspaceRegistry(
+          path.join(fixture.paseoHome, "workspaces.json"),
+          createLogger(),
+        );
+        const operations = new WorkspaceArchiveOperations();
+        const now = "2026-11-24T00:00:00.000Z";
+        const ws1 = createPersistedWorkspaceRecord({
+          workspaceId: "ws-archive-target",
+          projectId: "proj-1",
+          displayName: "ws-archive-target",
+          cwd: fixture.worktreePath,
+          kind: "worktree",
+          worktreeRoot: fixture.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: fixture.repoDir,
+          untrustedSource,
+          createdAt: now,
+          updatedAt: now,
+        });
+        const ws2 = createPersistedWorkspaceRecord({
+          workspaceId: "ws-approve-sibling",
+          projectId: "proj-1",
+          displayName: "ws-approve-sibling",
+          cwd: fixture.worktreePath,
+          kind: "worktree",
+          worktreeRoot: fixture.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: fixture.repoDir,
+          untrustedSource,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await registry.upsert(ws1);
+        await registry.upsert(ws2);
+
+        const deps = createArchiveDeps({
+          paseoHome: fixture.paseoHome,
+          activeWorkspaces: [],
+        });
+        deps.workspaceArchiveOperations = operations;
+        deps.getWorkspace = (id) => registry.get(id);
+        deps.listActiveWorkspaces = () => registry.listActive();
+        deps.archiveWorkspaceRecord = async (id, archivedAt) => {
+          await registry.archive(id, archivedAt);
+        };
+        deps.assertWorkspaceAutomationAllowed = (id) =>
+          assertWorkspaceAutomationAllowedForWorkspace(registry, id);
+        deps.isCheckoutUntrusted = (checkoutPath) => isCheckoutUntrusted(registry, checkoutPath);
+
+        async function clearInsideCheckoutLock() {
+          return clearWorkspaceAutomationBlock(registry, ws2.workspaceId, {
+            checkoutPath: fixture.worktreePath,
+          });
+        }
+
+        if (order === "approval-first") {
+          const [cleared, archived] = await Promise.all([
+            operations.withCheckout(fixture.worktreePath, clearInsideCheckoutLock),
+            archiveByScope(deps, {
+              scope: { kind: "workspace", workspaceId: ws1.workspaceId },
+              requestId: `req-${order}-ws1`,
+            }),
+          ]);
+          expect(cleared).toBe(true);
+          expect(archived.removedDirectory).toBe(false);
+        } else {
+          // Pause archive mid-flight (after resolving targets, before backfill) while Run setup
+          // queues on the same checkout lock, ensuring approval runs after backfill and wins.
+          let enteredStop!: () => void;
+          let releaseStop!: () => void;
+          const stopEntered = new Promise<void>((resolve) => {
+            enteredStop = resolve;
+          });
+          const stopGate = new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          });
+          deps.stopWorkspaceSetup = async () => {
+            enteredStop();
+            await stopGate;
+          };
+          const archivePromise = archiveByScope(deps, {
+            scope: { kind: "workspace", workspaceId: ws1.workspaceId },
+            requestId: `req-${order}-ws1`,
+          });
+          await stopEntered;
+          const approvalPromise = operations.withCheckout(
+            fixture.worktreePath,
+            clearInsideCheckoutLock,
+          );
+          releaseStop();
+          const [archived, cleared] = await Promise.all([archivePromise, approvalPromise]);
+          expect(archived.removedDirectory).toBe(false);
+          expect(cleared).toBe(true);
+          deps.stopWorkspaceSetup = undefined;
+        }
+
+        expect(
+          (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
+        ).toBeUndefined();
+        expect((await registry.get(ws2.workspaceId))?.untrustedSource).toBeUndefined();
+
+        const finalArchive = await archiveByScope(deps, {
+          scope: { kind: "workspace", workspaceId: ws2.workspaceId },
+          requestId: `req-${order}-ws2`,
+        });
+        expect(finalArchive.removedDirectory).toBe(true);
+        expect(readFileSync(fixture.marker, "utf8")).toBe("ran");
+      },
+    );
 
     test("workspace scope skips teardown when an active sibling on the same checkout is blocked", async () => {
       const nestedRelative = path.join("packages", "app");
