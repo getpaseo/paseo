@@ -57,6 +57,9 @@ interface ButtonView {
   toast: ReturnType<typeof useToast>;
 }
 
+export const PLUGIN_HEADER_BUTTON_MAX_WIDTH = 160;
+export const PLUGIN_COMPOSER_PILL_MAX_WIDTH = 240;
+
 const ROOT_PATH: readonly string[] = [];
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
@@ -265,7 +268,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
       composer
         ? [
             composerPillStyles.body,
-            styles.button,
+            styles.composerButton,
             (hovered || pressed || entry.open) && styles.active,
             disabled && styles.disabled,
           ]
@@ -667,7 +670,8 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
   },
-  button: { flexShrink: 1, minWidth: 0, maxWidth: 160 },
+  button: { flexShrink: 1, minWidth: 0, maxWidth: PLUGIN_HEADER_BUTTON_MAX_WIDTH },
+  composerButton: { flexShrink: 1, minWidth: 0, maxWidth: PLUGIN_COMPOSER_PILL_MAX_WIDTH },
   active: { backgroundColor: theme.colors.surface2 },
   disabled: { opacity: theme.opacity[50] },
   tooltipLabel: { fontSize: theme.fontSize.sm, color: theme.colors.foreground },
