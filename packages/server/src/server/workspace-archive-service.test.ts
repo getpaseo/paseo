@@ -642,41 +642,6 @@ describe("archiveByScope", () => {
       expect(existsSync(fixture.marker)).toBe(false);
     });
 
-    test("workspace scope backfills checkout metadata when archiving an unapproved pre-upgrade checkout that stays on disk", async () => {
-      const fixture = await createTeardownWorktree("pre-upgrade-retained");
-      expect(
-        (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
-      ).toBeUndefined();
-      const untrustedSource = sampleBlockedSource(91);
-      const blockedWorkspaceId = "ws-pre-upgrade-blocked";
-      const keptSiblingId = "ws-pre-upgrade-sibling";
-      const deps = createArchiveDeps({
-        paseoHome: fixture.paseoHome,
-        activeWorkspaces: [
-          makeWorktreeWorkspace(blockedWorkspaceId, fixture, { untrustedSource }),
-          makeWorktreeWorkspace(keptSiblingId, fixture),
-        ],
-      });
-
-      const first = await archiveByScope(deps, {
-        scope: { kind: "workspace", workspaceId: blockedWorkspaceId },
-        requestId: "req-pre-upgrade-first",
-      });
-      expect(first.removedDirectory).toBe(false);
-      expect(existsSync(fixture.marker)).toBe(false);
-      expect((await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource).toEqual(
-        untrustedSource,
-      );
-
-      const second = await archiveByScope(deps, {
-        scope: { kind: "workspace", workspaceId: keptSiblingId },
-        requestId: "req-pre-upgrade-second",
-      });
-      expect(second.removedDirectory).toBe(true);
-      expect(existsSync(fixture.worktreePath)).toBe(false);
-      expect(existsSync(fixture.marker)).toBe(false);
-    });
-
     test("workspace scope skips teardown when an active sibling on the same checkout is blocked", async () => {
       const nestedRelative = path.join("packages", "app");
       const fixture = await createTeardownWorktree("shared-blocked-sibling", { nestedRelative });
