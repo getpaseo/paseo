@@ -59,8 +59,8 @@ export interface ArchiveDependencies {
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
-  assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
-  isCheckoutUntrusted?: (checkoutPath: string) => Promise<boolean>;
+  assertWorkspaceAutomationAllowed: (workspaceId: string) => Promise<void>;
+  isCheckoutUntrusted: (checkoutPath: string) => Promise<boolean>;
   sessionLogger?: Logger;
 }
 
@@ -515,12 +515,11 @@ async function maybeRemoveDirectory(
   );
 
   let untrustedBacking =
-    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted?.(backing.path));
+    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted(backing.path));
   try {
-    const allowedTeardownTargets = await filterAllowedTeardownTargets(
-      dependencies,
-      teardownTargets,
-    );
+    const allowedTeardownTargets = untrustedBacking
+      ? []
+      : await filterAllowedTeardownTargets(dependencies, teardownTargets);
     if (allowedTeardownTargets.length < teardownTargets.length) {
       untrustedBacking = true;
     }
@@ -588,21 +587,27 @@ async function filterAllowedTeardownTargets(
   dependencies: ArchiveDependencies,
   targets: Array<{ workspaceId: string | null; cwd: string }>,
 ): Promise<Array<{ workspaceId: string | null; cwd: string }>> {
+  if (typeof dependencies.assertWorkspaceAutomationAllowed !== "function") {
+    return [];
+  }
   const allowed: Array<{ workspaceId: string | null; cwd: string }> = [];
-  const blockedCwds: string[] = [];
   for (const target of targets) {
+    if (!target.workspaceId) {
+      // Worktree-scope archive without an active workspace record has no
+      // workspace-level setup approval to authorize teardown commands.
+      return [];
+    }
     try {
-      if (target.workspaceId)
-        await dependencies.assertWorkspaceAutomationAllowed?.(target.workspaceId);
+      await dependencies.assertWorkspaceAutomationAllowed(target.workspaceId);
       allowed.push(target);
     } catch (error) {
       if (!(error instanceof WorkspaceAutomationBlockedError)) throw error;
-      blockedCwds.push(target.cwd);
+      // Every target in this archive shares one backing checkout; if any
+      // workspace on it is blocked, skip teardown for the entire checkout.
+      return [];
     }
   }
-  return allowed.filter(
-    (target) => !blockedCwds.some((cwd) => createRealpathAwarePathMatcher(cwd)(target.cwd)),
-  );
+  return allowed;
 }
 
 function uniqueTeardownTargets<T extends { cwd: string }>(targets: T[]): T[] {
