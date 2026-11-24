@@ -1168,3 +1168,92 @@ test("a failed workspace unarchive write keeps agents archived and permits retry
   expect((await registry.get(workspace.workspaceId))?.archivedAt).toBeNull();
   expect(agentArchived).toBe(false);
 });
+
+test("unarchiving an approved workspace onto an active unapproved checkout inherits untrustedSource", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-unarchive-inherit");
+  const worktreePath = path.join(tmpDir, "worktree-reused-path");
+  mkdirSync(sourceCwd, { recursive: true });
+  mkdirSync(worktreePath, { recursive: true });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const original = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "feature/approved",
+    baseBranch: "main",
+    title: null,
+  });
+  await workspaceRegistry.archive(original.workspaceId, ARCHIVED_AT);
+  const archivedOriginal = (await workspaceRegistry.get(original.workspaceId))!;
+
+  const untrustedSource = {
+    kind: "change_request" as const,
+    forge: "github",
+    number: 55,
+    headRepository: "contributor/repo",
+  };
+  await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "contributor/pr-55",
+    baseBranch: "main",
+    title: null,
+    untrustedSource,
+  });
+
+  const restored = await provisioning.ensureWorkspaceRecordUnarchived(archivedOriginal);
+
+  expect(restored.archivedAt).toBeNull();
+  expect(restored.untrustedSource).toEqual(untrustedSource);
+  expect((await workspaceRegistry.get(original.workspaceId))?.untrustedSource).toEqual(
+    untrustedSource,
+  );
+});
+
+test("unarchiving an approved workspace ignores archived unapproved records on the same path", async () => {
+  const sourceCwd = path.join(tmpDir, "repo-unarchive-historical");
+  const worktreePath = path.join(tmpDir, "worktree-historical-path");
+  mkdirSync(sourceCwd, { recursive: true });
+  mkdirSync(worktreePath, { recursive: true });
+  gitRoots.add(sourceCwd);
+  gitRoots.add(worktreePath);
+
+  const oldUntrusted = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "contributor/pr-56",
+    baseBranch: "main",
+    title: null,
+    untrustedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 56,
+      headRepository: "contributor/repo",
+    },
+  });
+  await workspaceRegistry.archive(oldUntrusted.workspaceId, ARCHIVED_AT);
+
+  const approved = await provisioning.createWorkspaceForWorktree({
+    sourceCwd,
+    repoRoot: sourceCwd,
+    cwd: worktreePath,
+    worktreeRoot: worktreePath,
+    branch: "feature/fresh",
+    baseBranch: "main",
+    title: null,
+  });
+  await workspaceRegistry.archive(approved.workspaceId, ARCHIVED_AT);
+  const archivedApproved = (await workspaceRegistry.get(approved.workspaceId))!;
+
+  const restored = await provisioning.ensureWorkspaceRecordUnarchived(archivedApproved);
+
+  expect(restored.archivedAt).toBeNull();
+  expect(restored.untrustedSource).toBeUndefined();
+});

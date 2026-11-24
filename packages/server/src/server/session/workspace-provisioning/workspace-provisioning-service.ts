@@ -429,6 +429,24 @@ export function createWorkspaceProvisioningService(deps: {
     ).workspaceId;
   }
 
+  async function inheritActiveCheckoutUntrustedSource(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<PersistedWorkspaceRecord> {
+    if (workspace.untrustedSource) {
+      return workspace;
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(workspace.worktreeRoot ?? workspace.cwd);
+    const active = await workspaceRegistry.listActive();
+    const inheritedUntrustedSource = active.find(
+      (candidate) =>
+        Boolean(candidate.untrustedSource) &&
+        matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    )?.untrustedSource;
+    return inheritedUntrustedSource
+      ? { ...workspace, untrustedSource: inheritedUntrustedSource }
+      : workspace;
+  }
+
   async function resolveRestoredAutoArchiveChangeRequestUrl(
     workspace: PersistedWorkspaceRecord,
   ): Promise<string | null> {
@@ -466,7 +484,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       });
       next = {
-        ...(placementUpdate?.workspace ?? workspace),
+        ...(await inheritActiveCheckoutUntrustedSource(placementUpdate?.workspace ?? workspace)),
         archivedAt: null,
         autoArchivedChangeRequestUrl,
         updatedAt: timestamp,
