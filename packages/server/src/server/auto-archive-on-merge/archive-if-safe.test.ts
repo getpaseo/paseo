@@ -669,17 +669,20 @@ describe("archiveIfSafe", () => {
           worktreeRoot: worktree.worktreePath,
           isPaseoOwnedWorktree: true,
           mainRepoRoot: repoDir,
-          untrustedSource: {
-            kind: "change_request",
-            forge: "github",
-            number: 123,
-            headRepository: "contributor/repo",
-          },
         },
       ],
       archivedWorkspaceIds,
     });
-    harness.options.isCheckoutUntrusted = async () => true;
+    const { WorkspaceAutomationBlockedError } = await import("../workspace-automation-gate.js");
+    const assertWorkspaceAutomationAllowed = vi.fn(async () => {
+      throw new WorkspaceAutomationBlockedError({
+        kind: "change_request",
+        forge: "github",
+        number: 123,
+        headRepository: "contributor/repo",
+      });
+    });
+    harness.options.assertWorkspaceAutomationAllowed = assertWorkspaceAutomationAllowed;
 
     await archiveIfSafe({
       workspaceId,
@@ -688,6 +691,7 @@ describe("archiveIfSafe", () => {
       log: harness.log,
     });
 
+    expect(assertWorkspaceAutomationAllowed).toHaveBeenCalledWith(workspaceId);
     expect(archivedWorkspaceIds.has(workspaceId)).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
     expect(existsSync(marker)).toBe(false);

@@ -88,15 +88,20 @@ async function createUntrustedWorktreeFixture(slug: string, markerName: string) 
     worktreeRoot: worktree.worktreePath,
     isPaseoOwnedWorktree: true,
     mainRepoRoot: repoDir,
-    untrustedSource: {
-      kind: "change_request",
-      forge: "github",
-      number: 99,
-      headRepository: "contributor/paseo",
-    },
     createdAt: "2026-11-24T00:00:00.000Z",
     updatedAt: "2026-11-24T00:00:00.000Z",
   };
+  const blockedSource = {
+    kind: "change_request" as const,
+    forge: "github",
+    number: 99,
+    headRepository: "contributor/paseo",
+  };
+  const assertWorkspaceAutomationAllowed = vi.fn(async (id: string) => {
+    if (id === workspace.workspaceId) {
+      throw new WorkspaceAutomationBlockedError(blockedSource);
+    }
+  });
   const activeWorkspaces = [workspace];
   const archived = new Set<string>();
   const events = new AgentLifecycleEvents();
@@ -110,13 +115,8 @@ async function createUntrustedWorktreeFixture(slug: string, markerName: string) 
   const dispatch = new CreateAgentLifecycleDispatch({
     paseoHome,
     getWorkspace: async (id) => (id === workspace.workspaceId ? workspace : null),
-    assertWorkspaceAutomationAllowed: async (id) => {
-      if (id === workspace.workspaceId && workspace.untrustedSource) {
-        throw new WorkspaceAutomationBlockedError(workspace.untrustedSource);
-      }
-    },
-    isCheckoutUntrusted: async (checkoutPath) =>
-      path.resolve(checkoutPath) === path.resolve(worktree.worktreePath),
+    assertWorkspaceAutomationAllowed,
+    isCheckoutUntrusted: async () => false,
     agentManager,
     agentStorage: { listByWorkspace: async () => [] } as unknown as AgentStorage,
     github: { invalidate: () => {} } as unknown as ForgeService,
@@ -146,6 +146,7 @@ async function createUntrustedWorktreeFixture(slug: string, markerName: string) 
     marker: path.join(repoDir, markerName),
     createdWorktree: { worktree, workspace },
     archived,
+    assertWorkspaceAutomationAllowed,
   };
 }
 
@@ -171,23 +172,24 @@ test("auto-archive self-releases once and later cancellation waits harmlessly", 
 });
 
 test("failed create cleanup skips teardown commands for an unapproved cross-repository checkout", async () => {
-  const { dispatch, marker, createdWorktree, archived } = await createUntrustedWorktreeFixture(
-    "failed-create-untrusted",
-    "failed-create-teardown.log",
-  );
+  const { dispatch, marker, createdWorktree, archived, assertWorkspaceAutomationAllowed } =
+    await createUntrustedWorktreeFixture("failed-create-untrusted", "failed-create-teardown.log");
 
   await dispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
     createdWorktree,
     createdAgentId: null,
   });
 
+  expect(assertWorkspaceAutomationAllowed).toHaveBeenCalledWith(
+    createdWorktree.workspace.workspaceId,
+  );
   expect(archived.has(createdWorktree.workspace.workspaceId)).toBe(true);
   expect(existsSync(createdWorktree.worktree.worktreePath)).toBe(false);
   expect(existsSync(marker)).toBe(false);
 });
 
 test("first-turn auto-archive skips teardown commands for an unapproved cross-repository checkout", async () => {
-  const { dispatch, events, marker, createdWorktree, archived } =
+  const { dispatch, events, marker, createdWorktree, archived, assertWorkspaceAutomationAllowed } =
     await createUntrustedWorktreeFixture("auto-archive-untrusted", "auto-archive-teardown.log");
   const agentId = "agent-auto-archive-untrusted";
 
@@ -199,6 +201,9 @@ test("first-turn auto-archive skips teardown commands for an unapproved cross-re
   events.completeTurn(agentId);
   await registration.cancel();
 
+  expect(assertWorkspaceAutomationAllowed).toHaveBeenCalledWith(
+    createdWorktree.workspace.workspaceId,
+  );
   expect(archived.has(createdWorktree.workspace.workspaceId)).toBe(true);
   expect(existsSync(createdWorktree.worktree.worktreePath)).toBe(false);
   expect(existsSync(marker)).toBe(false);

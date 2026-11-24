@@ -535,9 +535,9 @@ describe("archiveByScope", () => {
     expect(existsSync(marker)).toBe(false);
   });
 
-  test("workspace scope skips teardown when isCheckoutUntrusted reports the backing checkout untrusted", async () => {
+  test("workspace scope runs teardown for a fresh worktree reusing the path of an archived unapproved checkout", async () => {
     const { tempDir, repoDir } = createGitRepo();
-    const markerName = "untrusted-checkout-teardown.log";
+    const markerName = "reused-path-teardown.log";
     const marker = path.join(repoDir, markerName);
     writeFileSync(
       path.join(repoDir, "paseo.json"),
@@ -550,13 +550,13 @@ describe("archiveByScope", () => {
       }),
     );
     execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "checkout teardown"], {
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "reused path teardown"], {
       cwd: repoDir,
       stdio: "pipe",
     });
     const paseoHome = path.join(tempDir, ".paseo");
-    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "untrusted-checkout");
-    const workspaceId = "ws-untrusted-checkout";
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "reused-slug");
+    const workspaceId = "ws-fresh-reused-slug";
     const deps = createArchiveDeps({
       paseoHome,
       activeWorkspaces: [
@@ -570,16 +570,86 @@ describe("archiveByScope", () => {
         },
       ],
     });
+    // Simulates an earlier archived unapproved workspace that previously used the same path.
     deps.isCheckoutUntrusted = async () => true;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
-      requestId: "req-untrusted-checkout",
+      requestId: "req-fresh-reused-slug",
     });
 
     expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(readFileSync(marker, "utf8")).toBe("ran");
+  });
+
+  test("workspace scope skips teardown when an active sibling on the same checkout is blocked", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const nestedRelative = path.join("packages", "app");
+    const sourceNested = path.join(repoDir, nestedRelative);
+    mkdirSync(sourceNested, { recursive: true });
+    const markerName = "shared-blocked-sibling-teardown.log";
+    const marker = path.join(repoDir, markerName);
+    writeFileSync(
+      path.join(sourceNested, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "shared sibling teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "shared-blocked-sibling");
+    const blockedRootId = "ws-shared-blocked-root";
+    const nestedWorkspaceId = "ws-shared-nested";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId: blockedRootId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+        {
+          workspaceId: nestedWorkspaceId,
+          cwd: path.join(worktree.worktreePath, nestedRelative),
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.assertWorkspaceAutomationAllowed = async (workspaceId) => {
+      if (workspaceId === blockedRootId) {
+        throw new WorkspaceAutomationBlockedError({
+          kind: "change_request",
+          forge: "github",
+          number: 42,
+          headRepository: "contributor/paseo",
+        });
+      }
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: nestedWorkspaceId },
+      requestId: "req-shared-blocked-sibling",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([nestedWorkspaceId]);
+    expect(result.removedDirectory).toBe(false);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
     expect(existsSync(marker)).toBe(false);
   });
 
