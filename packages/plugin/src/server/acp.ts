@@ -10,7 +10,13 @@ import type {
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "./provider.js";
-import { createAcpProviderConnection } from "./acp-internal/connection.js";
+import {
+  AcpStartupError,
+  createAcpProviderConnection,
+  type AcpStartupFailureReason,
+} from "./acp-internal/connection.js";
+
+export { AcpStartupError, type AcpStartupFailureReason };
 
 interface RunAcpProviderBaseOptions {
   id: string;

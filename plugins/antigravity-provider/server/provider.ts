@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { execCommand } from "@getpaseo/plugin/server";
-import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
+import { AcpStartupError, runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import {
   PROVIDER_PROTOCOL_VERSION,
   type ProviderInstallationLaunch,
+  type ProviderLaunch,
   type ProviderRegistration,
+  type ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 import { mapToolCall } from "./tool-calls.js";
@@ -101,7 +104,39 @@ function describeSignIn(env: Readonly<Record<string, string>>): string {
     : "SSH session: no\nSign-in: can differ from agy over SSH";
 }
 
+// Below PluginRuntime's 30s REQUEST_TIMEOUT_MS so child cleanup and diagnostics still return in time.
+const ACP_STARTUP_TIMEOUT_MS = 20_000;
+
+function statusProbeKey(launch: ProviderLaunch): string {
+  const envEntries = Object.keys(launch.env)
+    .sort()
+    .map((key) => [key, launch.env[key]]);
+  return createHash("sha256")
+    .update(JSON.stringify([launch.command, launch.args, envEntries]))
+    .digest("hex");
+}
+
+function describeStartupFailure(error: unknown): string | undefined {
+  if (!(error instanceof AcpStartupError)) return undefined;
+  if (error.reason === "timeout") {
+    const seconds = Math.round((error.timeoutMs ?? ACP_STARTUP_TIMEOUT_MS) / 1000);
+    return `ACP initialization timed out after ${seconds}s`;
+  }
+  if (error.reason === "closed") {
+    return "ACP process exited before initializing";
+  }
+  if (error.code === "ENOENT") return "executable not found";
+  if (error.code === "EACCES" || error.code === "EPERM") {
+    return "executable is not permitted to run";
+  }
+  if (error.code && /^[A-Z0-9_]+$/u.test(error.code)) {
+    return `process spawn failed (${error.code})`;
+  }
+  return undefined;
+}
+
 export function createAntigravityProvider(): ProviderRegistration {
+  const statusInFlight = new Map<string, Promise<ProviderStatus>>();
   const provider = runAcpProvider({
     id: "antigravity",
     label: "Antigravity",
@@ -111,6 +146,7 @@ export function createAntigravityProvider(): ProviderRegistration {
     acpOptions: {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
+      startupTimeoutMs: ACP_STARTUP_TIMEOUT_MS,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
@@ -154,23 +190,42 @@ export function createAntigravityProvider(): ProviderRegistration {
         return version ? { status: "installed", version } : { status: "installed" };
       },
     },
-    async status({ launch }) {
+    async status({ launch, force }) {
       if (!launch) return { available: false, diagnostic: "Install Antigravity 1.5.0 or later." };
+      const key = statusProbeKey(launch);
+      if (force !== true) {
+        const existing = statusInFlight.get(key);
+        if (existing) return existing;
+      }
       // A sign-in problem can stop ACP from starting, so the report says which sign-in either way.
       const signIn = describeSignIn(launch.env);
+      const probe = (async (): Promise<ProviderStatus> => {
+        try {
+          const connection = await provider.connect({
+            launch,
+            versions: [PROVIDER_PROTOCOL_VERSION],
+            capabilities: [],
+          });
+          await connection.close();
+          return { available: true, diagnostic: signIn };
+        } catch (error) {
+          const reason = describeStartupFailure(error);
+          const headline = reason
+            ? `Antigravity ACP did not start (${reason}).`
+            : "Antigravity ACP did not start.";
+          return {
+            available: false,
+            diagnostic: `${headline} Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.\n${signIn}`,
+          };
+        }
+      })();
+      statusInFlight.set(key, probe);
       try {
-        const connection = await provider.connect({
-          launch,
-          versions: [PROVIDER_PROTOCOL_VERSION],
-          capabilities: [],
-        });
-        await connection.close();
-        return { available: true, diagnostic: signIn };
-      } catch {
-        return {
-          available: false,
-          diagnostic: `Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.\n${signIn}`,
-        };
+        return await probe;
+      } finally {
+        if (statusInFlight.get(key) === probe) {
+          statusInFlight.delete(key);
+        }
       }
     },
   };

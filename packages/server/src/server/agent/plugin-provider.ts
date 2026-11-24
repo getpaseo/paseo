@@ -268,11 +268,17 @@ class ProviderRuntime {
     return rows;
   }
 
-  async status(): Promise<ProviderStatus> {
+  async status(options?: { force?: boolean }): Promise<ProviderStatus> {
     try {
       const launch = await this.resolveLaunch();
-      if (this.registration.status)
-        return ProviderStatusSchema.parse(await this.registration.status({ launch }));
+      if (this.registration.status) {
+        return ProviderStatusSchema.parse(
+          await this.registration.status({
+            launch,
+            ...(options?.force ? { force: true } : {}),
+          }),
+        );
+      }
       if (!this.registration.command) await this.getConnection();
       return { available: true };
     } catch (error) {
@@ -306,8 +312,8 @@ class ProviderRuntime {
     return this.closed;
   }
 
-  async isAvailable(): Promise<boolean> {
-    return (await this.status()).available;
+  async isAvailable(options?: { force?: boolean }): Promise<boolean> {
+    return (await this.status(options)).available;
   }
 
   async catalog(
@@ -1186,15 +1192,15 @@ class PluginAgentClient implements AgentClient {
     };
   }
 
-  async isAvailable(signal?: AbortSignal): Promise<boolean> {
+  async isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean> {
     signal?.throwIfAborted();
-    return await this.runtime.isAvailable();
+    return await this.runtime.isAvailable({ force: options?.force === true });
   }
 
   async getDiagnostic(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }> {
     const [rows, status] = await Promise.all([
       this.runtime.launchDiagnosticRows(context),
-      this.runtime.status(),
+      this.runtime.status({ force: true }),
     ]);
     const report = [formatProviderDiagnostic(this.label, rows)];
     if (!status.available) report.push(`  Error: ${status.diagnostic}`);

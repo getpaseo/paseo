@@ -75,11 +75,163 @@ describe("diagnostic", () => {
     expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
       available: false,
       diagnostic: [
-        "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        "Antigravity ACP did not start (ACP process exited before initializing). Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
         "SSH session: yes (SSH_CONNECTION)",
         "Sign-in: can differ from agy outside SSH",
       ].join("\n"),
     });
+  });
+
+  it("coalesces concurrent status() probes without caching completed results", async () => {
+    const { launch } = await launchAgent(`
+      const { appendFileSync } = require("node:fs");
+      const { createInterface } = require("node:readline");
+      appendFileSync(process.env.CAPTURE, "started\\n");
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") {
+          setTimeout(() => send({ id, result: { protocolVersion: 1, agentCapabilities: {} } }), 80);
+        }
+      });
+    `);
+    const provider = createAntigravityProvider();
+    const expected = {
+      available: true,
+      diagnostic: "SSH session: no\nSign-in: can differ from agy over SSH",
+    };
+    const [first, second] = await Promise.all([
+      provider.status!({ launch }),
+      provider.status!({ launch }),
+    ]);
+    expect(first).toEqual(expected);
+    expect(second).toEqual(expected);
+    expect((await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n")).toHaveLength(1);
+
+    // Subsequent retries (such as manual Refresh) run a fresh probe.
+    expect(await provider.status!({ launch })).toEqual(expected);
+    expect((await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n")).toHaveLength(2);
+  });
+
+  it("does not coalesce concurrent status() probes across distinct launch configs", async () => {
+    const { launch } = await launchAgent(`
+      const { appendFileSync } = require("node:fs");
+      const { createInterface } = require("node:readline");
+      appendFileSync(process.env.CAPTURE, "started\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") {
+          setTimeout(
+            () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result: { protocolVersion: 1, agentCapabilities: {} } }) + "\\n"),
+            80,
+          );
+        }
+      });
+    `);
+    const provider = createAntigravityProvider();
+    const sshLaunch = { ...launch, env: { ...launch.env, SSH_CONNECTION: "set" } };
+    const [direct, ssh] = await Promise.all([
+      provider.status!({ launch }),
+      provider.status!({ launch: sshLaunch }),
+    ]);
+    expect(direct).toEqual({
+      available: true,
+      diagnostic: "SSH session: no\nSign-in: can differ from agy over SSH",
+    });
+    expect(ssh).toEqual({
+      available: true,
+      diagnostic: "SSH session: yes (SSH_CONNECTION)\nSign-in: can differ from agy outside SSH",
+    });
+    expect((await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n")).toHaveLength(2);
+  });
+
+  it("bypasses an older in-flight status() probe when force is true", async () => {
+    const { directory, launch } = await launchAgent(`
+      const { appendFileSync, existsSync } = require("node:fs");
+      const { createInterface } = require("node:readline");
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method !== "initialize") return;
+        if (existsSync(process.env.SIGNED_IN_FLAG)) {
+          appendFileSync(process.env.CAPTURE, "signed-in\\n");
+          send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          return;
+        }
+        appendFileSync(process.env.CAPTURE, "waiting\\n");
+        setTimeout(() => {
+          send({ id, error: { code: -32000, message: "Authentication required" } });
+        }, 120);
+      });
+    `);
+    const flag = path.join(directory, "signed-in");
+    const env = { ...launch.env, SIGNED_IN_FLAG: flag };
+    const provider = createAntigravityProvider();
+    await writeFile(launch.env.CAPTURE, "");
+    const background = provider.status!({ launch: { ...launch, env } });
+    await expect
+      .poll(async () => (await readFile(launch.env.CAPTURE, "utf8")).trim())
+      .toBe("waiting");
+    await writeFile(flag, "ok");
+    const forced = provider.status!({ launch: { ...launch, env }, force: true });
+    const [backgroundResult, forcedResult] = await Promise.all([background, forced]);
+    expect(backgroundResult.available).toBe(false);
+    expect(forcedResult).toEqual({
+      available: true,
+      diagnostic: "SSH session: no\nSign-in: can differ from agy over SSH",
+    });
+    expect((await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n")).toEqual([
+      "waiting",
+      "signed-in",
+    ]);
+  });
+
+  it("reports credential-free startup errors and redacts raw RPC errors", async () => {
+    const { directory, launch } = await launchAgent(`
+      const { createInterface } = require("node:readline");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32000,
+                message: "Authentication required: local keyring did not initialize (https://user:super-secret-token@proxy.internal)",
+              },
+            }) + "\\n",
+          );
+        }
+      });
+    `);
+    const provider = createAntigravityProvider();
+    const missing = await provider.status!({
+      launch: {
+        command: path.join(directory, "missing-agy"),
+        args: ["acp"],
+        env: {},
+      },
+    });
+    expect(missing).toEqual({
+      available: false,
+      diagnostic: [
+        "Antigravity ACP did not start (executable not found). Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        "SSH session: no",
+        "Sign-in: can differ from agy over SSH",
+      ].join("\n"),
+    });
+
+    const rpcError = await provider.status!({ launch });
+    expect(rpcError).toEqual({
+      available: false,
+      diagnostic: [
+        "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
+        "SSH session: no",
+        "Sign-in: can differ from agy over SSH",
+      ].join("\n"),
+    });
+    expect(rpcError.diagnostic).not.toContain("super-secret-token");
   });
 });
 
