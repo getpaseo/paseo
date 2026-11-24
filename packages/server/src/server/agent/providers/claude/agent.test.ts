@@ -1133,6 +1133,41 @@ describe("ClaudeAgentSession features", () => {
     },
   );
 
+  test("probes the configured Claude command in the workspace with the session environment", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "claude-mcp-workspace-"));
+    const versionProbe = `
+      const workspace = process.cwd().endsWith(${JSON.stringify(path.basename(cwd))});
+      const selected = workspace && process.env.TEST_CLAUDE_WORKSPACE_VERSION;
+      console.log((selected || "2.1.326") + " (Claude Code)");
+    `;
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      runtimeSettings: {
+        command: { mode: "replace", argv: [process.execPath, "-e", versionProbe, "--"] },
+      },
+    });
+    try {
+      const session = await client.createSession(
+        {
+          provider: "claude",
+          cwd,
+          mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+        },
+        { env: { TEST_CLAUDE_WORKSPACE_VERSION: "2.1.325" } },
+      );
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("uses stdin on new launches and relaunches after Claude Code upgrades", async () => {
     const { queryFactory, launches } = createQueryMock();
     let version = "2.1.325";
