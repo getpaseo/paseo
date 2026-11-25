@@ -938,6 +938,49 @@ test("a plugin reruns when an earlier plugin changes what it receives, and the s
   }
 }, 60_000);
 
+const hintSource = (hint: string) => `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, env: { ...request.env, HINT: ${JSON.stringify(hint)} } }));
+  return () => {};
+}
+`;
+
+const hintReaderSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { HINT: hint, ...env } = request.env;
+    const tool = defineAgentTool({
+      name: "read_tool_hint", description: "The hint from the plugin before",
+      input: z.object({}),
+      async execute() { return { text: String(hint) }; },
+    });
+    return { ...request, env, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a later plugin rerun by an earlier plugin's edit keeps its own tool, and the session keeps running", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-hint", hintSource("red"));
+    await h.install("b-hint-reader", hintReaderSource);
+    const a = await h.create();
+    await writePluginSource(h, "a-hint", hintSource("green"));
+    await h.client.reloadPlugin("a-hint");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "green" }] });
+    // b-hint-reader removes the hint, so the launch is unchanged.
+    await sendAndFinish(h, a.id, "after hint change");
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 // Once armed, the module waits for the gate file before it loads, which holds a restart between stop and start.
 const gatedStartSource = (arm: string, entered: string, gate: string) =>
   openCounterSource.replace(

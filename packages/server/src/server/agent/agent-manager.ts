@@ -1162,14 +1162,18 @@ export class AgentManager {
     );
   }
 
-  /** Paseo's own tool names, including the ones the agent's provider disables, and its running plugin tools. */
+  /**
+   * Paseo's own tool names for the agent, including the ones its provider disables. The catalog also lists the
+   * agent's plugin tools; the plugin session owner settles those names between plugins itself.
+   */
   private async reservedAgentToolNames(agentId: string): Promise<ReadonlySet<string>> {
     if (!this.paseoToolCatalogFactory) return new Set();
+    const pluginToolNames = new Set(this.getPluginTools(agentId).map((tool) => tool.name));
     const catalog = await this.paseoToolCatalogFactory({
       callerAgentId: agentId,
       paseoToolPolicy: {},
     });
-    return new Set(catalog.tools.keys());
+    return new Set([...catalog.tools.keys()].filter((name) => !pluginToolNames.has(name)));
   }
 
   private detachPluginTools(agentId: string): void {

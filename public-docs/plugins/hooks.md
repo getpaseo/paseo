@@ -524,8 +524,9 @@ the session continues as if the plugin stopped.
 - If the callback throws or times out, its tools stay off, and the session reopens before its next
   idle prompt. Paseo does not rerun it for the same plugin instance.
 - If a returned tool collides with a Paseo tool or another plugin's tool, that plugin's tools stay
-  off, and the session reopens before its next idle prompt. The same happens when two plugins return
-  the same MCP server name. That prompt fails with the collision error.
+  off, and the session reopens before its next idle prompt.
+- If two plugins return the same MCP server name, both plugins keep their agent tools, but the reopen
+  before the next idle prompt fails with the collision error.
 
 Agents that receive Paseo tools natively (OpenCode with the bridge, OMP) keep the tool list they
 launched with until the reopen. Their calls to a listed tool reach the new instance of the plugin
