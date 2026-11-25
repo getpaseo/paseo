@@ -77,6 +77,10 @@ function nameTargetIdentityKey(name: string, target: ScheduleTarget): string {
   );
 }
 
+function isSameTarget(left: ScheduleTarget, right: ScheduleTarget): boolean {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
 function matchesNameAndTarget(
   schedule: StoredSchedule,
   name: string,
@@ -208,9 +212,11 @@ export class ScheduleStore {
     const identity = nameTargetIdentityKey(name, target);
     return this.serializeIdentityMutation(identity, async () => {
       while (true) {
-        const existing = (await this.list()).find((schedule) =>
+        const matches = (await this.list()).filter((schedule) =>
           matchesNameAndTarget(schedule, name, target),
         );
+        const existing =
+          matches.find((schedule) => isSameTarget(schedule.target, target)) ?? matches[0];
         if (!existing) {
           const created = StoredScheduleSchema.parse({
             ...(await options.create()),
