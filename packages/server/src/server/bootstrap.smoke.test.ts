@@ -7,7 +7,7 @@ import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAgentClient } from "./agent/providers/claude/agent.js";
 import http from "node:http";
 import path from "node:path";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -431,6 +431,62 @@ describe("paseo daemon bootstrap", () => {
       expect(response.status).toBe(404);
       expect(await response.text()).toBe("404 Not Found");
     } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  // SQLite removes paseo.db's WAL file when the last connection closes cleanly.
+  test("closes paseo.db when the daemon fails to start", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-failed-start-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    // A directory where the keypair file belongs makes construction throw after paseo.db opens.
+    const keyPairPath = path.join(paseoHome, "daemon-keypair.json");
+    await mkdir(path.join(keyPairPath, "blocked"), { recursive: true });
+    const config: PaseoDaemonConfig = {
+      listen: "127.0.0.1:0",
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: false,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      relayEnabled: false,
+      appBaseUrl: "https://app.paseo.sh",
+      openai: undefined,
+      speech: undefined,
+    };
+    try {
+      await expect(
+        createPaseoDaemon(config, pino({ level: "silent" }), {
+          builtinPlugins: new BuiltinPluginLoader(undefined, []),
+          lazyTerminalWorker: true,
+        }),
+      ).rejects.toThrow();
+      await access(path.join(paseoHome, "paseo.db"));
+      await expect(access(path.join(paseoHome, "paseo.db-wal"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      // The keypair loader narrows the directory's mode to a private file's.
+      await chmod(keyPairPath, 0o700);
+      await rm(paseoHomeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("closes paseo.db when an earlier shutdown step fails", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    const credentialPath = path.join(daemonHandle.paseoHome, "local-credential");
+    try {
+      // A directory where the local credential belongs makes the first shutdown step throw.
+      await rm(credentialPath, { force: true });
+      await mkdir(path.join(credentialPath, "blocked"), { recursive: true });
+      await expect(daemonHandle.daemon.stop()).rejects.toThrow();
+      await expect(access(path.join(daemonHandle.paseoHome, "paseo.db-wal"))).rejects.toMatchObject(
+        { code: "ENOENT" },
+      );
+    } finally {
+      await rm(credentialPath, { recursive: true, force: true });
       await daemonHandle.close();
     }
   });
