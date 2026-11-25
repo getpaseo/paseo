@@ -4790,6 +4790,52 @@ describe("OpenCode provider subagent contract", () => {
     ]);
   });
 
+  test("resumes a wrapped child on its own server behind the wrap, not the parent's server", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    const childClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_wrapped" } };
+    runtime.enqueueClient(parentClient);
+    runtime.enqueueClient(childClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      { env: { PASEO_AGENT_ID: "parent-agent" } },
+    );
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: { id: "ses_child_wrapped", parentID: "ses_parent_wrapped", title: "Live child" },
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "child"] as const;
+
+    const child = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "ses_child_wrapped",
+        nativeHandle: "ses_child_wrapped",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      { env: { PASEO_AGENT_ID: "child-agent" }, wrap },
+    );
+    await child.close();
+    await parent.close();
+
+    expect(runtime.acquisitions.map((acquisition) => [acquisition.kind, acquisition.wrap])).toEqual(
+      [
+        ["dedicated", undefined],
+        ["dedicated", wrap],
+      ],
+    );
+  });
+
   test("synthesizes an autonomous turn for adopted child timeline events", async () => {
     const { child, childClient, parent } = await createAdoptedChildSession();
     const completed = createTestDeferred<void>();

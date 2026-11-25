@@ -1538,7 +1538,10 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    // A registered parent server runs outside this launch's wrap, so a wrapped resume starts its own.
+    const registeredServerUrl = launchContext?.wrap
+      ? undefined
+      : getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
       : null;
