@@ -99,6 +99,9 @@ const beforeSchemas = {
     env: true,
     metadata: true,
   }).strict(),
+  "agent.prompt.before": z
+    .object({ agentId: z.string(), provider: z.string(), model: z.string().nullable() })
+    .strict(),
   "agent.open.before": z
     .object({
       agentId: z.string(),
@@ -272,6 +275,9 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   output: unknown,
 ): Promise<PluginWireBeforeRequests[Name]> {
   const result = validateBeforeRequest(name, output);
+  if (name === "agent.prompt.before" && !isDeepStrictEqual(input, result)) {
+    throw new Error("agent.prompt.before hooks cannot change the request");
+  }
   if (name === "agent.open.before") {
     const previous = beforeSchemas["agent.open.before"].parse(input);
     const next = beforeSchemas["agent.open.before"].parse(result);
@@ -362,6 +368,9 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
             { request: structuredClone(request) },
             { paseo, signal: controller.signal },
           );
+          if (hookName === "agent.prompt.before" && result !== undefined) {
+            throw new Error("agent.prompt.before hooks must return undefined");
+          }
           if (result !== undefined) request = await validateBeforeResult(hookName, request, result);
         }
         return request;

@@ -140,11 +140,20 @@ export interface PluginHookRequests {
     metadata?: Record<string, JsonValue>;
   };
   "agent.open.before": PluginSessionOpenRequest;
+  "agent.prompt.before": {
+    readonly agentId: string;
+    readonly provider: string;
+    readonly model: string | null;
+  };
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 
 /** What a hook may return. An omitted `metadata` stays as it was. */
-type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
+type PluginHookRequestResults = Omit<
+  PluginHookRequests,
+  "agent.open.before" | "agent.prompt.before"
+> & {
+  "agent.prompt.before": never;
   // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
   "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
     readonly background?: boolean;
@@ -211,6 +220,7 @@ export const pluginHookRegistry = {
   "agent.create.before": { waits: true },
   "agent.create.after": { waits: false },
   "agent.open.before": { waits: true },
+  "agent.prompt.before": { waits: true },
   "agent.close.after": { waits: false },
   "agent.archive.after": { waits: false },
   "agent.turn.before": { waits: false },

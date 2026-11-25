@@ -9942,6 +9942,82 @@ test("turns an agent starts on its own keep its finish unread until it is read",
   expect(attention[3]?.attentionTimestamp).not.toBe(unreadFinish);
 });
 
+test("a prompt hook blocks provider dispatch and leaves an active turn alone", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-prompt-hook-"));
+  const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  let blocked = true;
+  const emit = vi.fn();
+  const checking = deferred<void>();
+  const allow = deferred<void>();
+  let hold = false;
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginLifecycle: {
+      emit,
+      before: async (name, request) => {
+        if (name === "agent.prompt.before") {
+          if (blocked) throw new Error("Quota maximum reached");
+          if (hold) {
+            checking.resolve();
+            await allow.promise;
+          }
+        }
+        return request;
+      },
+    },
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    let claimed = false;
+    const queued = new ForegroundPromptStart(agent.id, () => {
+      claimed = true;
+      return true;
+    });
+    await expect(
+      manager.streamAgent(agent.id, "from queue", undefined, queued).next(),
+    ).rejects.toThrow("Quota maximum reached");
+    await expect(queued.started).rejects.toThrow("Quota maximum reached");
+    expect(claimed).toBe(true);
+    expect(session.startCount).toBe(0);
+    expect(emit.mock.calls.map(([name]) => name)).not.toContain("agent.turn.after");
+
+    blocked = false;
+    hold = true;
+    const waiting = manager.streamAgent(agent.id, "stop before dispatch").next();
+    await checking.promise;
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await expect(waiting).resolves.toMatchObject({ value: { type: "turn_canceled" } });
+    allow.resolve();
+    hold = false;
+    expect(session.startCount).toBe(0);
+
+    await startAgentRun(manager, agent.id, "allowed", logger);
+    await manager.waitForAgentRunStart(agent.id);
+    expect(session.startCount).toBe(1);
+
+    blocked = true;
+    await expect(manager.steerOrReplaceActiveTurn(agent.id, "steer")).rejects.toThrow(
+      "Quota maximum reached",
+    );
+    await expect(manager.replaceAgentRun(agent.id, "replace")).rejects.toThrow(
+      "Quota maximum reached",
+    );
+    expect(session.startCount).toBe(1);
+    expect(session.interruptCount).toBe(0);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
   const storagePath = join(workdir, "agents");

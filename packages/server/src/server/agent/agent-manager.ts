@@ -478,6 +478,7 @@ type ActiveTurnTerminalDisposition = "closed_current" | "stale" | "untracked";
 
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
+  notifyPlugins?: boolean;
 }
 
 interface ManagedAgentBase {
@@ -3275,6 +3276,14 @@ export class AgentManager {
     });
   }
 
+  private checkPromptAdmission(agent: ActiveManagedAgent): Promise<unknown> | undefined {
+    return this.pluginLifecycle?.before("agent.prompt.before", {
+      agentId: agent.id,
+      provider: agent.provider,
+      model: agent.runtimeInfo?.model ?? agent.config.model ?? null,
+    });
+  }
+
   private async startPendingForegroundTurn(params: {
     agent: ActiveManagedAgent;
     agentId: string;
@@ -3288,7 +3297,19 @@ export class AgentManager {
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       return null;
     }
+    let providerDispatched = false;
     try {
+      const admission = this.checkPromptAdmission(agent);
+      if (admission) {
+        pendingRun.checkingPromptAdmission = true;
+        try {
+          await Promise.race([admission, pendingRun.settledPromise]);
+        } finally {
+          pendingRun.checkingPromptAdmission = false;
+        }
+        if (pendingRun.settled) return null;
+      }
+      providerDispatched = true;
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -3336,11 +3357,11 @@ export class AgentManager {
             messageId: options.clientMessageId,
           });
         }
-        await this.handleStreamEvent(agent, {
-          type: "turn_failed",
-          provider: agent.provider,
-          error: errorMsg,
-        });
+        await this.handleStreamEvent(
+          agent,
+          { type: "turn_failed", provider: agent.provider, error: errorMsg },
+          { notifyPlugins: providerDispatched },
+        );
         this.finalizeForegroundTurn(agent);
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
@@ -3763,6 +3784,8 @@ export class AgentManager {
     operation: () => Promise<T>,
   ): Promise<T> {
     return this.runForegroundMutation(agent.id, async () => {
+      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+      await this.checkPromptAdmission(agent);
       await this.drainSessionEvents(agent.id);
       this.agentStreamCoalescer.flushFor(agent.id);
       this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
@@ -3864,6 +3887,8 @@ export class AgentManager {
             iterator: this.streamAgent(agent.id, prompt, options, promptStart),
           };
         }
+        await this.checkPromptAdmission(agent);
+        assertAdmission?.(agent);
         agent.pendingReplacement = true;
         agent.lifecycle = "running";
         this.touchUpdatedAt(agent);
@@ -4103,6 +4128,10 @@ export class AgentManager {
       for (const listener of this.stopListeners) listener(agentId);
     }
 
+    if (run.kind === "foreground" && run.checkingPromptAdmission && !agent.activeTurnId) {
+      this.settleUnstartedRun(agent, run);
+      return { status: "settled" };
+    }
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
@@ -4133,12 +4162,7 @@ export class AgentManager {
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
       );
-      this.runs.settleForegroundRun(agentId, run.token);
-      if (!agent.pendingReplacement) {
-        agent.lifecycle = "idle";
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }
+      this.settleUnstartedRun(agent, run);
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -4157,6 +4181,15 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private settleUnstartedRun(agent: ActiveManagedAgent, run: PendingForegroundRun): void {
+    this.runs.settleForegroundRun(agent.id, run.token);
+    if (!agent.pendingReplacement) {
+      agent.lifecycle = "idle";
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    }
   }
 
   private async cancelAgentRunBefore(agentId: string, action: "reload" | "rewind"): Promise<void> {
@@ -5401,7 +5434,12 @@ export class AgentManager {
       }
 
       if (flags.shouldDispatchEvent) {
-        this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
+        this.dispatchStream(
+          agent.id,
+          event,
+          { timestamp: new Date().toISOString() },
+          options?.notifyPlugins,
+        );
       }
     }
 
@@ -6259,6 +6297,7 @@ export class AgentManager {
       epoch?: string;
       timestamp?: string;
     },
+    notifyPlugins = true,
   ): void {
     if (event.type === "timeline") {
       event = {
@@ -6279,7 +6318,13 @@ export class AgentManager {
       "agent.manager.dispatch_stream",
     );
     this.dispatch({ type: "agent_stream", agentId, event, ...metadata });
-    if (this.pluginLifecycle && agent && !agent.internal && event.type !== "timeline") {
+    if (
+      notifyPlugins &&
+      this.pluginLifecycle &&
+      agent &&
+      !agent.internal &&
+      event.type !== "timeline"
+    ) {
       publishAgentStream(
         this.pluginLifecycle,
         describeHookAgent({ ...agent, title: agent.config.title }),
