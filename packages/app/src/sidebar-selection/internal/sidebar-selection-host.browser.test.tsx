@@ -189,6 +189,22 @@ function selectedIds(): string[] {
   return [...state.selectedKeys].map((key) => key.replace("srv:", "")).sort();
 }
 
+/** Holds the primary mouse button on a row past the long-press delay, then releases it. */
+async function slowClick(element: HTMLElement) {
+  const box = element.getBoundingClientRect();
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX: box.left + box.width / 2,
+    clientY: box.top + box.height / 2,
+  };
+  element.dispatchEvent(new MouseEvent("mousedown", { ...init, buttons: 1 }));
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  element.dispatchEvent(new MouseEvent("mouseup", init));
+  element.dispatchEvent(new MouseEvent("click", init));
+}
+
 // Cmd on macOS, Ctrl on Windows and Linux, matching the shortcut layer's `mod`.
 const MOD_KEY = getShortcutOs() === "mac" ? "Meta" : "Control";
 
@@ -228,6 +244,16 @@ describe("sidebar workspace row presses", () => {
     staleLongPressRef.current = true;
     await userEvent.click(row("b"));
     expect(selectedIds()).toEqual(["a", "b"]);
+  });
+
+  it("opens a row on a slow click and still selects it on the next Cmd/Ctrl+click", async () => {
+    mountHost(["a", "b"].map(makeEntry));
+
+    await act(() => slowClick(row("a")));
+    expect(navigatedKeys).toEqual(["srv:a"]);
+
+    await userEvent.click(row("a"), { modifiers: [MOD_KEY] });
+    expect(selectedIds()).toEqual(["a"]);
   });
 
   it("enters select mode on the Shift+clicked row alone, then extends and shrinks the range", async () => {
