@@ -207,6 +207,18 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
+interface ResumeAgentOptions {
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastUserMessageAt?: Date | null;
+  labels?: Record<string, string>;
+  metadata?: AgentMetadata;
+  workspaceId?: string;
+  owner?: AgentOwner;
+  background?: boolean;
+  attention?: AttentionState;
+}
+
 interface PluginToolCall {
   pluginId: string;
   toolName: string;
@@ -1682,7 +1694,17 @@ export class AgentManager {
     );
   }
 
-  private async createAgentInternal(
+  private createAgentInternal(
+    config: AgentSessionConfig,
+    resolvedAgentId: string,
+    options: CreateAgentOptions,
+  ): Promise<ManagedAgent> {
+    return this.launchAgent(resolvedAgentId, () =>
+      this.createAgentSession(config, resolvedAgentId, options),
+    );
+  }
+
+  private async createAgentSession(
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
@@ -1803,7 +1825,19 @@ export class AgentManager {
     );
   }
 
-  private async resumeAgentFromPersistenceInternal(
+  private resumeAgentFromPersistenceInternal(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    agentId: string,
+    options?: ResumeAgentOptions,
+    resumeOptions?: AgentResumeSessionOptions,
+  ): Promise<ManagedAgent> {
+    return this.launchAgent(agentId, () =>
+      this.resumeAgentSession(handle, overrides, agentId, options, resumeOptions),
+    );
+  }
+
+  private async resumeAgentSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
@@ -1909,18 +1943,23 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
+    return this.trackAgentRegistrationOperation(
+      this.launchAgent(resolvedAgentId, () => this.importAgentSession(input, resolvedAgentId)),
+    );
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  private async importAgentSession(
+    input: {
+      provider: AgentProvider;
+      providerHandleId: string;
+      cwd: string;
+      workspaceId: string;
+      labels?: Record<string, string>;
+    },
+    resolvedAgentId: string,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
-    const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
 
     const client = await this.requireAvailableClient({ provider: input.provider });
@@ -2016,7 +2055,29 @@ export class AgentManager {
     );
   }
 
-  private async reloadAgentSessionInternal(
+  private reloadAgentSessionInternal(
+    agentId: string,
+    overrides?: Partial<AgentSessionConfig>,
+    options?: { rehydrateFromDisk?: boolean },
+  ): Promise<ManagedAgent> {
+    return this.launchAgent(agentId, () => this.reopenAgentSession(agentId, overrides, options));
+  }
+
+  /**
+   * Runs one provider launch: create, resume, import, or reopen. Its plugin open takes over the session once
+   * `registerSession` admits the agent. A launch that fails before then discards that open, so a session still
+   * running keeps its plugin tools.
+   */
+  private async launchAgent<T>(agentId: string, launch: () => Promise<T>): Promise<T> {
+    try {
+      return await launch();
+    } catch (error) {
+      this.pluginSessions?.sessionLaunchFailed(agentId);
+      throw error;
+    }
+  }
+
+  private async reopenAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
@@ -2132,8 +2193,8 @@ export class AgentManager {
       throw error;
     } finally {
       if (!handedToRegistration) {
+        // The closed agent drops its plugin record; a launch that never closed it leaves the rollback to launchAgent.
         if (closedExisting) this.detachPluginTools(agentId);
-        else this.pluginLaunchFailed(agentId);
         if (hadPreviousPaseoToolPolicy) {
           this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
         } else {
@@ -2146,34 +2207,21 @@ export class AgentManager {
     }
   }
 
-  /**
-   * Validates a reload's launch before it closes the running session. A rejected launch never takes over, so the
-   * running session keeps its plugin tools.
-   */
+  /** Validates a reload's launch before it closes the running session. */
   private resolveReloadLaunchConfig(
     existing: ActiveManagedAgent,
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
-    try {
-      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-      const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
-      if (
-        Object.keys(mcpServers).length > 0 &&
-        existing.session.capabilities.supportsMcpServers !== true
-      ) {
-        throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
-      }
-      return providerLaunchConfig;
-    } catch (error) {
-      this.pluginLaunchFailed(existing.id);
-      throw error;
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
+    if (
+      Object.keys(mcpServers).length > 0 &&
+      existing.session.capabilities.supportsMcpServers !== true
+    ) {
+      throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
     }
-  }
-
-  /** The plugin open for a launch that never took over; the session still running keeps its plugin tools. */
-  private pluginLaunchFailed(agentId: string): void {
-    this.pluginSessions?.sessionLaunchFailed(agentId);
+    return providerLaunchConfig;
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -4645,8 +4693,6 @@ export class AgentManager {
       launchEnv?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
-    // The provider session launched and passed validation, so its plugin open now describes the running session.
-    this.pluginSessions?.sessionLaunched(agentId);
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
@@ -4695,6 +4741,8 @@ export class AgentManager {
       this.runtimeCleanupIdentities.set(session, Object.freeze({ openedAt: Date.now() }));
       this.agents.set(resolvedAgentId, managed);
       registered = true;
+      // The agent now runs this launch, so its plugin open describes the running session.
+      this.pluginSessions?.sessionLaunched(resolvedAgentId);
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       if (session.initialTimeline?.length) {
@@ -6633,16 +6681,12 @@ export class AgentManager {
       this.paseoToolCatalogFactory &&
       (useNativeTools || this.getPluginTools(agentId).length > 0)
     ) {
-      try {
-        const catalog = await this.paseoToolCatalogFactory({
-          callerAgentId: agentId,
-          paseoToolPolicy,
-        });
-        if (useNativeTools) context.paseoTools = catalog;
-      } catch (error) {
-        this.pluginLaunchFailed(agentId);
-        throw error;
-      }
+      // Building the catalog checks the plugin tools against Paseo's own names.
+      const catalog = await this.paseoToolCatalogFactory({
+        callerAgentId: agentId,
+        paseoToolPolicy,
+      });
+      if (useNativeTools) context.paseoTools = catalog;
     }
     return context;
   }

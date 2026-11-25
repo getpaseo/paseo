@@ -503,10 +503,15 @@ target are unaffected.
 | Apply immediately                                             | Call `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`. `requestId` is optional. This reopens the provider session, reruns hooks with `reason: "refresh"`, and interrupts a running turn. |
 | Read the current snapshot                                     | Call `await paseo.agents.ref(id).refresh()`. This reads state without reopening the session.                                                                                                               |
 
-When a plugin declaring `agent.open.before` starts, stops, or reloads, Paseo reruns only that
-plugin's callback for each open session. The callback gets the request it saw at the session's last
-open, with `reason: "refresh"` and the agent's current title, workspace, labels, and metadata. This happens before the session's next agent tool call or prompt.
-Callbacks of other plugins do not run.
+When a plugin declaring `agent.open.before` starts, stops, or reloads, Paseo reruns that plugin's
+callback for each open session, before the session's next agent tool call or prompt. The callback
+gets the request it saw at the session's last open, with `reason: "refresh"` and the agent's current
+title, workspace, labels, and metadata. A later plugin in the chain also reruns when the env or
+instructions it receives change. Other callbacks do not run.
+
+A reload counts as one change. A tool call or prompt during the reload waits for the plugin to
+start, so the session does not lose the plugin's tools in between. If the plugin fails to start,
+the session continues as if the plugin stopped.
 
 - The tools the callback returns replace its old tools at once, also during a running turn. The new
   plugin instance answers the calls.

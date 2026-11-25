@@ -901,6 +901,85 @@ test("a plugin reload reruns its callback with the agent's current metadata", as
   }
 }, 60_000);
 
+const setsXSource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, env: { ...request.env, X: "yes" } }));
+  return () => {};
+}
+`;
+
+const needsXSource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.env.X !== "yes") return;
+    return { ...request, env: { ...request.env, Y: "yes" } };
+  });
+  return () => {};
+}
+`;
+
+test("a plugin reruns when an earlier plugin changes what it receives, and the session reopens with the composed launch", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-sets-x", setsXSource);
+    const a = await h.create();
+    expect(h.launches.at(-1)!.context!.env).toMatchObject({ X: "yes" });
+    await h.client.disablePlugin("a-sets-x");
+    await h.install("b-needs-x", needsXSource);
+    await listedToolNames(await h.mcp(a.id));
+    await h.client.enablePlugin("a-sets-x");
+    await listedToolNames(await h.mcp(a.id));
+    // b-needs-x now sees X and adds Y, which the running session never launched with.
+    await sendAndFinish(h, a.id, "after re-enable");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context!.env).toMatchObject({ X: "yes", Y: "yes" });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+// Once armed, the module waits for the gate file before it loads, which holds a restart between stop and start.
+const gatedStartSource = (arm: string, entered: string, gate: string) =>
+  openCounterSource.replace(
+    'import { z } from "zod";',
+    `import { existsSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+if (existsSync(${JSON.stringify(arm)})) {
+  writeFileSync(${JSON.stringify(entered)}, "");
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (!existsSync(${JSON.stringify(gate)})) Atomics.wait(pause, 0, 0, 20);
+}`,
+  );
+
+test("an idle prompt during a plugin restart keeps the agent's session, with its subagents running", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-restart-gap-"));
+  const arm = path.join(scratch, "arm");
+  const entered = path.join(scratch, "entered");
+  const gate = path.join(scratch, "gate");
+  const h = await setup(false, gatedStartSource(arm, entered, gate));
+  try {
+    const a = await h.create();
+    await sendAndFinish(h, a.id, "Emit a provider child");
+    await writeFile(arm, "");
+    const reloading = h.client.reloadPlugin("tools-test");
+    await expect.poll(() => existsSync(entered)).toBe(true);
+    const prompting = sendAndFinish(h, a.id, "during restart");
+    // Room for a prompt that does not wait for the restart to reopen the session first.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await writeFile(gate, "");
+    await reloading;
+    await prompting;
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, a.id)).toEqual(["running"]);
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "1" }] });
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
 const impostorSource = `
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";
@@ -1476,6 +1555,25 @@ test("session-open MCP servers fail on unsupported providers and leave saved con
       workspaceId: "import-workspace",
     });
     await expect(imported).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const mcpWithToolSource = openCounterSource.replace(
+  "return { ...request, tools: [...request.tools, tool] };",
+  `return { ...request, tools: [...request.tools, tool], mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} } };`,
+);
+
+test("a create that fails the MCP check leaves no plugin tools behind for its agent id", async () => {
+  const h = await setup(false, mcpWithToolSource, undefined, { supportsMcpServers: false });
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const agentId = "00000000-0000-4000-8000-000000009493";
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: h.directory }, agentId, {}),
+    ).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+    expect(manager.getPluginTools(agentId)).toEqual([]);
   } finally {
     await h.close();
   }

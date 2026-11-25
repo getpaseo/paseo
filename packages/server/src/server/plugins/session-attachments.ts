@@ -148,7 +148,8 @@ export class SessionAttachments {
 
   /** The last open's result never launched. The session that is still running keeps its record. */
   launchFailed(agentId: string): void {
-    this.pending.delete(agentId);
+    // Nothing is pending once a launch took over; its later failures close the session instead.
+    if (!this.pending.delete(agentId)) return;
     this.plugins.detachEverywhere(agentId);
   }
 
@@ -195,31 +196,28 @@ export class SessionAttachments {
     const attachment = this.attachments.get(agentId);
     if (!attachment || this.pending.has(agentId)) return { stale: false };
     if (this.isCurrent(attachment)) return { stale: attachment.stale };
-    const running = new Map(this.plugins.sessionOpenPlugins().map((plugin) => [plugin.id, plugin]));
     const recorded = new Map(
       attachment.contributions.map((contribution) => [contribution.pluginId, contribution]),
     );
-    const pluginIds = [...new Set([...recorded.keys(), ...running.keys()])].sort((left, right) =>
-      left.localeCompare(right),
-    );
+    // The running plugins in open order, as a reopen would run them. A stopped plugin, or one that no longer declares
+    // the callback, drops out, and the plugins after it see the chain without it.
     let previous = attachment.base;
     const contributions: Contribution[] = [];
     const replayed: { contribution: Contribution; plugin: SessionOpenPlugin }[] = [];
     let facts: SessionOpenAgentFacts | undefined;
-    for (const pluginId of pluginIds) {
-      const plugin = running.get(pluginId);
-      const before = recorded.get(pluginId);
-      if (plugin && before?.synced && before.pluginInstanceId === plugin.instanceId) {
+    for (const plugin of this.plugins.sessionOpenPlugins()) {
+      const before = recorded.get(plugin.id);
+      if (before && isReusable(before, plugin, previous)) {
         contributions.push(before);
         previous = before.output;
         continue;
       }
-      // Stopped, or no longer declares the callback: the session loses what it contributed.
-      if (!plugin) continue;
       facts ??= await options.agentFacts();
       const contribution = await this.replay(plugin, {
-        ...(before?.input ?? { ...previous, tools: [], mcpServers: {} }),
+        ...previous,
         ...facts,
+        tools: [],
+        mcpServers: {},
       });
       contributions.push(contribution);
       replayed.push({ contribution, plugin });
@@ -238,7 +236,12 @@ export class SessionAttachments {
       return { stale: false };
     }
     attachment.contributions = contributions;
-    attachment.stale = launchDiffers(attachment.launched, contributions);
+    attachment.stale =
+      contributions.some((contribution) => contribution.failed) ||
+      !isDeepStrictEqual(
+        composedLaunch(attachment.base, attachment.launched),
+        composedLaunch(attachment.base, contributions),
+      );
     return { stale: attachment.stale };
   }
 
@@ -343,44 +346,43 @@ function toolOwners(contributions: readonly Contribution[]): Map<string, string>
   );
 }
 
-/** Whether a reopen with the current contributions would launch the provider differently from the running session. */
-function launchDiffers(
-  launched: readonly Contribution[],
-  current: readonly Contribution[],
+/**
+ * A recorded contribution stands for the plugin's callback in a reopen while the plugin runs the same instance, holds
+ * the tools in its process, and would receive the same env and instructions from the plugins before it.
+ */
+function isReusable(
+  contribution: Contribution,
+  plugin: SessionOpenPlugin,
+  incoming: SessionOpenWireRequest,
 ): boolean {
-  if (current.some((contribution) => contribution.failed)) return true;
-  const before = new Map(launched.map((contribution) => [contribution.pluginId, contribution]));
-  const after = new Map(current.map((contribution) => [contribution.pluginId, contribution]));
-  for (const pluginId of new Set([...before.keys(), ...after.keys()])) {
-    const left = before.get(pluginId);
-    const right = after.get(pluginId);
-    if (left && right) {
-      if (!sameLaunch(left.output, right.output)) return true;
-      continue;
-    }
-    // A plugin on one side only changes the launch when its callback changed its input.
-    const only = left ?? right;
-    if (only && !sameLaunch(only.input, only.output)) return true;
-  }
-  return false;
+  return (
+    contribution.synced &&
+    contribution.pluginInstanceId === plugin.instanceId &&
+    isDeepStrictEqual(chainedFields(contribution.input), chainedFields(incoming))
+  );
 }
 
-/** The parts of a plugin's open result that reach the provider launch. */
-function sameLaunch(left: SessionOpenWireRequest, right: SessionOpenWireRequest): boolean {
-  return isDeepStrictEqual(launchView(left), launchView(right));
+/** The fields one plugin's callback passes on to the next. Tools and MCP servers are collected per plugin instead. */
+function chainedFields(request: SessionOpenWireRequest) {
+  return { env: request.env, appendSystemPrompt: request.appendSystemPrompt ?? [] };
 }
 
-function launchView(request: SessionOpenWireRequest) {
+/** What the provider launches with when the session opens with these contributions, in open order. */
+function composedLaunch(base: SessionOpenWireRequest, contributions: readonly Contribution[]) {
   return {
-    env: request.env,
-    appendSystemPrompt: request.appendSystemPrompt ?? [],
-    mcpServers: request.mcpServers,
-    tools: request.tools.map(({ name, title, description, inputSchema }) => ({
-      name,
-      title,
-      description,
-      inputSchema,
-    })),
+    ...chainedFields(contributions.at(-1)?.output ?? base),
+    mcpServers: Object.assign(
+      {},
+      ...contributions.map((contribution) => contribution.output.mcpServers),
+    ) as SessionOpenWireRequest["mcpServers"],
+    tools: contributions.flatMap((contribution) =>
+      contribution.tools.map(({ name, title, description, inputSchema }) => ({
+        name,
+        title,
+        description,
+        inputSchema,
+      })),
+    ),
   };
 }
 
