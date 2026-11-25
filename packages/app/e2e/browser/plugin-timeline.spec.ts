@@ -75,6 +75,7 @@ test("plugin-transformed assistant reply keeps copy, fork, and turn duration in 
     await expect(footer).toBeVisible();
     await expect(footer.getByRole("button", { name: "Copy turn" })).toBeVisible();
     await expect(footer.getByRole("button", { name: "Fork chat from here" })).toBeVisible();
+    await expect(footer.getByText(/^Worked for /)).toBeVisible();
 
     await forkMostRecentAssistantTurnToNewTab(page);
     await expectChatHistoryAttachment(page);
