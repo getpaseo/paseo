@@ -38,7 +38,7 @@ If the user names profiles, use those. If fewer than two suitable profiles are c
 ## Workflow
 
 1. Write a problem-level prompt
-2. Create both agents in parallel via Paseo with `[Committee] <task>` titles and the same prompt
+2. Create both agents in parallel via Paseo with `[Committee] <task>` titles and the same prompt. Follow **Agent delegation** in the **paseo** skill to verify each member's parentage.
 3. Wait for both responses
 4. Resolve disagreements by passing their arguments between each other
 5. Keep going until they converge into a response

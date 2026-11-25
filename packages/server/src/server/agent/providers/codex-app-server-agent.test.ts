@@ -209,6 +209,49 @@ function createFakeCodexAppServerProcess(spawn: () => ChildProcessWithoutNullStr
   };
 }
 
+test.each(["create", "resume"] as const)(
+  "keeps Paseo caller identity in the Codex shell policy on %s",
+  async (operation) => {
+    const appServer = createFakeCodexAppServer();
+    const processPort = createFakeCodexAppServerProcess(() => appServer.child);
+    let spawnArgs: string[] | undefined;
+    const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
+      appServerProcess: {
+        ...processPort,
+        spawn: ({ args }) => {
+          spawnArgs = args;
+          return appServer.child;
+        },
+      },
+    });
+    const internals = castInternals<{
+      goalsEnabledPromise: Promise<boolean> | null;
+      autoReviewEnabledPromise: Promise<boolean> | null;
+    }>(provider);
+    internals.goalsEnabledPromise = Promise.resolve(false);
+    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    const agentId = "00000000-0000-4000-8000-000000000301";
+    const launchContext = { agentId, env: { PASEO_AGENT_ID: agentId } };
+    const session =
+      operation === "create"
+        ? await provider.createSession(createConfig(), launchContext)
+        : await provider.resumeSession(
+            { sessionId: "saved-thread" },
+            createConfig(),
+            launchContext,
+          );
+    try {
+      expect(spawnArgs).toEqual([
+        "app-server",
+        "-c",
+        `shell_environment_policy.set.PASEO_AGENT_ID="${agentId}"`,
+      ]);
+    } finally {
+      await session.close();
+    }
+  },
+);
+
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
   resolveSlashCommandInvocation?: (prompt: AgentPromptInput) => Promise<{

@@ -90,6 +90,12 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 
+### Agent delegation
+
+- Create a managed child from its intended Paseo parent using agent-scoped `create_agent`. Use `workspaceId` to place the child in another workspace. If a provider-native child cannot confirm its Paseo caller scope, have the intended parent make the call.
+- Before delegating with the CLI, verify that `PASEO_AGENT_ID` identifies the intended parent on the target daemon. If the ID is missing or differs, have the intended parent make an agent-scoped call. User-initiated top-level launches can run without a caller.
+- Read the created child on its host. Compare `get_agent_status` → `snapshot.labels["paseo.parent-agent-id"]` or `paseo agent inspect <child-id> --json` → `ParentAgentId` with the intended parent ID. If the relationship cannot be verified, report the child ID and observed state and pause creation retries until the existing child is accounted for.
+
 ## Sending prompts to agents
 
 **`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Sends a follow-up to an existing agent and returns at once.
