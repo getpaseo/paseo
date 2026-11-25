@@ -14,33 +14,37 @@ export type ListenTarget =
 // Matches a Windows drive-letter path like C:\ or D:\
 const WINDOWS_DRIVE_RE = /^[A-Za-z]:\\/;
 
-export function parseListenString(listen: string): ListenTarget {
-  // 1. Windows named pipes: \\.\pipe\... or pipe://...
+function parseSocketTarget(listen: string): ListenTarget | undefined {
+  // Windows named pipes: \\.\pipe\... or pipe://...
   if (listen.startsWith("\\\\.\\pipe\\") || listen.startsWith("pipe://")) {
     return {
       type: "pipe",
       path: listen.startsWith("pipe://") ? listen.slice("pipe://".length) : listen,
     };
   }
-  // 2. Explicit unix:// prefix
+  // Explicit unix:// prefix
   if (listen.startsWith("unix://")) {
     return { type: "socket", path: listen.slice(7) };
   }
-  // 3. Reject Windows absolute drive paths — they are not Unix sockets
-  if (WINDOWS_DRIVE_RE.test(listen)) {
-    throw new Error(`Invalid listen string (Windows path is not a valid listen target): ${listen}`);
-  }
-  // 4. POSIX absolute path (/ or ~) — Unix socket
+  // POSIX absolute path (/ or ~) — Unix socket
   if (listen.startsWith("/") || listen.startsWith("~")) {
     return { type: "socket", path: listen };
   }
-  // 5. Pure numeric — TCP port on 127.0.0.1
+}
+
+export function parseListenString(listen: string): ListenTarget {
+  const socket = parseSocketTarget(listen);
+  if (socket) return socket;
+  if (WINDOWS_DRIVE_RE.test(listen)) {
+    throw new Error(`Invalid listen string (Windows path is not a valid listen target): ${listen}`);
+  }
+  // Pure numeric — TCP port on 127.0.0.1
   const trimmed = listen.trim();
   if (/^\d+$/.test(trimmed)) {
     const port = parseInt(trimmed, 10);
     return { type: "tcp", host: "127.0.0.1", port };
   }
-  // 6. host:port — TCP
+  // host:port — TCP
   if (listen.includes(":")) {
     const lastColonIdx = listen.lastIndexOf(":");
     const host = listen.slice(0, lastColonIdx);
@@ -66,9 +70,14 @@ export function formatListenTarget(listenTarget: ListenTarget | null): string | 
 }
 
 export function splitListen(listen: string): [main: string, ...extras: string[]] {
+  if (parseSocketTarget(listen)) return [listen];
   const [main = "", ...extras] = listen.split(",").map((entry) => entry.trim());
   for (const entry of extras) parseExtra(entry);
   return [main, ...new Set(extras)];
+}
+
+export function getMainListenAddress(listen: string): string {
+  return parseSocketTarget(listen) ? listen : listen.split(",", 1)[0].trim();
 }
 
 function parseExtra(address: string) {
@@ -151,29 +160,50 @@ function isTailnetIPv4(address: string) {
   return isIPv4(address) && first === "100" && Number(second) >= 64 && Number(second) <= 127;
 }
 
-// Saved Tailscale listeners use an extra address in the Tailscale range on the main
-// port. The entry can outlive the interface or its current IP.
+export interface TailscaleNetwork {
+  addresses: readonly string[];
+  otherAddresses: ReadonlySet<string>;
+}
+
+// A saved address can outlive its interface. An address assigned to a different
+// interface belongs to that interface even when it is in the shared IPv4 range.
 function isTailscaleListener(
   target: ReturnType<typeof parseExtra>,
   port: number,
-  ip: string | null,
+  network: TailscaleNetwork,
 ) {
-  return target.port === port && (target.host === ip || isTailnetIPv4(target.host));
+  return (
+    target.port === port &&
+    !network.otherAddresses.has(target.host) &&
+    (network.addresses.includes(target.host) || isTailnetIPv4(target.host))
+  );
 }
 
-export function findTailscaleAddress(readInterfaces = networkInterfaces) {
+export function inspectTailscaleNetwork(readInterfaces = networkInterfaces): TailscaleNetwork {
+  const tailscaleAddresses: string[] = [];
+  const otherAddresses = new Set<string>();
   for (const [name, addresses] of Object.entries(readInterfaces())) {
     if (!addresses) continue;
-    if (
-      !/^tailscale/i.test(name) &&
-      !addresses.some(({ address }) => address.toLowerCase().startsWith("fd7a:115c:a1e0:"))
-    ) {
-      continue;
+    const isTailscale =
+      /^tailscale/i.test(name) ||
+      addresses.some(({ address }) => address.toLowerCase().startsWith("fd7a:115c:a1e0:"));
+    for (const { address } of addresses) {
+      if (!isTailnetIPv4(address)) continue;
+      if (isTailscale) tailscaleAddresses.push(address);
+      else otherAddresses.add(address);
     }
-    const v4 = addresses.find(({ address }) => isTailnetIPv4(address));
-    if (v4) return v4.address;
   }
-  return null;
+  return {
+    addresses: tailscaleAddresses.filter((address) => !otherAddresses.has(address)),
+    otherAddresses,
+  };
+}
+
+function mainTailscaleEndpoint(main: ListenTarget | null, addresses: readonly string[]) {
+  if (main?.type !== "tcp") return null;
+  if (addresses.includes(main.host)) return `${main.host}:${main.port}`;
+  const [ip] = addresses;
+  return ip && ["0.0.0.0", "::"].includes(main.host) ? `${ip}:${main.port}` : null;
 }
 
 export function createDaemonListeners(options: {
@@ -181,36 +211,49 @@ export function createDaemonListeners(options: {
   listen: string;
   overridden: boolean;
   getMain: () => ListenTarget | null;
-  getTailscaleAddress?: () => string | null;
+  getTailscaleNetwork?: () => TailscaleNetwork;
 }) {
-  const { http, listen, overridden, getMain, getTailscaleAddress = findTailscaleAddress } = options;
+  const {
+    http,
+    listen,
+    overridden,
+    getMain,
+    getTailscaleNetwork = inspectTailscaleNetwork,
+  } = options;
   const [startupMain] = splitListen(listen);
   const extras = createExtraListeners(http);
   let stopped = false;
+
+  async function applyLive(addresses: readonly string[]) {
+    if (!stopped) await extras.apply(addresses);
+  }
+
   function describeTailscale() {
     const main = getMain();
-    const ip = getTailscaleAddress();
+    const network = getTailscaleNetwork();
+    const ip = network.addresses[0] ?? null;
     const extraListeners = extras.status();
     const configured = extraListeners.flatMap((listener) => {
       const target = parseExtra(listener.address);
-      if (main?.type !== "tcp" || !isTailscaleListener(target, main.port, ip)) return [];
-      return [{ target, state: listener.state }];
+      if (main?.type !== "tcp" || !isTailscaleListener(target, main.port, network)) return [];
+      return [{ ...listener, target }];
     });
-    const current = configured.find(({ target }) => target.host === ip);
+    const current = configured.find(
+      ({ state, target }) => state === "listening" && network.addresses.includes(target.host),
+    );
     const shown = current ?? configured[0];
-    const managedByMain =
-      main?.type === "tcp" && ip !== null && [ip, "0.0.0.0", "::"].includes(main.host);
-    let address = shown ? formatListenTarget(shown.target) : null;
-    if (managedByMain) address = `${ip}:${main.port}`;
+    const mainEndpoint = mainTailscaleEndpoint(main, network.addresses);
+    const address = mainEndpoint ?? (shown ? formatListenTarget(shown.target) : null);
     let state: "on" | "off" | "waiting" | "unavailable" = ip ? "off" : "unavailable";
-    if (shown) state = current?.state === "listening" ? "on" : "waiting";
-    if (managedByMain) state = "on";
+    if (shown) state = current ? "on" : "waiting";
+    if (mainEndpoint) state = "on";
 
     let lockedBy: "main" | "launch" | undefined;
-    if (managedByMain || main?.type !== "tcp") lockedBy = "main";
+    if (mainEndpoint || main?.type !== "tcp") lockedBy = "main";
     if (overridden) lockedBy = "launch";
     return {
       main,
+      network,
       configured,
       tailscale: {
         ip,
@@ -237,35 +280,58 @@ export function createDaemonListeners(options: {
     async apply(persisted: string | undefined) {
       const [main, ...addresses] = splitListen(overridden ? listen : (persisted ?? listen));
       const before = extras.status().map(({ address }) => address);
-      if (!stopped) await extras.apply(addresses);
+      const applicable = getMain()?.type === "tcp" ? addresses : [];
+      await applyLive(applicable);
       return {
         restartRequired: main !== startupMain,
-        applied: JSON.stringify(before) !== JSON.stringify(addresses),
+        applied: JSON.stringify(before) !== JSON.stringify(applicable),
       };
     },
     stop() {
       stopped = true;
       return extras.apply([]);
     },
-    edit(persisted: string | undefined, enabled: boolean) {
-      const { main, tailscale } = describeTailscale();
+    prepareTailscaleChange(
+      persisted: string | undefined,
+      enabled: boolean,
+      localEndpoint: string | undefined,
+      confirmed: boolean,
+    ) {
+      const { main, network, tailscale, configured, extraListeners } = describeTailscale();
       if (stopped || tailscale.lockedBy || main?.type !== "tcp") {
         throw new Error("Tailscale listen address cannot be changed");
       }
-      const [first, ...addresses] = splitListen(persisted ?? listen);
+      const [first, ...saved] = splitListen(persisted ?? listen);
+      const live = extraListeners.map(({ address }) => address);
       if (enabled) {
         if (!tailscale.ip) throw new Error("Tailscale is not running");
-        const alreadyConfigured = addresses.some((entry) => {
-          const target = parseExtra(entry);
-          return target.host === tailscale.ip && target.port === main.port;
-        });
-        if (!alreadyConfigured) addresses.push(`${tailscale.ip}:${main.port}`);
-        return [first, ...addresses].join(",");
+        if (parseSocketTarget(first)) throw new Error("The configured main listener is a socket");
+        const address = `${tailscale.ip}:${main.port}`;
+        const add = (addresses: string[]) =>
+          addresses.some((entry) => formatListenTarget(parseExtra(entry)) === address)
+            ? addresses
+            : [...addresses, address];
+        return {
+          confirmationRequired: false as const,
+          listen: [first, ...add(saved)].join(","),
+          apply: () => applyLive(add(live)),
+        };
       }
-      const remaining = addresses.filter(
-        (entry) => !isTailscaleListener(parseExtra(entry), main.port, tailscale.ip),
+      if (
+        !confirmed &&
+        configured.some(({ target }) => formatListenTarget(target) === localEndpoint)
+      ) {
+        return { confirmationRequired: true as const };
+      }
+      const removed = new Set(configured.map(({ address }) => address));
+      const remaining = saved.filter(
+        (entry) => !isTailscaleListener(parseExtra(entry), main.port, network),
       );
-      return [first, ...remaining].join(",");
+      return {
+        confirmationRequired: false as const,
+        listen: [first, ...remaining].join(","),
+        apply: () => applyLive(live.filter((address) => !removed.has(address))),
+      };
     },
   };
 }

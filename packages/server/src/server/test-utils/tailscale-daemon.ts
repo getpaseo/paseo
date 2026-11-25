@@ -7,7 +7,7 @@ if (!origin) throw new Error("Expected the app origin");
 
 const daemon = await createTestPaseoDaemon({
   corsAllowedOrigins: [origin],
-  getTailscaleAddress: () => "127.0.0.2",
+  getTailscaleNetwork: () => ({ addresses: ["127.0.0.2"], otherAddresses: new Set() }),
 });
 try {
   await writeFile(

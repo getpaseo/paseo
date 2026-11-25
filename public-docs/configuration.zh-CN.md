@@ -78,8 +78,9 @@ paseo daemon restart
 
 ## 监听地址 {#listen-addresses}
 
-将 `daemon.listen` 设为一个地址，或用逗号分隔多个地址，例如
-`127.0.0.1:6767,100.101.102.103:6767`。`PASEO_LISTEN` 和 `--listen` 也支持这个格式。
+将 `daemon.listen` 设为一个 TCP 地址，或用逗号分隔多个 TCP 地址，例如
+`127.0.0.1:6767,100.101.102.103:6767`。Unix 套接字或命名管道的路径即使包含逗号，也始终是一个地址。
+`PASEO_LISTEN` 和 `--listen` 支持相同的格式。
 
 第一个地址是主监听地址。更改后请重启 daemon。运行 `paseo reload`，即可在 daemon 运行时应用额外 TCP 监听地址的更改。
 daemon 会重试暂时不可用的额外地址，并在 `paseo daemon status` 中显示它们的状态。

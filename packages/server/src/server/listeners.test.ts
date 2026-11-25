@@ -3,7 +3,21 @@ import { createServer as createTcpServer } from "node:net";
 import { once } from "node:events";
 import { expect, test } from "vitest";
 import type { NetworkInterfaceInfo } from "node:os";
-import { createDaemonListeners, createExtraListeners, findTailscaleAddress } from "./listeners.js";
+import {
+  createDaemonListeners,
+  createExtraListeners,
+  inspectTailscaleNetwork,
+  splitListen,
+} from "./listeners.js";
+
+test.each([
+  "/tmp/paseo,qa.sock",
+  "unix:///tmp/paseo,127.0.0.1:12345",
+  String.raw`\\.\pipe\paseo,qa`,
+  String.raw`pipe://\\.\pipe\paseo,qa`,
+])("preserves the legacy socket or pipe path %s", (listen) => {
+  expect(splitListen(listen)).toEqual([listen]);
+});
 
 test("retries an occupied extra listener and serves the original HTTP handler", async () => {
   const blocker = createTcpServer().listen(0, "127.0.0.2");
@@ -39,12 +53,16 @@ test("requires a Tailscale interface name or IPv6 prefix alongside the IPv4 addr
       mac: "",
     };
   }
-  expect(findTailscaleAddress(() => ({ eth0: [ipv4("100.101.102.103")] }))).toBeNull();
-  expect(findTailscaleAddress(() => ({ tailscale0: [ipv4("100.101.102.103")] }))).toBe(
-    "100.101.102.103",
-  );
+  expect(inspectTailscaleNetwork(() => ({ eth0: [ipv4("100.101.102.103")] }))).toEqual({
+    addresses: [],
+    otherAddresses: new Set(["100.101.102.103"]),
+  });
+  expect(inspectTailscaleNetwork(() => ({ tailscale0: [ipv4("100.101.102.103")] }))).toEqual({
+    addresses: ["100.101.102.103"],
+    otherAddresses: new Set(),
+  });
   expect(
-    findTailscaleAddress(() => ({
+    inspectTailscaleNetwork(() => ({
       eth0: [ipv4("100.101.102.103")],
       utun4: [
         ipv4("100.120.121.122"),
@@ -59,7 +77,7 @@ test("requires a Tailscale interface name or IPv6 prefix alongside the IPv4 addr
         },
       ],
     })),
-  ).toBe("100.120.121.122");
+  ).toEqual({ addresses: ["100.120.121.122"], otherAddresses: new Set(["100.101.102.103"]) });
 });
 
 test.each(["100.101.102.103", "0.0.0.0"])(
@@ -70,7 +88,7 @@ test.each(["100.101.102.103", "0.0.0.0"])(
       listen: `${host}:6767`,
       overridden: false,
       getMain: () => ({ type: "tcp", host, port: 6767 }),
-      getTailscaleAddress: () => "100.101.102.103",
+      getTailscaleNetwork: () => ({ addresses: ["100.101.102.103"], otherAddresses: new Set() }),
     });
     expect(listeners.status().tailscale).toMatchObject({
       state: "on",
@@ -89,7 +107,7 @@ test.each([
     listen: main.path,
     overridden: false,
     getMain: () => main,
-    getTailscaleAddress: () => "100.101.102.103",
+    getTailscaleNetwork: () => ({ addresses: ["100.101.102.103"], otherAddresses: new Set() }),
   });
   expect(listeners.status().tailscale).toMatchObject({
     state: "off",
@@ -107,13 +125,48 @@ test("shows the saved Tailscale listener waiting when the host has no Tailscale 
     listen,
     overridden: false,
     getMain: () => ({ type: "tcp", host: "127.0.0.1", port: 6767 }),
-    getTailscaleAddress: () => null,
+    getTailscaleNetwork: () => ({ addresses: [], otherAddresses: new Set() }),
   });
   try {
     await listeners.apply(listen);
     expect(listeners.status()).toMatchObject({
       tailscale: { ip: null, address, state: "waiting" },
       extraListeners: [{ address, state: "waiting" }],
+    });
+    const change = listeners.prepareTailscaleChange(listen, false, undefined, false);
+    expect(change).toMatchObject({ confirmationRequired: false, listen: "127.0.0.1:6767" });
+    if (change.confirmationRequired) throw new Error("Unexpected confirmation");
+    await change.apply();
+    expect(listeners.status()).toMatchObject({
+      tailscale: { ip: null, address: null, state: "unavailable" },
+      extraListeners: [],
+    });
+  } finally {
+    await listeners.stop();
+  }
+});
+
+test("does not count an extra listener on a non-Tailscale interface in the shared range", async () => {
+  const address = "100.127.255.254";
+  const endpoint = `${address}:6767`;
+  const listen = `127.0.0.1:6767,${endpoint}`;
+  const listeners = createDaemonListeners({
+    http: createServer(),
+    listen,
+    overridden: false,
+    getMain: () => ({ type: "tcp", host: "127.0.0.1", port: 6767 }),
+    getTailscaleNetwork: () => ({ addresses: [], otherAddresses: new Set([address]) }),
+  });
+  try {
+    await listeners.apply(listen);
+    expect(listeners.status(endpoint)).toMatchObject({
+      tailscale: {
+        ip: null,
+        address: null,
+        state: "unavailable",
+        disconnectsCurrentConnection: false,
+      },
+      extraListeners: [{ address: endpoint }],
     });
   } finally {
     await listeners.stop();

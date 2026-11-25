@@ -80,8 +80,9 @@ Deployment environment variables and legacy supervisor flags remain authoritativ
 
 ## Listen addresses
 
-Set `daemon.listen` to one address or a comma-separated list such as
-`127.0.0.1:6767,100.101.102.103:6767`. `PASEO_LISTEN` and `--listen` accept the same format.
+Set `daemon.listen` to one TCP address or a comma-separated list of TCP addresses, such as
+`127.0.0.1:6767,100.101.102.103:6767`. A Unix socket or named pipe path is always one address, even
+if it contains a comma. `PASEO_LISTEN` and `--listen` accept the same forms.
 
 The first address is the main listener. Restart after changing it. Run `paseo reload` to
 apply changes to extra TCP listeners while the daemon is running. The daemon retries

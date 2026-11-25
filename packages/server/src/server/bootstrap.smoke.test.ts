@@ -72,7 +72,10 @@ describe("paseo daemon bootstrap", () => {
     let tailscaleAddress: string | null = null;
     const daemon = await createTestPaseoDaemon({
       relayEnabled: false,
-      getTailscaleAddress: () => tailscaleAddress,
+      getTailscaleNetwork: () => ({
+        addresses: tailscaleAddress ? [tailscaleAddress] : [],
+        otherAddresses: new Set(),
+      }),
     });
     const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     const address = `127.0.0.2:${daemon.port}`;
@@ -147,7 +150,10 @@ describe("paseo daemon bootstrap", () => {
       let tailscaleAddress: string | null = "100.127.255.254";
       const daemon = await createTestPaseoDaemon({
         relayEnabled: false,
-        getTailscaleAddress: () => tailscaleAddress,
+        getTailscaleNetwork: () => ({
+          addresses: tailscaleAddress ? [tailscaleAddress] : [],
+          otherAddresses: new Set(),
+        }),
       });
       const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
       const configPath = path.join(daemon.paseoHome, "config.json");
@@ -162,6 +168,7 @@ describe("paseo daemon bootstrap", () => {
           JSON.stringify({ version: 1, daemon: { listen: originalListen } }),
         );
         await client.connect();
+        await client.reloadDaemonConfig();
         await client.setTailscaleEnabled(true);
         expect(await readListen()).toBe(`${originalListen},${originalAddress}`);
 
@@ -183,7 +190,7 @@ describe("paseo daemon bootstrap", () => {
   );
 
   test("reload changes only the extra TCP listeners without replacing the main endpoint", async () => {
-    const daemon = await createTestPaseoDaemon({ relayEnabled: false });
+    const daemon = await createTestPaseoDaemon({ relayEnabled: false, hostnames: [] });
     const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     const address = `127.0.0.2:${daemon.port}`;
     const configPath = path.join(daemon.paseoHome, "config.json");
@@ -200,6 +207,18 @@ describe("paseo daemon bootstrap", () => {
         restartRequiredPaths: [],
       });
       expect((await fetch(`http://${address}/api/health`)).ok).toBe(true);
+      const rejectedHost = await new Promise<number | undefined>((resolve, reject) => {
+        const request = http.get(
+          `http://${address}/api/health`,
+          { headers: { host: "unlisted.example.test" } },
+          (response) => {
+            response.resume();
+            resolve(response.statusCode);
+          },
+        );
+        request.on("error", reject);
+      });
+      expect(rejectedHost).toBe(403);
 
       await persist("127.0.0.3:0");
       expect(await local.reloadDaemonConfig()).toMatchObject({
@@ -210,6 +229,55 @@ describe("paseo daemon bootstrap", () => {
       await expect(fetch(`http://${address}/api/health`)).rejects.toThrow();
     } finally {
       await local.close();
+      await daemon.close();
+    }
+  });
+
+  test("switching Tailscale preserves unrelated live listeners and pending listen edits", async () => {
+    const carrierNatIp = "100.127.255.254";
+    const daemon = await createTestPaseoDaemon({
+      relayEnabled: false,
+      getTailscaleNetwork: () => ({
+        addresses: ["127.0.0.2"],
+        otherAddresses: new Set([carrierNatIp]),
+      }),
+    });
+    const tailscale = `127.0.0.2:${daemon.port}`;
+    const live = `127.0.0.3:${daemon.port}`;
+    const pending = `127.0.0.4:${daemon.port}`;
+    const carrierNat = `${carrierNatIp}:${daemon.port}`;
+    const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const other = new DaemonClient({ url: `ws://${live}/ws` });
+    const configPath = path.join(daemon.paseoHome, "config.json");
+    const persist = (listen: string) =>
+      writeFile(configPath, JSON.stringify({ version: 1, daemon: { listen } }));
+    try {
+      await local.connect();
+      await persist(`${daemon.config.listen},${live},${carrierNat}`);
+      await local.reloadDaemonConfig();
+      await other.connect();
+
+      // Leave another addition and removal pending in config.json across both toggles.
+      await persist(`${daemon.config.listen},${carrierNat},${pending}`);
+      expect(await local.setTailscaleEnabled(true)).toMatchObject({
+        extraListeners: [{ address: live }, { address: carrierNat }, { address: tailscale }],
+      });
+      expect(JSON.parse(await readFile(configPath, "utf8")).daemon.listen).toBe(
+        `${daemon.config.listen},${carrierNat},${pending},${tailscale}`,
+      );
+
+      expect(await other.setTailscaleEnabled(false)).toMatchObject({
+        confirmationRequired: false,
+        extraListeners: [{ address: live }, { address: carrierNat }],
+      });
+      expect((await other.getDaemonStatus({ includeProviders: false })).tailscale?.state).toBe(
+        "off",
+      );
+      expect(JSON.parse(await readFile(configPath, "utf8")).daemon.listen).toBe(
+        `${daemon.config.listen},${carrierNat},${pending}`,
+      );
+    } finally {
+      await Promise.all([other.close(), local.close()]);
       await daemon.close();
     }
   });
@@ -1076,6 +1144,47 @@ export default function contribute(plugin: unknown) {
     });
   });
 
+  test.skipIf(isPlatform("win32"))(
+    "keeps network listeners closed when a socket daemon reloads a staged TCP main address",
+    async () => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-socket-listen-"));
+      const socketPath = path.join(paseoHome, "daemon.sock");
+      const configPath = path.join(paseoHome, "config.json");
+      const persist = (listen: string) =>
+        writeFile(
+          configPath,
+          JSON.stringify({ version: 1, daemon: { listen, relay: { enabled: false } } }),
+        );
+      await persist(socketPath);
+      const config = loadConfig(paseoHome, { env: {} });
+      config.agentClients = createTestAgentClients();
+      const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+        builtinPlugins: new BuiltinPluginLoader(undefined, []),
+        lazyTerminalWorker: true,
+      });
+      const client = new DaemonClient({ url: `ws+unix://${socketPath}:/ws` });
+      try {
+        await daemon.start();
+        await client.connect();
+        const extra = `127.0.0.1:${await findFreePort()}`;
+        await persist(`127.0.0.1:6767,${extra}`);
+        expect(await client.reloadDaemonConfig()).toMatchObject({
+          appliedPaths: [],
+          restartRequiredPaths: ["daemon.listen"],
+        });
+        expect(await client.getDaemonStatus({ includeProviders: false })).toMatchObject({
+          listen: socketPath,
+          extraListeners: [],
+        });
+        await expect(fetch(`http://${extra}/api/health`)).rejects.toThrow();
+      } finally {
+        await client.close();
+        await daemon.stop();
+        await rm(paseoHome, { recursive: true, force: true });
+      }
+    },
+  );
+
   // POSIX-only: Unix socket listen paths are invalid Windows listen targets.
   test.skipIf(isPlatform("win32"))(
     "generates a relay pairing offer for unix socket listeners",
@@ -1083,7 +1192,7 @@ export default function contribute(plugin: unknown) {
       const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-socket-relay-"));
       const paseoHome = path.join(paseoHomeRoot, ".paseo");
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-      const socketPath = path.join(paseoHomeRoot, "run", "paseo.sock");
+      const socketPath = path.join(paseoHomeRoot, "run", "paseo.sock,127.0.0.1:12345");
       await mkdir(path.dirname(socketPath), { recursive: true });
       await mkdir(paseoHome, { recursive: true });
       const logger = pino({ level: "silent" });
@@ -1113,6 +1222,7 @@ export default function contribute(plugin: unknown) {
 
       try {
         await daemon.start();
+        expect(daemon.getListenTarget()).toEqual({ type: "socket", path: socketPath });
         const pairing = await generateLocalPairingOffer({
           paseoHome,
           relayEnabled: true,

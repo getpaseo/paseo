@@ -32,6 +32,7 @@ import {
   formatHostForHttpUrl,
   splitListen,
   type ListenTarget,
+  type TailscaleNetwork,
 } from "./listeners.js";
 export { parseListenString, formatListenTarget, type ListenTarget } from "./listeners.js";
 
@@ -470,7 +471,7 @@ export interface PaseoDaemon {
 export interface PaseoDaemonDependencies {
   builtinPlugins?: BuiltinPluginLoader;
   lazyTerminalWorker?: boolean;
-  getTailscaleAddress?: () => string | null;
+  getTailscaleNetwork?: () => TailscaleNetwork;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -758,17 +759,17 @@ export async function createPaseoDaemon(
   app.use(serviceProxy.middleware());
 
   // Host allowlist / DNS rebinding protection (vite-like semantics).
-  // For non-TCP (unix sockets), skip host validation.
-  if (listenTarget.type === "tcp") {
-    app.use((req, res, next) => {
+  // Validate the accepted connection so extra TCP listeners also enforce the allowlist.
+  app.use((req, res, next) => {
+    if (req.socket.localPort !== undefined) {
       const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
       if (!isHostnameAllowed(hostHeader, configuredHostnames)) {
         res.status(403).json({ error: "Invalid Host header" });
         return;
       }
-      next();
-    });
-  }
+    }
+    next();
+  });
 
   // CORS - allow same-origin + configured origins
   const fixedAllowedOrigins = [
@@ -914,7 +915,7 @@ export async function createPaseoDaemon(
     listen: config.listen,
     overridden: isListenOverridden(config),
     getMain: () => boundListenTarget,
-    getTailscaleAddress: dependencies.getTailscaleAddress,
+    getTailscaleNetwork: dependencies.getTailscaleNetwork,
   });
   daemonConfigStore.attachListeners(listeners);
 

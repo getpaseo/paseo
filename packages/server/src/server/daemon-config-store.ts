@@ -582,23 +582,25 @@ export class DaemonConfigStore {
     return this.enqueue(async () => {
       const listeners = this.listeners;
       if (!listeners) throw new Error("Tailscale is unavailable");
-      if (!enabled && !confirmed) {
-        const status = listeners.status(localEndpoint);
-        if (status.tailscale.disconnectsCurrentConnection) {
-          return { confirmationRequired: true, ...status };
-        }
-      }
       const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
-      const listen = listeners.edit(persisted.daemon?.listen, enabled);
+      const change = listeners.prepareTailscaleChange(
+        persisted.daemon?.listen,
+        enabled,
+        localEndpoint,
+        confirmed,
+      );
+      if (change.confirmationRequired) {
+        return { confirmationRequired: true, ...listeners.status(localEndpoint) };
+      }
       await savePersistedConfigAsync(
         this.paseoHome,
         {
           ...persisted,
-          daemon: { ...persisted.daemon, listen },
+          daemon: { ...persisted.daemon, listen: change.listen },
         },
         this.logger,
       );
-      await listeners.apply(listen);
+      await change.apply();
       return { confirmationRequired: false, ...listeners.status(localEndpoint) };
     });
   }

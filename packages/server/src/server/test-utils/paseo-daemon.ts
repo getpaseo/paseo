@@ -14,15 +14,17 @@ import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/index.js";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { TailscaleNetwork } from "../listeners.js";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
   desktopManaged?: boolean;
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
+  hostnames?: PaseoDaemonConfig["hostnames"];
   listen?: string;
   listenPort?: number;
-  getTailscaleAddress?: () => string | null;
+  getTailscaleNetwork?: () => TailscaleNetwork;
   logger?: Parameters<typeof createPaseoDaemon>[1];
   mcpEnabled?: boolean;
   mcpDebug?: boolean;
@@ -111,7 +113,7 @@ export async function createTestPaseoDaemon(
       await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
-      getTailscaleAddress: options.getTailscaleAddress,
+      getTailscaleNetwork: options.getTailscaleNetwork,
       builtinPlugins: options.builtinPlugins ?? new BuiltinPluginLoader(undefined, []),
       lazyTerminalWorker: options.lazyTerminalWorker ?? true,
       serverFeatureOverrides: {
@@ -197,7 +199,7 @@ async function prepareTestDaemonConfig(
     daemonVersion: options.daemonVersion,
     desktopManaged: options.desktopManaged,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-    hostnames: true,
+    hostnames: options.hostnames ?? true,
     mcpEnabled: options.mcpEnabled ?? true,
     staticDir,
     mcpDebug: options.mcpDebug ?? false,

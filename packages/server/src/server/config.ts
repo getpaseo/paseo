@@ -34,6 +34,7 @@ export {
   editPersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
+export { getMainListenAddress } from "./listeners.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
