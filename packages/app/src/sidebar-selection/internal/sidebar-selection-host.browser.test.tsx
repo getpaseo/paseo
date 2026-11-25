@@ -260,7 +260,7 @@ describe("SidebarSelectionHost", () => {
     });
     expect(fallbackArchiveCount).toBe(1);
 
-    // Same while a worktree safety check is in progress.
+    // Same while a worktree safety check is in progress (both archive shortcut and Escape stay owned).
     act(() => {
       useSidebarSelectionStore.getState().enter("srv:a");
       useSidebarSelectionStore.getState().setArchiving(true);
@@ -269,8 +269,22 @@ describe("SidebarSelectionHost", () => {
       expect(capturedDispatcher?.dispatch({ id: "workspace.archive", scope: "sidebar" })).toBe(
         true,
       );
+      expect(
+        dispatchTopOverlayKeyDown({
+          key: "Escape",
+          code: "Escape",
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false,
+          shiftKey: false,
+          repeat: false,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+        }),
+      ).toBe(true);
     });
     expect(fallbackArchiveCount).toBe(1);
+    expect(useSidebarSelectionStore.getState().active).toBe(true);
   });
 
   it("keeps the selection bar visible when an Undo toast is already displayed in the sidebar", () => {

@@ -104,7 +104,10 @@ export function SidebarSelectionHost({
 
   useOverlayRegistration({
     keys: ESCAPE_OVERLAY_KEYS,
-    active: selectionMode && active && !isArchiving,
+    // Keep Escape owned while select mode is active (including during worktree checks) so it
+    // never falls through to interrupt a running agent in the open workspace; any higher-layer
+    // confirmation dialog still receives Escape first.
+    active: selectionMode && active,
     layer: 0,
     manageFocus: false,
     onKeyDown: (event) => {
