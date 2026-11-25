@@ -328,6 +328,7 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     expect(firstWarning.message()).toContain(`Archive "${worktree.workspaceName}"?`);
     expect(firstWarning.message()).toContain("Uncommitted changes");
     expect(firstWarning.message()).toContain("1 unpushed commit");
+    expect(firstWarning.message()).toContain("The worktree folder will be deleted");
 
     await expectWorktreeKept(page, worktree);
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
@@ -344,6 +345,60 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
       .toBe(false);
 
     createdWorktreeDirectories.delete(worktree.workspaceDirectory);
+  });
+
+  // Another workspace on the same worktree, as "New workspace" in an existing worktree makes.
+  async function addWorkspaceOnWorktree(directory: string): Promise<string> {
+    const { workspace, error } = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+    });
+    if (!workspace) throw new Error(error ?? `Failed to add a workspace on ${directory}`);
+    return workspace.id;
+  }
+
+  test("archiving one of two workspaces on a worktree says the worktree stays, and it does", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-shared");
+    await seedRiskyWorktree(client, worktree.workspaceDirectory);
+    await addWorkspaceOnWorktree(worktree.workspaceDirectory);
+    await openSidebarRow(page, worktree.workspaceId);
+
+    const warning = await answerArchiveWarning(page, "accept", () =>
+      clickArchiveWorkspaceMenuItem(page, worktree.workspaceId),
+    );
+    expect(warning.message()).toContain(
+      "The worktree and its changes stay. Another workspace still uses it.",
+    );
+    expect(warning.message()).not.toContain("Uncommitted changes");
+
+    await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    expect(existsSync(path.join(worktree.workspaceDirectory, "DIRTY.md"))).toBe(true);
+  });
+
+  test("the worktree is kept when its other workspace is archived while the dialog says it stays", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-shared-race");
+    await seedRiskyWorktree(client, worktree.workspaceDirectory);
+    const otherWorkspaceId = await addWorkspaceOnWorktree(worktree.workspaceDirectory);
+    await openSidebarRow(page, worktree.workspaceId);
+
+    const dialogOpened = page.waitForEvent("dialog");
+    const menuItemClicked = clickArchiveWorkspaceMenuItem(page, worktree.workspaceId);
+    const dialog = await dialogOpened;
+    expect(dialog.message()).toContain("The worktree and its changes stay");
+    expect((await client.archiveWorkspace(otherWorkspaceId)).error).toBeNull();
+    await dialog.accept();
+    await menuItemClicked;
+
+    await expect(page.getByTestId("app-toast-message")).toContainText(
+      "No other workspace uses this worktree anymore",
+    );
+    await expectWorktreeKept(page, worktree);
+    expect(await hostListsWorkspace(worktree.workspaceId)).toBe(true);
+    expect(existsSync(path.join(worktree.workspaceDirectory, "DIRTY.md"))).toBe(true);
   });
 
   test("the row's archive button warns from the host's git state while the row has none, and Cancel keeps the worktree", async ({

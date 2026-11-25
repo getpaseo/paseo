@@ -42,7 +42,16 @@ export async function runWorkspaceArchiveAttempt(input: {
 }
 
 interface WorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; canceled?: boolean }>;
+  archiveWorkspace: (
+    workspaceId: string,
+    requestId?: string,
+    options?: WorkspaceArchiveOptions,
+  ) => Promise<{ error: string | null; canceled?: boolean }>;
+}
+
+export interface WorkspaceArchiveOptions {
+  /** The user was told the worktree stays, so the host refuses an archive that would remove it. */
+  expectDirectoryKept?: boolean;
 }
 
 interface WorkspaceArchiveUndoClient {
@@ -131,8 +140,9 @@ function invalidateAgentHistory(serverId: string): void {
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
+  options?: WorkspaceArchiveOptions;
 }): Promise<WorkspaceArchiveOutcome> {
-  const payload = await input.client.archiveWorkspace(input.workspaceId);
+  const payload = await input.client.archiveWorkspace(input.workspaceId, undefined, input.options);
   if (payload.canceled) {
     return "canceled";
   }
@@ -149,6 +159,7 @@ async function archiveWorkspaceOrThrow(input: {
 export function beginOptimisticWorkspaceArchive(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
+  options?: WorkspaceArchiveOptions;
 }): OptimisticWorkspaceArchive {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
   const done = (async () => {
@@ -156,6 +167,7 @@ export function beginOptimisticWorkspaceArchive(input: {
       const outcome = await archiveWorkspaceOrThrow({
         client: input.client,
         workspaceId: input.workspace.workspaceId,
+        options: input.options,
       });
       if (outcome === "canceled") {
         restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });

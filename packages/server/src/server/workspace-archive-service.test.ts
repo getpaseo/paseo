@@ -20,6 +20,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
 import {
   archiveByScope,
+  inspectWorkspaceArchive,
   unarchiveWorkspaceAgents,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
@@ -926,6 +927,67 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
+  test("a host asked to keep the directory refuses an archive that would remove it", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "expect-kept");
+    const dependencies = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        { workspaceId: "ws-first", cwd: worktree.worktreePath, kind: "worktree" },
+        { workspaceId: "ws-second", cwd: worktree.worktreePath, kind: "worktree" },
+      ],
+    });
+    const archiveKeepingDirectory = (workspaceId: string) =>
+      archiveByScope(dependencies, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-expect-kept",
+        expectDirectoryKept: true,
+      });
+
+    assertArchiveResult(await archiveKeepingDirectory("ws-first"), {
+      archivedWorkspaceIds: ["ws-first"],
+      removedDirectory: false,
+    });
+    await expect(archiveKeepingDirectory("ws-second")).rejects.toThrow(
+      "No other workspace uses this worktree anymore",
+    );
+
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+    expect(dependencies.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      "ws-second",
+    ]);
+  });
+
+  test("an archive expected to keep the directory keeps it when the other workspace goes away meanwhile", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "expect-kept-race");
+    const dependencies = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        { workspaceId: "ws-archived", cwd: worktree.worktreePath, kind: "worktree" },
+        { workspaceId: "ws-other", cwd: worktree.worktreePath, kind: "worktree" },
+      ],
+    });
+    // Outside the checkout gate, as removing the other workspace's project does.
+    dependencies.killTerminalsForWorkspace = () =>
+      dependencies.archiveWorkspaceRecord("ws-other", "");
+
+    const result = await archiveByScope(dependencies, {
+      scope: { kind: "workspace", workspaceId: "ws-archived" },
+      requestId: "req-expect-kept-race",
+      expectDirectoryKept: true,
+    });
+
+    assertArchiveResult(result, {
+      archivedWorkspaceIds: ["ws-archived"],
+      removedDirectory: false,
+    });
+    expect(dependencies.activeWorkspaces).toEqual([]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
   test("archiving a subdirectory workspace keeps its active worktree root", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -1750,3 +1812,45 @@ test.each(["outer", "inner"])(
     expect(readFileSync(dirtyFile, "utf8")).toBe("keep-inner");
   },
 );
+
+describe("inspectWorkspaceArchive", () => {
+  test("says the last workspace on a worktree removes it, and a shared one keeps it", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "inspect-archive");
+    const subdirectory = path.join(worktree.worktreePath, "packages", "app");
+    mkdirSync(subdirectory, { recursive: true });
+    const root = { workspaceId: "ws-root", cwd: worktree.worktreePath, kind: "worktree" as const };
+    const nested = { workspaceId: "ws-nested", cwd: subdirectory, kind: "worktree" as const };
+    const inspect = (activeWorkspaces: ActiveWorkspaceRef[]) =>
+      inspectWorkspaceArchive(createArchiveDeps({ paseoHome, activeWorkspaces }), "ws-root");
+
+    expect(await inspect([root])).toEqual({ removesDirectory: true, usedByOtherWorkspace: false });
+    expect(await inspect([root, nested])).toEqual({
+      removesDirectory: false,
+      usedByOtherWorkspace: true,
+    });
+  });
+
+  test("says a worktree Paseo does not own stays", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    expect(
+      await inspectWorkspaceArchive(
+        createArchiveDeps({
+          paseoHome: path.join(tempDir, ".paseo"),
+          activeWorkspaces: [
+            {
+              workspaceId: "ws-external",
+              cwd: repoDir,
+              kind: "worktree",
+              worktreeRoot: repoDir,
+              mainRepoRoot: repoDir,
+              isPaseoOwnedWorktree: false,
+            },
+          ],
+        }),
+        "ws-external",
+      ),
+    ).toEqual({ removesDirectory: false, usedByOtherWorkspace: false });
+  });
+});

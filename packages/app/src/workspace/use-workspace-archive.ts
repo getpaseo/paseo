@@ -5,18 +5,26 @@ import { useToast } from "@/contexts/toast-context";
 import {
   confirmRiskyWorktreeArchive,
   DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+  readWorktreeArchiveDirectory,
   readWorktreeArchiveRisk,
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceWithUndo, supportsWorkspaceArchiveUndo } from "@/workspace/archive-undo";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   archiveWorkspaceOptimistically,
   runWorkspaceArchiveAttempt,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
+
+function supportsWorkspaceArchiveInspect(serverId: string): boolean {
+  return (
+    useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.workspaceArchiveInspect ===
+    true
+  );
+}
 
 function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
@@ -62,6 +70,9 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
   const onArchiveStartedRef = useRef(onArchiveStarted);
   onArchiveStartedRef.current = onArchiveStarted;
 
+  // Set when the host said the worktree stays, so the archive can't remove it after all.
+  const expectDirectoryKeptRef = useRef(false);
+
   const archiveWorkspaceRecord = useCallback(async () => {
     const client = getHostRuntimeStore().getClient(serverId);
     if (!client) {
@@ -77,6 +88,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
           client,
           workspace,
           toast,
+          options: { expectDirectoryKept: expectDirectoryKeptRef.current },
           onArchiveCommitted: () => purgeArchivedWorkspaceState(workspace),
         });
       } else {
@@ -101,7 +113,14 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
       toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
       return false;
     }
-    const risk = await readWorktreeArchiveRisk(client, workspaceDirectory).catch(
+    const risk = await Promise.all([
+      readWorktreeArchiveRisk(client, workspaceDirectory),
+      // COMPAT(workspaceArchiveInspect): hosts before v0.17.5 don't say; remove after 2027-05-25.
+      supportsWorkspaceArchiveInspect(serverId)
+        ? readWorktreeArchiveDirectory(client, workspaceId)
+        : null,
+    ]).then(
+      ([gitRisk, directory]) => ({ ...gitRisk, directory }),
       (error: unknown) => {
         toast.error(
           error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
@@ -112,11 +131,12 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     if (!risk) {
       return false;
     }
+    expectDirectoryKeptRef.current = risk.directory === "shared";
     return await confirmRiskyWorktreeArchive(
       { workspaceName: name, diffStat, ...risk },
       warningLabels,
     );
-  }, [diffStat, name, serverId, t, toast, warningLabels, workspaceDirectory]);
+  }, [diffStat, name, serverId, t, toast, warningLabels, workspaceDirectory, workspaceId]);
 
   const archive = useCallback(() => {
     void runWorkspaceArchiveAttempt({

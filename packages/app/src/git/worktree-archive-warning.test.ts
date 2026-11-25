@@ -4,6 +4,7 @@ import type { CheckoutStatusClient, CheckoutStatusPayload } from "@/git/checkout
 import {
   buildWorktreeArchiveConfirmationMessage,
   buildWorktreeArchiveRiskReasons,
+  readWorktreeArchiveDirectory,
   readWorktreeArchiveRisk,
   toWorktreeArchiveRisk,
 } from "@/git/worktree-archive-warning";
@@ -133,6 +134,51 @@ describe("workspace archive warning for worktree backing", () => {
         diffStat: { additions: 1, deletions: 3 },
       }),
     ).toBe("Uncommitted changes (1 added line, 3 deleted lines)\n1 unpushed commit");
+  });
+
+  it("says the worktree folder is deleted with what it holds", () => {
+    expect(
+      buildWorktreeArchiveConfirmationMessage({
+        workspaceName: "feature",
+        isDirty: true,
+        aheadOfOrigin: 0,
+        directory: "removed",
+      }),
+    ).toBe("Uncommitted changes\nThe worktree folder will be deleted");
+  });
+
+  it("says a worktree another workspace uses stays, instead of listing what would be lost", () => {
+    expect(
+      buildWorktreeArchiveConfirmationMessage({
+        workspaceName: "feature",
+        isDirty: true,
+        aheadOfOrigin: 2,
+        directory: "shared",
+      }),
+    ).toBe("The worktree and its changes stay. Another workspace still uses it.");
+  });
+
+  it.each(["removed", "shared"] as const)(
+    "does not require a confirmation for a clean worktree that is %s",
+    (directory) => {
+      expect(
+        buildWorktreeArchiveConfirmationMessage({
+          workspaceName: "feature",
+          isDirty: false,
+          aheadOfOrigin: 0,
+          directory,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.each([
+    [{ removesDirectory: true, usedByOtherWorkspace: false }, "removed"],
+    [{ removesDirectory: false, usedByOtherWorkspace: true }, "shared"],
+    [{ removesDirectory: false, usedByOtherWorkspace: false }, null],
+  ] as const)("reads %j from the host as %s", async (inspection, expected) => {
+    const client = { inspectWorkspaceArchive: async () => inspection };
+    expect(await readWorktreeArchiveDirectory(client, "ws")).toBe(expected);
   });
 
   it("maps archive workspace fields into the shared worktree risk shape", () => {
