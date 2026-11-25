@@ -16,6 +16,7 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
+import { CONTROL_HEIGHTS, mapLayout } from "@/components/ui/control-geometry";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -28,10 +29,16 @@ import {
 } from "@/constants/layout";
 
 export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
+/**
+ * `action` tightens vertical and trailing insets around `size="sm"` pill controls and uses a
+ * concentric corner radius (`controlHeight / 2 + inset`) so buttons nest evenly in the shell.
+ */
+export type ToastLayout = "default" | "action";
 
 export interface ToastShowOptions {
   icon?: ReactNode;
   variant?: ToastVariant;
+  layout?: ToastLayout;
   durationMs?: number | null;
   nativeAndroid?: boolean;
   testID?: string;
@@ -45,6 +52,7 @@ export interface ToastState {
   nativeMessage: string | null;
   icon?: ReactNode;
   variant: ToastVariant;
+  layout?: ToastLayout;
   durationMs: number | null;
   testID?: string;
   onDismiss?: () => void;
@@ -73,6 +81,11 @@ const TOAST_MAX_WIDTH = 480;
 /** How long a toast takes to fade in or out. */
 export const TOAST_FADE_MS = 140;
 const SIDEBAR_TOAST_INSET = SPACING[2];
+const ACTION_TOAST_INSET = SPACING[1.5];
+const ACTION_TOAST_RADIUS = mapLayout(
+  CONTROL_HEIGHTS.sm,
+  (height) => height / 2 + ACTION_TOAST_INSET,
+);
 const toastEntering = FadeIn.duration(TOAST_FADE_MS);
 const toastExiting = FadeOut.duration(TOAST_FADE_MS);
 const ThemedCheckCircle = withUnistyles(CheckCircle2);
@@ -136,6 +149,7 @@ export function useToastHost(): {
         nativeMessage,
         icon: options?.icon,
         variant,
+        layout: options?.layout,
         durationMs,
         testID: options?.testID,
         onDismiss: options?.onDismiss,
@@ -310,6 +324,7 @@ function ToastCard({
       onPointerLeave={onPointerLeave}
       style={[
         styles.toast,
+        toast.layout === "action" ? styles.toastAction : null,
         toast.variant === "info" ? styles.toastInfo : null,
         toast.variant === "warning" ? styles.toastWarning : null,
         toast.variant === "error" ? styles.toastError : null,
@@ -371,6 +386,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     ...theme.shadow.md,
+  },
+  toastAction: {
+    borderRadius: ACTION_TOAST_RADIUS,
+    paddingVertical: theme.spacing[1.5],
+    paddingLeft: theme.spacing[3.5],
+    paddingRight: theme.spacing[1.5],
   },
   toastInfo: {
     borderColor: theme.colors.palette.blue[300],

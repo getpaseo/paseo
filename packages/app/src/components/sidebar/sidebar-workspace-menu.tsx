@@ -4,6 +4,7 @@ import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
+  CheckSquare,
   Circle,
   CircleCheck,
   Copy,
@@ -56,6 +57,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCheckSquare = withUnistyles(CheckSquare);
 const ThemedCircle = withUnistyles(Circle);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
@@ -69,6 +71,7 @@ const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
 const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
+const selectLeadingIcon = <ThemedCheckSquare size={14} uniProps={foregroundMutedColorMapping} />;
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
@@ -124,6 +127,7 @@ export interface SidebarWorkspaceMenuProps {
   onRename?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
+  onSelectWorkspace?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -172,6 +176,7 @@ function SidebarWorkspaceMenuItems({
   onRename,
   onMarkAsRead,
   onMarkAsUnread,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -267,6 +272,16 @@ function SidebarWorkspaceMenuItems({
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
       />
+      {onSelectWorkspace ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-select-${workspaceKey}`}
+          leading={selectLeadingIcon}
+          onSelect={onSelectWorkspace}
+        >
+          {t("sidebar.workspace.actions.select")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -294,6 +309,7 @@ export function SidebarWorkspaceMenu({
   onRename,
   onMarkAsRead,
   onMarkAsUnread,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -340,6 +356,7 @@ export function SidebarWorkspaceMenu({
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
           onMarkAsUnread={onMarkAsUnread}
+          onSelectWorkspace={onSelectWorkspace}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -373,6 +390,7 @@ export function SidebarWorkspaceContextMenu({
   onRename,
   onMarkAsRead,
   onMarkAsUnread,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -454,6 +472,7 @@ export function SidebarWorkspaceContextMenu({
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
           onMarkAsUnread={onMarkAsUnread}
+          onSelectWorkspace={onSelectWorkspace}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}

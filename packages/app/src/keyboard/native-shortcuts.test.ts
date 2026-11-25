@@ -269,4 +269,80 @@ describe("hardware source adapter", () => {
     expect(claimed).toEqual([]);
     releaseFinal();
   });
+
+  it("forwards native blur events and unsubscribes on detach", async () => {
+    const { createHardwareKeyboardSource } = await import("./internal/sources/native");
+    const blurListeners = new Set<() => void>();
+    let blurCalls = 0;
+    const detach = createHardwareKeyboardSource({
+      subscribe: () => () => {},
+      subscribeBlur(listener) {
+        blurListeners.add(listener);
+        return () => {
+          blurListeners.delete(listener);
+        };
+      },
+      setOverlayKeys() {},
+      setClaimedShortcuts() {},
+    }).attach({
+      keyDown() {},
+      keyUp() {},
+      blur() {
+        blurCalls += 1;
+      },
+      commandCenterOpen: () => false,
+      subscribeCommandCenter: () => () => {},
+    });
+    for (const listener of blurListeners) listener();
+    expect(blurCalls).toBe(1);
+    detach();
+    expect(blurListeners.size).toBe(0);
+  });
+});
+
+describe("shift modifier tracking", () => {
+  it("tracks left/right Shift holds, self-heals on non-shifted keys, and resets on blur", async () => {
+    const { createShiftModifierTracker } = await import("./internal/shift-modifier");
+    const tracker = createShiftModifierTracker();
+    expect(tracker.isDown()).toBe(false);
+
+    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
+    expect(tracker.isDown()).toBe(true);
+
+    tracker.handleKeyDown({ key: "Shift", code: "ShiftRight", shiftKey: true });
+    tracker.handleKeyUp({ key: "Shift", code: "ShiftLeft", shiftKey: true });
+    expect(tracker.isDown()).toBe(true);
+
+    tracker.handleKeyUp({ key: "Shift", code: "ShiftRight", shiftKey: false });
+    expect(tracker.isDown()).toBe(false);
+
+    // Self-heals if a Shift key-up was swallowed by the OS.
+    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
+    expect(tracker.isDown()).toBe(true);
+    tracker.handleKeyDown({ key: "a", code: "KeyA", shiftKey: false });
+    expect(tracker.isDown()).toBe(false);
+
+    // Clears on blur / backgrounding.
+    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
+    expect(tracker.isDown()).toBe(true);
+    tracker.reset();
+    expect(tracker.isDown()).toBe(false);
+  });
+
+  it("exposes live hardware Shift state through isShiftKeyDown", async () => {
+    const { shiftModifier } = await import("./internal/shift-modifier");
+    const { isShiftKeyDown } = await import("./index");
+    try {
+      shiftModifier.reset();
+      expect(isShiftKeyDown()).toBe(false);
+
+      shiftModifier.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
+      expect(isShiftKeyDown()).toBe(true);
+
+      shiftModifier.handleKeyUp({ key: "Shift", code: "ShiftLeft", shiftKey: false });
+      expect(isShiftKeyDown()).toBe(false);
+    } finally {
+      shiftModifier.reset();
+    }
+  });
 });
