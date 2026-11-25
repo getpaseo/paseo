@@ -26,6 +26,21 @@ async function centerMockup(mockup: Locator) {
   );
 }
 
+async function finishPanelSwap(page: Page, mockup: Locator, outgoingPanel: Locator) {
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(250);
+      // Playwright's clock drives JavaScript frames. Native animations use the document timeline.
+      await mockup.evaluate((element) => {
+        for (const animation of element.getAnimations({ subtree: true })) {
+          if (Number.isFinite(animation.effect?.getComputedTiming().endTime)) animation.finish();
+        }
+      });
+      return outgoingPanel.count();
+    })
+    .toBe(0);
+}
+
 async function viewPhones(page: Page) {
   await page.getByRole("img", { name: "Paseo agent chat", exact: true }).scrollIntoViewIfNeeded();
 }
@@ -191,13 +206,7 @@ test("the plugins scene installs the panel, then changes it on request", async (
   // Installing the plugin swaps the docked panel for the one the agent built.
   await page.clock.runFor(5500);
   await expect(pluginPanel).toBeVisible();
-  // The old panel stays mounted during the crossfade. Advance its exit after the new panel renders.
-  await expect
-    .poll(async () => {
-      await page.clock.runFor(250);
-      return changesPanel.count();
-    })
-    .toBe(0);
+  await finishPanelSwap(page, mockup, changesPanel);
   await expect(failingCheck).toHaveCount(0);
 
   // The second request reloads the plugin and the open panel lists the failing check.
