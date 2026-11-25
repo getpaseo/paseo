@@ -6,6 +6,7 @@ import type {
   EditorTargetIcon,
   EditorTargetRuntime,
 } from "./target.js";
+import { antigravityTarget } from "./targets/antigravity.js";
 import { cursorTarget } from "./targets/cursor.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
@@ -240,6 +241,41 @@ describe("editor target registry", () => {
         command: "C:/Tools/PyCharm/bin/pycharm64.exe",
         args: ["--line", "6", "C:/repo", "C:/repo/src/app.py"],
       },
+    ]);
+  });
+
+  it("never mistakes the agy CLI agent or Antigravity.app for the Antigravity IDE", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installCommand("agy");
+    runtime.installMacApplication("Antigravity");
+
+    expect(await antigravityTarget.isInstalled(runtime)).toBe(false);
+  });
+
+  it("launches Antigravity through the IDE's bundled antigravity-ide command", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    const bundled = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
+    runtime.installCommand("agy");
+    runtime.installCommand(bundled, bundled);
+
+    await antigravityTarget.launch(
+      { workspacePath: "/repo", filePath: "/repo/a.ts", line: 3 },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      { command: bundled, args: ["/repo", "--goto", "/repo/a.ts:3"] },
+    ]);
+  });
+
+  it("opens the Antigravity IDE application when no launcher command resolves", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installMacApplication("Antigravity IDE");
+
+    await antigravityTarget.launch({ workspacePath: "/repo" }, runtime);
+
+    expect(runtime.openedMacApplications).toEqual([
+      { applicationName: "Antigravity IDE", paths: ["/repo"] },
     ]);
   });
 
