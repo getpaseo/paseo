@@ -6,7 +6,6 @@ import {
   validatePort,
   validateSshHost,
 } from "@getpaseo/protocol/ssh-transport";
-import { BrowserWindow } from "electron";
 import { WebSocket, type RawData } from "ws";
 
 export interface LocalTransportTarget {
@@ -81,12 +80,6 @@ export interface LocalTransportManager {
 const WS_ENDPOINT_PATH = "/ws";
 const SSH_STDERR_LIMIT = 8192;
 export const LOCAL_TRANSPORT_SETUP_TIMEOUT_MS = 30_000;
-
-function emitTransportEvent(payload: TransportEventPayload): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send("paseo:event:local-daemon-transport-event", payload);
-  }
-}
 
 /**
  * Build a WebSocket URL that connects through a Unix domain socket or Windows
@@ -304,7 +297,7 @@ export function createLocalTransportManager(
     try {
       deps.emitEvent(payload);
     } catch {
-      // A renderer may disappear while the main process is broadcasting an event.
+      // A renderer may disappear while the main process is delivering an event.
     }
   }
 
@@ -540,33 +533,114 @@ export function createLocalTransportManager(
   return { open, send, close, closeAll };
 }
 
-const localTransportManager = createLocalTransportManager({
-  resolveEndpoint: resolveTransportEndpoint,
-  createWebSocket: (url) => new WebSocket(url),
-  scheduleTimeout: (callback, delayMs) => {
-    const timeout = setTimeout(callback, delayMs);
-    timeout.unref();
-    return () => clearTimeout(timeout);
-  },
-  emitEvent: emitTransportEvent,
-});
-
-export function openLocalTransportSession(rawInput: unknown): void {
-  localTransportManager.open(rawInput);
+export interface LocalTransportOwner {
+  isDestroyed(): boolean;
+  send(channel: string, payload: TransportEventPayload): void;
+  once(event: "destroyed" | "render-process-gone" | "did-navigate", listener: () => void): unknown;
+  removeListener(
+    event: "destroyed" | "render-process-gone" | "did-navigate",
+    listener: () => void,
+  ): unknown;
 }
 
-export async function sendLocalTransportMessage(input: {
-  sessionId: string;
-  text?: string;
-  binaryBase64?: string;
-}): Promise<void> {
-  await localTransportManager.send(input);
+/** The owner comes from the IPC event, never from renderer-provided arguments. */
+export function createOwnedLocalTransportRegistry(
+  createManager: (emitEvent: (payload: TransportEventPayload) => void) => LocalTransportManager,
+) {
+  const owners = new Map<
+    LocalTransportOwner,
+    { manager: LocalTransportManager; dispose: () => void }
+  >();
+
+  function requireOwner(owner: LocalTransportOwner | undefined): LocalTransportOwner {
+    if (!owner || owner.isDestroyed()) {
+      throw new Error("Local transport requires a live renderer owner.");
+    }
+    return owner;
+  }
+
+  function open(ownerInput: LocalTransportOwner | undefined, input: unknown): void {
+    const owner = requireOwner(ownerInput);
+    let entry = owners.get(owner);
+    if (!entry) {
+      const dispose = () => {
+        if (owners.get(owner) !== entry) return;
+        owners.delete(owner);
+        owner.removeListener("destroyed", dispose);
+        owner.removeListener("render-process-gone", dispose);
+        owner.removeListener("did-navigate", dispose);
+        entry?.manager.closeAll();
+      };
+      const manager = createManager((payload) => {
+        if (!owner.isDestroyed() && owners.get(owner) === entry) {
+          owner.send("paseo:event:local-daemon-transport-event", payload);
+        }
+      });
+      entry = { manager, dispose };
+      owners.set(owner, entry);
+      owner.once("destroyed", dispose);
+      owner.once("render-process-gone", dispose);
+      // Main-document commit replaces the renderer context. SPA, subframe, and
+      // cancelled navigation keep the existing context and sessions.
+      owner.once("did-navigate", dispose);
+    }
+    entry.manager.open(input);
+  }
+
+  async function send(
+    ownerInput: LocalTransportOwner | undefined,
+    input: { sessionId: string; text?: string; binaryBase64?: string },
+  ): Promise<void> {
+    const entry = owners.get(requireOwner(ownerInput));
+    if (!entry) throw new Error(`Local transport session not found: ${input.sessionId}`);
+    await entry.manager.send(input);
+  }
+
+  function close(ownerInput: LocalTransportOwner | undefined, sessionId: string): void {
+    owners.get(requireOwner(ownerInput))?.manager.close(sessionId);
+  }
+
+  function closeAll(): void {
+    for (const entry of owners.values()) entry.dispose();
+  }
+
+  return { open, send, close, closeAll };
 }
 
-export function closeLocalTransportSession(sessionId: string): void {
-  localTransportManager.close(sessionId);
+const localTransportRegistry = createOwnedLocalTransportRegistry((emitEvent) =>
+  createLocalTransportManager({
+    resolveEndpoint: resolveTransportEndpoint,
+    createWebSocket: (url) => new WebSocket(url),
+    scheduleTimeout: (callback, delayMs) => {
+      const timeout = setTimeout(callback, delayMs);
+      timeout.unref();
+      return () => clearTimeout(timeout);
+    },
+    emitEvent,
+  }),
+);
+
+export function openLocalTransportSession(
+  rawInput: unknown,
+  owner: LocalTransportOwner | undefined,
+): void {
+  localTransportRegistry.open(owner, rawInput);
+}
+
+export async function sendLocalTransportMessage(
+  input: { sessionId: string; text?: string; binaryBase64?: string },
+  owner: LocalTransportOwner | undefined,
+): Promise<void> {
+  await localTransportRegistry.send(owner, input);
+}
+
+export function closeLocalTransportSession(
+  sessionId: string,
+  owner: LocalTransportOwner | undefined,
+): void {
+  localTransportRegistry.close(owner, sessionId);
 }
 
 export function closeAllTransportSessions(): void {
-  localTransportManager.closeAll();
+  localTransportRegistry.closeAll();
 }
