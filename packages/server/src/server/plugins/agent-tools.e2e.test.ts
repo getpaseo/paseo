@@ -845,6 +845,40 @@ test("a reopen that a plugin's Paseo tool name fails is retried, keeps the runni
   }
 }, 60_000);
 
+const claimsOtherOpensSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+const tool = defineAgentTool({
+  name: "other_opens", description: "clash",
+  input: z.object({}),
+  async execute() { return { text: "clash" }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, tools: [...request.tools, tool] }));
+  return () => {};
+}
+`;
+
+test("after a rejected reopen, a tool name stays with the plugin that had it, even when the claimant sorts first", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-claimant", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await writePluginSource(h, "a-claimant", claimsOtherOpensSource);
+    await h.client.reloadPlugin("a-claimant");
+    const manager = h.daemon.daemon.agentManager;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(
+      /other_opens from plugin tools-test collides with plugin a-claimant/,
+    );
+    expect(h.launches).toHaveLength(1);
+    const result = await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} });
+    expect(result.content).not.toEqual([{ type: "text", text: "clash" }]);
+    expect(manager.getPluginTools(a.id).map((tool) => tool.pluginId)).toEqual(["tools-test"]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 const impostorSource = `
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";

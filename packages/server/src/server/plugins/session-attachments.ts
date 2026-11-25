@@ -222,7 +222,13 @@ export class SessionAttachments {
       replayed.push({ contribution, plugin });
       previous = contribution.output;
     }
-    await this.dropCollidingTools(agentId, contributions, replayed, options);
+    await this.dropCollidingTools({
+      agentId,
+      owners: toolOwners(attachment.contributions),
+      contributions,
+      replayed,
+      options,
+    });
     if (this.attachments.get(agentId) !== attachment) {
       // The session closed during the replay. Its close detached every plugin before the replay attached again.
       for (const { plugin } of replayed) plugin.detach(agentId);
@@ -260,21 +266,35 @@ export class SessionAttachments {
     }
   }
 
-  /** A replayed plugin whose tool takes a name already in use keeps no tools; the reopen reports the collision. */
-  private async dropCollidingTools(
-    agentId: string,
-    contributions: Contribution[],
-    replayed: { contribution: Contribution }[],
-    options: PluginSessionRefreshOptions,
-  ): Promise<void> {
+  /**
+   * A replayed plugin whose tool takes a name already in use keeps no tools; the reopen reports the collision. A name
+   * stays with the plugin that has it in the session's record, whatever the plugin order.
+   */
+  private async dropCollidingTools({
+    agentId,
+    owners,
+    contributions,
+    replayed,
+    options,
+  }: CollisionCheck): Promise<void> {
     if (replayed.every(({ contribution }) => contribution.tools.length === 0)) return;
     const changed = new Set(replayed.map(({ contribution }) => contribution));
     const taken = new Set(await options.reservedToolNames());
     for (const contribution of contributions) {
       if (!changed.has(contribution)) for (const tool of contribution.tools) taken.add(tool.name);
     }
+    // The previous owner keeps a name only while it still returns that tool.
+    const ownedElsewhere = (contribution: Contribution, name: string) => {
+      const owner = owners.get(name);
+      if (owner === undefined || owner === contribution.pluginId) return false;
+      return contributions.some(
+        (other) => other.pluginId === owner && other.tools.some((tool) => tool.name === name),
+      );
+    };
     for (const contribution of changed) {
-      const conflict = contribution.tools.find((tool) => taken.has(tool.name));
+      const conflict = contribution.tools.find(
+        (tool) => taken.has(tool.name) || ownedElsewhere(contribution, tool.name),
+      );
       if (conflict) {
         this.logger.warn(
           { agentId, pluginId: contribution.pluginId, tool: conflict.name },
@@ -301,6 +321,23 @@ export class SessionAttachments {
     });
     return next;
   }
+}
+
+interface CollisionCheck {
+  agentId: string;
+  /** Which plugin has each tool name in the session's record before this refresh. */
+  owners: ReadonlyMap<string, string>;
+  contributions: Contribution[];
+  replayed: { contribution: Contribution }[];
+  options: PluginSessionRefreshOptions;
+}
+
+function toolOwners(contributions: readonly Contribution[]): Map<string, string> {
+  return new Map(
+    contributions.flatMap((contribution) =>
+      contribution.tools.map((tool) => [tool.name, contribution.pluginId] as const),
+    ),
+  );
 }
 
 /** Whether a reopen with the current contributions would launch the provider differently from the running session. */
