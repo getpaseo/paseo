@@ -14,6 +14,7 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import {
   archiveWorkspacesWithUndo,
+  hasUndoableWorkspaceArchive,
   supportsWorkspaceArchiveUndo,
   type UndoableWorkspaceArchiveClient,
 } from "@/workspace/archive-undo";
@@ -31,6 +32,7 @@ export interface BulkArchiveWorkspacesDeps {
   confirmRiskyBulkArchive: typeof confirmRiskyBulkWorktreeArchive;
   archiveWithUndo: typeof archiveWorkspacesWithUndo;
   archiveWithoutUndo: typeof archiveWorkspaceOptimistically;
+  hasActiveUndo: () => boolean;
   purgeWorkspaceState: (workspace: WorkspaceArchiveTarget) => void;
   redirectActiveWorkspace: (workspace: WorkspaceArchiveTarget) => void;
 }
@@ -52,6 +54,7 @@ export function createDefaultBulkArchiveDeps(
     confirmRiskyBulkArchive: confirmRiskyBulkWorktreeArchive,
     archiveWithUndo: archiveWorkspacesWithUndo,
     archiveWithoutUndo: archiveWorkspaceOptimistically,
+    hasActiveUndo: hasUndoableWorkspaceArchive,
     purgeWorkspaceState: defaultPurgeWorkspaceState,
     redirectActiveWorkspace: (workspace) => {
       redirectIfArchivingActiveWorkspace({
@@ -79,10 +82,11 @@ interface ResolvedWorkspaceTarget {
 export async function archiveSelectedWorkspaces(input: {
   workspaces: readonly SidebarWorkspaceEntry[];
   toast: ToastApi;
+  fallbackErrorToast?: ToastApi;
   onArchiveStarted: () => void;
   deps: BulkArchiveWorkspacesDeps;
 }): Promise<boolean> {
-  const { workspaces, toast, onArchiveStarted, deps } = input;
+  const { workspaces, toast, fallbackErrorToast, onArchiveStarted, deps } = input;
   if (workspaces.length === 0) return false;
 
   const resolved: ResolvedWorkspaceTarget[] = [];
@@ -182,7 +186,10 @@ export async function archiveSelectedWorkspaces(input: {
   if (failures.length > 0) {
     const errorMessage = formatArchiveFailureMessage(failures);
     if (!showPartialFailure(errorMessage)) {
-      toast.error(errorMessage);
+      // If a newer batch now owns the sidebar Undo toast, surface this older failure on the
+      // app-level toast instead of displacing the active Undo window and purging its layouts.
+      const errorToast = deps.hasActiveUndo() ? (fallbackErrorToast ?? toast) : toast;
+      errorToast.error(errorMessage);
     }
   }
 

@@ -82,6 +82,7 @@ describe("archiveSelectedWorkspaces", () => {
         return { failures: [], showPartialFailure: () => false };
       },
       archiveWithoutUndo: async () => "archived",
+      hasActiveUndo: () => false,
       purgeWorkspaceState: vi.fn(),
       redirectActiveWorkspace: (workspace) => {
         order.push(`redirect:${workspace.workspaceId}`);
@@ -125,6 +126,7 @@ describe("archiveSelectedWorkspaces", () => {
         confirmRiskyBulkArchive,
         archiveWithUndo,
         archiveWithoutUndo: async () => "archived",
+        hasActiveUndo: () => false,
         purgeWorkspaceState: vi.fn(),
         redirectActiveWorkspace: vi.fn(),
       },
@@ -162,6 +164,7 @@ describe("archiveSelectedWorkspaces", () => {
         confirmRiskyBulkArchive: vi.fn(),
         archiveWithUndo: vi.fn(),
         archiveWithoutUndo: vi.fn(),
+        hasActiveUndo: () => false,
         purgeWorkspaceState: vi.fn(),
         redirectActiveWorkspace: vi.fn(),
       },
@@ -193,6 +196,7 @@ describe("archiveSelectedWorkspaces", () => {
           showPartialFailure: () => false,
         }),
         archiveWithoutUndo: vi.fn(),
+        hasActiveUndo: () => false,
         purgeWorkspaceState: vi.fn(),
         redirectActiveWorkspace: vi.fn(),
       },
@@ -226,6 +230,7 @@ describe("archiveSelectedWorkspaces", () => {
           },
         }),
         archiveWithoutUndo: vi.fn(),
+        hasActiveUndo: () => false,
         purgeWorkspaceState: vi.fn(),
         redirectActiveWorkspace: vi.fn(),
       },
@@ -234,5 +239,42 @@ describe("archiveSelectedWorkspaces", () => {
     expect(ok).toBe(false);
     expect(partialErrors).toEqual(["Host offline"]);
     expect(errors).toEqual([]);
+  });
+
+  it("routes a late failure from a superseded batch to fallbackErrorToast so a newer batch keeps its Undo", async () => {
+    const client = createFakeClient();
+    const sidebar = createFakeToast();
+    const app = createFakeToast();
+
+    const ok = await archiveSelectedWorkspaces({
+      workspaces: [makeEntry({ workspaceId: "w1" })],
+      toast: sidebar.toast,
+      fallbackErrorToast: app.toast,
+      onArchiveStarted: vi.fn(),
+      deps: {
+        getClient: () => client,
+        supportsUndo: () => true,
+        readWorktreeRisk: vi.fn(),
+        confirmRiskyBulkArchive: vi.fn(),
+        archiveWithUndo: async () => ({
+          failures: [
+            {
+              workspace: { serverId: "srv", workspaceId: "w1" },
+              error: new Error("Host timed out"),
+            },
+          ],
+          // This batch's own undo window was closed when a newer batch superseded it.
+          showPartialFailure: () => false,
+        }),
+        archiveWithoutUndo: vi.fn(),
+        hasActiveUndo: () => true,
+        purgeWorkspaceState: vi.fn(),
+        redirectActiveWorkspace: vi.fn(),
+      },
+    });
+
+    expect(ok).toBe(false);
+    expect(sidebar.errors).toEqual([]);
+    expect(app.errors).toEqual(["Host timed out"]);
   });
 });

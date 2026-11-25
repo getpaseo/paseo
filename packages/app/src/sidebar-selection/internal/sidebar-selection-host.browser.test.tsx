@@ -4,7 +4,8 @@ import { I18nextProvider } from "react-i18next";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { afterEach, describe, expect, it } from "vitest";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
-import { ToastProvider } from "@/contexts/toast-context";
+import { ToastProvider, useToast } from "@/contexts/toast-context";
+import type { ToastApi } from "@/components/toast-host";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { i18n } from "@/i18n/i18next";
 import { dispatchTopOverlayKeyDown } from "@/keyboard";
@@ -56,6 +57,7 @@ function makeEntry(id: string): SidebarWorkspaceEntry {
 }
 
 let capturedDispatcher: ReturnType<typeof useKeyboardActionDispatcher> | null = null;
+let capturedSidebarToast: ToastApi | null = null;
 let fallbackArchiveCount = 0;
 
 function FallbackArchiveProbe() {
@@ -70,6 +72,11 @@ function FallbackArchiveProbe() {
       return true;
     },
   });
+  return null;
+}
+
+function SidebarToastProbe() {
+  capturedSidebarToast = useToast();
   return null;
 }
 
@@ -89,6 +96,7 @@ function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
             <FallbackArchiveProbe />
             <ToastProvider>
               <SidebarToastRegion active>
+                <SidebarToastProbe />
                 <SidebarSelectionHost active workspaceEntriesByKey={entriesByKey} />
               </SidebarToastRegion>
             </ToastProvider>
@@ -101,6 +109,7 @@ function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
 
 afterEach(() => {
   capturedDispatcher = null;
+  capturedSidebarToast = null;
   fallbackArchiveCount = 0;
   act(() => {
     useSidebarSelectionStore.getState().exit();
@@ -218,5 +227,35 @@ describe("SidebarSelectionHost", () => {
       );
     });
     expect(fallbackArchiveCount).toBe(1);
+  });
+
+  it("keeps the selection bar visible when an Undo toast is already displayed in the sidebar", () => {
+    mountHost([makeEntry("a"), makeEntry("b")]);
+
+    let dismissUndo: (() => void) | undefined;
+    act(() => {
+      dismissUndo = capturedSidebarToast?.show("Workspace archived", {
+        durationMs: 6000,
+        testID: "workspace-archived-toast",
+      });
+    });
+    expect(document.querySelector('[data-testid="workspace-archived-toast"]')).not.toBeNull();
+
+    act(() => {
+      useSidebarSelectionStore.getState().enter("srv:a");
+    });
+
+    // Both the Undo toast and the selection bar (count, Archive, Exit) must remain visible.
+    expect(document.querySelector('[data-testid="workspace-archived-toast"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-selection-toast"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
+      "1 selected",
+    );
+    expect(document.querySelector('[data-testid="workspace-selection-archive"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-selection-exit"]')).not.toBeNull();
+
+    act(() => {
+      dismissUndo?.();
+    });
   });
 });

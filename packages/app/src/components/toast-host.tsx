@@ -177,11 +177,14 @@ export function useToastHost(): {
 
 export function ToastViewport({
   toast,
+  persistentToast = null,
   onDismiss,
   placement = "app-shell",
   onBottomCoverageChange,
 }: {
   toast: ToastState | null;
+  /** Sidebar placement: persistent bar (such as select mode) that stays visible below transient toasts. */
+  persistentToast?: ToastState | null;
   /** Called with the ID of the toast that timed out. */
   onDismiss: (id: number) => void;
   placement?: ToastViewportPlacement;
@@ -246,7 +249,10 @@ export function ToastViewport({
 
   const handleSidebarLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      onBottomCoverageChange?.(event.nativeEvent.layout.height + SIDEBAR_TOAST_INSET);
+      const height = event.nativeEvent.layout.height;
+      if (height > 0) {
+        onBottomCoverageChange?.(height + SIDEBAR_TOAST_INSET);
+      }
     },
     [onBottomCoverageChange],
   );
@@ -257,28 +263,41 @@ export function ToastViewport({
   const topOffset =
     placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
+  if (placement === "sidebar") {
+    return (
+      <View
+        style={animatedStyles.sidebarContainer}
+        pointerEvents="box-none"
+        collapsable={false}
+        onLayout={handleSidebarLayout}
+      >
+        <SidebarToastSlot
+          toast={toast}
+          onPointerEnter={pauseDismiss}
+          onPointerLeave={resumeDismiss}
+        />
+        <SidebarToastSlot
+          toast={persistentToast}
+          onPointerEnter={noopDismiss}
+          onPointerLeave={noopDismiss}
+        />
+      </View>
+    );
+  }
+
   // Keep the bottom anchor and its contents together while the native exit retains the view.
   const content = toast ? (
     <Animated.View
       entering={toastEntering}
       exiting={toastExiting}
-      style={
-        placement === "sidebar"
-          ? animatedStyles.sidebarContainer
-          : [
-              animatedStyles.container,
-              { top: topOffset + (placement === "app-shell" ? SPACING[2] : SPACING[3]) },
-            ]
-      }
+      style={[
+        animatedStyles.container,
+        { top: topOffset + (placement === "app-shell" ? SPACING[2] : SPACING[3]) },
+      ]}
       pointerEvents="box-none"
       collapsable={false}
-      onLayout={placement === "sidebar" ? handleSidebarLayout : undefined}
     >
-      <View
-        style={placement === "sidebar" ? styles.sidebarWidthBoundary : styles.widthBoundary}
-        pointerEvents="box-none"
-        collapsable={false}
-      >
+      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
         <View
           style={animatedStyles.surface}
           testID={toast.testID ?? "app-toast"}
@@ -295,6 +314,35 @@ export function ToastViewport({
   }
 
   return placement === "panel" ? <FloatingHeaderOverlay>{content}</FloatingHeaderOverlay> : content;
+}
+
+function SidebarToastSlot({
+  toast,
+  onPointerEnter,
+  onPointerLeave,
+}: {
+  toast: ToastState | null;
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
+}) {
+  if (!toast) return null;
+  return (
+    <Animated.View
+      entering={toastEntering}
+      exiting={toastExiting}
+      style={styles.sidebarWidthBoundary}
+      pointerEvents="box-none"
+      collapsable={false}
+    >
+      <View
+        style={animatedStyles.surface}
+        testID={toast.testID ?? "app-toast"}
+        accessibilityRole="alert"
+      >
+        <ToastCard toast={toast} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave} />
+      </View>
+    </Animated.View>
+  );
 }
 
 function ToastCard({
@@ -359,6 +407,7 @@ const animatedStyles = NativeStyleSheet.create({
     bottom: SIDEBAR_TOAST_INSET,
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
+    gap: SIDEBAR_TOAST_INSET,
   },
   surface: { alignSelf: "center", maxWidth: "100%" },
 });

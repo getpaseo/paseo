@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useSidebarPersistentToast } from "@/components/sidebar/sidebar-toast-region";
+import {
+  useSidebarAppToast,
+  useSidebarPersistentToast,
+} from "@/components/sidebar/sidebar-toast-region";
 import type { ToastState } from "@/components/toast-host";
 import { useToast } from "@/contexts/toast-context";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -32,6 +35,7 @@ export function SidebarSelectionHost({
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
 }): null {
   const toast = useToast();
+  const appToast = useSidebarAppToast();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const selectionMode = useIsSidebarSelectionMode();
   const selectedCount = useSidebarSelectionCount();
@@ -84,6 +88,7 @@ export function SidebarSelectionHost({
     void archiveSelectedWorkspaces({
       workspaces: entries,
       toast,
+      fallbackErrorToast: appToast,
       onArchiveStarted: () => {
         useSidebarSelectionStore.getState().exit();
       },
@@ -95,7 +100,7 @@ export function SidebarSelectionHost({
         current.setArchiving(false);
       }
     });
-  }, [toast]);
+  }, [appToast, toast]);
 
   useOverlayRegistration({
     keys: ESCAPE_OVERLAY_KEYS,

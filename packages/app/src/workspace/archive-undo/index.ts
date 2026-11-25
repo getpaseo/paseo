@@ -1,6 +1,7 @@
 export {
   archiveWorkspaceWithUndo,
   archiveWorkspacesWithUndo,
+  hasUndoableWorkspaceArchive,
   undoLatestWorkspaceArchive,
   type UndoableWorkspaceArchiveClient,
   type UndoableWorkspaceArchiveEntryInput,
