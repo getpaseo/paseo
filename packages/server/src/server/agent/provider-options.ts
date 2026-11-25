@@ -37,6 +37,18 @@ export class ToolPolicyUnsupportedError extends Error {
   }
 }
 
+export class LaunchWrapUnsupportedError extends Error {
+  readonly code = "launch_wrap_unsupported" as const;
+
+  constructor(
+    readonly provider: string,
+    reason?: string,
+  ) {
+    super(reason ?? `Provider '${provider}' cannot run a session behind a launch wrap`);
+    this.name = "LaunchWrapUnsupportedError";
+  }
+}
+
 export function validateProviderOptions<T extends ProviderOptions>(
   provider: string,
   schema: z.ZodType<T>,

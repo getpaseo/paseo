@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
+import type { LaunchWrap } from "../../../../utils/launch-wrap.js";
 import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
@@ -36,10 +37,16 @@ export interface OpenCodeServerAcquisition {
   release: () => Promise<void>;
 }
 
+/** How a session's own server starts: the session's environment, behind the session's wrap. */
+export interface OpenCodeDedicatedLaunch {
+  env: Record<string, string>;
+  wrap?: LaunchWrap;
+}
+
 export interface OpenCodeServerManagerLike {
   acquireCurrent(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
   acquireNew(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
-  acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
+  acquireDedicated(launch: OpenCodeDedicatedLaunch): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
   shutdown(): Promise<void>;
 }
@@ -180,8 +187,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return this.acquireServer(server);
   }
 
-  async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startServer({ launchEnv: env, epoch: this.epoch });
+  async acquireDedicated(launch: OpenCodeDedicatedLaunch): Promise<OpenCodeServerAcquisition> {
+    const server = await this.startServer({ launch, epoch: this.epoch });
     server.retired = true;
     this.retiredServers.add(server);
     const acquisition = this.acquireServer(server);
@@ -325,7 +332,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private startServer(options: {
-    launchEnv?: Record<string, string>;
+    launch?: OpenCodeDedicatedLaunch;
     epoch: number;
   }): Promise<OpenCodeServerGeneration> {
     const start = this.spawnServer(options);
@@ -336,10 +343,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async spawnServer(options: {
-    launchEnv?: Record<string, string>;
+    launch?: OpenCodeDedicatedLaunch;
     epoch: number;
   }): Promise<OpenCodeServerGeneration> {
-    const { launchEnv } = options;
+    const launchEnv = options.launch?.env;
     const port = await this.portAllocator();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
@@ -370,6 +377,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       baseEnv: environment,
+      wrap: options.launch?.wrap,
     });
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,
@@ -404,7 +412,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       managedProcessRecord,
     };
     this.logger.info(
-      { ...generationLogContext(server), dedicated: launchEnv !== undefined },
+      { ...generationLogContext(server), dedicated: options.launch !== undefined },
       "OpenCode server generation started",
     );
     void managedProcessRecord.then((record) => {

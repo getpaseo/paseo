@@ -223,6 +223,45 @@ describe("paseo worktree manager", () => {
     }).toEqual({ exitCode: 0, stdoutLength: limit, stderrLength: limit });
   });
 
+  it("stops teardown at its deadline while a plugin hook is pending, without starting the command", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: `node -e "require('fs').writeFileSync('ran.txt', 'ran')"`,
+          teardownTimeoutMs: 100,
+        },
+      }),
+    );
+    let hookDone!: () => void;
+    const hookSettled = new Promise<void>((resolve) => {
+      hookDone = resolve;
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      runWorktreeTeardownCommands({
+        worktreePath: repoDir,
+        repoRootPath: repoDir,
+        branchName: "main",
+        prepareCommand: async ({ env }) => {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          hookDone();
+          return { env };
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "WorktreeTeardownError",
+      message: `Worktree teardown command failed: node -e "require('fs').writeFileSync('ran.txt', 'ran')"\nTimed out after 0.1s`,
+      results: [],
+    });
+    expect(Date.now() - startedAt).toBeLessThan(900);
+    // The hook answering after the deadline does not start the command.
+    await hookSettled;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(existsSync(join(repoDir, "ran.txt"))).toBe(false);
+  });
+
   it("rejects paths that are not under the paseo worktrees root", async () => {
     const outsidePath = join(tempDir, "outside-paseo-home");
     mkdirSync(outsidePath, { recursive: true });

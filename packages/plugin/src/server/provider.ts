@@ -12,6 +12,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.can_stop_runtime",
   "session.archive",
   "session.configure",
+  "session.launch_wrap",
   "session.list",
   "session.metrics",
   "session.persistence",
@@ -34,6 +35,12 @@ export interface ProviderRegistration {
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
   command?: readonly [string, ...string[]];
+  /**
+   * Sessions can run behind an `agent.open.before` wrap: the connection offers `session.launch_wrap`
+   * and spawns each session as `[...config.wrap, command, ...args]`. Paseo publishes it on the
+   * provider snapshot before the first connection.
+   */
+  launchWrap?: boolean;
   status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
@@ -212,6 +219,8 @@ export interface ProviderSessionConfig {
   providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
+  /** Spawn the session as `[...wrap, command, ...args]`. Sent only with `session.launch_wrap`. */
+  wrap?: readonly [string, ...string[]];
 }
 
 export interface ProviderConfigChanges {
@@ -804,6 +813,7 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
       const capabilities: ProviderCapability[] = [];
       if (input.persistence) capabilities.push("session.persistence");
       if (input.config.toolPolicy) capabilities.push("permission.tool_policy");
+      if (input.config.wrap) capabilities.push("session.launch_wrap");
       return capabilities;
     }
     case "session.prompt":
@@ -907,6 +917,7 @@ const sessionConfigSchema = z
     providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
+    wrap: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const externalResourceSchema = z

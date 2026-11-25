@@ -5,6 +5,7 @@ import type { V2Api } from "./api.js";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
+import type { LaunchWrap } from "../../../../../utils/launch-wrap.js";
 import { spawnProcess } from "../../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../../utils/tree-kill.js";
 import {
@@ -14,7 +15,7 @@ import {
 } from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
-import { OpenCodeHttpError } from "../http-error.js";
+import { validateOpenCodeResponse } from "./http-response.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
 import {
@@ -59,9 +60,17 @@ export interface V2RuntimeOptions {
   bridge?: OpenCodeBridge;
 }
 
+/** A server started for one caller alone, behind its wrap and with its launch environment. */
+export interface V2DedicatedLaunch {
+  wrap: LaunchWrap;
+  env: Record<string, string> | undefined;
+}
+
 export interface V2RuntimeAcquireOptions {
   fresh?: boolean;
   signal?: AbortSignal;
+  /** Start a server for this caller alone. Other callers never share it. */
+  dedicated?: V2DedicatedLaunch;
 }
 
 // The runtime owns a credential for each subprocess; sessions only receive its authenticated client.
@@ -92,8 +101,9 @@ export class V2Runtime {
     this.assertBridgePort();
     const selection = await raceProviderRefreshAbort(input.signal, this.selection);
     if (selection.kind === "explicit") this.assertExplicitConfiguration();
-    this.current ??= this.startTracked();
-    const pending = this.current;
+    const pending = input.dedicated
+      ? this.startTracked(input.dedicated)
+      : (this.current ??= this.startTracked());
     let generation: Generation;
     try {
       generation = await raceProviderRefreshAbort(input.signal, pending);
@@ -179,8 +189,8 @@ export class V2Runtime {
     this.current = null;
   }
 
-  private startTracked(): Promise<Generation> {
-    const pending = this.start();
+  private startTracked(dedicated?: V2DedicatedLaunch): Promise<Generation> {
+    const pending = this.start(dedicated);
     this.starts.add(pending);
     void pending.then(
       (generation) =>
@@ -197,9 +207,14 @@ export class V2Runtime {
     return pending;
   }
 
-  private async start(): Promise<Generation> {
+  private async start(dedicated: V2DedicatedLaunch | undefined): Promise<Generation> {
     const selection = await this.selection;
-    if (selection.kind !== "owned") {
+    if (dedicated && selection.kind === "explicit")
+      throw new Error(
+        "OpenCode is configured to use an existing server, so Paseo cannot start it behind a launch wrap",
+      );
+    // A discovered server is only a preference; a wrapped caller gets a server Paseo starts.
+    if (selection.kind !== "owned" && !dedicated) {
       const generation: Generation = {
         ...(await connectSharedService(selection, this.options)),
         users: 0,
@@ -220,6 +235,7 @@ export class V2Runtime {
     const configured = {
       ...(inheritedConfig ? { OPENCODE_CONFIG_CONTENT: inheritedConfig } : {}),
       ...settings?.env,
+      ...dedicated?.env,
     };
     const bridge = this.options.bridge;
     const plugin = bridge
@@ -240,6 +256,7 @@ export class V2Runtime {
       cwd,
       detached: globalThis.process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
+      wrap: dedicated?.wrap,
       ...createProviderEnvSpec({
         runtimeSettings: settings,
         overlays: [{ ...decorated, OPENCODE_PASSWORD: password }],
@@ -316,12 +333,7 @@ export class V2Runtime {
             ? AbortSignal.any([init.signal, processAbort.signal])
             : processAbort.signal;
           const response = await fetch(request, { ...init, signal });
-          const html = response.headers.get("content-type")?.includes("text/html") ?? false;
-          if (!response.ok || html) {
-            const requestUrl = request instanceof Request ? request.url : String(request);
-            throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
-          }
-          return response;
+          return validateOpenCodeResponse(request, response);
         },
       });
       await client.server.info({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });

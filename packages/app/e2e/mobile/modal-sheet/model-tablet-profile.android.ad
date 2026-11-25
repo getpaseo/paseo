@@ -15,8 +15,8 @@ press "id=\"model-provider-${PROVIDER_ID}\""
 wait "id=\"compact-model-list\"" 3000
 # The row's profile action sits inside Android's independent scroll viewport.
 press "id=\"model-create-profile-${PROVIDER_ID}-${PROFILE_MODEL_ID}\""
-wait "text=\"Add agent profile\"" 5000
-# Closing the form keeps the remembered model: the tap did not also select the row.
-back
-wait "id=\"combined-model-selector\" label=\"Select model (${MODEL_LABEL})\"" 3000
+wait "id=\"model-profile-created-toast\"" 5000
+# Undo removes the created profile after selecting the model and closing the picker.
+press "id=\"model-profile-created-undo\""
+wait "id=\"combined-model-selector\"" 3000
 close

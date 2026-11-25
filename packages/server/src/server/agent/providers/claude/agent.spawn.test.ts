@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import {
@@ -172,5 +175,50 @@ describe("Claude spawn override", () => {
     expect(launchArgs).toBeDefined();
     expect(launchArgs?.join(" ")).not.toContain("secret-token");
     expect(launchArgs).not.toContain("--mcp-config");
+  });
+
+  test("starts Claude Code behind the session's launch wrap", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "claude-launch-wrap-"));
+    const launcher = path.join(root, "launcher.mjs");
+    await writeFile(launcher, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    let capturedOptions: Options | undefined;
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory: ({ options }: ClaudeQueryInput) => {
+        capturedOptions = options;
+        return createQueryMock([]);
+      },
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => "2.1.326",
+    });
+    const session = await client.createSession(
+      { provider: "claude", cwd: root },
+      { wrap: [process.execPath, launcher, "--sandbox"] },
+    );
+    try {
+      await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+      const child = capturedOptions?.spawnClaudeCodeProcess?.({
+        command: "/test/claude/bin",
+        args: ["--output-format", "stream-json"],
+        cwd: root,
+        env: {},
+        signal: new AbortController().signal,
+      }) as ChildProcess | undefined;
+      if (!child?.stdout) throw new Error("Claude Code was not spawned");
+      let stdout = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      await new Promise((resolve) => child.once("close", resolve));
+      expect(JSON.parse(stdout)).toEqual([
+        "--sandbox",
+        "/test/claude/bin",
+        "--output-format",
+        "stream-json",
+      ]);
+    } finally {
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
