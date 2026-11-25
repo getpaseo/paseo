@@ -4,7 +4,7 @@ import type { ResultListNotice, ResultRow } from "./result-list";
 export interface AddProjectTabView {
   /** The rows Up and Down walk; empty for a tab without a list. */
   rows: ResultRow[];
-  /** The picked row, or -1 while the rows on screen answer an older search. */
+  /** The active row, or -1 when none is: an older search's rows, or a pick the new answer dropped. */
   activeIndex: number;
   notice: ResultListNotice | null;
   /** Why this host cannot do what the tab offers; the tab's fields are read-only while set. */
@@ -16,11 +16,14 @@ export interface AddProjectTabView {
   };
 }
 
-/** Where the picked row sits in `rows`; the first row when nothing listed is picked. */
+/**
+ * Where the user's pick sits in `rows`. Without a pick, the first row is the default. A pick that
+ * a new answer dropped is not swapped for another row: nothing is active until the user picks again.
+ */
 export function resolveActiveIndex(
   rows: readonly { id: string }[],
   selectedId: string | null,
 ): number {
-  const index = selectedId === null ? -1 : rows.findIndex((row) => row.id === selectedId);
-  return Math.max(index, 0);
+  if (selectedId === null) return rows.length > 0 ? 0 : -1;
+  return rows.findIndex((row) => row.id === selectedId);
 }

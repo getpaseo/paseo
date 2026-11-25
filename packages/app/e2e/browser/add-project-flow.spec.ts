@@ -331,6 +331,35 @@ test.describe("Add project sheet", () => {
     await expect(addProjectFlow(page)).toBeHidden();
   });
 
+  test("a row picked during a search is not replaced by the answer's first row", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-dropped-pick-"));
+    try {
+      await Promise.all([
+        mkdir(path.join(parentDirectory, "previous-probe")),
+        mkdir(path.join(parentDirectory, "incoming-probe")),
+      ]);
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      const prefix = path.basename(parentDirectory);
+      const results = page.getByTestId("add-project-flow-results");
+      await addProjectFlowInput(page).fill(`${prefix}/previous-probe`);
+      await expect(results.getByRole("button", { name: /previous-probe/ })).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await addProjectFlowInput(page).fill(`${prefix}/incoming-probe`);
+      await page.keyboard.press("ArrowDown");
+      await expect(results.getByRole("button", { name: /incoming-probe/ })).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(addProjectFlowSubmit(page)).toBeDisabled();
+    } finally {
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("Enter in Location while a new search runs keeps the current location", async ({ page }) => {
     const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-stale-location-"));
     try {

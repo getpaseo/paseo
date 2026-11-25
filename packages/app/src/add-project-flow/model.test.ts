@@ -118,11 +118,12 @@ describe("Add Project flow", () => {
     );
   });
 
-  it("keeps the picked row picked when a refresh reorders the rows", () => {
+  it("keeps the user's pick across a reorder and never swaps a dropped pick for another row", () => {
     const rows = [{ id: "/code/beta" }, { id: "/code/alpha" }];
     expect(resolveActiveIndex(rows, "/code/alpha")).toBe(1);
     expect(resolveActiveIndex(rows, null)).toBe(0);
-    expect(resolveActiveIndex(rows, "/code/gone")).toBe(0);
+    expect(resolveActiveIndex(rows, "/code/gone")).toBe(-1);
+    expect(resolveActiveIndex([], null)).toBe(-1);
   });
 
   it("wraps keyboard selection at both ends", () => {
