@@ -40,12 +40,13 @@ export function fetchTimelinePage(input: {
     cursor !== undefined &&
     (cursor.epoch !== history.epoch ||
       (cursor.retirementCount !== undefined && cursor.retirementCount !== history.retirementCount));
+  // An after cursor is a gap when history it needs was dropped, or when it is ahead of the
+  // history (lost commits, a restored database): left alone, the client would drop new rows.
   const gap =
     !staleCursor &&
     direction === "after" &&
     cursor !== undefined &&
-    hasRows &&
-    cursor.seq < history.minSeq - 1;
+    ((hasRows && cursor.seq < history.minSeq - 1) || cursor.seq > window.maxSeq);
   const reset = staleCursor || gap;
   const page = input.selectPage({
     bounds: window,

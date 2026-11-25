@@ -353,6 +353,27 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("history paging over a $name backend",
       ],
     });
   });
+
+  it("resets an after cursor ahead of the history, as after a restored database", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(root("agent-1"), { epoch: "epoch-1", nextSeq: 8, rows: seededRows });
+
+    const result = await timeline.fetch(root("agent-1"), {
+      direction: "after",
+      cursor: { epoch: "epoch-1", seq: 20 },
+      limit: 1,
+    });
+
+    // Without the reset the client keeps its cursor and drops seqs 8 to 20 when they arrive.
+    expect(result).toMatchObject({
+      direction: "after",
+      reset: true,
+      staleCursor: false,
+      gap: true,
+      window: { minSeq: 5, maxSeq: 7, nextSeq: 8 },
+      rows: [{ seq: 7 }],
+    });
+  });
 });
 
 describe("projected timeline retention", () => {
@@ -615,7 +636,8 @@ async function assertSelectionMatchesReference(
         const expected = selectReferenceProjectedTimelinePage({
           rows,
           bounds: actual.window,
-          direction,
+          // A reset serves the tail, as `fetchTimelinePage` does.
+          direction: actual.reset ? "tail" : direction,
           limit,
           cursorSeq,
         });
