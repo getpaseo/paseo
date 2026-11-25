@@ -416,6 +416,7 @@ server.addHook("agent.open.before", async ({ request }) => ({
 
 - Only a provider whose provider snapshot entry has `launchWrap: true` applies a wrap: Codex and command-based ACP providers such as Antigravity. Read it with `paseo.providers.snapshot()` in `agent.create.before` and choose a provider there. A wrap for any other provider fails the open; it is never dropped.
 - History opens keep the wrap.
+- The harness does not always start in the agent's directory. Codex starts it in the daemon's directory and sends the session directory over its protocol. If your launcher needs the directory, put `request.cwd` in the wrap's arguments.
 - The wrap covers the session's harness process only. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
 
 ### Append instructions on every session opening

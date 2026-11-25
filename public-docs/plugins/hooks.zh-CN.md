@@ -412,6 +412,7 @@ server.addHook("agent.open.before", async ({ request }) => ({
 
 - 只有 Provider 快照条目中 `launchWrap: true` 的 Provider 才会应用包装：Codex，以及 Antigravity 等基于命令的 ACP Provider。在 `agent.create.before` 中用 `paseo.providers.snapshot()` 读取它，并在那里选择 Provider。为其他 Provider 返回包装会让打开失败，包装绝不会被丢弃。
 - 读取历史的打开也保留包装。
+- harness 不一定在 Agent 的目录中启动。Codex 在 daemon 的目录中启动它，并通过其协议发送会话目录。如果启动器需要该目录，把 `request.cwd` 放进包装的参数中。
 - 包装只覆盖会话的 harness 进程。Paseo 的主机终端工具、Provider 可用性和目录探测以及草稿发现都在包装之外运行。
 
 ### 在每次打开会话时追加指令 {#append-instructions-on-every-session-opening}
