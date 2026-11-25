@@ -77,4 +77,42 @@ describe("buildProjectPickerOptions", () => {
 
     expect(options).toEqual([{ kind: "suggestion", path: "/repo/app" }]);
   });
+  it("replaces a typed file path with its directory", () => {
+    const options = buildProjectPickerOptions({
+      recommendedPaths: ["/repo/api"],
+      serverPaths: ["/tmp/x/sub"],
+      query: "/tmp/x/a.txt",
+      typedFile: { parent: "/tmp/x", name: "a.txt" },
+    });
+
+    expect(options).toEqual([
+      { kind: "file-directory", path: "/tmp/x", fileName: "a.txt" },
+      { kind: "suggestion", path: "/tmp/x/sub" },
+    ]);
+  });
+
+  it("opens the filesystem root for a file at the root", () => {
+    const options = buildProjectPickerOptions({
+      recommendedPaths: [],
+      serverPaths: [],
+      query: "/a.txt",
+      typedFile: { parent: "/", name: "a.txt" },
+    });
+
+    expect(options).toEqual([{ kind: "file-directory", path: "/", fileName: "a.txt" }]);
+  });
+
+  it("does not repeat the file's directory as a suggestion", () => {
+    const options = buildProjectPickerOptions({
+      recommendedPaths: ["/repo"],
+      serverPaths: ["/repo", "/repo/src"],
+      query: "/repo/package.json",
+      typedFile: { parent: "/repo", name: "package.json" },
+    });
+
+    expect(options).toEqual([
+      { kind: "file-directory", path: "/repo", fileName: "package.json" },
+      { kind: "suggestion", path: "/repo/src" },
+    ]);
+  });
 });
