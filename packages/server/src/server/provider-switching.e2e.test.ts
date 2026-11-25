@@ -40,6 +40,7 @@ const CAPS = {
 class E2EFakeSession implements AgentSession {
   readonly capabilities = CAPS;
   readonly receivedPrompts: AgentPromptInput[] = [];
+  closed = false;
   private listeners = new Set<(event: AgentStreamEvent) => void>();
   private turnCount = 0;
 
@@ -48,6 +49,7 @@ class E2EFakeSession implements AgentSession {
     readonly provider: AgentProvider,
     private persistence: AgentPersistenceHandle | null,
     private readonly onStartTurn?: () => void,
+    private readonly getTurnCompletionGate?: () => Promise<void> | null,
   ) {}
 
   subscribe(listener: (event: AgentStreamEvent) => void): () => void {
@@ -65,7 +67,10 @@ class E2EFakeSession implements AgentSession {
     const turnId = `${this.provider}-t${this.turnCount}`;
     const msgId = `${this.provider}-m${this.turnCount}`;
     const rendered = renderProviderPromptText(prompt);
-    queueMicrotask(() => {
+    const completionGate = this.getTurnCompletionGate?.() ?? null;
+    const replyNumber = this.turnCount;
+    const emitCompletion = () => {
+      if (this.closed) return;
       for (const listener of this.listeners) {
         if (options?.clientMessageId) {
           listener({
@@ -86,12 +91,17 @@ class E2EFakeSession implements AgentSession {
           turnId,
           item: {
             type: "assistant_message",
-            text: `${this.provider} reply ${this.turnCount}`,
+            text: `${this.provider} reply ${replyNumber}`,
           },
         });
         listener({ type: "turn_completed", provider: this.provider, turnId });
       }
-    });
+    };
+    if (completionGate) {
+      void completionGate.then(emitCompletion);
+    } else {
+      queueMicrotask(emitCompletion);
+    }
     return { turnId };
   }
 
@@ -115,7 +125,9 @@ class E2EFakeSession implements AgentSession {
   describePersistence(): AgentPersistenceHandle | null {
     return this.persistence;
   }
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closed = true;
+  }
 }
 
 class E2EFakeClient implements AgentClient {
@@ -123,6 +135,10 @@ class E2EFakeClient implements AgentClient {
   readonly sessions: E2EFakeSession[] = [];
   failNextCreate: Error | null = null;
   failNextTurn: Error | null = null;
+  createSessionGate: Promise<void> | null = null;
+  onCreateSessionStarted: (() => void) | null = null;
+  turnCompletionGate: Promise<void> | null = null;
+  onTurnStarted: (() => void) | null = null;
 
   constructor(
     readonly provider: AgentProvider,
@@ -136,6 +152,12 @@ class E2EFakeClient implements AgentClient {
     return { models: [], modes: [] };
   }
   async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+    this.onCreateSessionStarted?.();
+    if (this.createSessionGate) {
+      const gate = this.createSessionGate;
+      this.createSessionGate = null;
+      await gate;
+    }
     if (this.failNextCreate) {
       const err = this.failNextCreate;
       this.failNextCreate = null;
@@ -152,13 +174,21 @@ class E2EFakeClient implements AgentClient {
           this.failNextTurn = null;
           throw err;
         }
+        this.onTurnStarted?.();
       },
+      () => this.turnCompletionGate,
     );
     this.sessions.push(session);
     return session;
   }
   async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
-    const session = new E2EFakeSession(handle.sessionId, this.provider, handle);
+    const session = new E2EFakeSession(
+      handle.sessionId,
+      this.provider,
+      handle,
+      () => this.onTurnStarted?.(),
+      () => this.turnCompletionGate,
+    );
     this.sessions.push(session);
     return session;
   }
@@ -374,5 +404,173 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
 
     const codexRecordAfterResume = await daemon.daemon.agentStorage.get(created.id);
     expect(codexRecordAfterResume?.archivedAt).toBeTruthy();
+  });
+
+  it("rejects an overlapping provider switch from a second client instead of cutting off the first switch's running turn", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-overlap-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    const copilot = new E2EFakeClient("copilot");
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex, copilot },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const client1 = await connectClient(url);
+    const client2 = await connectClient(url);
+
+    const agent = await client1.client.createAgent({ provider: "claude", cwd });
+    await client1.client.sendMessage(agent.id, "Initial Claude prompt", undefined, {
+      messageId: "msg-ov-1",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    let resolveCodexCreate!: () => void;
+    codex.createSessionGate = new Promise<void>((resolve) => {
+      resolveCodexCreate = resolve;
+    });
+    let resolveCodexCreateStarted!: () => void;
+    const codexCreateStarted = new Promise<void>((resolve) => {
+      resolveCodexCreateStarted = resolve;
+    });
+    codex.onCreateSessionStarted = resolveCodexCreateStarted;
+
+    let resolveCodexTurn!: () => void;
+    codex.turnCompletionGate = new Promise<void>((resolve) => {
+      resolveCodexTurn = resolve;
+    });
+
+    const firstSwitch = client1.client.switchAgentProvider(agent.id, {
+      provider: "codex",
+      text: "Continue on Codex",
+      messageId: "msg-ov-codex",
+    });
+    await codexCreateStarted;
+
+    // Second client requests a competing switch to Copilot while Client 1's switch is still running.
+    const secondSwitch = client2.client.switchAgentProvider(agent.id, {
+      provider: "copilot",
+      text: "Switch to Copilot instead",
+      messageId: "msg-ov-copilot",
+    });
+    // Give the WebSocket message a tick to queue behind Client 1's switch.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // Release Codex session startup; Codex turn 1 starts and remains running until we release it.
+    resolveCodexCreate();
+
+    const [firstOutcome, secondOutcome] = await Promise.allSettled([firstSwitch, secondSwitch]);
+    expect(firstOutcome.status).toBe("fulfilled");
+    if (firstOutcome.status === "fulfilled") {
+      expect(firstOutcome.value.agent?.provider).toBe("codex");
+    }
+    expect(secondOutcome.status).toBe("rejected");
+    if (secondOutcome.status === "rejected") {
+      expect(String(secondOutcome.reason)).toMatch(/running/i);
+    }
+
+    // Codex session must NOT have been closed mid-turn and Copilot must NOT have opened a session.
+    expect(codex.sessions).toHaveLength(1);
+    expect(codex.sessions[0].closed).toBe(false);
+    expect(copilot.sessions).toHaveLength(0);
+
+    // Let Codex turn 1 complete and verify its reply persisted cleanly.
+    resolveCodexTurn();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const timeline = await client1.client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 50,
+    });
+    expect(timeline.entries.filter((e) => e.item.type === "provider_switch")).toHaveLength(1);
+    expect(
+      timeline.entries.some(
+        (e) => e.item.type === "assistant_message" && e.item.text === "codex reply 1",
+      ),
+    ).toBe(true);
+  });
+
+  it("aborts a provider switch cleanly when a concurrent plain message starts a turn during target session creation", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-plain-race-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const client1 = await connectClient(url);
+    const client2 = await connectClient(url);
+
+    const agent = await client1.client.createAgent({ provider: "claude", cwd });
+    await client1.client.sendMessage(agent.id, "First Claude turn", undefined, {
+      messageId: "msg-pr-1",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    let resolveCodexCreate!: () => void;
+    codex.createSessionGate = new Promise<void>((resolve) => {
+      resolveCodexCreate = resolve;
+    });
+    let resolveCodexCreateStarted!: () => void;
+    const codexCreateStarted = new Promise<void>((resolve) => {
+      resolveCodexCreateStarted = resolve;
+    });
+    codex.onCreateSessionStarted = resolveCodexCreateStarted;
+
+    let resolveClaudeTurn!: () => void;
+    claude.turnCompletionGate = new Promise<void>((resolve) => {
+      resolveClaudeTurn = resolve;
+    });
+    let resolveClaudeTurnStarted!: () => void;
+    const claudeTurnStarted = new Promise<void>((resolve) => {
+      resolveClaudeTurnStarted = resolve;
+    });
+    claude.onTurnStarted = resolveClaudeTurnStarted;
+
+    const switchPromise = client1.client.switchAgentProvider(agent.id, {
+      provider: "codex",
+      text: "Switch to Codex",
+      messageId: "msg-pr-sw",
+    });
+    await codexCreateStarted;
+
+    // Start a direct foreground turn on the live Claude session while Codex createSession is awaiting.
+    const directStream = daemon.daemon.agentManager.streamAgent(agent.id, "Stay on Claude", {
+      clientMessageId: "msg-pr-stay",
+    });
+    const drainDirectStream = (async () => {
+      for await (const _event of directStream) {
+        // drain to completion
+      }
+    })();
+    await claudeTurnStarted;
+
+    // Now let Codex session creation finish while Claude's turn is actively running.
+    resolveCodexCreate();
+
+    await expect(switchPromise).rejects.toThrow(/running/i);
+    expect(claude.sessions[0].closed).toBe(false);
+    expect(codex.sessions).toHaveLength(1);
+    expect(codex.sessions[0].closed).toBe(true);
+
+    resolveClaudeTurn();
+    await drainDirectStream;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const timeline = await client2.client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 50,
+    });
+    expect(timeline.entries.filter((e) => e.item.type === "provider_switch")).toHaveLength(0);
+    expect(
+      timeline.entries.some(
+        (e) => e.item.type === "assistant_message" && e.item.text === "claude reply 2",
+      ),
+    ).toBe(true);
   });
 });

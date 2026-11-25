@@ -238,6 +238,17 @@ export interface SwitchAgentProviderInput {
   providerOptions?: ProviderOptions | null;
   prompt: AgentPromptInput;
   messageId: string;
+  /**
+   * Optional hook invoked while the switch still holds exclusive admission on `agentId`,
+   * after the target session is registered. Callers use this to save a delivery receipt,
+   * call `releaseAdmissionLock()`, and immediately admit the first turn so `hasInFlightRun`
+   * is true before any overlapping switch can enter. Must not invoke lifecycle-mutating
+   * `AgentManager` methods on `agentId`.
+   */
+  admitFirstTurn?: (
+    switched: SwitchAgentProviderResult,
+    releaseAdmissionLock: () => void,
+  ) => Promise<void>;
 }
 
 export interface SwitchAgentProviderResult {
@@ -2363,6 +2374,21 @@ export class AgentManager {
     );
   }
 
+  private assertSourceAgentIdleForSwitch(
+    agentId: string,
+    existingLive: ActiveManagedAgent | null,
+  ): void {
+    if (!existingLive) return;
+    if (this.hasInFlightRun(agentId) || existingLive.activeForegroundTurnId) {
+      throw new AgentTurnBusyError(`Cannot switch provider while agent ${agentId} is running`);
+    }
+    if (existingLive.pendingPermissions.size > 0) {
+      throw new Error(
+        `Cannot switch provider while agent ${agentId} has pending permission requests`,
+      );
+    }
+  }
+
   private async ensureSourceAgentReadyForSwitch(
     agentId: string,
     scope: TimelineScope,
@@ -2373,14 +2399,7 @@ export class AgentManager {
     }
     const existingLive = this.agents.get(agentId) ?? null;
     if (existingLive) {
-      if (this.hasInFlightRun(agentId) || existingLive.activeForegroundTurnId) {
-        throw new AgentTurnBusyError(`Cannot switch provider while agent ${agentId} is running`);
-      }
-      if (existingLive.pendingPermissions.size > 0) {
-        throw new Error(
-          `Cannot switch provider while agent ${agentId} has pending permission requests`,
-        );
-      }
+      this.assertSourceAgentIdleForSwitch(agentId, existingLive);
       await this.settleOpenRewind(existingLive, { judge: false });
       return existingLive;
     }
@@ -2536,12 +2555,65 @@ export class AgentManager {
       agentTitle: source.persistedTitle,
       cwd: source.cwd,
     });
-    return {
+    const result: SwitchAgentProviderResult = {
       agent,
       handoffPrompt: prependHandoffAttachment(input.prompt, handoff.attachment),
       markerSeq: activeHead.activeSegmentStartSeq,
       context: handoff.summary,
     };
+    if (input.admitFirstTurn) {
+      await this.runWithSwitchAdmissionLock(agentId, (release) =>
+        input.admitFirstTurn!(result, release),
+      );
+    }
+    return result;
+  }
+
+  private async runWithSwitchAdmissionLock<T>(
+    agentId: string,
+    fn: (releaseAdmissionLock: () => void) => Promise<T>,
+  ): Promise<T> {
+    let lock: PendingForegroundRun | null = this.runs.createPendingRun(agentId);
+    const release = () => {
+      if (!lock) return;
+      const token = lock.token;
+      lock = null;
+      this.runs.settleForegroundRun(agentId, token);
+    };
+    try {
+      return await fn(release);
+    } finally {
+      release();
+    }
+  }
+
+  private async commitProviderSwitchMarker(
+    agentId: string,
+    scope: TimelineScope,
+    intentId: string,
+    markerItem: ProviderSwitchTimelineItem,
+    targetPersistence: AgentPersistenceHandle | null,
+  ): Promise<number> {
+    const commitResult = await this.timeline.commitProviderSwitch(scope, intentId, {
+      markerEntry: { provider: markerItem.toProvider, item: markerItem },
+      targetPersistence,
+      publish: (commit) =>
+        this.publishTimelineEvent(
+          agentId,
+          { type: "timeline", item: markerItem, provider: markerItem.toProvider },
+          commit,
+        ),
+    });
+    if (commitResult.kind === "absent") {
+      throw new Error(`Provider switch intent '${intentId}' disappeared before commit`);
+    }
+    if (commitResult.kind === "unpublished") {
+      this.logger.error(
+        { err: commitResult.error, agentId },
+        "Failed to publish committed provider switch marker",
+      );
+    }
+    return commitResult.row.seq;
   }
 
   private async switchAgentProviderUnlocked(
@@ -2599,6 +2671,13 @@ export class AgentManager {
     let intent: TimelineProviderSwitchIntent | null = null;
     let committed = false;
     let handedToRegistration = false;
+    let switchRunLock: PendingForegroundRun | null = null;
+    const releaseSwitchRunLock = () => {
+      if (!switchRunLock) return;
+      const token = switchRunLock.token;
+      switchRunLock = null;
+      this.runs.settleForegroundRun(agentId, token);
+    };
 
     try {
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
@@ -2632,6 +2711,11 @@ export class AgentManager {
         storedConfig,
       );
 
+      // Re-verify idle right before committing/closing the source session, then immediately
+      // reserve the foreground run slot without yielding so no turn can sneak in.
+      this.assertSourceAgentIdleForSwitch(agentId, existingLive);
+      switchRunLock = this.runs.createPendingRun(agentId);
+
       intent = await this.timeline.beginProviderSwitch(scope, {
         messageId: input.messageId,
         fromProvider: source.fromProvider,
@@ -2644,6 +2728,10 @@ export class AgentManager {
       });
 
       await this.closeLiveSessionForSwitch(existingLive, agentId);
+      if (existingLive) {
+        // prepareAgentForClosure clears the run map; re-reserve until first-turn admission.
+        switchRunLock = this.runs.createPendingRun(agentId);
+      }
       this.assertAcceptingAgentRegistrations();
 
       const markerItem: ProviderSwitchTimelineItem = {
@@ -2656,25 +2744,13 @@ export class AgentManager {
         toSessionId: targetPersistence?.sessionId ?? null,
         context: handoff.summary,
       };
-      const commitResult = await this.timeline.commitProviderSwitch(scope, intent.id, {
-        markerEntry: { provider: input.toProvider, item: markerItem },
+      const markerSeq = await this.commitProviderSwitchMarker(
+        agentId,
+        scope,
+        intent.id,
+        markerItem,
         targetPersistence,
-        publish: (commit) =>
-          this.publishTimelineEvent(
-            agentId,
-            { type: "timeline", item: markerItem, provider: input.toProvider },
-            commit,
-          ),
-      });
-      if (commitResult.kind === "absent") {
-        throw new Error(`Provider switch intent '${intent.id}' disappeared before commit`);
-      }
-      if (commitResult.kind === "unpublished") {
-        this.logger.error(
-          { err: commitResult.error, agentId },
-          "Failed to publish committed provider switch marker",
-        );
-      }
+      );
       committed = true;
 
       const previousSessions = appendUniquePreviousSession(
@@ -2700,18 +2776,23 @@ export class AgentManager {
 
       await this.timeline.completeProviderSwitch(scope, intent.id);
 
-      return {
+      const result: SwitchAgentProviderResult = {
         agent: switchedAgent,
         handoffPrompt: prependHandoffAttachment(input.prompt, handoff.attachment),
-        markerSeq: commitResult.row.seq,
+        markerSeq,
         context: handoff.summary,
       };
+      if (input.admitFirstTurn) {
+        await input.admitFirstTurn(result, releaseSwitchRunLock);
+      }
+      return result;
     } catch (error) {
       if (!committed && intent) {
         await this.timeline.abandonProviderSwitch(scope, intent.id).catch(() => undefined);
       }
       throw error;
     } finally {
+      releaseSwitchRunLock();
       if (!handedToRegistration) {
         this.restoreToolPolicyOnSwitchFailure(
           agentId,

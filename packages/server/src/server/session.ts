@@ -9285,6 +9285,9 @@ export class Session {
     try {
       const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       const send = async (beforeDispatch: () => Promise<void>) => {
+        const admitted: {
+          dispatch: Awaited<ReturnType<typeof startAgentRun>> | null;
+        } = { dispatch: null };
         const switched = await this.agentManager.switchAgentProvider(agentId, {
           toProvider: msg.provider,
           model: msg.model,
@@ -9293,35 +9296,44 @@ export class Session {
           providerOptions: msg.providerOptions,
           prompt,
           messageId: msg.messageId,
+          admitFirstTurn: async (result, releaseAdmissionLock) => {
+            try {
+              await beforeDispatch();
+              releaseAdmissionLock();
+              admitted.dispatch = await startAgentRun(
+                this.agentManager,
+                agentId,
+                result.handoffPrompt,
+                this.sessionLogger,
+                {
+                  idleOnly: true,
+                  skipPluginReload: true,
+                  runOptions: { clientMessageId: msg.messageId },
+                },
+              );
+            } catch (startError) {
+              const liveAgent = this.agentManager.getAgent(agentId) ?? result.agent;
+              throw new AgentProviderSwitchStartError(liveAgent, startError);
+            }
+          },
         });
         const stored = await this.agentStorage.get(agentId);
         if (stored && !stored.title && !stored.lastUserMessageAt) {
           const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: msg.text });
           if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
         }
-        try {
-          await beforeDispatch();
-          const dispatchResult = await startAgentRun(
-            this.agentManager,
-            agentId,
-            switched.handoffPrompt,
-            this.sessionLogger,
-            {
-              idleOnly: true,
-              runOptions: { clientMessageId: msg.messageId },
-            },
-          );
-          if (dispatchResult.disposition === "turn_started") {
+        if (admitted.dispatch?.disposition === "turn_started") {
+          try {
             await waitForAgentRunStartWithTimeout(
               this.agentManager,
               agentId,
-              dispatchResult.started,
+              admitted.dispatch.started,
               this.delivery.requestSignal,
             );
+          } catch (startError) {
+            const liveAgent = this.agentManager.getAgent(agentId) ?? switched.agent;
+            throw new AgentProviderSwitchStartError(liveAgent, startError);
           }
-        } catch (startError) {
-          const liveAgent = this.agentManager.getAgent(agentId) ?? switched.agent;
-          throw new AgentProviderSwitchStartError(liveAgent, startError);
         }
       };
 

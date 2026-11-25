@@ -35,6 +35,8 @@ export class AgentTurnChangedError extends Error {}
 
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
+  /** Skip plugin-reload lifecycle checks when caller already holds the agent lifecycle lock. */
+  skipPluginReload?: boolean;
   admit?: () => boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
@@ -112,6 +114,30 @@ async function drainAgentRunIterator(
   }
 }
 
+async function startAgentRunWithPluginRecovery(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options: StartAgentRunOptions | undefined,
+  promptStart: ForegroundPromptStart,
+): Promise<PromptDispatchResult> {
+  if (options?.skipPluginReload) {
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  }
+  try {
+    await agentManager.reloadStalePluginSession(agentId);
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  } catch (error) {
+    if (!isStaleProviderSessionError(error)) throw error;
+    logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
+    // The live session belongs to a retired plugin runtime. Reload swaps in a
+    // fresh session on the current runtime while preserving history and labels.
+    await agentManager.reloadAgentSession(agentId);
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  }
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -147,20 +173,14 @@ export async function startAgentRun(
   }
   const promptStart = new ForegroundPromptStart(agentId, admit);
   try {
-    try {
-      await agentManager.reloadStalePluginSession(agentId);
-      return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
-    } catch (error) {
-      if (!isStaleProviderSessionError(error)) throw error;
-      logger.info(
-        { agentId, err: error },
-        "Provider session went stale; reopening from persistence",
-      );
-      // The live session belongs to a retired plugin runtime. Reload swaps in a
-      // fresh session on the current runtime while preserving history and labels.
-      await agentManager.reloadAgentSession(agentId);
-      return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
-    }
+    return await startAgentRunWithPluginRecovery(
+      agentManager,
+      agentId,
+      prompt,
+      logger,
+      options,
+      promptStart,
+    );
   } catch (error) {
     promptStart.end();
     throw error;
