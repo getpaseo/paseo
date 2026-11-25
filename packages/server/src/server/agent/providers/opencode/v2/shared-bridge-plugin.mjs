@@ -13,9 +13,12 @@ export async function registerSharedBridge(context) {
   const state = await import(new URL("./state.mjs", import.meta.url).href);
   const { bindings, definitions } = state.stateFor(context.location);
   const registrations = new Map();
+  const adopted = new Set();
+  // MCP tools run only after OpenCode's own permission check, which older servers lack.
+  const runsMcpTools = typeof context.permission?.assert === "function";
   let updating = Promise.resolve();
   async function request(binding, pathname, body, allowMissing = false, signal) {
-    const requestSignal = body === undefined ? AbortSignal.timeout(5_000) : signal;
+    const requestSignal = signal ?? (body === undefined ? AbortSignal.timeout(5_000) : undefined);
     const response = await fetch(new URL(`/_internal/opencode${pathname}`, binding.baseUrl), {
       method: body === undefined ? "GET" : "POST",
       headers: { Authorization: `Bearer ${binding.token}`, "Content-Type": "application/json" },
@@ -69,6 +72,68 @@ export async function registerSharedBridge(context) {
     });
     if (conflicts.length > 0) await retireUnusedDefinitions(conflicts);
     for (const definition of manifest.tools) await installDefinition(definition);
+    if (runsMcpTools)
+      for (const definition of manifest.mcpTools ?? []) await installMcpTool(definition.name);
+  }
+  // One registration serves every session that has an MCP tool of this name. The context hook
+  // gives each session its own definition, and execution routes to that session's server.
+  async function installMcpTool(name) {
+    const key = mcpKey(name);
+    if (registrations.has(key)) return;
+    const registration = await context.tool.transform((editor) => {
+      editor.add({
+        name,
+        description: `MCP tool ${name} provided by Paseo`,
+        input: { type: "object", additionalProperties: true },
+        options: { codemode: false },
+        async execute(input, call) {
+          const scope = await find(call.sessionID);
+          if (!scope) throw new Error("OpenCode session is not bound to a Paseo agent");
+          await context.permission.assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: name,
+            resources: ["*"],
+            save: ["*"],
+            metadata: { input: input ?? {} },
+            source: { type: "tool", messageID: call.messageID, id: call.id },
+          });
+          const result = await request(
+            scope,
+            `/sessions/${encodeURIComponent(scope.sessionID)}/mcp-tools/${encodeURIComponent(name)}`,
+            input ?? {},
+            false,
+            call.signal,
+          );
+          if (result.isError)
+            throw new Error(
+              result.content
+                .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                .join("\n")
+                .trim() || "MCP tool returned an error",
+            );
+          return {
+            content: result.content.map(toOpenCodeContent),
+            metadata: { paseoMcpTool: name },
+          };
+        },
+      });
+    });
+    registrations.set(key, registration);
+    definitions.set(key, { mcpTool: name });
+  }
+  // A child session starts its first request right away, so Paseo prepares it, including its
+  // environment, before the request is built.
+  async function adopt(scope, sessionID) {
+    if (scope.sessionID === sessionID || adopted.has(sessionID)) return;
+    await request(
+      scope,
+      `/sessions/${encodeURIComponent(scope.sessionID)}/descendants/${encodeURIComponent(sessionID)}`,
+      {},
+      true,
+      AbortSignal.timeout(10_000),
+    );
+    adopted.add(sessionID);
   }
   async function retireUnusedDefinitions(conflicts) {
     // A tool name is registered once per location. Another session can still
@@ -128,7 +193,9 @@ export async function registerSharedBridge(context) {
   }
   // Reinstall live tools before this plugin generation is made visible.
   // Definitions are kept in memory, so unavailable owners cannot delay reload.
-  for (const definition of definitions.values()) await installDefinition(definition);
+  for (const definition of definitions.values())
+    if (definition.mcpTool === undefined) await installDefinition(definition);
+    else if (runsMcpTools) await installMcpTool(definition.mcpTool);
   const object = { type: "object", additionalProperties: true };
   const rpc = await context.rpc.register(
     {
@@ -164,7 +231,7 @@ export async function registerSharedBridge(context) {
             }
             await install(input);
             bindings.set(input.sessionID, { baseUrl: input.baseUrl, token: input.token });
-            return {};
+            return { features: { mcpTools: runsMcpTools } };
           });
         updating = next;
         return await next;
@@ -195,11 +262,19 @@ export async function registerSharedBridge(context) {
   );
   const filter = await context.session.hook("context", async (input) => {
     const binding = await find(input.sessionID);
+    if (binding) await adopt(binding, input.sessionID);
     const scope =
       binding &&
       (await request(binding, `/sessions/${encodeURIComponent(binding.sessionID)}/context?tools`));
     const allowed = new Set((scope?.tools ?? []).map((name) => `paseo_${name}`));
+    const mcpTools = new Map((scope?.mcpTools ?? []).map((tool) => [tool.name, tool]));
     for (const name of Object.keys(input.tools)) {
+      if (definitions.has(mcpKey(name))) {
+        const own = mcpTools.get(name);
+        if (own) input.tools[name] = { description: own.description, input: own.inputSchema };
+        else delete input.tools[name];
+        continue;
+      }
       if (name.startsWith("paseo_") && name !== STRUCTURED_OUTPUT_TOOL && !allowed.has(name))
         delete input.tools[name];
     }
@@ -211,10 +286,15 @@ export async function registerSharedBridge(context) {
   };
 }
 
+function mcpKey(name) {
+  return `mcp:${name}`;
+}
+
 function toOpenCodeContent(part) {
   if (part.type === "image")
     return { type: "file", uri: `data:${part.mimeType};base64,${part.data}`, mime: part.mimeType };
-  return part;
+  if (part.type === "text") return part;
+  return { type: "text", text: JSON.stringify(part) };
 }
 
 function formatErrorDetail(details) {

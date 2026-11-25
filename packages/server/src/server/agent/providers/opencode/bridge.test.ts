@@ -105,11 +105,15 @@ describe("OpenCodeBridge", () => {
               inputSchema: serializePaseoToolInputParameters(catalog.getTool("echo_context")!),
             },
           ],
+          mcpTools: [],
         },
       };
       expect(await discover("")).toEqual(expected);
       expect(await discover("?sessionID=bound")).toEqual(expected);
-      expect(await discover("?sessionID=disabled")).toEqual({ status: 200, body: { tools: [] } });
+      expect(await discover("?sessionID=disabled")).toEqual({
+        status: 200,
+        body: { tools: [], mcpTools: [] },
+      });
       const missing = {
         status: 404,
         body: { error: "OpenCode session is not bound to a Paseo agent" },
@@ -469,6 +473,7 @@ describe("OpenCodeBridge", () => {
             },
           },
         ],
+        mcpTools: [],
       });
 
       const execution = await fetch(

@@ -787,11 +787,7 @@ describe("OpenCode v2 session lifecycle", () => {
       second.prompts.push(input.text);
     };
     const session = await client.createSession(
-      {
-        provider: "opencode",
-        cwd: "/tmp/project",
-        mcpServers: { tools: { type: "stdio", command: "tools" } },
-      },
+      { provider: "opencode", cwd: "/tmp/project" },
       { env: { TOKEN: "test" } },
     );
     const running = session.run("before exit");
@@ -802,7 +798,6 @@ describe("OpenCode v2 session lifecycle", () => {
     try {
       expect((await session.run("after exit")).finalText).toBe("recovered");
       expect(second.prompts).toEqual(["after exit"]);
-      expect(second.mcpAdds).toEqual(["tools"]);
       expect(second.environments).toMatchObject([
         { sessionID: "session", variables: { TOKEN: "test", PATH: process.env.PATH } },
       ]);
@@ -1128,12 +1123,12 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
-  test("reuses the shared helper for sessions whose env is only agent identity", async () => {
+  test("shares the server for a launch environment, which reaches the session only", async () => {
     const harness = new V2Harness();
-    const acquires: Array<{ env?: Record<string, string>; dedicated?: boolean }> = [];
+    let acquisitions = 0;
     const runtime = {
-      acquire: async (input: { env?: Record<string, string>; dedicated?: boolean } = {}) => {
-        acquires.push(input);
+      acquire: async () => {
+        acquisitions += 1;
         return harness.connection;
       },
       shutdown: async () => undefined,
@@ -1141,46 +1136,32 @@ describe("OpenCode v2 session lifecycle", () => {
     const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
     const session = await client.createSession(
       { provider: "opencode", cwd: "/tmp/project" },
-      { agentId: "agent", env: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" } },
+      { agentId: "agent", env: { HUB_SECRET: "secret", PASEO_AGENT_ID: "agent" } },
     );
     try {
-      expect(acquires).toEqual([{}]);
+      expect(acquisitions).toBe(1);
       expect(harness.environments).toMatchObject([
-        {
-          sessionID: "session",
-          variables: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" },
-        },
+        { sessionID: "session", variables: { HUB_SECRET: "secret", PASEO_AGENT_ID: "agent" } },
       ]);
     } finally {
       await session.close();
     }
   });
 
-  test("starts a dedicated helper when the session carries custom MCP", async () => {
+  test("rejects MCP servers without the Paseo bridge before creating an OpenCode session", async () => {
     const harness = new V2Harness();
-    const acquires: Array<{ env?: Record<string, string>; dedicated?: boolean }> = [];
-    const runtime = {
-      acquire: async (input: { env?: Record<string, string>; dedicated?: boolean } = {}) => {
-        acquires.push(input);
-        return harness.connection;
-      },
-      shutdown: async () => undefined,
-    };
-    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
-    const session = await client.createSession(
-      {
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    await expect(
+      client.createSession({
         provider: "opencode",
         cwd: "/tmp/project",
         mcpServers: { custom: { type: "stdio", command: "custom", args: [] } },
-      },
-      { agentId: "agent", env: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" } },
-    );
-    try {
-      expect(acquires).toHaveLength(1);
-      expect(acquires[0]?.dedicated).toBe(true);
-    } finally {
-      await session.close();
-    }
+      }),
+    ).rejects.toThrow("OpenCode MCP servers require the Paseo tool bridge");
+    expect(harness.creates).toEqual([]);
   });
 
   test("refuses replacement work after a failed stop until Stop succeeds", async () => {
