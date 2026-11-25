@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { Alert, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
@@ -222,15 +222,17 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
             );
           }
         } catch (error) {
-          Alert.alert(
-            t("common.errors.unableToSave"),
-            error instanceof Error ? error.message : String(error),
+          const detail = toErrorMessage(error);
+          toast.error(
+            detail
+              ? `${t("common.errors.unableToSave")}: ${detail}`
+              : t("common.errors.unableToSave"),
           );
         }
       };
       void confirmAndRemove();
     },
-    [mutateProfiles, profiles, t],
+    [mutateProfiles, profiles, t, toast],
   );
 
   const element = useMemo(

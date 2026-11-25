@@ -7,7 +7,7 @@ import {
   type MutableRefObject,
   type ReactElement,
 } from "react";
-import { Alert, Text, View, type LayoutChangeEvent } from "react-native";
+import { Text, View, type LayoutChangeEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -21,12 +21,14 @@ import { Button } from "@/components/ui/button";
 import { foregroundIconColorMapping } from "@/components/ui/icon-color";
 import { SearchField } from "@/components/ui/search-field";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-context";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { WindowChromeRegion } from "@/utils/desktop-window";
+import { toErrorMessage } from "@/utils/error-messages";
 import { generateAgentProfileId } from "../internal/profile-id";
 import type { AgentProfileValue } from "../internal/profile-form-model";
 import { buildAgentProfileTags } from "../internal/profile-summary";
@@ -268,6 +270,7 @@ function useAgentProfileRosterActions({
   closeIfEditingProfile: (profileId: string) => void;
 }) {
   const { t } = useTranslation();
+  const toast = useToast();
 
   const handleSave = useCallback(
     async (value: AgentProfileValue) => {
@@ -288,14 +291,16 @@ function useAgentProfileRosterActions({
         const written = await mutateProfiles(updater);
         return written !== null;
       } catch (error) {
-        Alert.alert(
-          t("common.errors.unableToSave"),
-          error instanceof Error ? error.message : String(error),
+        const detail = toErrorMessage(error);
+        toast.error(
+          detail
+            ? `${t("common.errors.unableToSave")}: ${detail}`
+            : t("common.errors.unableToSave"),
         );
         return false;
       }
     },
-    [mutateProfiles, t],
+    [mutateProfiles, t, toast],
   );
 
   const handleDragEnd = useCallback(
