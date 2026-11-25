@@ -150,6 +150,8 @@ import {
 } from "./websocket/physical-socket.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
+// Give clients intermediate messages that count as progress during large transfers.
+const DIRECT_WEBSOCKET_FRAME_BYTES = 512 * 1024;
 
 export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
@@ -951,7 +953,8 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      const socket = Object.assign(ws, { maxFrameBytes: DIRECT_WEBSOCKET_FRAME_BYTES });
+      void this.attachAuthenticatedSocket(socket, request, password);
     });
     return wss;
   }
