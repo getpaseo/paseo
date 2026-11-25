@@ -121,6 +121,7 @@ class E2EFakeSession implements AgentSession {
 class E2EFakeClient implements AgentClient {
   readonly capabilities = CAPS;
   readonly sessions: E2EFakeSession[] = [];
+  failNextCreate: Error | null = null;
   failNextTurn: Error | null = null;
 
   constructor(
@@ -135,6 +136,11 @@ class E2EFakeClient implements AgentClient {
     return { models: [], modes: [] };
   }
   async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+    if (this.failNextCreate) {
+      const err = this.failNextCreate;
+      this.failNextCreate = null;
+      throw err;
+    }
     const id = `${this.provider}-s${this.sessions.length + 1}`;
     const session = new E2EFakeSession(
       id,
@@ -226,7 +232,17 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     // Wait briefly for turn 1 to settle
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Switch from Claude to Codex via RPC
+    // Pre-commit failure MUST NOT leave a pending receipt, so retrying the same messageId succeeds!
+    codex.failNextCreate = new Error("Codex failed to open session");
+    await expect(
+      modern.client.switchAgentProvider(agent.id, {
+        provider: "codex",
+        text: "Continue on Codex",
+        messageId: "msg-sw-1",
+      }),
+    ).rejects.toThrow("Codex failed to open session");
+
+    // Switch from Claude to Codex via RPC reusing the exact same messageId
     const switched = await modern.client.switchAgentProvider(agent.id, {
       provider: "codex",
       text: "Continue on Codex",

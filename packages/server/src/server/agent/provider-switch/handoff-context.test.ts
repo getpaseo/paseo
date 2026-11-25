@@ -117,6 +117,29 @@ describe("buildProviderSwitchHandoff", () => {
     expect(handoff.summary.includedItems).toBe(1);
   });
 
+  it("caps included items to HANDOFF_TAIL_LIMIT when a single turn exceeds 80 rows", () => {
+    const oversizedRows = Array.from({ length: 85 }, (_, index) =>
+      row(index + 1, {
+        type: "assistant_message",
+        text: `Step ${index + 1}`,
+      }),
+    );
+    const handoff = buildProviderSwitchHandoff({
+      rows: oversizedRows,
+      hasOlder: false,
+      fromProvider: "claude",
+      toProvider: "codex",
+    });
+
+    expect(handoff.attachment).not.toBeNull();
+    expect(handoff.summary.includedItems).toBe(80);
+    expect(handoff.summary.truncated).toBe(true);
+    expect(handoff.summary.omittedReasons).toEqual(["tail_window_limit"]);
+    expect(handoff.attachment!.text).toContain("[Earlier chat history omitted]");
+    expect(handoff.attachment!.text).toContain("Step 85");
+    expect(handoff.attachment!.text).not.toContain("Step 1\n");
+  });
+
   it("prepends handoff attachment and renders providerPromptText including attachments", () => {
     const attachment = {
       type: "text" as const,

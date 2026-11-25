@@ -1920,6 +1920,7 @@ export class HostRuntimeStore {
   private lastOnlineEpochByServer = new Map<string, number>();
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
+  private queuedAgentDrainPending = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
   private nextCancellationRequestId = 0;
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
@@ -2886,7 +2887,10 @@ export class HostRuntimeStore {
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
     const drainKey = `${serverId}:${agentId}`;
-    if (this.queuedAgentDrainInFlight.has(drainKey)) return;
+    if (this.queuedAgentDrainInFlight.has(drainKey)) {
+      this.queuedAgentDrainPending.add(drainKey);
+      return;
+    }
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
     const queue = session?.queuedMessages.get(agentId);
@@ -2895,7 +2899,9 @@ export class HostRuntimeStore {
       return;
     }
     this.queuedAgentDrainInFlight.add(drainKey);
+    this.queuedAgentDrainPending.delete(drainKey);
     const next = queue[0];
+    let drainSent = false;
     void sendQueuedComposerMessageNow({
       agentId,
       messageId: next.id,
@@ -2941,7 +2947,9 @@ export class HostRuntimeStore {
       },
     })
       .then((result) => {
-        if (result.status === "failed") {
+        if (result.status === "submitted") {
+          drainSent = true;
+        } else if (result.status === "failed") {
           console.error("[HostRuntime] failed to drain queued agent message", {
             serverId,
             agentId,
@@ -2952,6 +2960,19 @@ export class HostRuntimeStore {
       })
       .finally(() => {
         this.queuedAgentDrainInFlight.delete(drainKey);
+        const hadPendingDrain = this.queuedAgentDrainPending.delete(drainKey);
+        if (!drainSent || !hadPendingDrain) return;
+        const latestSession = useSessionStore.getState().sessions[serverId];
+        const latestAgent = latestSession?.agents.get(agentId);
+        const remainingQueue = latestSession?.queuedMessages.get(agentId);
+        if (
+          latestAgent?.status === "idle" &&
+          remainingQueue &&
+          remainingQueue.length > 0 &&
+          latestSession?.initializingAgents.get(agentId) !== true
+        ) {
+          this.drainQueuedAgentMessage(serverId, agentId);
+        }
       });
   }
 

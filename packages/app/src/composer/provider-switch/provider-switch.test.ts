@@ -438,7 +438,33 @@ describe("app provider switching integration", () => {
       expect(switchedCalls).toEqual(["First queued switch prompt"]);
     });
 
-    // Concurrent drain trigger while M1's switch is still in-flight MUST NOT drain M2!
+    // Concurrent drain trigger while M1's switch is still running MUST NOT drain M2!
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("codex"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "running",
+            turn: {
+              phase: "open",
+              turnId: "t1",
+              startedAt: new Date(TS),
+              cancellationRequestId: null,
+            },
+          },
+        ],
+      ]),
+    );
     runtime.drainQueuedAgentMessage(serverId, "agent-1");
     expect(sentCalls).toEqual([]);
     expect(switchedCalls).toHaveLength(1);
@@ -446,15 +472,143 @@ describe("app provider switching integration", () => {
       { id: "m2", text: "Second queued follow-up", attachments: [] },
     ]);
 
-    // M1 switch completes -> staged switch clears -> M2 drains as a plain sendAgentMessage to Codex!
-    resolveSwitch({ agent: agentSnapshot("codex") });
+    // M1 switch completes while P2 is still running -> staged switch clears, M2 stays queued until idle.
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "running" } });
     await vi.waitFor(() => {
       expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
     });
+    expect(sentCalls).toEqual([]);
 
+    // Once P2 goes idle and triggers drain, M2 drains as a plain sendAgentMessage to Codex.
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("codex"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
     runtime.drainQueuedAgentMessage(serverId, "agent-1");
     await vi.waitFor(() => {
       expect(sentCalls).toEqual(["Second queued follow-up"]);
+    });
+    expect(switchedCalls).toHaveLength(1);
+    sessionStore.clearSession(serverId);
+  });
+
+  it("re-drains M2 automatically if a fast switch turn finishes before the switch RPC replies", async () => {
+    const serverId = "srv-fast-queue-switch";
+    const switchedCalls: string[] = [];
+    const sentCalls: string[] = [];
+    let resolveSwitch!: (value: { agent?: AgentSnapshotPayload }) => void;
+
+    const fakeClient = {
+      switchAgentProvider: vi.fn(
+        (_agentId: string, opts: { text: string }) =>
+          new Promise<{ agent?: AgentSnapshotPayload }>((resolve) => {
+            switchedCalls.push(opts.text);
+            resolveSwitch = resolve;
+          }),
+      ),
+      sendAgentMessage: vi.fn(async (_agentId: string, text: string) => {
+        sentCalls.push(text);
+        return { messageId: "m2-ack" };
+      }),
+      uploadFile: vi.fn(),
+    } as unknown as DaemonClient;
+
+    const runtime = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient,
+        connectToDaemon: async () => ({ client: fakeClient, serverId, hostname: null }),
+        getClientId: async () => "cid_fast_queue_switch",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(serverId, fakeClient, 1);
+    useSessionStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [serverId]: {
+          ...state.sessions[serverId]!,
+          serverInfo: {
+            serverId,
+            hostname: "localhost",
+            version: "0.18.0",
+            features: { providerSwitching: true },
+          },
+        },
+      },
+    }));
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("claude"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m1", text: "Fast switch prompt", attachments: [] },
+            { id: "m2", text: "Follow-up after fast switch", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.4",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: {},
+    });
+
+    // M1 begins switching
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(switchedCalls).toEqual(["Fast switch prompt"]);
+    });
+
+    // Fast provider completes M1's turn BEFORE switch RPC replies: status is idle and turn-end
+    // calls drainQueuedAgentMessage while the lock is held.
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    expect(sentCalls).toEqual([]);
+
+    // Switch RPC replies with idle agent -> finally MUST automatically drain M2 without another trigger!
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "idle" } });
+    await vi.waitFor(() => {
+      expect(sentCalls).toEqual(["Follow-up after fast switch"]);
     });
     expect(switchedCalls).toHaveLength(1);
     sessionStore.clearSession(serverId);

@@ -242,6 +242,26 @@ test.describe.serial("Provider switching in chat", () => {
         await page.getByTestId("cancel-staged-provider-switch").click();
         await expect(page.getByTestId("staged-provider-switch-banner")).toHaveCount(0);
         await expectComposerMode(page, "Load test");
+
+        // Returning to the live provider by choosing a different model clears the staged switch
+        // and applies the newly chosen model directly to the live provider.
+        await stageDirectProviderDesktop(page);
+        await openModelPicker(page);
+        const picker = page.getByTestId("combobox-desktop-container");
+        const backButton = picker.getByTestId("sheet-header-back");
+        if (await backButton.isVisible()) {
+          await backButton.click();
+        }
+        await drillIntoProvider(page, "mock");
+        await selectModelRow(page, { provider: "mock", modelId: "one-minute-stream" });
+        await expect(page.getByTestId("staged-provider-switch-banner")).toHaveCount(0);
+        await expectComposerModel(page, "One minute stream");
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "one-minute-stream",
+          modeId: "load-test",
+        });
       });
 
       await test.step("submitting commits the switch in place with clean user display text and inspectable marker", async () => {

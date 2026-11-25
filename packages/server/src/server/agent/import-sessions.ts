@@ -372,6 +372,9 @@ async function collectImportedProviderSessions(
       continue;
     }
     collect(record.provider, record.persistence);
+    for (const previous of record.previousSessions ?? []) {
+      collect(previous.provider, previous);
+    }
   }
 
   return { handles, count: sessions.size };

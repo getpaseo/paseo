@@ -106,8 +106,11 @@ export function buildProviderSwitchHandoff(input: {
   budgetChars?: number;
 }): ProviderSwitchHandoffResult {
   const budgetChars = input.budgetChars ?? MAX_HANDOFF_CONTEXT_CHARS;
+  const tailWindowExceeded = input.rows.length > HANDOFF_TAIL_LIMIT;
+  const boundedRows = tailWindowExceeded ? input.rows.slice(-HANDOFF_TAIL_LIMIT) : input.rows;
+  const hasOlder = input.hasOlder || tailWindowExceeded;
   const entries = curateProjectedActivityEntries(
-    input.rows.map((row) => row.item),
+    boundedRows.map((row) => row.item),
     {
       maxItems: 0,
       labelAssistantMessages: true,
@@ -116,7 +119,7 @@ export function buildProviderSwitchHandoff(input: {
     },
   );
 
-  if (entries.length === 0 && !input.hasOlder) {
+  if (entries.length === 0 && !hasOlder) {
     return {
       attachment: null,
       summary: {
@@ -139,11 +142,11 @@ export function buildProviderSwitchHandoff(input: {
 
   const fitted =
     entries.length > 0
-      ? fitHandoffEntries(entries, bodyBudget, input.hasOlder)
+      ? fitHandoffEntries(entries, bodyBudget, hasOlder)
       : { body: HANDOFF_OMITTED_MARKER.trimEnd(), includedItems: 0, charBudgetTruncated: false };
 
   const omittedReasons: string[] = [];
-  if (input.hasOlder) omittedReasons.push("tail_window_limit");
+  if (hasOlder) omittedReasons.push("tail_window_limit");
   if (fitted.charBudgetTruncated) omittedReasons.push("char_budget");
 
   const text = wrapHandoffContextText({

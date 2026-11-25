@@ -1314,6 +1314,28 @@ export const AgentControls = memo(function AgentControls({
     }),
   );
 
+  const applyLiveModel = useCallback(
+    async (modelId: string) => {
+      if (!client || !agentProvider) {
+        return;
+      }
+      try {
+        await client.setAgentModel(agentId, modelId);
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: { model: modelId },
+          }),
+        );
+      } catch (error) {
+        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [agentId, agentProvider, client, toast, updatePreferences],
+  );
+
   const handleSelectModel = useCallback(
     async (modelId: string) => {
       if (activeStagedSwitch) {
@@ -1334,33 +1356,15 @@ export const AgentControls = memo(function AgentControls({
         }));
         return;
       }
-      if (!client || !agentProvider) {
-        return;
-      }
-      try {
-        await client.setAgentModel(agentId, modelId);
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: agentProvider,
-            updates: { model: modelId },
-          }),
-        );
-      } catch (error) {
-        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
-        toast.error(toErrorMessage(error));
-      }
+      await applyLiveModel(modelId);
     },
     [
       activeStagedSwitch,
       agentId,
-      agentProvider,
-      client,
+      applyLiveModel,
       models,
       preferences.providerPreferences,
       serverId,
-      toast,
-      updatePreferences,
     ],
   );
 
@@ -1371,7 +1375,7 @@ export const AgentControls = memo(function AgentControls({
         clearStagedProviderSwitch(serverId, agentId);
         const liveModelId = agent?.runtimeModelId ?? agent?.model ?? null;
         if (modelId && modelId !== liveModelId) {
-          void handleSelectModel(modelId);
+          void applyLiveModel(modelId);
         }
         return;
       }
@@ -1392,7 +1396,7 @@ export const AgentControls = memo(function AgentControls({
       agent?.runtimeModelId,
       agentId,
       agentProvider,
-      handleSelectModel,
+      applyLiveModel,
       preferences.providerPreferences,
       serverId,
       snapshotEntries,
@@ -1445,9 +1449,13 @@ export const AgentControls = memo(function AgentControls({
     }
     return agentProvider ? [agentProvider] : [];
   }, [agentModelSelectorProviders, agentProvider, supportsProviderSwitching]);
+  const liveSnapshotEntry = useMemo(
+    () => resolveProviderSnapshotEntry(snapshotEntries, agentProvider),
+    [snapshotEntries, agentProvider],
+  );
   const profileModeIds = useMemo(
-    () => resolveSnapshotModeIds(snapshotSelectedEntry),
-    [snapshotSelectedEntry],
+    () => resolveSnapshotModeIds(liveSnapshotEntry),
+    [liveSnapshotEntry],
   );
   const profileTarget = useMemo<AgentProfileApplyTarget>(
     () => ({
