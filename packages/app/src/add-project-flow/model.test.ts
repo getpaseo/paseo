@@ -217,6 +217,11 @@ describe("Add Project options", () => {
   it("keeps a drive or filesystem root when deriving and joining a location", () => {
     expect(parentDirectory("C:\\repo")).toBe("C:\\");
     expect(parentDirectory("/repo")).toBe("/");
+    expect(parentDirectory("\\\\nas\\work")).toBeNull();
+    expect(parentDirectory("\\\\nas\\work\\app")).toBe("\\\\nas\\work");
+    expect(defaultProjectLocation({ remembered: undefined, projectPaths: ["\\\\nas\\work"] })).toBe(
+      "~",
+    );
     expect(parentDirectory("/code/app")).toBe("/code");
     expect(joinDirectoryPath("C:\\", "new-project")).toBe("C:\\new-project");
     expect(joinDirectoryPath("/", "new-project")).toBe("/new-project");

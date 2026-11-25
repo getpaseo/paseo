@@ -49,6 +49,8 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
 /** The folder that holds `path`. A root keeps its separator: `C:\repo` gives `C:\`, not `C:`. */
 export function parentDirectory(path: string): string | null {
   const trimmed = path.replace(/[\\/]+$/, "");
+  // A share root (\\server\share) has no parent folder; `\\server` alone is not a directory.
+  if (/^[\\/]{2}[^\\/]+[\\/][^\\/]+$/u.test(trimmed)) return null;
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (index < 0) return null;
   const parent = trimmed.slice(0, index);
