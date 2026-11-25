@@ -103,6 +103,8 @@ async function probeDaemonStatus(
         daemonNode: status.nodePath,
         providers: status.providers,
         relay: status.relay,
+        tailscale: status.tailscale,
+        extraListeners: status.extraListeners,
         ...(status.terminalsUnavailable ? { terminals: status.terminalsUnavailable } : {}),
       };
     }
@@ -127,7 +129,7 @@ function localStatus(home: string, instance: Awaited<ReturnType<typeof readDaemo
     listen: instance?.listen ?? null,
     serverId: instance?.serverId ?? undefined,
     hostname: instance?.hostname ?? null,
-    configuredListen: config.listen,
+    configuredListen: config.listen.split(",", 1)[0]?.trim(),
     localDaemon,
     desktopManaged: instance?.desktopManaged === true,
     logPath: daemonLogPath(home),

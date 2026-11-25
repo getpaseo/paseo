@@ -68,6 +68,152 @@ describe("paseo daemon bootstrap", () => {
     vi.restoreAllMocks();
   });
 
+  test("switches Tailscale live and requires confirmation from the extra listener", async () => {
+    let tailscaleAddress: string | null = null;
+    const daemon = await createTestPaseoDaemon({
+      relayEnabled: false,
+      getTailscaleAddress: () => tailscaleAddress,
+    });
+    const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const address = `127.0.0.2:${daemon.port}`;
+    const remote = new DaemonClient({ url: `ws://${address}/ws` });
+
+    try {
+      const configPath = path.join(daemon.paseoHome, "config.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({ version: 1, daemon: { listen: daemon.config.listen } }),
+      );
+      await local.connect();
+      expect(local.getLastServerInfoMessage()?.features?.tailscale).toBe(true);
+      const initial = await local.getDaemonStatus();
+      expect(initial.tailscale?.state).toBe("unavailable");
+
+      tailscaleAddress = "127.0.0.2";
+      expect((await local.getDaemonStatus()).tailscale?.state).toBe("off");
+      expect(await local.setTailscaleEnabled(true)).toMatchObject({
+        tailscale: { address, state: "on" },
+        extraListeners: [{ address, state: "listening" }],
+      });
+      expect(JSON.parse(await readFile(configPath, "utf8")).daemon.listen).toBe(
+        `${daemon.config.listen},${address}`,
+      );
+
+      await remote.connect();
+      expect(remote.getLastServerInfoMessage()?.serverId).toBe(initial.serverId);
+      const [mainStatus, tailscaleStatus] = await Promise.all([
+        local.getDaemonStatus({ includeProviders: false }),
+        remote.getDaemonStatus({ includeProviders: false }),
+      ]);
+      expect([mainStatus.tailscale, tailscaleStatus.tailscale]).toMatchObject([
+        { address, state: "on", disconnectsCurrentConnection: false },
+        { address, state: "on", disconnectsCurrentConnection: true },
+      ]);
+      expect(await remote.setTailscaleEnabled(false)).toMatchObject({
+        confirmationRequired: true,
+        tailscale: tailscaleStatus.tailscale,
+      });
+      expect(await local.setTailscaleEnabled(true)).toMatchObject({
+        confirmationRequired: false,
+        tailscale: mainStatus.tailscale,
+      });
+      expect(await remote.setTailscaleEnabled(false, true)).toMatchObject({
+        confirmationRequired: false,
+        tailscale: { state: "off", disconnectsCurrentConnection: false },
+      });
+      await expect.poll(() => remote.isConnected).toBe(false);
+
+      expect(JSON.parse(await readFile(configPath, "utf8")).daemon.listen).toBe(
+        daemon.config.listen,
+      );
+      expect(await local.getDaemonStatus()).toMatchObject({
+        pid: initial.pid,
+        listen: initial.listen,
+        tailscale: { state: "off" },
+        extraListeners: [],
+      });
+    } finally {
+      await Promise.all([remote.close(), local.close()]);
+      await daemon.close();
+    }
+  });
+
+  test.each([
+    { condition: "the interface goes away", nextAddress: null, nextState: "unavailable" },
+    { condition: "the interface gets a new IP", nextAddress: "100.127.255.253", nextState: "off" },
+  ])(
+    "turns off a saved Tailscale listener after $condition",
+    async ({ nextAddress, nextState }) => {
+      let tailscaleAddress: string | null = "100.127.255.254";
+      const daemon = await createTestPaseoDaemon({
+        relayEnabled: false,
+        getTailscaleAddress: () => tailscaleAddress,
+      });
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      const configPath = path.join(daemon.paseoHome, "config.json");
+      const originalAddress = `100.127.255.254:${daemon.port}`;
+      const unrelatedAddress = `127.0.0.3:${daemon.port}`;
+      const originalListen = `${daemon.config.listen},${unrelatedAddress}`;
+      const readListen = async () => JSON.parse(await readFile(configPath, "utf8")).daemon.listen;
+
+      try {
+        await writeFile(
+          configPath,
+          JSON.stringify({ version: 1, daemon: { listen: originalListen } }),
+        );
+        await client.connect();
+        await client.setTailscaleEnabled(true);
+        expect(await readListen()).toBe(`${originalListen},${originalAddress}`);
+
+        tailscaleAddress = nextAddress;
+        expect((await client.getDaemonStatus()).tailscale).toMatchObject({
+          address: originalAddress,
+          state: "waiting",
+        });
+        expect(await client.setTailscaleEnabled(false)).toMatchObject({
+          tailscale: { address: null, state: nextState },
+          extraListeners: [{ address: unrelatedAddress }],
+        });
+        expect(await readListen()).toBe(originalListen);
+      } finally {
+        await client.close();
+        await daemon.close();
+      }
+    },
+  );
+
+  test("reload changes only the extra TCP listeners without replacing the main endpoint", async () => {
+    const daemon = await createTestPaseoDaemon({ relayEnabled: false });
+    const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const address = `127.0.0.2:${daemon.port}`;
+    const configPath = path.join(daemon.paseoHome, "config.json");
+    try {
+      await local.connect();
+      const persist = (listen: string) =>
+        writeFile(
+          configPath,
+          JSON.stringify({ version: 1, daemon: { listen, relay: { enabled: false } } }),
+        );
+      await persist(`${daemon.config.listen},${address}`);
+      expect(await local.reloadDaemonConfig()).toMatchObject({
+        appliedPaths: expect.arrayContaining(["daemon.listen"]),
+        restartRequiredPaths: [],
+      });
+      expect((await fetch(`http://${address}/api/health`)).ok).toBe(true);
+
+      await persist("127.0.0.3:0");
+      expect(await local.reloadDaemonConfig()).toMatchObject({
+        appliedPaths: expect.arrayContaining(["daemon.listen"]),
+        restartRequiredPaths: ["daemon.listen"],
+      });
+      expect((await local.getDaemonStatus()).listen).toBe(`127.0.0.1:${daemon.port}`);
+      await expect(fetch(`http://${address}/api/health`)).rejects.toThrow();
+    } finally {
+      await local.close();
+      await daemon.close();
+    }
+  });
+
   test("starts and serves health endpoint", async () => {
     const daemonHandle = await createTestPaseoDaemon({
       openai: { stt: { apiKey: "test-openai-api-key" }, tts: { apiKey: "test-openai-api-key" } },

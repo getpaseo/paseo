@@ -22,6 +22,7 @@ interface TestPaseoDaemonOptions {
   corsAllowedOrigins?: string[];
   listen?: string;
   listenPort?: number;
+  getTailscaleAddress?: () => string | null;
   logger?: Parameters<typeof createPaseoDaemon>[1];
   mcpEnabled?: boolean;
   mcpDebug?: boolean;
@@ -110,6 +111,7 @@ export async function createTestPaseoDaemon(
       await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
+      getTailscaleAddress: options.getTailscaleAddress,
       builtinPlugins: options.builtinPlugins ?? new BuiltinPluginLoader(undefined, []),
       lazyTerminalWorker: options.lazyTerminalWorker ?? true,
       serverFeatureOverrides: {
