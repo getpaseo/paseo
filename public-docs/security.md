@@ -31,10 +31,10 @@ Relay is off on new installations. When you pair a device from `paseo`, `paseo d
 
 ### How it works
 
-1. On first run, the daemon generates a persistent Curve25519 keypair and saves it to `$PASEO_HOME/daemon-keypair.json` with mode `0600`.
+1. On first run, the daemon generates a persistent Curve25519 keypair and saves it to `$PASEO_HOME/daemon-keypair.json` (mode `0600` on Unix).
 2. When you scan the QR code or open the pairing link (`https://app.paseo.sh/#offer=...`), your client reads the daemon's public key from the URL fragment. Browsers never send URL fragments to the server, so `app.paseo.sh` never sees the key.
 3. When a client connects through the relay, both sides generate fresh ephemeral keys and run a Noise `NK` handshake bound to the daemon's public key. The handshake uses `X25519`, `ChaCha20-Poly1305`, and `SHA-256`. The daemon ignores all commands until the handshake completes.
-4. After the handshake, every message is encrypted with `ChaCha20-Poly1305` and an incrementing counter. Older clients that predate Noise fall back to NaCl `box` (`XSalsa20-Poly1305`) until you update them.
+4. After the handshake, every message is encrypted with `ChaCha20-Poly1305` and an incrementing counter. When either side predates Noise, the session falls back to NaCl `box` (`XSalsa20-Poly1305`) until both sides are updated.
 
 The relay sees only IP addresses, connection timing, message sizes, session IDs, and the public handshake frames. It cannot read message contents, tamper with messages, or derive encryption keys.
 
@@ -47,7 +47,7 @@ The daemon requires a valid cryptographic handshake before it accepts any comman
 - Forge or modify messages: authenticated encryption rejects tampered payloads.
 - Replay old messages: each Noise session uses fresh ephemeral keys from both sides and checks message counters. Replayed, duplicated, or reordered messages close the connection.
 
-Legacy clients that still use NaCl `box` are accepted by default during migration and do not have replay protection. Once all your clients are updated, set `daemon.relay.requireProtectedSecurity` to `true` in `config.json` to require the Noise handshake.
+Legacy NaCl `box` sessions remain supported by default during migration and do not have replay protection. Once both your daemon and clients are updated, set `daemon.relay.requireProtectedSecurity` to `true` in `config.json` to require the Noise handshake.
 
 ### Trust model
 

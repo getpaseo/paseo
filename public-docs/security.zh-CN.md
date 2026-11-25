@@ -29,10 +29,10 @@ Paseo daemon 可以运行在任何你想运行 Agent 的地方：你的笔记本
 
 ### 工作原理 {#how-it-works}
 
-1. 首次运行时，daemon 会生成一个持久的 Curve25519 密钥对，并以 `0600` 权限保存在 `$PASEO_HOME/daemon-keypair.json` 中。
+1. 首次运行时，daemon 会生成一个持久的 Curve25519 密钥对，并保存在 `$PASEO_HOME/daemon-keypair.json` 中（Unix 下权限为 `0600`）。
 2. 当你扫描二维码或打开配对链接（`https://app.paseo.sh/#offer=...`）时，客户端会从 URL 片段中读取 daemon 的公钥。浏览器从不把 URL 片段发送到服务器，因此 `app.paseo.sh` 永远看不到该公钥。
 3. 客户端通过中继连接时，双方都会生成新的临时密钥，并围绕 daemon 的公钥执行 Noise `NK` 握手。握手使用 `X25519`、`ChaCha20-Poly1305` 和 `SHA-256`。在握手完成之前，daemon 会忽略所有命令。
-4. 握手完成后，每条消息都使用 `ChaCha20-Poly1305` 和递增计数器加密。尚未支持 Noise 的旧版客户端会回退到 NaCl `box`（`XSalsa20-Poly1305`），直到你完成更新。
+4. 握手完成后，每条消息都使用 `ChaCha20-Poly1305` 和递增计数器加密。当任意一方尚未支持 Noise 时，会话会回退到 NaCl `box`（`XSalsa20-Poly1305`），直到双方都完成更新。
 
 中继只能看到 IP 地址、连接时间、消息大小、会话 ID 和公开的握手帧。它无法读取消息内容、篡改消息，也无法推导出加密密钥。
 
@@ -45,7 +45,7 @@ daemon 在接受任何命令之前都要求一次有效的密码学握手。被�
 - 伪造或修改消息：带认证的加密会拒绝被篡改的负载。
 - 重放旧消息：每个 Noise 会话都会混入双方新生成的临时密钥并校验递增计数器。重放、重复或乱序的消息都会关闭连接。
 
-迁移期间，仍使用 NaCl `box` 的旧版客户端默认仍可连接，但不具备防重放保护。等所有客户端更新后，可在 `config.json` 中将 `daemon.relay.requireProtectedSecurity` 设为 `true`，强制要求 Noise 握手。
+迁移期间，旧版 NaCl `box` 会话默认仍受支持，但不具备防重放保护。等 daemon 和所有客户端都更新后，可在 `config.json` 中将 `daemon.relay.requireProtectedSecurity` 设为 `true`，强制要求 Noise 握手。
 
 ### 信任模型 {#trust-model}
 
