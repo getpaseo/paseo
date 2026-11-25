@@ -312,7 +312,9 @@ export interface StartCreatedAgentInitialPromptParams {
  * Not derived from the provider constant on purpose: this module is provider-agnostic
  * and must not depend on a specific provider's internals.
  */
-const AGENT_RUN_START_TIMEOUT_MS = 60_000;
+// This must outlast provider admission (Codex turn/start permits 90s), while
+// leaving headroom for the client's 180s message acknowledgement deadline.
+const AGENT_RUN_START_TIMEOUT_MS = 120_000;
 
 export async function waitForAgentRunStartWithTimeout(
   agentManager: Pick<AgentManager, "getAgent">,

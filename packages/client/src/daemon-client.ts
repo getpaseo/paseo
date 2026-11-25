@@ -1179,6 +1179,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+// A send waits for host preparation and provider admission (Codex alone allows 90s).
+const AGENT_MESSAGE_ACK_TIMEOUT_MS = 180_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -4315,6 +4317,7 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
+      timeout: AGENT_MESSAGE_ACK_TIMEOUT_MS,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "send_agent_message_response") {
