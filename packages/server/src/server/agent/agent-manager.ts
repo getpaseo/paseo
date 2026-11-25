@@ -2048,8 +2048,11 @@ export class AgentManager {
         metadata: existing.metadata,
       },
     );
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    this.assertReloadMcpSupport(existing, providerLaunchConfig, launchContext);
+    const providerLaunchConfig = this.resolveReloadLaunchConfig(
+      existing,
+      launchConfig,
+      launchContext,
+    );
 
     let session: AgentSession | undefined;
     let closedExisting: ManagedAgentClosed | undefined;
@@ -2127,17 +2130,29 @@ export class AgentManager {
     }
   }
 
-  /** A reload checks MCP support before it closes the running session, which then keeps its plugin tools. */
-  private assertReloadMcpSupport(
+  /**
+   * Validates a reload's launch before it closes the running session. A rejected launch never takes over, so the
+   * running session keeps its plugin tools.
+   */
+  private resolveReloadLaunchConfig(
     existing: ActiveManagedAgent,
-    providerLaunchConfig: AgentSessionConfig,
+    launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
-  ): void {
-    const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
-    if (Object.keys(mcpServers).length === 0) return;
-    if (existing.session.capabilities.supportsMcpServers === true) return;
-    this.pluginLaunchFailed(existing.id);
-    throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
+  ): AgentSessionConfig {
+    try {
+      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
+      if (
+        Object.keys(mcpServers).length > 0 &&
+        existing.session.capabilities.supportsMcpServers !== true
+      ) {
+        throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
+      }
+      return providerLaunchConfig;
+    } catch (error) {
+      this.pluginLaunchFailed(existing.id);
+      throw error;
+    }
   }
 
   /** The plugin open for a launch that never took over; the session still running keeps its plugin tools. */

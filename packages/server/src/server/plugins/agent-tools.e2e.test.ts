@@ -1444,6 +1444,42 @@ test("a reopen that fails the MCP check is retried, and the running session keep
   }
 }, 60_000);
 
+test("a reopen whose plugin MCP server takes a saved server name is retried, and reverting the plugin restores its tools", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const a = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: h.directory,
+        mcpServers: { company: companyServer },
+      },
+      undefined,
+      {},
+    );
+    await writePluginSource(
+      h,
+      "tools-test",
+      openCounterSource.replace(
+        "return { ...request, tools: [...request.tools, tool] };",
+        `return { ...request, tools: [...request.tools, tool], mcpServers: { company: ${JSON.stringify(companyServer)} } };`,
+      ),
+    );
+    await h.client.reloadPlugin("tools-test");
+    const collision = /MCP server 'company' from plugin tools-test collides with agent saved/;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+
+    await writePluginSource(h, "tools-test", openCounterSource);
+    await h.client.reloadPlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("other_opens");
+    await manager.reloadStalePluginSession(a.id);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 test("history opens ignore session-open MCP servers", async () => {
   const h = await setup(true, mcpSource);
   try {
