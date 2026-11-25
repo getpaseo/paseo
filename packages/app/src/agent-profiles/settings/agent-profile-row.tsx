@@ -17,7 +17,12 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { DraggableListHandle } from "@/components/draggable-list";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
-import { bySizing, TOUCH_TARGET } from "@/components/ui/control-geometry";
+import {
+  bySizing,
+  ICON_BUTTON_SIZES,
+  mapLayout,
+  TOUCH_TARGET,
+} from "@/components/ui/control-geometry";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,11 +46,16 @@ import { buildAgentProfileRosterSummary } from "../internal/profile-summary";
 /** Shared column & rail geometry consumed by both RosterTableHeader and AgentProfileRow. */
 export const ROSTER_COL_PROFILE_WIDTH = 184;
 export const ROSTER_COL_RUNTIME_WIDTH = 248;
-export const ROSTER_GRIP_WIDTH = bySizing({ touch: 28, pointer: 20 });
 export const ROSTER_TRAILING_WIDTH = bySizing({ touch: TOUCH_TARGET + 14, pointer: 42 });
 
 const ROW_MIN_HEIGHT = bySizing({ touch: TOUCH_TARGET + 16, pointer: 56 });
-const GRIP_HANDLE_HEIGHT = bySizing({ touch: TOUCH_TARGET, pointer: 28 });
+const KEBAB_GLYPH_SIZE = ICON_SIZE.sm;
+// The kebab's hitbox is larger than its glyph; it overhangs the row so the glyph sits on the
+// card's trailing rail and the hitbox does not make the row taller.
+const KEBAB_HITBOX_OVERHANG = bySizing({
+  touch: (ICON_BUTTON_SIZES.small.touch - KEBAB_GLYPH_SIZE) / 2,
+  pointer: (ICON_BUTTON_SIZES.small.pointer - KEBAB_GLYPH_SIZE) / 2,
+});
 
 const ThemedGripVertical = withUnistyles(GripVertical);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
@@ -130,7 +140,7 @@ function AgentProfileRowMenu({
         label={t("settings.host.agentProfiles.profileActions", { name: profileName })}
         testID={`agent-profile-menu-${profileId}`}
       >
-        <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={mutedIconColorMapping} />
+        <ThemedMoreVertical size={KEBAB_GLYPH_SIZE} uniProps={mutedIconColorMapping} />
       </ToolbarButton>
       <DropdownMenuContent side="bottom" align="end" width={180}>
         <DropdownMenuItem
@@ -231,16 +241,9 @@ function AgentProfileRowContent({
           <Text style={styles.nameText} numberOfLines={1}>
             {profile.name}
           </Text>
-          <View style={styles.stackedSpecLine}>
-            <AgentProfileGlyph
-              provider={profile.provider}
-              serverId={serverId}
-              size={ICON_SIZE.xs}
-            />
-            <Text style={styles.stackedSpecText} numberOfLines={1}>
-              {fullSummary}
-            </Text>
-          </View>
+          <Text style={styles.stackedSpecText} numberOfLines={1}>
+            {fullSummary}
+          </Text>
           {profile.notes ? (
             <Text
               style={styles.stackedNotesText}
@@ -372,8 +375,8 @@ export function AgentProfileRow({
     [dragging, isFirst, isHovered, menuProps.open, selected],
   );
 
-  const gripVisibilityStyle = useMemo(
-    () => [styles.gripSlot, !showRowAffordances && styles.affordanceHidden],
+  const gripStyle = useMemo(
+    () => (showRowAffordances ? styles.grip : [styles.grip, styles.affordanceHidden]),
     [showRowAffordances],
   );
   const kebabVisibilityStyle = useMemo(
@@ -399,22 +402,6 @@ export function AgentProfileRow({
 
       {selected ? <View style={styles.selectedIndicator} pointerEvents="none" /> : null}
 
-      {reorderable ? (
-        <View style={gripVisibilityStyle} pointerEvents={showRowAffordances ? "auto" : "none"}>
-          <DraggableListHandle
-            accessibilityLabel={t("settings.host.agentProfiles.reorderProfile", {
-              name: profile.name,
-            })}
-            style={styles.gripHandle}
-            testID={`agent-profile-drag-${profile.id}`}
-          >
-            <ThemedGripVertical size={ICON_SIZE.sm} uniProps={extraMutedIconColorMapping} />
-          </DraggableListHandle>
-        </View>
-      ) : (
-        <View style={isStacked ? styles.gripSpacerCompact : styles.gripSlot} />
-      )}
-
       <AgentProfileRowContent
         serverId={serverId}
         profile={profile}
@@ -425,7 +412,8 @@ export function AgentProfileRow({
         isStacked={isStacked}
       />
 
-      <View style={styles.trailing}>
+      {/* A stacked row opens on tap like the wide one; the kebab alone ends it, on the trailing rail. */}
+      <View style={isStacked ? styles.trailingStacked : styles.trailing}>
         <View style={kebabVisibilityStyle} pointerEvents={showRowAffordances ? "auto" : "none"}>
           <AgentProfileRowMenu
             profileId={profile.id}
@@ -442,13 +430,27 @@ export function AgentProfileRow({
             onRemove={handleRemove}
           />
         </View>
-        <View style={[styles.chevron, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
-          <ThemedChevronRight
-            size={ICON_SIZE.sm}
-            uniProps={isHovered || selected ? foregroundIconColorMapping : mutedIconColorMapping}
-          />
-        </View>
+        {isStacked ? null : (
+          <View style={[styles.chevron, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+            <ThemedChevronRight
+              size={ICON_SIZE.sm}
+              uniProps={isHovered || selected ? foregroundIconColorMapping : mutedIconColorMapping}
+            />
+          </View>
+        )}
       </View>
+
+      {reorderable ? (
+        <DraggableListHandle
+          accessibilityLabel={t("settings.host.agentProfiles.reorderProfile", {
+            name: profile.name,
+          })}
+          style={gripStyle}
+          testID={`agent-profile-drag-${profile.id}`}
+        >
+          <ThemedGripVertical size={ICON_SIZE.sm} uniProps={extraMutedIconColorMapping} />
+        </DraggableListHandle>
+      ) : null}
     </View>
   );
 }
@@ -460,8 +462,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     minHeight: ROW_MIN_HEIGHT,
     paddingVertical: theme.spacing[3],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
     gap: theme.spacing[2],
   },
   rowHovered: {
@@ -491,19 +492,15 @@ const styles = StyleSheet.create((theme) => ({
   passThrough: {
     pointerEvents: "none",
   },
-  gripSlot: {
-    width: ROSTER_GRIP_WIDTH,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  gripSpacerCompact: {
-    width: theme.spacing[2],
-    flexShrink: 0,
-  },
-  gripHandle: {
-    width: ROSTER_GRIP_WIDTH,
-    height: GRIP_HANDLE_HEIGHT,
+  // The grip hangs in the row's leading padding, as on a Usage card, so the icon tile sits on the
+  // card's rail with or without it and revealing it on hover moves nothing. It takes the padding's
+  // full height so a finger finds it.
+  grip: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: theme.spacing[4],
     alignItems: "center",
     justifyContent: "center",
   },
@@ -585,12 +582,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     gap: theme.spacing[0.5],
   },
-  stackedSpecLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-    minWidth: 0,
-  },
   stackedSpecText: {
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
@@ -608,6 +599,11 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.spacing[1],
     flexShrink: 0,
+  },
+  trailingStacked: {
+    flexShrink: 0,
+    marginRight: mapLayout(KEBAB_HITBOX_OVERHANG, (overhang) => -overhang),
+    marginVertical: mapLayout(KEBAB_HITBOX_OVERHANG, (overhang) => -overhang),
   },
   kebabSlot: {
     alignItems: "center",
