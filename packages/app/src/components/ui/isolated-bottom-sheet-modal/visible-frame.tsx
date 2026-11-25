@@ -40,7 +40,6 @@ export function SheetVisibleFrame({
   children,
   footer,
   safeAreaInset = "footer",
-  testID,
 }: {
   children: ReactNode;
   footer?: ReactNode;
@@ -51,7 +50,6 @@ export function SheetVisibleFrame({
    * - `"none"`: caller owns safe-area clearance.
    */
   safeAreaInset?: "footer" | "frame" | "none";
-  testID?: string;
 }) {
   const { bottom: safeAreaBottom } = useSafeAreaInsets();
   const { animatedDetentsState, animatedKeyboardState, animatedLayoutState, animatedPosition } =
@@ -87,7 +85,7 @@ export function SheetVisibleFrame({
     safeAreaBottom,
   ]);
   return (
-    <Animated.View style={[styles.frame, visibleStyle]} testID={testID}>
+    <Animated.View style={[styles.frame, visibleStyle]}>
       <View style={styles.body}>{children}</View>
       {footer}
     </Animated.View>
