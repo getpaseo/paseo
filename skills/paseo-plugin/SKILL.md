@@ -529,7 +529,7 @@ paseo plugin remove my-plugin
 - A failed reload stays failed. Read the load error in `paseo plugin ls` and the output in `paseo plugin logs <id>`, fix the source, typecheck, and reload again.
 - `paseo plugin logs <id>` shows the recent stdout and stderr of the subprocess, including initialization, handler, cleanup, and crash output. Settings > Plugins > Logs shows the same output.
 - `remove` keeps a local folder and deletes a managed installation.
-- Most plugins do not need `build`. Declare it in `paseo-plugin.json` only when a Git source must install a dependency or generate files. Reference: CLI reference describes the format.
+- Most plugins do not need `build`. Declare it in `paseo-plugin.json` only when the plugin must install a dependency or generate files after acquisition. Paseo skips npm lifecycle scripts, so an npm plugin that generates files declares `build` too. Reference: CLI reference describes the format, and Publishing > Plugins with a build step describes the npm rules.
 
 ## Publish
 
