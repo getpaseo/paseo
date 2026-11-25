@@ -31,7 +31,7 @@ export interface AgentConfigMutationOptions {
 }
 
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string): Promise<void>;
+  ensureLoaded(agentId: string, options?: AgentConfigMutationOptions): Promise<void>;
   setMode(
     agentId: string,
     modeId: string,
@@ -63,6 +63,7 @@ export interface AgentConfigSessionOptions {
 interface ConfigChange {
   agentId: string;
   requestId: string;
+  options?: AgentConfigMutationOptions;
   logLabel: string;
   logFields: Record<string, unknown>;
   failureText: string;
@@ -96,6 +97,7 @@ export class AgentConfigSession {
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_mode_request",
       logFields: { agentId, modeId, requestId },
       failureText: "Failed to set agent mode",
@@ -112,6 +114,7 @@ export class AgentConfigSession {
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_model_request",
       logFields: { agentId, modelId, requestId },
       failureText: "Failed to set agent model",
@@ -131,6 +134,7 @@ export class AgentConfigSession {
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_feature_request",
       logFields: { agentId, featureId, value, requestId },
       failureText: "Failed to set agent feature",
@@ -151,6 +155,7 @@ export class AgentConfigSession {
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_thinking_request",
       logFields: { agentId, thinkingOptionId, requestId },
       failureText: "Failed to set agent thinking option",
@@ -167,6 +172,7 @@ export class AgentConfigSession {
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
@@ -229,11 +235,12 @@ export class AgentConfigSession {
   }
 
   private async applyConfigChange(change: ConfigChange): Promise<void> {
-    const { agentId, requestId, logLabel, logFields, failureText, run, emitResponse } = change;
+    const { agentId, requestId, options, logLabel, logFields, failureText, run, emitResponse } =
+      change;
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId);
+      await this.operations.ensureLoaded(agentId, options);
       const notice = await run();
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });

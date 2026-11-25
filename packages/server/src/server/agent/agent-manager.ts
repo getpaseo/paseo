@@ -1182,6 +1182,7 @@ export class AgentManager {
     { readonly openedAt: number }
   >();
   private readonly collectingRuntimes = new Set<string>();
+  private readonly switchingAgentIds = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
   private readonly pendingSubmittedPrompts = new Map<
@@ -2691,6 +2692,7 @@ export class AgentManager {
     };
 
     try {
+      this.switchingAgentIds.add(agentId);
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       const launchContext = await this.buildLaunchContext(
         agentId,
@@ -2812,6 +2814,7 @@ export class AgentManager {
       }
       throw error;
     } finally {
+      this.switchingAgentIds.delete(agentId);
       releaseSwitchRunLock();
       if (!handedToRegistration) {
         this.restoreToolPolicyOnSwitchFailure(
@@ -3494,11 +3497,27 @@ export class AgentManager {
   // `setThinkingOption` and `applyOptions` in flight at once, and none of them overlaps an open,
   // reload or close; providers do no sequencing of their own.
 
+  /**
+   * Rejects a legacy settings mutation (no `expectedProvider`) that arrives while a provider
+   * switch is in flight so edits for the departing provider cannot land on the target session.
+   */
+  assertSettingsMutationAllowedDuringSwitch(
+    agentId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ): void {
+    if (!options?.expectedProvider && this.switchingAgentIds.has(agentId)) {
+      throw new Error(
+        `Cannot update settings while agent ${agentId} is switching providers without specifying expectedProvider`,
+      );
+    }
+  }
+
   async setAgentMode(
     agentId: string,
     modeId: string,
     options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
+    this.assertSettingsMutationAllowedDuringSwitch(agentId, options);
     return this.runLifecycleMutation(agentId, () =>
       this.withLiveInteractiveSessionUnlocked(
         agentId,
@@ -3526,6 +3545,7 @@ export class AgentManager {
     modelId: string | null,
     options?: { expectedProvider?: AgentProvider },
   ): Promise<void> {
+    this.assertSettingsMutationAllowedDuringSwitch(agentId, options);
     return this.runLifecycleMutation(agentId, () =>
       this.withLiveInteractiveSessionUnlocked(
         agentId,
@@ -3558,6 +3578,7 @@ export class AgentManager {
     thinkingOptionId: string | null,
     options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
+    this.assertSettingsMutationAllowedDuringSwitch(agentId, options);
     return this.runLifecycleMutation(agentId, () =>
       this.withLiveInteractiveSessionUnlocked(
         agentId,
@@ -3606,6 +3627,7 @@ export class AgentManager {
     requested: ProviderOptionsPatch,
     options?: { expectedProvider?: AgentProvider },
   ): Promise<void> {
+    this.assertSettingsMutationAllowedDuringSwitch(agentId, options);
     return this.runLifecycleMutation(agentId, () =>
       this.withLiveInteractiveSessionUnlocked(
         agentId,

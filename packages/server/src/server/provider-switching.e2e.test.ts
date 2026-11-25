@@ -696,29 +696,43 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     });
     await codexCreateStarted;
 
-    // A client still viewing Claude sends setAgentModel targeting Claude while Codex is opening.
+    // Both a current client sending expectedProvider: "claude" AND an older client omitting
+    // expectedProvider MUST reject during the switch instead of applying "claude-opus" to Codex.
     const staleModelEdit = client2.client
       .setAgentModel(agent.id, "claude-opus", { expectedProvider: "claude" })
       .then(
         () => ({ status: "fulfilled" as const }),
         (error: unknown) => ({ status: "rejected" as const, error }),
       );
+    const legacyModelEdit = client2.client.setAgentModel(agent.id, "claude-opus-legacy").then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     resolveCodexCreate();
-    const [switched, staleEditOutcome] = await Promise.all([switchPromise, staleModelEdit]);
+    const [switched, staleEditOutcome, legacyEditOutcome] = await Promise.all([
+      switchPromise,
+      staleModelEdit,
+      legacyModelEdit,
+    ]);
     expect(switched.agent?.provider).toBe("codex");
 
-    // The stale Claude model edit MUST reject instead of applying "claude-opus" to Codex!
+    // Both stale Claude model edits MUST reject instead of applying to Codex!
     expect(staleEditOutcome.status).toBe("rejected");
     if (staleEditOutcome.status === "rejected") {
       expect(String(staleEditOutcome.error)).toMatch(/provider 'claude'.*now using 'codex'/i);
     }
+    expect(legacyEditOutcome.status).toBe("rejected");
+    if (legacyEditOutcome.status === "rejected") {
+      expect(String(legacyEditOutcome.error)).toMatch(/switching providers/i);
+    }
     expect(codex.sessions).toHaveLength(1);
     expect(codex.sessions[0].setModelCalls).toEqual([]);
 
-    // An edit targeting the now-live provider ("codex") succeeds cleanly.
+    // Once the switch completes, both expectedProvider: "codex" and legacy edits (omitting expectedProvider) succeed.
     await client1.client.setAgentModel(agent.id, "gpt-5.4", { expectedProvider: "codex" });
-    expect(codex.sessions[0].setModelCalls).toEqual(["gpt-5.4"]);
+    await client2.client.setAgentModel(agent.id, "gpt-5.4-mini");
+    expect(codex.sessions[0].setModelCalls).toEqual(["gpt-5.4", "gpt-5.4-mini"]);
   });
 });
