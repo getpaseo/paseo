@@ -489,6 +489,7 @@ function RosterBody({
  */
 function AgentProfileEditorHost({
   serverId,
+  targetKey,
   mode,
   profile,
   canUseDrawer,
@@ -505,6 +506,7 @@ function AgentProfileEditorHost({
   onRemove,
 }: {
   serverId: string;
+  targetKey: string;
   mode: "create" | "edit";
   profile?: AgentProfile;
   canUseDrawer: boolean;
@@ -515,17 +517,18 @@ function AgentProfileEditorHost({
   onStepPrev: () => void;
   onStepNext: () => void;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (savedKey: string) => void;
   onSave: (value: AgentProfileValue) => Promise<void>;
   onDuplicate: (profileId: string) => void;
   onRemove: (profileId: string) => void;
 }): ReactElement {
+  const handleSaved = useCallback(() => onSaved(targetKey), [onSaved, targetKey]);
   const session = useAgentProfileFormSession({
     serverId,
     mode,
     profile,
     onSave,
-    onSaved,
+    onSaved: handleSaved,
   });
 
   useEffect(() => {
@@ -667,9 +670,14 @@ export function AgentProfilesPage({
 
   const handleAddOpen = useCallback(() => transitionTarget({ mode: "create" }), [transitionTarget]);
   const handleEditClose = useCallback(() => transitionTarget(null), [transitionTarget]);
-  const handleSavedClose = useCallback(() => {
-    isDirtyRef.current = false;
-    setEditTarget(null);
+  const handleSavedClose = useCallback((savedKey: string) => {
+    setEditTarget((current) => {
+      if (!current || editTargetKey(current) !== savedKey) {
+        return current;
+      }
+      isDirtyRef.current = false;
+      return null;
+    });
   }, []);
 
   const handleEditOpen = useCallback(
@@ -850,6 +858,7 @@ export function AgentProfilesPage({
       {editorTarget ? (
         <AgentProfileEditorHost
           key={editTargetKey(editorTarget)}
+          targetKey={editTargetKey(editorTarget)}
           serverId={serverId}
           mode={editorTarget.mode}
           profile={activeProfile}

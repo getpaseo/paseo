@@ -180,7 +180,8 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
 
   const handleSave = useCallback(
     async (value: AgentProfileValue) => {
-      const editing = request?.mode === "edit" ? request.profile : undefined;
+      const savedRequest = request;
+      const editing = savedRequest?.mode === "edit" ? savedRequest.profile : undefined;
       const written = await mutateProfiles((current) =>
         editing
           ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
@@ -189,7 +190,7 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
       if (!written) {
         return;
       }
-      setRequest(null);
+      setRequest((current) => (current === savedRequest ? null : current));
     },
     [mutateProfiles, request],
   );

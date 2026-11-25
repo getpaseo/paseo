@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -74,6 +74,14 @@ export function useAgentProfileFormSession({
   const state = useAgentProfileFormState(model);
   useAgentProfileFormCatalog({ serverId, model });
   useAgentProfileFormControls({ serverId, model, state });
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const save = useCallback(async (): Promise<boolean> => {
     const value = model.getState().submitValue;
@@ -84,7 +92,11 @@ export function useAgentProfileFormSession({
     model.setSubmitting(true);
     try {
       await onSave(value);
-      onSaved();
+      // Only notify completion while this session is still active; switching profiles
+      // mid-save unmounts this session and must not close the next editor's draft.
+      if (mountedRef.current) {
+        onSaved();
+      }
       return true;
     } catch (error) {
       model.setSubmitError(toErrorMessage(error));
