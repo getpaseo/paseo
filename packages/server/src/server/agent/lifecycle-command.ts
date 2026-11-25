@@ -123,7 +123,16 @@ export async function archiveAgentCommand(
   const liveAgent = dependencies.agentManager.getAgent(agentId);
   let record: StoredAgentRecord | null;
   if (liveAgent) {
-    await requestAgentRunCancellation(dependencies, agentId);
+    try {
+      await requestAgentRunCancellation(dependencies, agentId);
+    } catch (error) {
+      // A concurrent archive or close may have removed the live agent while
+      // cancellation was in flight; let archiveAgent settle against storage
+      // or retired internal state.
+      if (dependencies.agentManager.getAgent(agentId) !== null) {
+        throw error;
+      }
+    }
     await dependencies.agentManager.clearAgentAttention(agentId).catch(() => undefined);
     const archived = await dependencies.agentManager.archiveAgent(agentId);
     if (liveAgent.internal) {

@@ -2340,7 +2340,33 @@ export class AgentManager {
     agentId: string,
     requestedArchivedAt?: string,
   ): Promise<{ archivedAt: string }> {
-    const agent = this.requireAgent(agentId);
+    const normalizedId = validateAgentId(agentId, "archiveAgent");
+    const agent = this.agents.get(normalizedId);
+    if (!agent) {
+      // A concurrent archive or runtime close may have retired or unloaded the live entry
+      // while this call waited behind it in the agent's lifecycle lane.
+      const retiredInternal = this.getRetiredInternalAgent(normalizedId);
+      if (retiredInternal) {
+        return { archivedAt: retiredInternal.record.archivedAt };
+      }
+      if (this.registry) {
+        const stored = await this.registry.get(normalizedId);
+        if (stored) {
+          if (stored.archivedAt) {
+            return { archivedAt: stored.archivedAt };
+          }
+          const archived = await this.archiveSnapshotUnlocked(
+            normalizedId,
+            requestedArchivedAt ?? new Date().toISOString(),
+          );
+          if (!archived.archivedAt) {
+            throw new Error(`Agent missing archivedAt after archive: ${normalizedId}`);
+          }
+          return { archivedAt: archived.archivedAt };
+        }
+      }
+      throw new Error(`Unknown agent '${normalizedId}'`);
+    }
     if (agent.internal) {
       // Nothing about an internal agent is on disk, and archiving must not put
       // it there. Its final snapshot is kept in memory for a while (see
