@@ -971,6 +971,52 @@ test("Reload agent keeps the history and its identity, and adds only what the pr
   }
 });
 
+test("records the provider that wrote each row, live or from provider history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-row-provider-"));
+  class HistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "continue", messageId: "provider-1" },
+      };
+    }
+  }
+  class HistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new HistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new HistoryClient() },
+    timeline: new AgentTimeline(new DeferredTimelineBackend()),
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    expect(await reloadAgent(manager, agent.id)).toEqual({ kind: "appended" });
+    await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "live" });
+    await manager.flush();
+
+    const page = await manager.fetchTimeline(agent.id);
+    expect(page.rows.map((row) => row.provider)).toEqual(["codex", "codex"]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("Reload agent adds the provider children of new turns and leaves the children Paseo shows alone", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-reload-children-"));
   const providerHistory: AgentStreamEvent[] = [
@@ -7474,6 +7520,7 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
       sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
       collapsed: ["assistant_merge"],
       timestamp: expect.any(String),
+      provider: "codex",
       item: { type: "assistant_message", text: "row onerow two" },
     },
   ]);

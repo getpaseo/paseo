@@ -1,5 +1,6 @@
 import type {
   AgentMetric,
+  AgentProvider,
   AgentTimelineItem,
   ConversationRewindCut,
 } from "../../agent-sdk-types.js";
@@ -19,6 +20,8 @@ export interface TimelineScope {
 
 export interface TimelineEntry {
   item: AgentTimelineItem;
+  /** The provider that wrote the entry. */
+  provider?: AgentProvider;
   timestamp?: string;
   turnId?: string;
   providerMessageId?: string;

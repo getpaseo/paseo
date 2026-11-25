@@ -11,6 +11,7 @@ export function buildSourceRow(
     seq,
     timestamp: entry.timestamp ?? timestamp,
     item: entry.item,
+    ...(entry.provider ? { provider: entry.provider } : {}),
     ...(entry.turnId ? { turnId: entry.turnId } : {}),
     ...(entry.providerMessageId ? { providerMessageId: entry.providerMessageId } : {}),
     ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),

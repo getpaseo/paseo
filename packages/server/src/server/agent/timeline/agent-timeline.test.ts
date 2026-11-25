@@ -64,6 +64,24 @@ describe.each(
     expect(published).toEqual([1, 2, 3]);
   });
 
+  it("keeps the provider that wrote each row, and a merged row the one it started with", async () => {
+    const timeline = createTimeline();
+    await timeline.create(root("a"), { epoch: "e" });
+    await timeline.append(root("a"), [
+      { item: { type: "user_message", text: "prompt" }, provider: "codex" },
+      { item: { type: "assistant_message", text: "A" }, provider: "claude" },
+      { item: { type: "assistant_message", text: "B" }, provider: "claude" },
+      { item: { type: "user_message", text: "unattributed" } },
+    ]);
+
+    const page = await timeline.fetch(root("a"), { direction: "tail", limit: 0 });
+    expect(page.rows.map((row) => [row.item.type, row.provider])).toEqual([
+      ["user_message", "codex"],
+      ["assistant_message", "claude"],
+      ["user_message", undefined],
+    ]);
+  });
+
   it("publishes each commit before the next operation starts", async () => {
     const timeline = createTimeline();
     await timeline.create(root("a"), { epoch: "e" });

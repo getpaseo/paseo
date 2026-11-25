@@ -458,6 +458,26 @@ describe("wire compatibility", () => {
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
   });
 
+  test("serves each entry with the provider that wrote it, the agent's when the row has none", async () => {
+    const response = await emitTimelineResponse({
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          provider: "claude",
+          item: { type: "user_message", text: "prompt" },
+        },
+        {
+          seq: 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          item: { type: "assistant_message", text: "done" },
+        },
+      ],
+    });
+
+    expect(response.payload.entries.map((entry) => entry.provider)).toEqual(["claude", "codex"]);
+  });
+
   test("carries canonical turn IDs to new clients while legacy schemas ignore them", async () => {
     const response = await emitTimelineResponse({
       rows: [

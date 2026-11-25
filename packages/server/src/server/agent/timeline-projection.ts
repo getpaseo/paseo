@@ -1,5 +1,10 @@
 import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
-import type { AgentMetric, AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
+import type {
+  AgentMetric,
+  AgentProvider,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from "./agent-sdk-types.js";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
@@ -20,6 +25,7 @@ export type TimelineLimitDirection = "tail" | "before" | "after";
 
 export interface TimelineProjectionEntry {
   item: AgentTimelineItem;
+  provider?: AgentProvider;
   turnId?: string;
   providerMessageId?: string;
   turnMetrics?: AgentMetric[];
@@ -135,6 +141,7 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
     return {
       item: row.item,
       timestamp: row.timestamp,
+      ...(row.provider ? { provider: row.provider } : {}),
       ...(row.turnId ? { turnId: row.turnId } : {}),
       ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
       ...(row.turnMetrics ? { turnMetrics: row.turnMetrics } : {}),

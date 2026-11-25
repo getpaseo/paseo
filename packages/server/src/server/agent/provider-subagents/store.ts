@@ -95,7 +95,7 @@ export class ProviderSubagentStore {
 
     if (event.type === "timeline") {
       const commits = await this.timeline.recordChildEntries(scope, [
-        { item: event.item, timestamp: event.timestamp },
+        { item: event.item, provider, timestamp: event.timestamp },
       ]);
       if (!commits) return null;
       const [{ row, epoch }] = commits;
