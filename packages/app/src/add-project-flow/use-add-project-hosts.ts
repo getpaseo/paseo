@@ -6,7 +6,7 @@ import { useHostFeatureMap } from "@/runtime/host-features";
 import { orderHostsLocalFirst } from "@/types/host-connection";
 import type { AddProjectHost } from "./model";
 
-/** Connected hosts with what each can do in Add project, the local host first. */
+/** Every host, whether it is online, and what each can do in Add project, the local host first. */
 export function useAddProjectHosts(): AddProjectHost[] {
   const hosts = useHosts();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
@@ -23,17 +23,14 @@ export function useAddProjectHosts(): AddProjectHost[] {
   const localServerId = useLocalDaemonServerId();
 
   return useMemo<AddProjectHost[]>(() => {
-    const connected = orderHostsLocalFirst(
-      hosts.filter((host) => connectionStatuses.get(host.serverId) === "online"),
-      localServerId,
-    );
-    return connected.map((host) => {
+    return orderHostsLocalFirst(hosts, localServerId).map((host) => {
       const canAddProject =
         projectAddByHost.get(host.serverId) === true &&
         stableProjectIdentityByHost.get(host.serverId) === true;
       return {
         serverId: host.serverId,
         label: host.label,
+        online: connectionStatuses.get(host.serverId) === "online",
         canAddProject,
         canBrowse: canAddProject && getIsElectronRuntime() && localServerId === host.serverId,
         canCloneGithubRepositories: githubCloneByHost.get(host.serverId) === true,

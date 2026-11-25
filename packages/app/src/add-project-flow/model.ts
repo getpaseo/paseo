@@ -1,6 +1,7 @@
 export interface AddProjectHost {
   serverId: string;
   label: string;
+  online: boolean;
   canAddProject: boolean;
   canBrowse: boolean;
   canCloneGithubRepositories: boolean;
@@ -63,10 +64,11 @@ export interface OpenAddProjectFlowInput {
 const IDLE: AddProjectSubmission = { status: "idle" };
 
 function pickHostId(hosts: AddProjectHost[], preferredHostId?: string | null): string | null {
+  const online = hosts.filter((host) => host.online);
   const preferred = preferredHostId
-    ? hosts.find((host) => host.serverId === preferredHostId)
+    ? online.find((host) => host.serverId === preferredHostId)
     : undefined;
-  return (preferred ?? hosts[0])?.serverId ?? null;
+  return (preferred ?? online[0])?.serverId ?? null;
 }
 
 export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFlowState {
@@ -95,12 +97,21 @@ export function addProjectFailure(state: AddProjectFlowState): string | null {
   return submission.status === "failed" && submission.tab === state.tab ? submission.message : null;
 }
 
+/** The hosts the user can switch to: every online host, plus the current one even while offline. */
+export function selectableAddProjectHosts(state: AddProjectFlowState): AddProjectHost[] {
+  return state.hosts.filter((host) => host.online || host.serverId === state.hostId);
+}
+
+/**
+ * The chosen host stays chosen while it is offline, with its drafts, so a disconnect never sends
+ * them to another host. A host is picked only when none is chosen or the chosen one was removed.
+ */
 export function applyAvailableAddProjectHosts(
   state: AddProjectFlowState,
   hosts: AddProjectHost[],
 ): AddProjectFlowState {
-  const stillAvailable = hosts.some((host) => host.serverId === state.hostId);
-  if (stillAvailable) return { ...state, hosts };
+  const stillListed = hosts.some((host) => host.serverId === state.hostId);
+  if (stillListed) return { ...state, hosts };
   return withHost({ ...state, hosts }, pickHostId(hosts));
 }
 
@@ -120,7 +131,7 @@ export function selectAddProjectHost(
   hostId: string,
 ): AddProjectFlowState {
   if (isAddProjectSubmitting(state) || hostId === state.hostId) return state;
-  if (!state.hosts.some((host) => host.serverId === hostId)) return state;
+  if (!state.hosts.some((host) => host.serverId === hostId && host.online)) return state;
   return withHost(state, hostId);
 }
 

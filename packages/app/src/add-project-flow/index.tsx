@@ -28,6 +28,7 @@ import {
   addProjectFailure,
   applyAvailableAddProjectHosts,
   currentAddProjectHost,
+  selectableAddProjectHosts,
   isAddProjectSubmitting,
   moveAddProjectActiveIndex,
   openAddProjectFlow,
@@ -142,7 +143,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     clone,
     "new-folder": newFolder,
   };
-  const view = views[state.tab];
+  // An offline host keeps its drafts, but nothing submits until it is back or the user picks
+  // another host.
+  const tabView = views[state.tab];
+  const view = host?.online === false ? withoutSubmit(tabView) : tabView;
 
   const selectTab = useCallback(
     (tab: AddProjectTab) => setState((current) => selectAddProjectTab(current, tab)),
@@ -208,28 +212,30 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     () => buildTabOptions(isMac, !isCompact, lockedTab),
     [isCompact, isMac, lockedTab],
   );
+  const selectableHosts = useMemo(() => selectableAddProjectHosts(state), [state]);
   const header = useMemo(
     () => ({
       title: "Add project",
       titleTestID: "add-project-flow-title",
       actions:
-        state.hosts.length > 1 && state.hostId ? (
+        selectableHosts.length > 1 && state.hostId ? (
           <HostPill
-            hosts={state.hosts}
+            hosts={selectableHosts}
             hostId={state.hostId}
             onSelect={selectHost}
             disabled={submitting}
           />
         ) : undefined,
     }),
-    [selectHost, state.hostId, state.hosts, submitting],
+    [selectHost, selectableHosts, state.hostId, submitting],
   );
 
   // On a pointer layout the failure sits left of the button; compact stacks it above a
   // full-width button.
-  const failureLine = failure ? (
+  const problem = failure ?? (host?.online === false ? `${host.label} is offline` : null);
+  const failureLine = problem ? (
     <Text style={styles.failure} numberOfLines={2} testID="add-project-flow-error">
-      {failure}
+      {problem}
     </Text>
   ) : null;
   const footer = host ? (
@@ -322,6 +328,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       </View>
     </AdaptiveModalSheet>
   );
+}
+
+function withoutSubmit(view: AddProjectTabView): AddProjectTabView {
+  return { ...view, primary: { ...view.primary, submit: null } };
 }
 
 function hostOptionTestID(serverId: string): string {

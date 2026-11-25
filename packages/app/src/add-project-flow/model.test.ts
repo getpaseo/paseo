@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyAvailableAddProjectHosts,
+  selectableAddProjectHosts,
   failAddProjectSubmission,
   moveAddProjectActiveIndex,
   openAddProjectFlow,
@@ -27,6 +28,7 @@ import { resolveActiveIndex } from "./tab-view";
 const HOST: AddProjectHost = {
   serverId: "host-1",
   label: "Local",
+  online: true,
   canAddProject: true,
   canBrowse: true,
   canCloneGithubRepositories: true,
@@ -34,6 +36,7 @@ const HOST: AddProjectHost = {
   canCreateDirectory: true,
 };
 const REMOTE: AddProjectHost = { ...HOST, serverId: "host-2", label: "Remote", canBrowse: false };
+const REMOTE_OFFLINE: AddProjectHost = { ...REMOTE, online: false };
 
 const KEY = { key: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
 
@@ -107,11 +110,36 @@ describe("Add Project flow", () => {
     expect(selectAddProjectRow(state, "/code/app").submission).toEqual({ status: "idle" });
   });
 
-  it("keeps the current host when the host list refreshes, and recovers when it disconnects", () => {
+  it("keeps the chosen host and its draft while it is offline, never moving them to another host", () => {
     let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
     state = selectAddProjectHost(state, "host-2");
+    state = setAddProjectQuery(state, "/srv/app");
 
-    expect(applyAvailableAddProjectHosts(state, [HOST, REMOTE]).hostId).toBe("host-2");
+    const offline = applyAvailableAddProjectHosts(state, [HOST, REMOTE_OFFLINE]);
+    expect(offline.hostId).toBe("host-2");
+    expect(offline.existing.query).toBe("/srv/app");
+    expect(selectableAddProjectHosts(offline).map((host) => host.serverId)).toEqual([
+      "host-1",
+      "host-2",
+    ]);
+
+    const back = applyAvailableAddProjectHosts(offline, [HOST, REMOTE]);
+    expect(back.hostId).toBe("host-2");
+    expect(back.existing.query).toBe("/srv/app");
+    expect(selectAddProjectHost(offline, "host-1").hostId).toBe("host-1");
+  });
+
+  it("picks only an online host, and another one when the chosen host is removed", () => {
+    expect(openAddProjectFlow({ hosts: [REMOTE_OFFLINE, HOST] }).hostId).toBe("host-1");
+    expect(
+      openAddProjectFlow({ hosts: [REMOTE_OFFLINE, HOST], preferredHostId: "host-2" }).hostId,
+    ).toBe("host-1");
+    expect(openAddProjectFlow({ hosts: [REMOTE_OFFLINE] }).hostId).toBeNull();
+    expect(
+      selectAddProjectHost(openAddProjectFlow({ hosts: [HOST, REMOTE_OFFLINE] }), "host-2").hostId,
+    ).toBe("host-1");
+
+    const state = selectAddProjectHost(openAddProjectFlow({ hosts: [HOST, REMOTE] }), "host-2");
     expect(applyAvailableAddProjectHosts(state, [HOST]).hostId).toBe("host-1");
     expect(applyAvailableAddProjectHosts(openAddProjectFlow({ hosts: [] }), [REMOTE]).hostId).toBe(
       "host-2",

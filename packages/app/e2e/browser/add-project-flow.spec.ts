@@ -182,6 +182,38 @@ test.describe("Add project sheet", () => {
     });
   });
 
+  test("a host that disconnects keeps its draft and blocks submit instead of moving it", async ({
+    page,
+  }) => {
+    const droppingHost = await startIsolatedHostDaemon("add-project-flow-dropping");
+    try {
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: droppingHost.serverId,
+        label: "Dropping Host",
+        port: droppingHost.port,
+      });
+      await waitForConnectedHost(page, {
+        serverId: droppingHost.serverId,
+        endpoint: `localhost:${droppingHost.port}`,
+      });
+      await openAddProjectFlow(page);
+      await chooseAddProjectHost(page, droppingHost.serverId);
+      await addProjectFlowInput(page).fill(homedir());
+
+      await droppingHost.close();
+      await expect(page.getByTestId("add-project-flow-error")).toHaveText(
+        "Dropping Host is offline",
+        { timeout: 30_000 },
+      );
+      await expect(addProjectFlowHostTrigger(page)).toContainText("Dropping Host");
+      await expect(addProjectFlowInput(page)).toHaveValue(homedir());
+      await expect(addProjectFlowSubmit(page)).toBeDisabled();
+    } finally {
+      await droppingHost.close();
+    }
+  });
+
   test("keyboard directory search adds the selected Project", async ({
     page,
     projectPickerFixture,
