@@ -140,6 +140,26 @@ test("a Windows launch quotes for cmd.exe only when cmd.exe parses the command l
   });
 });
 
+// The daemon runs git with `shell: false` on hot paths that must not block on synchronous IO, so
+// an explicit `shell: false` starts a bare name directly and leaves the PATH search to Windows.
+test("a Windows bare name searches PATH for a script only when the caller allows a shell", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "plugin-path-shim-"));
+  roots.push(directory);
+  await writeFile(path.join(directory, "tool.CMD"), "");
+  const env = { ...windowsEnv, PATH: directory };
+  expect(resolveSpawnInvocation("tool", ["a & b"], false, "win32", env)).toEqual({
+    command: "tool",
+    args: ["a & b"],
+    shell: false,
+  });
+  expect(resolveSpawnInvocation("tool", ["a & b"], undefined, "win32", env)).toEqual({
+    command: windowsEnv.ComSpec,
+    args: ["/d", "/s", "/c", `"${path.join(directory, "tool.CMD")} ^"a^ ^&^ b^""`],
+    shell: false,
+    windowsVerbatimArguments: true,
+  });
+});
+
 // Real Git Bash on Windows: the arguments reach Bash as given, without cmd.exe escapes.
 test.runIf(process.platform === "win32")(
   "execCommand passes arguments as given to a Windows shell other than cmd.exe",

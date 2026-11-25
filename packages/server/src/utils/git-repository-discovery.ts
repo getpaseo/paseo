@@ -113,7 +113,8 @@ let safeBareRepositorySupport: Promise<boolean> | null = null;
 
 /** Reads `git --version` once per process. */
 export function readSafeBareRepositorySupport(): Promise<boolean> {
-  safeBareRepositorySupport ??= execCommand("git", ["--version"]).then(
+  // Started like every daemon git command, directly and without a PATH lookup in Node.
+  safeBareRepositorySupport ??= execCommand("git", ["--version"], { shell: false }).then(
     ({ stdout }) => parseSafeBareRepositorySupport(stdout),
     () => false,
   );

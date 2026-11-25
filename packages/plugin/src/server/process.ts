@@ -51,8 +51,8 @@ function namesCmd(shell: boolean | string | undefined): boolean {
 /**
  * How `spawnProcess` and `execCommand` start `command` on `platform`.
  *
- * On Windows a bare name is first found on `PATH`, as cmd.exe would find it. A program then starts
- * directly. A `.cmd` or `.bat` script, a name that is not on `PATH` (a cmd.exe builtin), or a
+ * On Windows a bare name is first found on `PATH`, as cmd.exe would find it, unless the caller
+ * passes `shell: false`. A program then starts directly. A `.cmd` or `.bat` script, a name that is not on `PATH` (a cmd.exe builtin), or a
  * `shell: true` launch runs as `cmd.exe /d /s /c "..."`, quoted by `windowsCommandLine`. A shell
  * the caller names other than cmd.exe gets the command and arguments as given.
  */
@@ -68,7 +68,8 @@ export function resolveSpawnInvocation(
     return { command, args: [...args], shell: requestedShell };
   }
   const bareName = !/[\\/]/u.test(command) && !extname(command);
-  const found = bareName ? findWindowsCommand(command, env) : undefined;
+  // `shell: false` starts a bare name directly, and Windows searches PATH without blocking Node.
+  const found = bareName && requestedShell !== false ? findWindowsCommand(command, env) : undefined;
   const target = found ?? command;
   const commandScript = isWindowsCommandScript(target, platform);
   // Only cmd.exe knows a builtin, so a bare name off `PATH` goes to it unless the caller said no shell.
