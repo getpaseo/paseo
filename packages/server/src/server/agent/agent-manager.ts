@@ -114,6 +114,7 @@ import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
   PASEO_MCP_SERVER_NAME,
+  type AgentMcpEndpoint,
   stripInternalPaseoMcpServer,
   withRuntimePaseoMcpServer,
 } from "./runtime-mcp-config.js";
@@ -421,7 +422,7 @@ export interface AgentManagerOptions {
   timelineStore?: InMemoryAgentTimelineStore;
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
-  mcpBaseUrl?: string;
+  mcpEndpoint?: AgentMcpEndpoint;
   mcpAuthToken?: string;
   pluginSessions?: PluginSessionsRuntime;
   paseoToolsEnabled?: boolean;
@@ -959,7 +960,7 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
-  private mcpBaseUrl: string | null;
+  private mcpEndpoint: AgentMcpEndpoint | null;
   private readonly mcpAuthToken: string | null;
   private readonly pluginSessions: PluginSessionsRuntime | undefined;
   private paseoToolsEnabled = true;
@@ -986,7 +987,7 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
-    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.mcpEndpoint = options?.mcpEndpoint ?? null;
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
@@ -1068,8 +1069,8 @@ export class AgentManager {
     this.onAgentArchived = callback;
   }
 
-  setMcpBaseUrl(url: string | null): void {
-    this.mcpBaseUrl = url;
+  setMcpEndpoint(endpoint: AgentMcpEndpoint | null): void {
+    this.mcpEndpoint = endpoint;
   }
 
   prepareForShutdown(): void {
@@ -6603,9 +6604,9 @@ export class AgentManager {
       withRuntimePaseoMcpServer({
         config: storedConfig,
         agentId,
-        mcpBaseUrl:
+        mcpEndpoint:
           this.paseoToolsEnabled && isPaseoToolPolicyEnabled(paseoToolPolicy)
-            ? this.mcpBaseUrl
+            ? this.mcpEndpoint
             : null,
         mcpAuthToken: this.mcpAuthToken,
       }),

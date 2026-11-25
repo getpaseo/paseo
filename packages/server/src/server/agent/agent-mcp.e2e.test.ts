@@ -5,6 +5,8 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   Client as StandardMcpClient,
@@ -271,7 +273,7 @@ class RecordingAgentClient implements AgentClient {
 }
 
 function createMcpRecordingAgentClients(recorder: LaunchRecorder) {
-  const clients = createTestAgentClients();
+  const clients = createTestAgentClients({ supportsMcpServers: true });
   const claude = clients.claude;
   if (!claude) {
     throw new Error("Fake Claude client is not configured");
@@ -969,6 +971,63 @@ describe("agent MCP end-to-end (offline)", () => {
 });
 
 describe("agent MCP protocol negotiation", () => {
+  test.skipIf(process.platform === "win32")(
+    "a Unix listener injects a working MCP connection into agents",
+    async () => {
+      const home = await mkdtemp(path.join(os.tmpdir(), "paseo-unix-mcp-"));
+      const recorder: LaunchRecorder = { recordedLaunches: [] };
+      const daemon = await createPaseoDaemon(
+        {
+          listen: `unix://${path.join(home, "daemon.sock")}`,
+          paseoHome: home,
+          staticDir: home,
+          corsAllowedOrigins: [],
+          hostnames: true,
+          mcpEnabled: true,
+          mcpInjectIntoAgents: true,
+          browserToolsEnabled: true,
+          mcpDebug: false,
+          relayEnabled: false,
+          agentClients: createMcpRecordingAgentClients(recorder),
+          agentStoragePath: path.join(home, "agents"),
+        },
+        pino({ level: "silent" }),
+      );
+      const client = new Client({ name: "unix-injection-regression", version: "1.0.0" });
+      try {
+        await daemon.start();
+        const snapshot = await daemon.agentManager.createAgent(
+          {
+            provider: "claude",
+            cwd: home,
+            mcpServers: { custom: { type: "stdio", command: "custom-mcp" } },
+          },
+          undefined,
+          { workspaceId: undefined },
+        );
+        const injected = recorder.recordedLaunches.at(-1)?.mcpServers?.paseo;
+        expect(injected?.type).toBe("stdio");
+        if (injected?.type !== "stdio") throw new Error("Missing Unix MCP injection");
+        expect(snapshot.config.mcpServers).toEqual({
+          custom: { type: "stdio", command: "custom-mcp" },
+        });
+        await client.connect(new StdioClientTransport(injected));
+        const tools = await client.listTools();
+        expect(tools.tools.map((tool) => tool.name)).toEqual(
+          expect.arrayContaining(["list_workspaces", "list_hosts", "browser_list_tabs"]),
+        );
+        const result = await client.callTool({ name: "list_workspaces", arguments: {} });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ workspaces: [] });
+      } finally {
+        await client.close();
+        await daemon.stop();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   test("a client pinned to 2026-07-28 lists and calls tools", async () => {
     const daemon = await startOfflineDaemon();
     try {

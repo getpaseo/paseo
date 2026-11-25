@@ -17,7 +17,7 @@ category: Orchestration
 | `daemon.mcp.enabled`          | `true`  | Run the MCP server.                                |
 | `daemon.mcp.injectIntoAgents` | `false` | Give agents launched by Paseo access to its tools. |
 
-Depending on the provider, Paseo delivers tools through its native tool interface or MCP. The capabilities are the same. Start a new agent or reload an existing one after changing injection settings.
+Depending on the provider, Paseo delivers tools through its native tool interface or MCP. The capabilities are the same. Tool injection works with TCP and Unix socket listeners; Unix sockets do not require an additional TCP port. Start a new agent or reload an existing one after changing injection settings.
 
 ## Limit Paseo tools by provider
 

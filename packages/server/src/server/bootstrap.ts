@@ -151,6 +151,7 @@ import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
+import type { AgentMcpEndpoint } from "./agent/runtime-mcp-config.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
   createPaseoToolCatalog,
@@ -284,15 +285,18 @@ function resolveAgentMcpClientHost(host: string): string {
   return host;
 }
 
-function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null {
-  if (!listenTarget || listenTarget.type !== "tcp") {
-    return null;
+function createAgentMcpEndpoint(listenTarget: ListenTarget): AgentMcpEndpoint {
+  if (listenTarget.type !== "tcp") {
+    return { type: "socket", path: listenTarget.path };
   }
   const host = resolveAgentMcpClientHost(listenTarget.host);
-  return new URL(
-    "/mcp/agents",
-    `http://${formatHostForHttpUrl(host)}:${listenTarget.port}`,
-  ).toString();
+  return {
+    type: "http",
+    url: new URL(
+      "/mcp/agents",
+      `http://${formatHostForHttpUrl(host)}:${listenTarget.port}`,
+    ).toString(),
+  };
 }
 
 function createTerminalActivityUrl(listenTarget: ListenTarget | null): string | null {
@@ -1696,7 +1700,6 @@ export async function createPaseoDaemon(
   setAgentProviderToolsEnabled(config.mcpEnabled !== false && config.mcpInjectIntoAgents !== false);
 
   let mcpEnabled = config.mcpEnabled ?? true;
-  let agentMcpBaseUrl: string | null = null;
   {
     const agentMcpRoute = "/mcp/agents";
 
@@ -1862,20 +1865,21 @@ export async function createPaseoDaemon(
           mainStarted = true;
           const logAndResolve = async () => {
             boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
-            const mcpBaseUrl = createAgentMcpBaseUrl(boundListenTarget);
-            agentMcpBaseUrl =
-              !mcpEnabled || config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
-            agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            const mcpEndpoint = createAgentMcpEndpoint(boundListenTarget);
+            const mcpBaseUrl = mcpEndpoint.type === "http" ? mcpEndpoint.url : null;
+            agentManager.setMcpEndpoint(
+              mcpEnabled && config.mcpInjectIntoAgents !== false ? mcpEndpoint : null,
+            );
             agentManager.setPaseoToolsEnabled(mcpEnabled && config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.enabled", (value) => {
               mcpEnabled = value !== false;
               const inject = daemonConfigStore.get().mcp.injectIntoAgents !== false;
-              agentManager.setMcpBaseUrl(mcpEnabled && inject ? mcpBaseUrl : null);
+              agentManager.setMcpEndpoint(mcpEnabled && inject ? mcpEndpoint : null);
               agentManager.setPaseoToolsEnabled(mcpEnabled && inject);
               setAgentProviderToolsEnabled(mcpEnabled && inject);
             });
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-              agentManager.setMcpBaseUrl(mcpEnabled && value ? mcpBaseUrl : null);
+              agentManager.setMcpEndpoint(mcpEnabled && value !== false ? mcpEndpoint : null);
               agentManager.setPaseoToolsEnabled(mcpEnabled && value !== false);
               setAgentProviderToolsEnabled(mcpEnabled && value !== false);
             });

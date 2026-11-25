@@ -3964,7 +3964,7 @@ test("createAgent injects paseo MCP server only into provider launch config", as
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     idFactory: () => "00000000-0000-4000-8000-000000000103",
   });
 
@@ -4212,7 +4212,7 @@ test("createAgent passes native Paseo tools through launch context without inter
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     paseoToolCatalogFactory: () => paseoTools,
     idFactory: () => "00000000-0000-4000-8000-000000000106",
   });
@@ -4276,7 +4276,7 @@ test("createAgent allows best-effort internal MCP when the provider session repo
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     mcpAuthToken: "cap-token",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
@@ -4341,7 +4341,7 @@ test("uses each provider's current policy for new sessions and snapshots it by a
     clients: { codex, claude },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     resolvePaseoToolPolicy: (provider) => policies.get(provider),
     paseoToolCatalogFactory: async (context) => {
       policyInputs.push(context);
@@ -4421,7 +4421,7 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
     clients: { codex: enabledClient },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     resolvePaseoToolPolicy: () => ({ disabledTools: ["list_agents"] }),
   });
   const enabledAgent = await enabledManager.createAgent(
@@ -4441,7 +4441,7 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
     clients: { codex: disabledClient },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     paseoToolsEnabled: false,
     resolvePaseoToolPolicy: () => ({ enabled: true }),
     paseoToolCatalogFactory: () => {
@@ -4462,6 +4462,39 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test.each(["global", "provider"])(
+  "respects the %s tool gate for Unix MCP injection",
+  async (gate) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    class CaptureClient extends McpCapableTestAgentClient {
+      lastConfig: AgentSessionConfig | null = null;
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.lastConfig = config;
+        return super.createSession(config);
+      }
+    }
+    const client = new CaptureClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      mcpEndpoint: { type: "socket", path: join(workdir, "daemon.sock") },
+      paseoToolsEnabled: gate !== "global",
+      resolvePaseoToolPolicy: () => ({ enabled: gate !== "provider" }),
+    });
+    try {
+      await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      expect(client.lastConfig?.mcpServers).toBeUndefined();
+    } finally {
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("resumeAgentFromPersistence replaces stored internal paseo MCP with current runtime URL", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -4473,7 +4506,7 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6768/mcp/agents" },
     idFactory: () => "00000000-0000-4000-8000-000000000105",
   });
   const handle: AgentPersistenceHandle = {
@@ -4571,7 +4604,7 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpEndpoint: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
 
