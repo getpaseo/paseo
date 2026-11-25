@@ -23,6 +23,54 @@ function initializeRepo(root: string, name: string) {
   return { repo, remote };
 }
 
+it.each(["branch-tag-collision", "equals-in-url"])(
+  "preserves approved push identity for %s",
+  async (scenario) => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-pr-identity-"));
+    try {
+      const { repo, remote } = initializeRepo(
+        root,
+        scenario === "equals-in-url" ? "parent=destination" : "parent",
+      );
+      git(repo, "tag", "feature");
+      git(repo, "switch", "-c", "feature");
+      git(repo, "commit", "--allow-empty", "-m", "Approved");
+      git(repo, "config", "remote.origin.proxy", "");
+      const approved = await capturePrCheckoutState(repo, "main");
+      expect(approved.head).toBe("feature");
+      let createdHead = "";
+      await createPullRequest(
+        repo,
+        {
+          title: "Approved",
+          head: approved.head,
+          base: approved.base,
+          approvedHeadSha: approved.headSha,
+          approvedPushUrls: approved.pushUrls,
+          approvedOriginConfig: approved.originConfig,
+        },
+        {
+          ...createGitHubService(),
+          createPullRequest: async (input) => {
+            createdHead = input.head;
+            return { url: "https://example.com/pull/1", number: 1 };
+          },
+        },
+      );
+      expect(createdHead).toBe("feature");
+      expect(git(root, "--git-dir", remote, "rev-parse", "refs/heads/feature")).toBe(
+        approved.headSha,
+      );
+      expect(git(repo, "config", "branch.feature.merge")).toBe("refs/heads/feature");
+      expect(() =>
+        git(root, "--git-dir", remote, "rev-parse", "refs/heads/heads/feature"),
+      ).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 it.each(["local", "symbolic"])(
   "does not rewind a local branch through a %s upstream mapping",
   async (mapping) => {

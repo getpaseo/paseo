@@ -2698,6 +2698,34 @@ describe("createGiteaService", () => {
     },
   );
 
+  it.each(["apps/gitea", "nested/forge/prefix"])(
+    "selects the approved path-mounted Gitea login at %s",
+    async (prefix) => {
+      const { service, calls } = makeService((args) =>
+        args[0] === "login"
+          ? ok(
+              JSON.stringify([
+                { name: "root", url: "https://forge.example:4000" },
+                { name: "other-prefix", url: "https://forge.example:4000/unrelated" },
+                { name: "mounted", url: `https://forge.example:4000/${prefix}/` },
+              ]),
+            )
+          : ok(`https://forge.example:4000/${prefix}/team/project/pulls/7`),
+      );
+      await service.createPullRequest({
+        cwd: "/repo",
+        title: "Approved",
+        head: "feature",
+        base: "main",
+        repositoryUrl: `https://forge.example:4000/${prefix}/team/project.git`,
+      });
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--repo", "team/project", "--login", "mounted"]),
+      );
+      expect(calls[1]).not.toContain(`${prefix}/team/project`);
+    },
+  );
+
   it("merges a mergeable pull request with the requested style", async () => {
     const { service, calls } = makeService(() => ok(""));
 

@@ -4722,17 +4722,29 @@ export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
 export type ReviewDecision = "approved" | "changes_requested" | "pending" | null;
 
+function approvedPushConfigEnv(config: Array<[string, string]>): Record<string, string> {
+  const offset = Number(process.env.GIT_CONFIG_COUNT ?? "0");
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(offset + config.length) };
+  for (const [index, [key, value]] of config.entries()) {
+    env[`GIT_CONFIG_KEY_${offset + index}`] = key;
+    env[`GIT_CONFIG_VALUE_${offset + index}`] = value;
+  }
+  return env;
+}
+
 export async function capturePrCheckoutState(
   cwd: string,
   requestedBaseRef?: string,
   context?: CheckoutContext,
 ) {
-  const attachedHead = await runGitCommand(["symbolic-ref", "--quiet", "--short", "HEAD"], {
+  const attachedHead = await runGitCommand(["symbolic-ref", "--quiet", "HEAD"], {
     cwd,
     acceptExitCodes: [0, 1],
   });
-  const head = attachedHead.stdout.trim();
-  if (!head) throw new Error("Finish the rebase or attach a branch before preparing a PR");
+  const headRef = attachedHead.stdout.trim();
+  if (!headRef.startsWith("refs/heads/"))
+    throw new Error("Finish the rebase or attach a branch before preparing a PR");
+  const head = headRef.slice("refs/heads/".length);
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
   if (!head || !base) throw new Error("Unable to determine PR head and base");
@@ -4792,39 +4804,30 @@ export async function createPullRequest(
   );
   for (const destination of options.approvedPushUrls ?? ["origin"]) {
     const remote = `paseo-approved-${randomUUID()}`;
-    const remoteConfig = options.approvedOriginConfig
+    const remoteConfig: Array<[string, string]> = options.approvedOriginConfig
       ? [
-          "-c",
-          `remote.${remote}.url=${destination}`,
-          "-c",
-          `remote.${remote}.pushurl=${destination}`,
+          [`remote.${remote}.url`, destination],
+          [`remote.${remote}.pushurl`, destination],
           // This URL is already expanded by remote get-url. An identity rule
           // at the full destination takes precedence over shorter rewrites.
-          "-c",
-          `url.${destination}.insteadOf=${destination}`,
-          "-c",
-          `url.${destination}.pushInsteadOf=${destination}`,
-          ...options.approvedOriginConfig.flatMap(([key, value]) => [
-            "-c",
-            `remote.${remote}.${key}=${value}`,
+          [`url.${destination}.insteadOf`, destination],
+          [`url.${destination}.pushInsteadOf`, destination],
+          ...options.approvedOriginConfig.map(([key, value]): [string, string] => [
+            `remote.${remote}.${key}`,
+            value,
           ]),
         ]
       : [];
     if (remoteConfig.length) {
-      const resolved = await runGitCommand([...remoteConfig, "ls-remote", "--get-url", remote], {
+      const resolved = await runGitCommand(["ls-remote", "--get-url", remote], {
         cwd,
+        envOverlay: approvedPushConfigEnv(remoteConfig),
       });
       if (resolved.stdout.trim() !== destination)
         throw new Error("Approved push URL cannot be preserved by Git's URL configuration");
     }
     const pushArgs = options.approvedHeadSha
       ? [
-          ...remoteConfig,
-          ...["proxy", "proxyauthmethod"].flatMap((key) =>
-            originSettings.has(key)
-              ? ["-c", `http.${destination}.${key}=${originSettings.get(key)}`]
-              : [],
-          ),
           "push",
           ...(originSettings.has("receivepack")
             ? [`--receive-pack=${originSettings.get("receivepack")}`]
@@ -4836,7 +4839,19 @@ export async function createPullRequest(
           `${options.approvedHeadSha}:refs/heads/${head}`,
         ]
       : ["push", "-u", "origin", head];
-    await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
+    const pushConfig = [
+      ...remoteConfig,
+      ...["proxy", "proxyauthmethod"].flatMap(
+        (key): Array<[string, string]> =>
+          originSettings.has(key) ? [[`http.${destination}.${key}`, originSettings.get(key)!]] : [],
+      ),
+    ];
+    // Unlike -c name=value, this preserves '=' inside URL-bearing keys.
+    await runGitCommand(pushArgs, {
+      cwd,
+      timeout: 120_000,
+      envOverlay: approvedPushConfigEnv(pushConfig),
+    });
   }
   if (options.approvedHeadSha) {
     // Match push -u without requiring a remote-tracking ref: single-branch
