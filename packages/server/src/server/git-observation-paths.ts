@@ -3,7 +3,11 @@ import { readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import pLimit from "p-limit";
 import { dirname, resolve as resolvePath, sep } from "node:path";
-import { looksLikeDefiniteWindowsPath, normalizePathPreservingCase } from "../utils/path.js";
+import {
+  createPathContainmentMatcher,
+  looksLikeDefiniteWindowsPath,
+  normalizePathPreservingCase,
+} from "../utils/path.js";
 
 const nativeRealpath = promisify(realpath.native);
 const jsRealpath = promisify(realpath);
@@ -82,15 +86,15 @@ export class GitObservationPaths {
         excluded.push(this.windows ? subtree.toLowerCase() : subtree);
       }
     }
-    const prefixes = excluded.map((root) => `${root}/`);
+    const excludedMatcher = createPathContainmentMatcher({
+      roots: excluded,
+      compareAsWindows: this.windows,
+    });
     return (candidate) => {
       const normalized = this.normalizeEventPath(candidate);
       const comparable = this.windows ? normalized.toLowerCase() : normalized;
       if (this.aliases.includes(comparable)) return false;
-      for (let i = 0; i < excluded.length; i++) {
-        if (comparable === excluded[i] || comparable.startsWith(prefixes[i])) return false;
-      }
-      return true;
+      return !excludedMatcher.matches(comparable);
     };
   }
 

@@ -1757,6 +1757,37 @@ describe("WorkspaceGitServiceImpl", () => {
     30_000,
   );
 
+  test("rejects and unsubscribes a watcher subscription that resolves past its deadline before the timeout timer runs", async () => {
+    vi.useFakeTimers();
+    let monotonicMs = 1_000;
+    const lateSubscription = createAsyncSubscription();
+    let attempts = 0;
+    const subscribe = vi.fn(async (directory: string) => {
+      if (directory === REPO_CWD && ++attempts === 1) {
+        // Advance the monotonic clock past the deadline without firing timers, matching a
+        // synchronous stall whose subscribe() resolves in a microtask before setTimeout runs.
+        monotonicMs += WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS + 500;
+        return lateSubscription;
+      }
+      return createAsyncSubscription();
+    });
+    const service = createService({ subscribe, monotonicNow: () => monotonicMs });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    try {
+      await settle(() => expect(attempts).toBe(1));
+      await waitForObservationToSettle(service, 1);
+      expect(lateSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+      // Confirm timeout backoff was recorded (first retry waits 30s).
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(attempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => expect(attempts).toBe(2));
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+    }
+  });
+
   test.each(["repository metadata", "working tree"])(
     "keeps the %s watcher retry delay when the last observer reconnects",
     async (kind) => {
