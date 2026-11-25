@@ -21,7 +21,14 @@ import type {
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher, isRealpathInsideRoot } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
-import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import {
+  readPaseoWorktreeMetadata,
+  setPaseoWorktreeUntrustedSource,
+} from "../utils/worktree-metadata.js";
+import {
+  WorkspaceAutomationBlockedError,
+  type UntrustedWorkspaceSource,
+} from "./workspace-automation-gate.js";
 import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import type { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
 
@@ -59,8 +66,8 @@ export interface ArchiveDependencies {
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
-  assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
-  isCheckoutUntrusted?: (checkoutPath: string) => Promise<boolean>;
+  assertWorkspaceAutomationAllowed: (workspaceId: string) => Promise<void>;
+  isCheckoutUntrusted: (checkoutPath: string) => Promise<boolean>;
   sessionLogger?: Logger;
 }
 
@@ -128,12 +135,17 @@ interface BackingDirectory {
   mainRepoRoot: string | null;
   paseoWorktreesRoot: string | null;
   worktreeManagerPluginId: string | null;
-  untrusted: boolean;
+  untrustedSource: UntrustedWorkspaceSource | null;
 }
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
-  teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
+  teardownTargets: Array<{ workspaceId: string; cwd: string }>;
+  // Active workspaces sharing the resolved backing checkout when archive starts
+  // (including the records being archived and any active siblings). Keeps
+  // teardown approval scoped to the live checkout rather than historical
+  // archived records that previously occupied the same path.
+  checkoutWorkspaceIds: string[];
   setupWorkspaceIds: string[];
   workspaceIds: string[];
 }
@@ -275,6 +287,33 @@ async function resolveArchiveCheckoutPath(
   return (await resolveBackingDirectory(scope.targetPath, dependencies)).path;
 }
 
+async function listActiveWorkspacesOnBacking(
+  activeWorkspaces: ActiveWorkspaceRef[],
+  backingPath: string,
+  dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
+): Promise<ActiveWorkspaceRef[]> {
+  const matchesBackingDirectory = createRealpathAwarePathMatcher(backingPath);
+  return (
+    await Promise.all(
+      activeWorkspaces.map(async (workspace) => {
+        const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
+        return matchesBackingDirectory(backingDirectory.path) ? workspace : null;
+      }),
+    )
+  ).filter((workspace): workspace is ActiveWorkspaceRef => workspace !== null);
+}
+
+function firstUntrustedSource(
+  primary: UntrustedWorkspaceSource | null,
+  workspaces: ActiveWorkspaceRef[],
+): UntrustedWorkspaceSource | null {
+  return (
+    primary ??
+    workspaces.find((workspace) => Boolean(workspace.untrustedSource))?.untrustedSource ??
+    null
+  );
+}
+
 async function resolveArchiveTarget(
   dependencies: ArchiveDependencies,
   scope: ArchiveScope,
@@ -291,12 +330,37 @@ async function resolveArchiveTarget(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownTargets: [], setupWorkspaceIds: [], workspaceIds: [] };
+      return {
+        backing: null,
+        teardownTargets: [],
+        checkoutWorkspaceIds: [],
+        setupWorkspaceIds: [],
+        workspaceIds: [],
+      };
     }
     const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
+    const backing = await resolveWorkspaceBackingDirectory(record, dependencies);
+    const activeOnCheckout = await listActiveWorkspacesOnBacking(
+      activeWorkspaces,
+      backing.path,
+      dependencies,
+    );
+    const checkoutWorkspaceIds = Array.from(
+      new Set([
+        ...(isArchived ? [] : [workspaceId]),
+        ...activeOnCheckout.map((workspace) => workspace.workspaceId),
+      ]),
+    );
     return {
-      backing: await resolveWorkspaceBackingDirectory(record, dependencies),
+      backing: {
+        ...backing,
+        untrustedSource: firstUntrustedSource(
+          isArchived ? null : backing.untrustedSource,
+          activeOnCheckout,
+        ),
+      },
       teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
+      checkoutWorkspaceIds,
       setupWorkspaceIds: [workspaceId],
       workspaceIds: isArchived ? [] : [workspaceId],
     };
@@ -304,14 +368,11 @@ async function resolveArchiveTarget(
 
   const backing = await resolveBackingDirectory(scope.targetPath, dependencies);
   const matchesBackingDirectory = createRealpathAwarePathMatcher(backing.path);
-  const targetWorkspaces = (
-    await Promise.all(
-      activeWorkspaces.map(async (workspace) => {
-        const backingDirectory = await resolveWorkspaceBackingDirectory(workspace, dependencies);
-        return matchesBackingDirectory(backingDirectory.path) ? workspace : null;
-      }),
-    )
-  ).filter((workspace): workspace is ActiveWorkspaceRef => workspace !== null);
+  const targetWorkspaces = await listActiveWorkspacesOnBacking(
+    activeWorkspaces,
+    backing.path,
+    dependencies,
+  );
   const recordedId = await dependencies.findWorkspaceIdForCwd(backing.path);
   const recorded = recordedId ? await dependencies.getWorkspace?.(recordedId) : null;
   const record =
@@ -320,15 +381,19 @@ async function resolveArchiveTarget(
       ? recorded
       : null) ??
     targetWorkspaces[0];
+  const resolvedBacking = record
+    ? await resolveWorkspaceBackingDirectory(record, dependencies)
+    : backing;
   return {
-    backing: record ? await resolveWorkspaceBackingDirectory(record, dependencies) : backing,
-    teardownTargets:
-      targetWorkspaces.length > 0
-        ? targetWorkspaces.map((workspace) => ({
-            workspaceId: workspace.workspaceId,
-            cwd: workspace.cwd,
-          }))
-        : [{ workspaceId: null, cwd: scope.targetPath }],
+    backing: {
+      ...resolvedBacking,
+      untrustedSource: firstUntrustedSource(null, targetWorkspaces),
+    },
+    teardownTargets: targetWorkspaces.map((workspace) => ({
+      workspaceId: workspace.workspaceId,
+      cwd: workspace.cwd,
+    })),
+    checkoutWorkspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
     setupWorkspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
   };
@@ -360,7 +425,7 @@ async function resolveWorkspaceBackingDirectory(
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
   const worktreeManagerPluginId = workspace.worktreeManagerPluginId ?? null;
-  const untrusted = Boolean(workspace.untrustedSource);
+  const untrustedSource = workspace.untrustedSource ?? null;
   if (workspace.isPaseoOwnedWorktree === false) {
     return {
       path: resolve(workspace.worktreeRoot ?? workspace.cwd),
@@ -370,7 +435,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
-      untrusted,
+      untrustedSource,
     };
   }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
@@ -382,7 +447,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
-      untrusted,
+      untrustedSource,
     };
   }
   if (workspace.kind !== "worktree") {
@@ -394,7 +459,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
-      untrusted,
+      untrustedSource,
     };
   }
 
@@ -408,7 +473,7 @@ async function resolveWorkspaceBackingDirectory(
     ...backing,
     mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot,
     worktreeManagerPluginId: worktreeManagerPluginId ?? backing.worktreeManagerPluginId,
-    untrusted: untrusted || backing.untrusted,
+    untrustedSource: untrustedSource ?? backing.untrustedSource,
   };
 }
 
@@ -429,7 +494,7 @@ async function resolveBackingDirectory(
     mainRepoRoot: ownership.repoRoot ?? null,
     paseoWorktreesRoot: ownership.worktreeRoot ?? null,
     worktreeManagerPluginId: null,
-    untrusted: false,
+    untrustedSource: null,
   };
 }
 
@@ -509,22 +574,20 @@ async function maybeRemoveDirectory(
   }
 
   const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
-  const teardownTargets = target.teardownTargets.filter(
-    (teardownTarget) =>
-      teardownTarget.workspaceId === null || archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
+  const teardownTargets = target.teardownTargets.filter((teardownTarget) =>
+    archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
   );
 
+  const teardownPlan = await resolveCheckoutTeardownPlan(
+    dependencies,
+    backing,
+    teardownTargets,
+    target.checkoutWorkspaceIds,
+  );
   let untrustedBacking =
-    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted?.(backing.path));
+    teardownPlan.untrustedBacking || Boolean(await dependencies.isCheckoutUntrusted(backing.path));
   try {
-    const allowedTeardownTargets = await filterAllowedTeardownTargets(
-      dependencies,
-      teardownTargets,
-    );
-    if (allowedTeardownTargets.length < teardownTargets.length) {
-      untrustedBacking = true;
-    }
-    for (const teardownTarget of uniqueTeardownTargets(allowedTeardownTargets)) {
+    for (const teardownTarget of uniqueTeardownTargets(teardownPlan.allowedTargets)) {
       request.checkpoint();
       await runWorktreeTeardownCommands({
         worktreePath: backing.path,
@@ -584,25 +647,66 @@ async function maybeRemoveDirectory(
   }
 }
 
+async function resolveCheckoutTeardownPlan(
+  dependencies: ArchiveDependencies,
+  backing: BackingDirectory,
+  teardownTargets: Array<{ workspaceId: string; cwd: string }>,
+  checkoutWorkspaceIds: string[],
+): Promise<{
+  allowedTargets: Array<{ workspaceId: string; cwd: string }>;
+  untrustedBacking: boolean;
+}> {
+  const metadataUntrustedSource =
+    (await readPaseoWorktreeMetadata(backing.path).catch(() => null))?.untrustedSource ?? null;
+  const checkoutUntrusted = Boolean(backing.untrustedSource || metadataUntrustedSource);
+  const teardownGate = checkoutUntrusted
+    ? { allowed: [] as Array<{ workspaceId: string; cwd: string }>, blockedSource: null }
+    : await filterAllowedTeardownTargets(dependencies, teardownTargets, checkoutWorkspaceIds);
+  const untrustedSourceToPersist =
+    teardownTargets.length === 0 || metadataUntrustedSource
+      ? null
+      : (backing.untrustedSource ?? teardownGate.blockedSource);
+  if (untrustedSourceToPersist) {
+    // Runs inside workspaceArchiveOperations.withCheckout alongside Run setup approval,
+    // so retained pre-upgrade checkouts keep their block without racing approval clears.
+    await setPaseoWorktreeUntrustedSource(backing.path, untrustedSourceToPersist).catch(
+      () => false,
+    );
+  }
+  return {
+    allowedTargets: teardownGate.allowed,
+    untrustedBacking: checkoutUntrusted || teardownGate.allowed.length < teardownTargets.length,
+  };
+}
+
 async function filterAllowedTeardownTargets(
   dependencies: ArchiveDependencies,
-  targets: Array<{ workspaceId: string | null; cwd: string }>,
-): Promise<Array<{ workspaceId: string | null; cwd: string }>> {
-  const allowed: Array<{ workspaceId: string | null; cwd: string }> = [];
-  const blockedCwds: string[] = [];
-  for (const target of targets) {
+  targets: Array<{ workspaceId: string; cwd: string }>,
+  checkoutWorkspaceIds: string[],
+): Promise<{
+  allowed: Array<{ workspaceId: string; cwd: string }>;
+  blockedSource: UntrustedWorkspaceSource | null;
+}> {
+  if (targets.length === 0) {
+    return { allowed: [], blockedSource: null };
+  }
+  if (typeof dependencies.assertWorkspaceAutomationAllowed !== "function") {
+    return { allowed: [], blockedSource: null };
+  }
+  const workspaceIdsToCheck = Array.from(
+    new Set([...targets.map((target) => target.workspaceId), ...checkoutWorkspaceIds]),
+  );
+  for (const workspaceId of workspaceIdsToCheck) {
     try {
-      if (target.workspaceId)
-        await dependencies.assertWorkspaceAutomationAllowed?.(target.workspaceId);
-      allowed.push(target);
+      await dependencies.assertWorkspaceAutomationAllowed(workspaceId);
     } catch (error) {
       if (!(error instanceof WorkspaceAutomationBlockedError)) throw error;
-      blockedCwds.push(target.cwd);
+      // Every workspace in checkoutWorkspaceIds shares the same backing checkout;
+      // if any active workspace on it is blocked, skip teardown for the checkout.
+      return { allowed: [], blockedSource: error.source };
     }
   }
-  return allowed.filter(
-    (target) => !blockedCwds.some((cwd) => createRealpathAwarePathMatcher(cwd)(target.cwd)),
-  );
+  return { allowed: targets, blockedSource: null };
 }
 
 function uniqueTeardownTargets<T extends { cwd: string }>(targets: T[]): T[] {

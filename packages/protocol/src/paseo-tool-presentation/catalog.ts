@@ -60,6 +60,7 @@ const AUTOMATION_FIELDS = [
   "provider",
   "cwd",
   "isolation",
+  "archiveOnFinish",
   "maxRuns",
   "expiresIn",
   "clearExpires",

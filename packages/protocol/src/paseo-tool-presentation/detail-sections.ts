@@ -21,6 +21,7 @@ export type PaseoToolDetailSection =
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   agentId: "Agent",
   archivedAgentIds: "Archived agents",
+  archiveOnFinish: "Archive on finish",
   baseBranch: "Base branch",
   branchName: "New branch",
   browserId: "Browser tab",

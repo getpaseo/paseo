@@ -133,7 +133,9 @@ A configured URL takes precedence even when unreachable; Paseo reports the conne
 
 An explicitly configured server needs the bridge installed separately. Connect once and start a session: the setup error gives the local package directory. Copy that directory to the server's OpenCode global `plugins` directory, then retry. For a server on another machine, set `PASEO_OPENCODE_BRIDGE_PORT` in the Paseo OpenCode provider environment before starting Paseo, and set `PASEO_OPENCODE_BRIDGE_URL` to the URL the OpenCode server can use to reach that port. For example, an SSH reverse tunnel can expose the Paseo loopback port on the OpenCode host. The bridge token is exchanged through the OpenCode connection and is not written into the plugin package.
 
-OpenCode's custom MCP registrations are shared by all sessions in a location. Paseo rejects custom MCP servers and per-agent process environment overrides on a reused server rather than applying them to other sessions or ignoring them. Session identity is applied to each session's shell environment. A Paseo-owned helper supports custom process and MCP settings; it is selected when there is no explicit URL or healthy registered service.
+Agent MCP servers and per-agent environment work on a reused server with OpenCode 2.0.29 or newer. Paseo connects each agent's MCP servers itself and shows their tools only to that agent and its subagents. Other agents in the same directory and your own OpenCode sessions do not see them. The agent's environment applies to its shell commands, its subagents, and its stdio MCP servers.
+
+The provider `env` configures the OpenCode process. When it sets variables other than the connection variables above and `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, or `OPENCODE_CONFIG_DIR`, Paseo ignores a registered service and starts its own helper. With an explicit URL, Paseo reports those variables as an error.
 
 ---
 

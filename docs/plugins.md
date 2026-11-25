@@ -883,6 +883,13 @@ its Zod schema, and mounts the component inside the normal plugin runtime and er
 optional output `id` distinguishes several stable replacements from the same source item; its output
 index is the default.
 
+Each replacement keeps a reference to the source row (`source` on the projected stream item), and
+turn logic reads a replaced reply through it. A reply split into several cards stays one reply: turn
+folding keeps every card visible, and the turn footer hangs under the last card, copies the original
+reply text once, forks at its message, and shows its duration and stats. Read the reply with
+`getAssistantReply` (`packages/app/src/types/stream.ts`) instead of checking `kind ===
+"assistant_message"`.
+
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.

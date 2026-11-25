@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import { SessionChildren } from "./children.js";
+import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
 
 function setup() {
   const harness = new V2Harness();
@@ -35,7 +36,204 @@ function setup() {
   return { children, child, upserts };
 }
 
+function setupTree() {
+  const harness = new V2Harness();
+  const sessions = new Map<string, SessionInfo>(
+    [
+      { ...harness.info, id: "first", parentID: "session" },
+      { ...harness.info, id: "second", parentID: "session" },
+      { ...harness.info, id: "grandchild", parentID: "first" },
+    ].map((info) => [info.id, info]),
+  );
+  harness.api.session.list = async (input) => ({
+    data: [...sessions.values()].filter((info) => info.parentID === input?.parentID),
+    cursor: {},
+  });
+  harness.api.session.get = async ({ sessionID }) => {
+    const info = sessions.get(sessionID);
+    if (!info) throw { _tag: "SessionNotFoundError", sessionID };
+    return info;
+  };
+  const store = new ProviderSubagentStore();
+  const children = new SessionChildren({
+    client: () => harness.api,
+    id: "session",
+    emit: (event) => {
+      if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+    },
+    reconcilePermissions: async () => {},
+  });
+  const ids = () =>
+    store
+      .list("parent")
+      .map((child) => child.id)
+      .sort();
+  return { harness, sessions, children, ids, store };
+}
+
 describe("OpenCode v2 child presentation", () => {
+  test.each(["deletion event", "reconnect"])("removes a deleted child on %s", async (trigger) => {
+    const harness = new V2Harness();
+    const child: SessionInfo = { ...harness.info, id: "child", parentID: "session" };
+    let exists = true;
+    harness.api.session.list = async (input) => ({
+      data: exists && input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    harness.api.session.get = async () => {
+      if (!exists) throw { _tag: "SessionNotFoundError", sessionID: child.id };
+      return child;
+    };
+    harness.api.session.active = async () => (exists ? { child: { type: "running" } } : {});
+    const store = new ProviderSubagentStore();
+    const children = new SessionChildren({
+      client: () => harness.api,
+      id: "session",
+      emit: (event) => {
+        if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+      },
+      reconcilePermissions: async () => {},
+    });
+    await children.reconcile("session");
+    expect(store.list("parent")).toMatchObject([{ id: "child", status: "running" }]);
+    exists = false;
+    if (trigger === "reconnect") await children.reconcile("session");
+    else
+      await children.observe({
+        id: "deleted",
+        created: 2,
+        type: "session.deleted",
+        durable: { aggregateID: "child", seq: 1, version: 1 },
+        data: { sessionID: "child" },
+      });
+    expect(store.list("parent")).toEqual([]);
+  });
+
+  test.each(["deletion event", "reconnect"])(
+    "removes a deleted child's descendants on %s without removing its sibling",
+    async (trigger) => {
+      const { sessions, children, ids } = setupTree();
+      await children.reconcile("session");
+      expect(ids()).toEqual(["first", "grandchild", "second"]);
+      sessions.delete("first");
+      sessions.delete("grandchild");
+      if (trigger === "reconnect") await children.reconcile("session");
+      else
+        await children.observe({
+          id: "deleted",
+          created: 2,
+          type: "session.deleted",
+          durable: { aggregateID: "first", seq: 1, version: 1 },
+          data: { sessionID: "first" },
+        });
+      expect(ids()).toEqual(["second"]);
+    },
+  );
+
+  test("retains children on later pages and when reconciling only another subtree", async () => {
+    const { harness, sessions, children, ids } = setupTree();
+    await children.reconcile("session");
+    const list = harness.api.session.list;
+    harness.api.session.list = async (input) => {
+      if (input?.cursor === "second-page") return { data: [sessions.get("second")!], cursor: {} };
+      if (input?.parentID === "session")
+        return { data: [sessions.get("first")!], cursor: { next: "second-page" } };
+      return list(input);
+    };
+    await children.reconcile("session");
+    await children.reconcile("first");
+    expect(ids()).toEqual(["first", "grandchild", "second"]);
+  });
+
+  test.each(["present", "deleted"])(
+    "reconciles a live child skipped by the reconnect cursor when its grandchild is %s",
+    async (grandchild) => {
+      const { harness, sessions, children, ids, store } = setupTree();
+      for (let i = 3; i <= 101; i++) {
+        sessions.set(`child-${i}`, {
+          ...harness.info,
+          id: `child-${i}`,
+          parentID: "session",
+          time: { created: i, updated: i },
+        });
+      }
+      sessions.get("second")!.time = { created: 2, updated: 2 };
+      await children.reconcile("session");
+      const expected = ids();
+      expect(expected).toHaveLength(102);
+      if (grandchild === "deleted") sessions.delete("grandchild");
+      const remaining = expected.filter((id) => grandchild === "present" || id !== "grandchild");
+      const list = harness.api.session.list;
+      harness.api.session.list = async (input) => {
+        if (input?.parentID !== "session" && !input?.cursor) return list(input);
+        const page = [...sessions.values()]
+          .filter((info) => info.parentID === "session")
+          .filter((info) => !input.cursor || info.time.updated < Number(input.cursor))
+          .sort((a, b) => b.time.updated - a.time.updated)
+          .slice(0, input.limit);
+        const next = page.length === input.limit ? String(page.at(-1)!.time.updated) : undefined;
+        if (!input.cursor) {
+          // The oldest child was not on page one. Updating it moves it ahead of that page's cursor.
+          const first = sessions.get("first")!;
+          first.time = { ...first.time, updated: 200 };
+          first.title = "Updated during reconnect";
+        }
+        return { data: page, cursor: { next } };
+      };
+      await children.reconcile("session");
+      expect(ids()).toEqual(remaining);
+      expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+        title: "Updated during reconnect",
+      });
+      await children.observe({
+        id: "queued-update",
+        created: 200,
+        type: "session.execution.started",
+        durable: { aggregateID: "first", seq: 1, version: 1 },
+        data: { sessionID: "first" },
+      });
+      expect(ids()).toEqual(remaining);
+      expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+        title: "Updated during reconnect",
+      });
+    },
+  );
+
+  test("retains an absent child's subtree when its existence cannot be confirmed", async () => {
+    const { harness, sessions, children, ids } = setupTree();
+    await children.reconcile("session");
+    sessions.delete("first");
+    sessions.delete("grandchild");
+    const get = harness.api.session.get;
+    harness.api.session.get = async () => {
+      throw new Error("Provider disconnected");
+    };
+    await children.reconcile("session");
+    expect(ids()).toEqual(["first", "grandchild", "second"]);
+    harness.api.session.get = get;
+    await children.reconcile("session");
+    expect(ids()).toEqual(["second"]);
+  });
+
+  test("keeps missing children when a listing fails before its last page", async () => {
+    const { harness, sessions, children, ids } = setupTree();
+    await children.reconcile("session");
+    sessions.delete("first");
+    sessions.delete("grandchild");
+    const list = harness.api.session.list;
+    harness.api.session.list = async (input) => {
+      if (input?.cursor) throw new Error("Provider disconnected");
+      if (input?.parentID === "session")
+        return { data: [sessions.get("second")!], cursor: { next: "second-page" } };
+      return list(input);
+    };
+    await expect(children.reconcile("session")).rejects.toThrow("Provider disconnected");
+    expect(ids()).toEqual(["first", "grandchild", "second"]);
+    harness.api.session.list = list;
+    await children.reconcile("session");
+    expect(ids()).toEqual(["second"]);
+  });
+
   test("restores agent, model, variant and all token categories in the child subtitle", async () => {
     const { children, upserts } = setup();
     await children.reconcile("session");

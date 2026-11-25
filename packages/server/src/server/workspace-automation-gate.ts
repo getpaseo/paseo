@@ -1,4 +1,5 @@
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { setPaseoWorktreeUntrustedSource } from "../utils/worktree-metadata.js";
 import type { WorkspaceRegistry } from "./workspace-registry.js";
 
 export interface UntrustedWorkspaceSource {
@@ -51,23 +52,26 @@ export async function isCheckoutUntrusted(
 export async function clearWorkspaceAutomationBlock(
   registry: Pick<WorkspaceRegistry, "update" | "listAll">,
   workspaceId: string,
+  options?: { checkoutPath?: string | null },
 ): Promise<boolean> {
-  let cleared = false;
+  const allWorkspaces = await registry.listAll();
+  const target = allWorkspaces.find((record) => record.workspaceId === workspaceId);
+  if (!target) throw new Error(`Workspace not found: ${workspaceId}`);
+  const checkoutPath = options?.checkoutPath ?? target.worktreeRoot ?? target.cwd;
+  // Clear checkout metadata before mutating workspace records so a failed metadata
+  // write surfaces an error and leaves workspace records intact to retry approval.
+  let cleared = await setPaseoWorktreeUntrustedSource(checkoutPath, null);
   const timestamp = new Date().toISOString();
-  const workspace = await registry.update(workspaceId, (record) => {
-    if (!record.untrustedSource) return record;
-    cleared = true;
-    const { untrustedSource: _removed, ...trusted } = record;
-    return { ...trusted, updatedAt: timestamp };
-  });
-  if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-  const checkoutPath = workspace.worktreeRoot ?? workspace.cwd;
   const matchesCheckout = createRealpathAwarePathMatcher(checkoutPath);
-  const siblings = await registry.listAll();
-  for (const sibling of siblings) {
-    if (sibling.workspaceId === workspaceId || !sibling.untrustedSource) continue;
-    if (!matchesCheckout(sibling.worktreeRoot ?? sibling.cwd)) continue;
-    await registry.update(sibling.workspaceId, (record) => {
+  for (const candidate of allWorkspaces) {
+    if (!candidate.untrustedSource) continue;
+    if (
+      candidate.workspaceId !== workspaceId &&
+      !matchesCheckout(candidate.worktreeRoot ?? candidate.cwd)
+    ) {
+      continue;
+    }
+    await registry.update(candidate.workspaceId, (record) => {
       if (!record.untrustedSource) return record;
       cleared = true;
       const { untrustedSource: _removed, ...trusted } = record;

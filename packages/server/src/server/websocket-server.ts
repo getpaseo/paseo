@@ -26,6 +26,7 @@ import { MessageReceipts } from "./message-receipts/index.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
+import { getCachedHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -149,6 +150,8 @@ import {
 } from "./websocket/physical-socket.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
+// Give clients intermediate messages that count as progress during large transfers.
+const DIRECT_WEBSOCKET_FRAME_BYTES = 512 * 1024;
 
 export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
@@ -950,7 +953,8 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      const socket = Object.assign(ws, { maxFrameBytes: DIRECT_WEBSOCKET_FRAME_BYTES });
+      void this.attachAuthenticatedSocket(socket, request, password);
     });
     return wss;
   }
@@ -2060,12 +2064,14 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
+    const machineKind = getCachedHostMachineKind();
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
       serverId: this.serverId,
       hostname: getHostName(),
       version: this.daemonVersion,
+      ...(machineKind ? { machineKind } : {}),
       sourceId: session.getHostSourceId(),
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.

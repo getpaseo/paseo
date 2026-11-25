@@ -16,8 +16,7 @@ function pluginReply(sourceId: string, part = "0"): StreamItem {
   return {
     kind: "plugin",
     id: `math/${sourceId}/${part}`,
-    sourceId,
-    sourceKind: "assistant_message",
+    source: reply(sourceId),
     timestamp: at,
     pluginId: "math",
     pluginItemId: `${sourceId}/${part}`,
@@ -99,10 +98,10 @@ describe("collapseTurns", () => {
     expect(result.hostIdByFoldedMessageId.get("intermediate")).toBe("prompt");
   });
 
-  it.each([undefined, "thought", "tool_call"] as const)(
-    "does not treat a plugin row with source kind %s as a reply",
-    (sourceKind) => {
-      const card = { ...pluginReply("card"), sourceKind };
+  it.each([undefined, thought("card"), shell("card")])(
+    "does not treat a plugin row replacing %o as a reply",
+    (source) => {
+      const card = { ...pluginReply("card"), source };
       const items = [user("prompt"), shell("call"), card];
       expect(collapse(items).tail).toEqual(items);
       expect(collapse(items).summaryRowsByHostId.size).toBe(0);

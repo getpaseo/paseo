@@ -16,6 +16,7 @@ import { createServer as createHTTPServer, type IncomingMessage, type ServerResp
 import { constants, existsSync, unlinkSync } from "fs";
 import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
+import { getCachedHostMachineKind, primeHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
 import path from "node:path";
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -636,6 +637,9 @@ export async function createPaseoDaemon(
   rootLogger: Logger,
   dependencies: PaseoDaemonDependencies = {},
 ): Promise<PaseoDaemon> {
+  // Start hardware detection at the beginning of bootstrap so it overlaps with disk/registry init
+  // and does not hold up the listener when probes are slow.
+  const hostMachineKindReady = primeHostMachineKind();
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
   const obsoleteTimelineDirectory = path.join(config.paseoHome, "agent-timelines");
@@ -874,11 +878,13 @@ export async function createPaseoDaemon(
   });
 
   app.get("/api/status", (_req, res) => {
+    const machineKind = getCachedHostMachineKind();
     res.json({
       status: "server_info",
       serverId,
       hostname: getHostName(),
       version: daemonVersion,
+      ...(machineKind ? { machineKind } : {}),
       listen: formatListenTarget(boundListenTarget ?? listenTarget),
     });
   });
@@ -1246,6 +1252,8 @@ export async function createPaseoDaemon(
     logger,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+      assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
     isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     listActiveWorkspaces: listActiveWorkspacesExternal,
     getAutoArchivedChangeRequestUrl: async (workspaceId) =>
@@ -1358,6 +1366,8 @@ export async function createPaseoDaemon(
     worktreeManagers: pluginRuntime,
     workspaceArchiveOperations,
     getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+      assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
     isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     agentManager,
     agentStorage,
@@ -1611,6 +1621,8 @@ export async function createPaseoDaemon(
     workspaceGitService,
     worktreeManagers: pluginRuntime,
     workspaceArchiveOperations,
+    assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+      assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
     isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
@@ -1803,7 +1815,20 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
-      localCredential = await writeLocalCredential(config.paseoHome);
+      let machineKindTimeout: ReturnType<typeof setTimeout> | null = null;
+      const [nextLocalCredential] = await Promise.all([
+        writeLocalCredential(config.paseoHome),
+        Promise.race([
+          hostMachineKindReady,
+          new Promise<void>((resolve) => {
+            machineKindTimeout = setTimeout(resolve, 150);
+            machineKindTimeout.unref();
+          }),
+        ]).finally(() => {
+          if (machineKindTimeout) clearTimeout(machineKindTimeout);
+        }),
+      ]);
+      localCredential = nextLocalCredential;
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,
