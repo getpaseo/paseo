@@ -217,6 +217,38 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("reports a plugin provider whose command is not installed as unavailable", async () => {
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    manager.replacePluginProviders([
+      {
+        id: "uninstalled-plugin",
+        label: "Uninstalled plugin",
+        command: ["paseo-test-command-that-is-not-installed"],
+        async getCatalogCacheKey({ launch }) {
+          if (!launch) throw new Error("requires a daemon-resolved executable");
+          return launch.command;
+        },
+        async status({ launch }) {
+          return launch ? { available: true } : { available: false, diagnostic: "Install it" };
+        },
+        async connect() {
+          throw new Error("an uninstalled provider is never connected");
+        },
+      },
+    ]);
+    try {
+      const entry = await manager.getProvider({
+        provider: "uninstalled-plugin",
+        cwd: "/tmp/project",
+        wait: true,
+      });
+      expect(entry).toMatchObject({ status: "unavailable" });
+      expect(entry.error).toBeUndefined();
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("carries a plugin provider icon and docs link in snapshot metadata", () => {
     const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
     const docsUrl = "https://example.com/docs";

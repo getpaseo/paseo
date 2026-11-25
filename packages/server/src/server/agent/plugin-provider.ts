@@ -281,7 +281,10 @@ class ProviderRuntime {
   async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
     const callback = this.registration.getCatalogCacheKey;
     if (!callback) return undefined;
-    return callback({ ...options, launch: await this.resolveLaunch() });
+    const launch = await this.resolveUsageLaunch();
+    // A command that does not resolve has no catalogue identity; status() reports it unavailable.
+    if (this.registration.command && !launch) return undefined;
+    return callback({ ...options, launch });
   }
 
   get negotiatedCapabilities(): readonly string[] {
