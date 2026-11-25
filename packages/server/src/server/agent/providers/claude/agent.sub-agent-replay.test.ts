@@ -449,7 +449,11 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   describe("a background subagent", () => {
     // Shapes recorded from Claude Code 2.1.x: the launch returns at once with an async result,
     // and a child stopped by an interrupt ends on the interrupt placeholder, not an end_turn.
-    function backgroundLaunch({ toolUseId = TOOL_USE_ID, agentId = AGENT_ID } = {}): string[] {
+    function backgroundLaunch({
+      toolUseId = TOOL_USE_ID,
+      agentId = AGENT_ID,
+      name,
+    }: { toolUseId?: string; agentId?: string; name?: string } = {}): string[] {
       return [
         parentEntry([
           {
@@ -458,6 +462,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
             name: "Agent",
             input: {
               subagent_type: "general-purpose",
+              ...(name ? { name } : {}),
               description: "probe sleeper",
               run_in_background: true,
             },
@@ -786,6 +791,50 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         id: TOOL_USE_ID,
         status: "completed",
       });
+    });
+
+    test("completes a child resumed by name through SendMessage after a recorded stop", async () => {
+      const name = "probe-sleeper";
+      const resumeToolId = "toolu_resume";
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch({ name }),
+          taskNotification({ status: "stopped", form: "queue-operation", includeToolUseId: false }),
+          parentEntry([
+            {
+              type: "tool_use",
+              id: resumeToolId,
+              name: "SendMessage",
+              input: { to: name, message: "Continue the task." },
+            },
+          ]),
+          JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: resumeToolId,
+                  content: [{ type: "text", text: "Message delivered." }],
+                },
+              ],
+            },
+            toolUseResult: { success: true, resumedAgentId: AGENT_ID },
+          }),
+          taskNotification({ status: "completed", form: "queue-operation" }).replace(
+            TOOL_USE_ID,
+            resumeToolId,
+          ),
+          taskNotification({ status: "completed" }).replace(TOOL_USE_ID, resumeToolId),
+        ],
+        meta: null,
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+
+      const descriptors = upserts(await replayDescriptors());
+      for (const descriptor of descriptors) expect(descriptor.id).toBe(TOOL_USE_ID);
+      expect(descriptors.at(-1)).toMatchObject({ id: TOOL_USE_ID, status: "completed" });
     });
 
     test("honors a later task-only stopped notification after a tool-linked completion", async () => {

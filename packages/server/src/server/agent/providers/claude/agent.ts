@@ -6837,10 +6837,7 @@ async function readClaudeReplayParentFacts(
 ): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
-  const resumedChildrenByToolCallId = new Map<
-    string,
-    { taskId: string; launchToolCallId: string }
-  >();
+  const resumeTargetsByToolCallId = new Map<string, string>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
 
   const resolveLaunchToolCallId = (taskId: string): string | undefined => {
@@ -6854,7 +6851,8 @@ async function readClaudeReplayParentFacts(
     const notificationOutcomes = readClaudeReplayNotificationOutcomes(
       entry,
       linksByAgentId,
-      resumedChildrenByToolCallId,
+      resumeTargetsByToolCallId,
+      resolveLaunchToolCallId,
     );
     for (const notificationOutcome of notificationOutcomes) {
       outcomes.set(notificationOutcome.toolCallId, { status: notificationOutcome.status });
@@ -6866,19 +6864,19 @@ async function readClaudeReplayParentFacts(
       const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
       if (declaration) toolCalls.set(declaration.id, declaration.identity);
       const resume = readClaudeReplayResume(entry.type, block);
-      if (resume) {
-        const launchToolCallId = resolveLaunchToolCallId(resume.taskId);
-        if (launchToolCallId) {
-          resumedChildrenByToolCallId.set(resume.id, { taskId: resume.taskId, launchToolCallId });
-        }
-      }
+      if (resume) resumeTargetsByToolCallId.set(resume.id, resume.target);
       if (
         entry.type !== "user" ||
         block?.type !== "tool_result" ||
         typeof block.tool_use_id !== "string"
       )
         continue;
-      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
+      const result = toObjectRecord(entry.toolUseResult);
+      const resumedTaskId = readClaudeReplayResumedTaskId(block, result);
+      if (resumedTaskId && resumeTargetsByToolCallId.has(block.tool_use_id)) {
+        resumeTargetsByToolCallId.set(block.tool_use_id, resumedTaskId);
+      }
+      if (result?.status !== "async_launched")
         outcomes.set(block.tool_use_id, {
           status: block.is_error === true ? "failed" : "completed",
         });
@@ -6900,7 +6898,8 @@ async function readClaudeReplayParentFacts(
 function* readClaudeReplayNotificationOutcomes(
   entry: ClaudeHistoryEntry,
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
-  resumedChildrenByToolCallId: ReadonlyMap<string, { taskId: string; launchToolCallId: string }>,
+  resumeTargetsByToolCallId: ReadonlyMap<string, string>,
+  resolveLaunchToolCallId: (taskId: string) => string | undefined,
 ): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
   const notification = readTaskNotificationOutcomeFromHistoryRecord(entry);
   if (!notification) return;
@@ -6909,12 +6908,10 @@ function* readClaudeReplayNotificationOutcomes(
 
   if (notification.toolUseId) {
     // A resumed child keeps its task ID, but Claude reports its outcome under the SendMessage call.
-    const resumedChild = resumedChildrenByToolCallId.get(notification.toolUseId);
-    const toolCallId =
-      resumedChild && resumedChild.taskId === notification.taskIds[0]
-        ? resumedChild.launchToolCallId
-        : notification.toolUseId;
-    yield { toolCallId, status };
+    const taskId = resumeTargetsByToolCallId.get(notification.toolUseId);
+    const launchToolCallId =
+      taskId && taskId === notification.taskIds[0] ? resolveLaunchToolCallId(taskId) : undefined;
+    yield { toolCallId: launchToolCallId ?? notification.toolUseId, status };
     return;
   }
   // Stopped tasks can omit tool-use-id; their launch results already link the native IDs.
@@ -6927,7 +6924,7 @@ function* readClaudeReplayNotificationOutcomes(
 function readClaudeReplayResume(
   entryType: unknown,
   block: Record<string, unknown> | undefined,
-): { id: string; taskId: string } | null {
+): { id: string; target: string } | null {
   if (
     entryType !== "assistant" ||
     block?.type !== "tool_use" ||
@@ -6936,8 +6933,16 @@ function readClaudeReplayResume(
   ) {
     return null;
   }
-  const taskId = readNonEmptyString(toObjectRecord(block.input)?.to);
-  return taskId ? { id: block.id, taskId } : null;
+  const target = readNonEmptyString(toObjectRecord(block.input)?.to);
+  return target ? { id: block.id, target } : null;
+}
+
+function readClaudeReplayResumedTaskId(
+  block: Record<string, unknown>,
+  result: Record<string, unknown> | undefined,
+): string | null {
+  if (block.is_error === true || result?.success !== true) return null;
+  return readNonEmptyString(result.resumedAgentId);
 }
 
 function readClaudeReplayTaskDeclaration(
