@@ -142,10 +142,9 @@ describe("paseo daemon bootstrap", () => {
         await second.close();
       }
     } finally {
-      await Promise.all([
-        rm(paseoHomeRoot, { recursive: true, force: true }),
-        rm(agentCwd, { recursive: true, force: true }),
-      ]);
+      // Windows can hold a closed daemon's directory handles briefly, as in `removeDirs`.
+      const retry = { recursive: true, force: true, maxRetries: 3, retryDelay: 100 };
+      await Promise.all([rm(paseoHomeRoot, retry), rm(agentCwd, retry)]);
     }
   });
 
