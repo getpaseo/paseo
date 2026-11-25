@@ -4481,12 +4481,25 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.childProcess = null;
+    const failedTasks = this.failRunningRuntimeTasks();
+    const idle = !this.activeForegroundTurnId && !this.autonomousTurn;
+    // A clean exit between turns with nothing running lost no work (the idle reaper stops
+    // processes this way): drop the dead handles so the next message respawns Claude, without
+    // flagging the agent as failed.
+    if (idle && code === 0 && !signal && failedTasks === 0) {
+      this.logger.info(
+        { agentId: this.agentId, pid: child.pid },
+        "Claude runtime exited cleanly while idle",
+      );
+      this.query = null;
+      this.input = null;
+      return;
+    }
     this.logger.warn(
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
     );
-    this.failRunningRuntimeTasks();
-    if (this.activeForegroundTurnId || this.autonomousTurn) {
+    if (!idle) {
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code
       // and detach this.query, which is how the pump recognizes its own stream.
@@ -4503,16 +4516,19 @@ class ClaudeAgentSession implements AgentSession {
     ]);
   }
 
-  private failRunningRuntimeTasks(): void {
+  /** Returns how many running tasks the lost process took with it. */
+  private failRunningRuntimeTasks(): number {
     for (const finish of this.backgroundStops.values()) finish("connection lost");
     this.runtimeSafety.retire();
+    const observations = this.taskProtocolSource.failRunningTasks();
     this.dispatchEvents([
-      ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+      ...foldSubagentObservations(observations).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
       ),
       // The SDK resets its background task set when the CLI process (re)starts.
       { type: "background_work", provider: "claude", items: null },
     ]);
+    return observations.length;
   }
 
   private startQueryPump(): void {
