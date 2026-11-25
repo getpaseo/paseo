@@ -15,7 +15,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSwitchItem, StreamItem, UserMessageItem } from "@/types/stream";
 import {
-  dismissRetainedProviderSwitchEditFailure,
+  getFailedStartupSettings,
   getStagedProviderSwitch,
   useStagedProviderSwitchStore,
 } from "./index";
@@ -1075,6 +1075,9 @@ describe("app provider switching integration", () => {
     expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
       "Plan mode rejected by provider",
     );
+    expect(getFailedStartupSettings(serverId, "agent-1")?.bundle).toEqual({
+      options: { plan_mode: true },
+    });
     expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
       plan_mode: true,
     });
@@ -1083,12 +1086,70 @@ describe("app provider switching integration", () => {
       { id: "m4", text: "Must stay queued", attachments: [] },
     ]);
 
-    // Once the user explicitly dismisses or re-applies the failed settings, automatic drain resumes.
-    dismissRetainedProviderSwitchEditFailure(serverId, "agent-1");
-    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    // Retrying via the single recovery action re-applies the exact failed bundle (plan_mode: true)
+    // and automatically resumes the idle queue strictly AFTER the retry succeeds!
+    const retryPromise = runtime.recoverFailedStartupSettings(serverId, "agent-1", "retry");
+    await vi.waitFor(() => {
+      expect(callOrder).toHaveLength(3);
+    });
+    expect(callOrder[2]).toContain('"plan_mode":true');
+    // Still waiting for applyAgentConfig response -> M4 MUST NOT send yet!
+    expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
+    resolveApplyConfig();
+    expect(await retryPromise).toBe(true);
     await vi.waitFor(() => {
       expect(callOrder).toContain("send:Must stay queued");
     });
+    expect(getFailedStartupSettings(serverId, "agent-1")).toBeNull();
+    expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
+      undefined,
+    );
+
+    // Case 3: Explicit discard clears the failed settings and resumes an idle queue immediately.
+    callOrder.length = 0;
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m5", text: "Switch with discarded edit", attachments: [] },
+            { id: "m6", text: "Send after explicit discard", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.3",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: { plan_mode: false },
+    });
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(callOrder).toEqual(["switch:codex"]);
+    });
+    useStagedProviderSwitchStore.getState().patch(serverId, "agent-1", (current) => ({
+      ...current,
+      providerOptions: { plan_mode: true },
+    }));
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "idle" } });
+    await vi.waitFor(() => {
+      expect(callOrder).toHaveLength(2);
+    });
+    rejectApplyConfig!(new Error("Disconnected"));
+    await vi.waitFor(() => {
+      expect(getFailedStartupSettings(serverId, "agent-1")?.errorMessage).toBe("Disconnected");
+    });
+    expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
+
+    expect(await runtime.recoverFailedStartupSettings(serverId, "agent-1", "discard")).toBe(true);
+    await vi.waitFor(() => {
+      expect(callOrder).toContain("send:Send after explicit discard");
+    });
+    expect(getFailedStartupSettings(serverId, "agent-1")).toBeNull();
 
     sessionStore.clearSession(serverId);
   });

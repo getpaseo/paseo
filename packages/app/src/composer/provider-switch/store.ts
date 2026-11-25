@@ -42,6 +42,12 @@ export interface LiveAgentSettingsWriter {
   ) => Promise<unknown>;
 }
 
+export interface FailedStartupSettings {
+  provider: AgentProvider;
+  bundle: AgentConfigApply;
+  errorMessage: string;
+}
+
 export type SettleCommittedProviderSwitchResult =
   | { applied: true }
   | { applied: false; errorMessage: string };
@@ -49,7 +55,7 @@ export type SettleCommittedProviderSwitchResult =
 interface StagedProviderSwitchState {
   stagedByKey: Map<string, StagedProviderSwitch>;
   inFlightByKey: Map<string, number>;
-  retainedOnEditFailureByKey: Set<string>;
+  failedStartupSettingsByKey: Map<string, FailedStartupSettings>;
   stage: (serverId: string, agentId: string, draft: StagedProviderSwitch) => void;
   patch: (
     serverId: string,
@@ -58,7 +64,11 @@ interface StagedProviderSwitchState {
   ) => void;
   beginSwitch: (serverId: string, agentId: string) => void;
   endSwitch: (serverId: string, agentId: string) => void;
-  markRetainedOnEditFailure: (serverId: string, agentId: string) => void;
+  setFailedStartupSettings: (
+    serverId: string,
+    agentId: string,
+    failed: FailedStartupSettings | null,
+  ) => void;
   settle: (serverId: string, agentId: string, sentDraft: StagedProviderSwitch) => void;
   clear: (serverId: string, agentId: string) => void;
   clearForServer: (serverId: string) => void;
@@ -67,16 +77,16 @@ interface StagedProviderSwitchState {
 export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((set) => ({
   stagedByKey: new Map(),
   inFlightByKey: new Map(),
-  retainedOnEditFailureByKey: new Set(),
+  failedStartupSettingsByKey: new Map(),
 
   stage: (serverId, agentId, draft) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
       const next = new Map(state.stagedByKey);
       next.set(key, draft);
-      const nextRetained = new Set(state.retainedOnEditFailureByKey);
-      nextRetained.delete(key);
-      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
+      const nextFailed = new Map(state.failedStartupSettingsByKey);
+      nextFailed.delete(key);
+      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
     }),
 
   patch: (serverId, agentId, updater) =>
@@ -88,9 +98,7 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (updated === current) return state;
       const next = new Map(state.stagedByKey);
       next.set(key, updated);
-      const nextRetained = new Set(state.retainedOnEditFailureByKey);
-      nextRetained.delete(key);
-      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
+      return { stagedByKey: next };
     }),
 
   beginSwitch: (serverId, agentId) =>
@@ -115,13 +123,17 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       return { inFlightByKey: next };
     }),
 
-  markRetainedOnEditFailure: (serverId, agentId) =>
+  setFailedStartupSettings: (serverId, agentId, failed) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
-      if (state.retainedOnEditFailureByKey.has(key)) return state;
-      const next = new Set(state.retainedOnEditFailureByKey);
-      next.add(key);
-      return { retainedOnEditFailureByKey: next };
+      const next = new Map(state.failedStartupSettingsByKey);
+      if (failed === null) {
+        if (!next.has(key)) return state;
+        next.delete(key);
+      } else {
+        next.set(key, failed);
+      }
+      return { failedStartupSettingsByKey: next };
     }),
 
   settle: (serverId, agentId, sentDraft) =>
@@ -131,20 +143,20 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (!current || current !== sentDraft) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      const nextRetained = new Set(state.retainedOnEditFailureByKey);
-      nextRetained.delete(key);
-      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
+      const nextFailed = new Map(state.failedStartupSettingsByKey);
+      nextFailed.delete(key);
+      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
     }),
 
   clear: (serverId, agentId) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
-      if (!state.stagedByKey.has(key) && !state.retainedOnEditFailureByKey.has(key)) return state;
+      if (!state.stagedByKey.has(key) && !state.failedStartupSettingsByKey.has(key)) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      const nextRetained = new Set(state.retainedOnEditFailureByKey);
-      nextRetained.delete(key);
-      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
+      const nextFailed = new Map(state.failedStartupSettingsByKey);
+      nextFailed.delete(key);
+      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
     }),
 
   clearForServer: (serverId) =>
@@ -165,10 +177,10 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
           changed = true;
         }
       }
-      const nextRetained = new Set(state.retainedOnEditFailureByKey);
-      for (const key of nextRetained) {
+      const nextFailed = new Map(state.failedStartupSettingsByKey);
+      for (const key of nextFailed.keys()) {
         if (key.startsWith(prefix)) {
-          nextRetained.delete(key);
+          nextFailed.delete(key);
           changed = true;
         }
       }
@@ -176,7 +188,7 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
         ? {
             stagedByKey: next,
             inFlightByKey: nextInFlight,
-            retainedOnEditFailureByKey: nextRetained,
+            failedStartupSettingsByKey: nextFailed,
           }
         : state;
     }),
@@ -206,14 +218,28 @@ export function isStagedProviderSwitchInFlight(serverId: string, agentId: string
   );
 }
 
-export function hasRetainedProviderSwitchEditFailure(serverId: string, agentId: string): boolean {
-  return useStagedProviderSwitchStore
-    .getState()
-    .retainedOnEditFailureByKey.has(stagedKey(serverId, agentId));
+export function getFailedStartupSettings(
+  serverId: string,
+  agentId: string,
+): FailedStartupSettings | null {
+  return (
+    useStagedProviderSwitchStore
+      .getState()
+      .failedStartupSettingsByKey.get(stagedKey(serverId, agentId)) ?? null
+  );
 }
 
-export function dismissRetainedProviderSwitchEditFailure(serverId: string, agentId: string): void {
-  if (!hasRetainedProviderSwitchEditFailure(serverId, agentId)) return;
+export function useFailedStartupSettings(
+  serverId: string,
+  agentId: string,
+): FailedStartupSettings | null {
+  return useStagedProviderSwitchStore(
+    (state) => state.failedStartupSettingsByKey.get(stagedKey(serverId, agentId)) ?? null,
+  );
+}
+
+export function discardFailedStartupSettings(serverId: string, agentId: string): void {
+  if (!getFailedStartupSettings(serverId, agentId)) return;
   useStagedProviderSwitchStore.getState().clear(serverId, agentId);
 }
 
@@ -333,9 +359,37 @@ export async function settleCommittedProviderSwitch(input: {
     store.settle(serverId, agentId, remaining);
     return { applied: true };
   } catch (error) {
-    store.markRetainedOnEditFailure(serverId, agentId);
     const errorMessage = error instanceof Error ? error.message : String(error);
+    store.setFailedStartupSettings(serverId, agentId, {
+      provider: liveProvider,
+      bundle,
+      errorMessage,
+    });
     console.warn("[ProviderSwitch] failed to forward edited settings after switch", error);
+    return { applied: false, errorMessage };
+  }
+}
+
+/** Retries applying previously failed startup settings for a committed provider switch. */
+export async function applyFailedStartupSettings(input: {
+  serverId: string;
+  agentId: string;
+  client: LiveAgentSettingsWriter;
+}): Promise<SettleCommittedProviderSwitchResult> {
+  const { serverId, agentId, client } = input;
+  const failed = getFailedStartupSettings(serverId, agentId);
+  if (!failed) {
+    return { applied: true };
+  }
+  const store = useStagedProviderSwitchStore.getState();
+  try {
+    await applyEditedDraftSettingsToLiveAgent(agentId, failed.bundle, failed.provider, client);
+    store.clear(serverId, agentId);
+    return { applied: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    store.setFailedStartupSettings(serverId, agentId, { ...failed, errorMessage });
+    console.warn("[ProviderSwitch] failed to retry startup settings", error);
     return { applied: false, errorMessage };
   }
 }

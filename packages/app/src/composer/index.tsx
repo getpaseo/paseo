@@ -13,12 +13,12 @@ import { Button } from "@/components/ui/button";
 import {
   beginStagedProviderSwitch,
   clearStagedProviderSwitch,
-  dismissRetainedProviderSwitchEditFailure,
   endStagedProviderSwitch,
+  getFailedStartupSettings,
   getStagedProviderSwitch,
-  hasRetainedProviderSwitchEditFailure,
   isStagedProviderSwitchInFlight,
   settleCommittedProviderSwitch,
+  useFailedStartupSettings,
   useStagedProviderSwitch,
 } from "@/composer/provider-switch";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -1384,6 +1384,7 @@ function ComposerContentImpl({
     (state) => state.sessions[serverId]?.serverInfo?.features?.providerSwitching === true,
   );
   const rawStagedSwitch = useStagedProviderSwitch(serverId, agentId);
+  const failedStartupSettings = useFailedStartupSettings(serverId, agentId);
   const stagedSwitch =
     supportsProviderSwitching &&
     rawStagedSwitch &&
@@ -1402,7 +1403,7 @@ function ComposerContentImpl({
       agentState.provider &&
       rawStagedSwitch.provider === agentState.provider &&
       !isStagedProviderSwitchInFlight(serverId, agentId) &&
-      !hasRetainedProviderSwitchEditFailure(serverId, agentId)
+      !getFailedStartupSettings(serverId, agentId)
     ) {
       clearStagedProviderSwitch(serverId, agentId);
     }
@@ -1412,6 +1413,16 @@ function ComposerContentImpl({
     clearStagedProviderSwitch(serverId, agentId);
     setSendError(null);
     useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+  }, [agentId, serverId]);
+
+  const handleRetryFailedStartupSettings = useCallback(() => {
+    setSendError(null);
+    void getHostRuntimeStore().recoverFailedStartupSettings(serverId, agentId, "retry");
+  }, [agentId, serverId]);
+
+  const handleDismissFailedStartupSettings = useCallback(() => {
+    setSendError(null);
+    void getHostRuntimeStore().recoverFailedStartupSettings(serverId, agentId, "discard");
   }, [agentId, serverId]);
 
   const queuedMessagesRaw = useSessionStore((state) =>
@@ -1781,9 +1792,6 @@ function ComposerContentImpl({
       const stagedProviderSwitch =
         pendingSwitch && pendingSwitch.provider !== liveProvider ? pendingSwitch : null;
       useSessionStore.getState().setQueuedSendError(serverId, targetAgentId, null);
-      if (!stagedProviderSwitch) {
-        dismissRetainedProviderSwitchEditFailure(serverId, targetAgentId);
-      }
       if (stagedProviderSwitch) {
         beginStagedProviderSwitch(serverId, targetAgentId);
       }
@@ -2186,7 +2194,6 @@ function ComposerContentImpl({
       });
       if (!result) return;
       useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
-      dismissRetainedProviderSwitchEditFailure(serverId, agentId);
       replaceUserInput(result.text);
       setSelectedAttachments(result.attachments);
     },
@@ -2197,7 +2204,6 @@ function ComposerContentImpl({
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
       useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
-      dismissRetainedProviderSwitchEditFailure(serverId, agentId);
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
@@ -2664,13 +2670,41 @@ function ComposerContentImpl({
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
-  const displayError = externalError || sendError || queuedSendError;
+  const displayError =
+    externalError || sendError || failedStartupSettings?.errorMessage || queuedSendError;
   const sendErrorNode = useMemo(
     () =>
       displayError ? (
-        <Alert variant="error" size="sm" description={displayError} testID="composer-error" />
+        <Alert variant="error" size="sm" description={displayError} testID="composer-error">
+          {failedStartupSettings ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={handleRetryFailedStartupSettings}
+                testID="retry-failed-startup-settings"
+              >
+                {t("common.actions.retry")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onPress={handleDismissFailedStartupSettings}
+                testID="dismiss-failed-startup-settings"
+              >
+                {t("common.actions.dismiss")}
+              </Button>
+            </>
+          ) : null}
+        </Alert>
       ) : null,
-    [displayError],
+    [
+      displayError,
+      failedStartupSettings,
+      handleDismissFailedStartupSettings,
+      handleRetryFailedStartupSettings,
+      t,
+    ],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")

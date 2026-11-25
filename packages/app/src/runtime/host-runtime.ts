@@ -84,10 +84,12 @@ import {
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import {
+  applyFailedStartupSettings,
   beginStagedProviderSwitch,
+  discardFailedStartupSettings,
   endStagedProviderSwitch,
+  getFailedStartupSettings,
   getStagedProviderSwitch,
-  hasRetainedProviderSwitchEditFailure,
   settleCommittedProviderSwitch,
 } from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -2891,8 +2893,51 @@ export class HostRuntimeStore {
     }
   }
 
+  private resumeIdleQueueIfReady(serverId: string, agentId: string): void {
+    const latestSession = useSessionStore.getState().sessions[serverId];
+    const latestAgent = latestSession?.agents.get(agentId);
+    const remainingQueue = latestSession?.queuedMessages.get(agentId);
+    if (
+      latestAgent?.status === "idle" &&
+      remainingQueue &&
+      remainingQueue.length > 0 &&
+      latestSession?.initializingAgents.get(agentId) !== true
+    ) {
+      this.drainQueuedAgentMessage(serverId, agentId);
+    }
+  }
+
+  /**
+   * Explicitly retries or discards startup settings that failed after a provider switch,
+   * then resumes automatic draining if the chat is idle with queued messages.
+   */
+  async recoverFailedStartupSettings(
+    serverId: string,
+    agentId: string,
+    action: "retry" | "discard",
+  ): Promise<boolean> {
+    if (action === "discard") {
+      discardFailedStartupSettings(serverId, agentId);
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+      this.resumeIdleQueueIfReady(serverId, agentId);
+      return true;
+    }
+    const client = useSessionStore.getState().sessions[serverId]?.client;
+    if (!client) {
+      return false;
+    }
+    const result = await applyFailedStartupSettings({ serverId, agentId, client });
+    if (!result.applied) {
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, result.errorMessage);
+      return false;
+    }
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+    this.resumeIdleQueueIfReady(serverId, agentId);
+    return true;
+  }
+
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
-    if (hasRetainedProviderSwitchEditFailure(serverId, agentId)) {
+    if (getFailedStartupSettings(serverId, agentId)) {
       return;
     }
     const drainKey = `${serverId}:${agentId}`;
@@ -2997,17 +3042,7 @@ export class HostRuntimeStore {
         this.queuedAgentDrainInFlight.delete(drainKey);
         const hadPendingDrain = this.queuedAgentDrainPending.delete(drainKey);
         if (!drainSent || !hadPendingDrain) return;
-        const latestSession = useSessionStore.getState().sessions[serverId];
-        const latestAgent = latestSession?.agents.get(agentId);
-        const remainingQueue = latestSession?.queuedMessages.get(agentId);
-        if (
-          latestAgent?.status === "idle" &&
-          remainingQueue &&
-          remainingQueue.length > 0 &&
-          latestSession?.initializingAgents.get(agentId) !== true
-        ) {
-          this.drainQueuedAgentMessage(serverId, agentId);
-        }
+        this.resumeIdleQueueIfReady(serverId, agentId);
       });
   }
 
