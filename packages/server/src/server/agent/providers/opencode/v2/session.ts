@@ -534,7 +534,7 @@ export class OpenCodeV2Session implements AgentSession {
     // reconciling a new connection, including event-stream reconnections.
     if (this.environment)
       await this.client.session.environment({ sessionID: this.id, variables: this.environment });
-    for (const id of this.children.ids()) await this.adoptDescendant(id);
+    await this.children.restoreAdoptions();
     await this.reconcile();
     await this.children.reconcile(this.id);
     await this.turns.reconcile();

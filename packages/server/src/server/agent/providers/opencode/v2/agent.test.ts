@@ -1,8 +1,9 @@
-import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
+import type { FormInfo, ModelInfo, SessionInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
+import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
@@ -753,6 +754,73 @@ describe("OpenCode v2 session lifecycle", () => {
       expect(second.prompts).toEqual([]);
     } finally {
       await Promise.all(resumed.map((session) => session.close()));
+    }
+  });
+
+  test("restores live descendant environments when a tracked child was deleted during disconnect", async () => {
+    const harness = new V2Harness();
+    const child: SessionInfo = { ...harness.info, id: "deleted", parentID: "session" };
+    const sibling: SessionInfo = { ...harness.info, id: "sibling", parentID: "session" };
+    const grandchild: SessionInfo = { ...harness.info, id: "grandchild", parentID: sibling.id };
+    const sessions = new Map([[harness.info.id, harness.info]]);
+    harness.api.session.get = async ({ sessionID }) => {
+      const info = sessions.get(sessionID);
+      if (!info) throw { _tag: "SessionNotFoundError", sessionID };
+      return info;
+    };
+    harness.api.session.list = async ({ parentID } = {}) => ({
+      data: parentID ? [...sessions.values()].filter((info) => info.parentID === parentID) : [],
+      cursor: {},
+    });
+    const applyEnvironment = harness.api.session.environment;
+    harness.api.session.environment = async (input) => {
+      if (!sessions.has(input.sessionID))
+        throw { _tag: "SessionNotFoundError", sessionID: input.sessionID };
+      await applyEnvironment(input);
+    };
+    harness.api.session.active = async () =>
+      sessions.has(child.id) ? { [child.id]: { type: "running" } } : {};
+
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project" },
+      { env: { PASEO_AGENT_ID: "parent" } },
+    );
+    const store = new ProviderSubagentStore();
+    session.subscribe((event) => {
+      if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+    });
+    try {
+      for (const info of [child, sibling, grandchild]) sessions.set(info.id, info);
+      harness.push({ id: child.id, created: 2, type: "session.created", data: child });
+      const ids = () =>
+        store
+          .list("parent")
+          .map(({ id }) => id)
+          .sort();
+      await expect.poll(ids).toEqual([child.id, grandchild.id, sibling.id]);
+      expect(store.list("parent").find(({ id }) => id === child.id)?.status).toBe("running");
+
+      sessions.delete(child.id);
+      harness.environments.length = 0;
+      harness.push({ id: "reconnected", created: 3, type: "server.connected", data: {} });
+
+      await expect.poll(ids).toEqual([grandchild.id, sibling.id]);
+      await expect
+        .poll(() => harness.environments)
+        .toMatchObject([
+          { sessionID: harness.info.id, variables: { PASEO_AGENT_ID: "parent" } },
+          { sessionID: sibling.id, variables: { PASEO_AGENT_ID: "parent" } },
+          { sessionID: grandchild.id, variables: { PASEO_AGENT_ID: "parent" } },
+        ]);
+      await expect(session.run("continue after reconnect")).resolves.toMatchObject({
+        sessionId: harness.info.id,
+      });
+    } finally {
+      await session.close();
     }
   });
 
