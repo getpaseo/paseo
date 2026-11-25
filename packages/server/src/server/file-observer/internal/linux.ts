@@ -207,11 +207,8 @@ class LinuxBackend implements ObservationBackend {
 
   private async reconcile(scopes: string[], mode: ReconcileMode): Promise<void> {
     for (const scope of scopes) {
-      const snapshot = await this.scan(scope);
+      const snapshot = await this.scan(scope, mode);
       if (!this.host.isActive()) return;
-      for (const directory of snapshot.directories) {
-        if (!this.watchSnapshotDirectory(directory)) snapshot.directories.delete(directory);
-      }
       if (mode === "changes") {
         for (const path of snapshot.filesDiscoveredBeforeCoverage) {
           this.host.queueEvent("create", path);
@@ -242,7 +239,29 @@ class LinuxBackend implements ObservationBackend {
     }
   }
 
-  private async scan(scope: string): Promise<DirectorySnapshot> {
+  private async readDirectoryForScan(
+    directory: string,
+    needsCoverageDiscovery: boolean,
+  ): Promise<Dirent[] | null> {
+    // Establish inotify coverage before taking the directory snapshot so files
+    // written during readdir() or mid-directory scan yields are never missed.
+    if (needsCoverageDiscovery && !this.watchSnapshotDirectory(directory)) {
+      return null;
+    }
+    try {
+      return await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      if (directory === this.host.root && this.host.isActive()) throw error;
+      if (needsCoverageDiscovery) {
+        this.watchers.get(directory)?.close();
+        this.watchers.delete(directory);
+      }
+      return null;
+    }
+  }
+
+  private async scan(scope: string, mode: ReconcileMode): Promise<DirectorySnapshot> {
     let scopeStats;
     try {
       scopeStats = await stat(scope);
@@ -264,12 +283,10 @@ class LinuxBackend implements ObservationBackend {
         directories.delete(directory);
         continue;
       }
-      let entries: Dirent[];
-      try {
-        entries = await readdir(directory, { withFileTypes: true });
-      } catch (error) {
-        if (!isMissingPathError(error)) throw error;
-        if (directory === this.host.root && this.host.isActive()) throw error;
+      const needsCoverageDiscovery = !this.watchers.has(directory);
+      const entries = await this.readDirectoryForScan(directory, needsCoverageDiscovery);
+      if (!entries) {
+        directories.delete(directory);
         continue;
       }
       if (!this.host.isActive()) {
@@ -282,6 +299,7 @@ class LinuxBackend implements ObservationBackend {
       const keepScanning = await this.scanDirectoryEntries(
         directory,
         entries,
+        mode === "changes" && needsCoverageDiscovery,
         directories,
         filesDiscoveredBeforeCoverage,
         pending,
@@ -300,6 +318,7 @@ class LinuxBackend implements ObservationBackend {
   private async scanDirectoryEntries(
     directory: string,
     entries: Dirent[],
+    collectDiscoveredFiles: boolean,
     directories: Set<string>,
     filesDiscoveredBeforeCoverage: Set<string>,
     pending: string[],
@@ -307,7 +326,6 @@ class LinuxBackend implements ObservationBackend {
   ): Promise<boolean> {
     const childDirectories: string[] = [];
     const childFiles: string[] = [];
-    const needsCoverageDiscovery = !this.watchers.has(directory);
     for (const entry of entries) {
       if (slice.shouldYield()) {
         await slice.yield();
@@ -320,7 +338,7 @@ class LinuxBackend implements ObservationBackend {
       const child = resolve(directory, entry.name);
       if (this.host.isIgnoredRoot(child)) continue;
       if (!entry.isDirectory()) {
-        if (needsCoverageDiscovery) childFiles.push(child);
+        if (collectDiscoveredFiles) childFiles.push(child);
         continue;
       }
       if (directories.size + childDirectories.length + 1 > MAX_WATCHED_DIRECTORIES) {

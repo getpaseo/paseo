@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { expect, test } from "vitest";
 import { createFileObserver } from "../index.js";
 import { createLinuxBackend } from "./linux.js";
@@ -178,5 +179,77 @@ test("scan yields to the event loop and aborts mid-directory when the observatio
     await backend.close();
     await observer.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a file written into a newly moved directory during a scan yield is not missed", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "linux-scan-watch-order-"));
+  const root = join(parent, "root");
+  const staged = join(parent, "staged");
+  const moved = join(root, "moved");
+  const lateFile = join(moved, "late.txt");
+  await mkdir(root);
+  await mkdir(staged);
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(staged, `file-${index}.txt`), "x"),
+    ),
+  );
+
+  const paths = createObserverPaths(process.platform);
+  const observer = createFileObserver();
+  let active = true;
+  const delivered = new Set<string>();
+  const movedPrefix = `${moved}${sep}`;
+  let inspectedMoved = 0;
+  let scheduledLateWrite = false;
+  let wroteDuringYield = false;
+  const backend = createLinuxBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isIgnoredRoot: (path) => {
+        if (path.startsWith(movedPrefix)) {
+          inspectedMoved += 1;
+          if (!scheduledLateWrite && inspectedMoved === 260) {
+            scheduledLateWrite = true;
+            const until = performance.now() + 15;
+            while (performance.now() < until) {
+              // Ensure the next stride boundary exceeds the 8 ms slice budget.
+            }
+            setImmediate(() => {
+              if (inspectedMoved < totalFiles) {
+                wroteDuringYield = true;
+              }
+              writeFileSync(lateFile, "after-readdir");
+            });
+          }
+        }
+        return false;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: (_type, path) => {
+        delivered.add(path);
+      },
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+  );
+
+  try {
+    await backend.start();
+    await rename(staged, moved);
+    await expect.poll(() => wroteDuringYield, { timeout: 5_000 }).toBe(true);
+    await expect.poll(() => delivered.has(lateFile), { timeout: 2_000 }).toBe(true);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(parent, { recursive: true, force: true });
   }
 });
