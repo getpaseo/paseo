@@ -189,6 +189,88 @@ describe("paseo daemon bootstrap", () => {
     },
   );
 
+  test("keeps Tailscale on its original port across a main port change", async () => {
+    const tailscaleIp = "127.0.0.2";
+    const carrierNatIp = "100.127.255.254";
+    const dependencies = {
+      getTailscaleNetwork: () => ({
+        addresses: [tailscaleIp],
+        otherAddresses: new Set([carrierNatIp]),
+      }),
+    };
+    const original = await createTestPaseoDaemon({ ...dependencies, cleanup: false });
+    const oldAddress = `${tailscaleIp}:${original.port}`;
+    const first = new DaemonClient({ url: `ws://127.0.0.1:${original.port}/ws` });
+    const configPath = path.join(original.paseoHome, "config.json");
+    const persist = (listen: string) =>
+      writeFile(configPath, JSON.stringify({ version: 1, daemon: { listen } }));
+    const readListen = async () => JSON.parse(await readFile(configPath, "utf8")).daemon.listen;
+    let restarted: Awaited<ReturnType<typeof createPaseoDaemon>> | undefined;
+    let local: DaemonClient | undefined;
+    let remote: DaemonClient | undefined;
+    try {
+      await first.connect();
+      await first.setTailscaleEnabled(true);
+      const [, savedExtra] = (await readListen()).split(",");
+      expect(savedExtra).toBe(oldAddress);
+
+      const newPort = await findFreePort();
+      const newMain = `127.0.0.1:${newPort}`;
+      await persist(`${newMain},${savedExtra}`);
+      await first.close();
+      await original.close();
+      restarted = await createPaseoDaemon(
+        { ...original.config, listen: loadConfig(original.paseoHome, { env: {} }).listen },
+        pino({ level: "silent" }),
+        {
+          ...dependencies,
+          builtinPlugins: new BuiltinPluginLoader(undefined, []),
+          lazyTerminalWorker: true,
+        },
+      );
+      await restarted.start();
+
+      local = new DaemonClient({ url: `ws://${newMain}/ws` });
+      remote = new DaemonClient({ url: `ws://${oldAddress}/ws` });
+      await Promise.all([local.connect(), remote.connect()]);
+      expect((await local.getDaemonStatus()).tailscale).toMatchObject({
+        state: "on",
+        address: oldAddress,
+      });
+      expect(await local.setTailscaleEnabled(true)).toMatchObject({
+        extraListeners: [{ address: oldAddress, state: "listening" }],
+      });
+      expect(await readListen()).toBe(`${newMain},${oldAddress}`);
+
+      const anotherTailscale = `${tailscaleIp}:${newPort}`;
+      const carrierNat = `${carrierNatIp}:${original.port}`;
+      await persist(`${newMain},${oldAddress},${carrierNat},${anotherTailscale}`);
+      await local.reloadDaemonConfig();
+      expect((await fetch(`http://${anotherTailscale}/api/health`)).ok).toBe(true);
+      expect((await local.getDaemonStatus()).tailscale?.address).toBe(oldAddress);
+      expect(await remote.setTailscaleEnabled(false)).toMatchObject({
+        confirmationRequired: true,
+        tailscale: { state: "on", address: oldAddress },
+      });
+      expect(await remote.setTailscaleEnabled(false, true)).toMatchObject({
+        confirmationRequired: false,
+        tailscale: { state: "off" },
+        extraListeners: [{ address: carrierNat }],
+      });
+      await expect.poll(() => remote.isConnected).toBe(false);
+      await expect(fetch(`http://${anotherTailscale}/api/health`)).rejects.toThrow();
+      expect(await readListen()).toBe(`${newMain},${carrierNat}`);
+    } finally {
+      await Promise.all([first.close(), local?.close(), remote?.close()]);
+      if (restarted) await restarted.stop();
+      else await original.close();
+      await Promise.all([
+        rm(path.dirname(original.paseoHome), { recursive: true, force: true }),
+        rm(original.staticDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("reload changes only the extra TCP listeners without replacing the main endpoint", async () => {
     const daemon = await createTestPaseoDaemon({ relayEnabled: false, hostnames: [] });
     const local = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });

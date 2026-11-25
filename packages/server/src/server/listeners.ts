@@ -167,13 +167,8 @@ export interface TailscaleNetwork {
 
 // A saved address can outlive its interface. An address assigned to a different
 // interface belongs to that interface even when it is in the shared IPv4 range.
-function isTailscaleListener(
-  target: ReturnType<typeof parseExtra>,
-  port: number,
-  network: TailscaleNetwork,
-) {
+function isTailscaleListener(target: ReturnType<typeof parseExtra>, network: TailscaleNetwork) {
   return (
-    target.port === port &&
     !network.otherAddresses.has(target.host) &&
     (network.addresses.includes(target.host) || isTailnetIPv4(target.host))
   );
@@ -235,7 +230,7 @@ export function createDaemonListeners(options: {
     const extraListeners = extras.status();
     const configured = extraListeners.flatMap((listener) => {
       const target = parseExtra(listener.address);
-      if (main?.type !== "tcp" || !isTailscaleListener(target, main.port, network)) return [];
+      if (main?.type !== "tcp" || !isTailscaleListener(target, network)) return [];
       return [{ ...listener, target }];
     });
     const current = configured.find(
@@ -304,6 +299,13 @@ export function createDaemonListeners(options: {
       const [first, ...saved] = splitListen(persisted ?? listen);
       const live = extraListeners.map(({ address }) => address);
       if (enabled) {
+        if (configured.length) {
+          return {
+            confirmationRequired: false as const,
+            listen: persisted ?? listen,
+            apply: () => Promise.resolve(),
+          };
+        }
         if (!tailscale.ip) throw new Error("Tailscale is not running");
         if (parseSocketTarget(first)) throw new Error("The configured main listener is a socket");
         const address = `${tailscale.ip}:${main.port}`;
@@ -324,9 +326,7 @@ export function createDaemonListeners(options: {
         return { confirmationRequired: true as const };
       }
       const removed = new Set(configured.map(({ address }) => address));
-      const remaining = saved.filter(
-        (entry) => !isTailscaleListener(parseExtra(entry), main.port, network),
-      );
+      const remaining = saved.filter((entry) => !isTailscaleListener(parseExtra(entry), network));
       return {
         confirmationRequired: false as const,
         listen: [first, ...remaining].join(","),
