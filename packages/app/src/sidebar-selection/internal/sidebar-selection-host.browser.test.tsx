@@ -5,6 +5,7 @@ import { I18nextProvider } from "react-i18next";
 import { Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { afterEach, describe, expect, it } from "vitest";
+import { userEvent } from "vitest/browser";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
 import { SidebarWorkspaceContextMenu } from "@/components/sidebar/sidebar-workspace-menu";
 import { ToastProvider, useToast } from "@/contexts/toast-context";
@@ -18,13 +19,14 @@ import {
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import {
-  isShiftPressEvent,
   registerSidebarVisibleWorkspaceKeysReader,
   SidebarSelectionHost,
   useIsSidebarSelectionMode,
   useIsWorkspaceBulkSelected,
   useSidebarSelectionStore,
+  useWorkspaceSelectionPress,
 } from "@/sidebar-selection";
+import { getShortcutOs } from "@/utils/shortcut-platform";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -87,19 +89,18 @@ function SidebarToastProbe() {
 }
 
 const noop = () => {};
+let navigatedKeys: string[] = [];
 
 function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
   const isSelectionMode = useIsSidebarSelectionMode();
   const isBulkSelected = useIsWorkspaceBulkSelected(entry.workspaceKey);
-  const handlePress = useCallback(
-    (event: unknown) => {
-      const shiftKey = isShiftPressEvent(event);
-      if (isSelectionMode || shiftKey) {
-        useSidebarSelectionStore.getState().pressWorkspace(entry.workspaceKey, { shiftKey });
-      }
-    },
-    [entry.workspaceKey, isSelectionMode],
-  );
+  const handleNavigate = useCallback(() => {
+    navigatedKeys.push(entry.workspaceKey);
+  }, [entry.workspaceKey]);
+  const { onPress, onPressIn } = useWorkspaceSelectionPress({
+    workspaceKey: entry.workspaceKey,
+    onNavigate: handleNavigate,
+  });
   return (
     <SidebarWorkspaceContextMenu
       contextMenuOpen={false}
@@ -110,7 +111,8 @@ function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
       accessibilityRole={isSelectionMode ? "checkbox" : "button"}
       aria-checked={isSelectionMode ? isBulkSelected : undefined}
       highlightStyle={undefined}
-      onPress={handlePress}
+      onPress={onPress}
+      onPressIn={onPressIn}
       testID={`sidebar-workspace-row-${entry.workspaceKey}`}
     >
       <Text>{entry.name}</Text>
@@ -125,6 +127,8 @@ function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
   );
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   container = document.createElement("div");
+  // Give the sidebar room so the floating selection bar sits below the rows instead of on them.
+  container.style.cssText = "display:flex;flex-direction:column;width:320px;height:640px;";
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
@@ -155,6 +159,7 @@ afterEach(() => {
   capturedDispatcher = null;
   capturedSidebarToast = null;
   fallbackArchiveCount = 0;
+  navigatedKeys = [];
   act(() => {
     useSidebarSelectionStore.getState().exit();
   });
@@ -166,6 +171,67 @@ afterEach(() => {
   container = null;
 });
 
+function row(id: string): HTMLElement {
+  const element = document.querySelector<HTMLElement>(
+    `[data-testid="sidebar-workspace-row-srv:${id}"]`,
+  );
+  if (!element) throw new Error(`Row ${id} is not mounted`);
+  return element;
+}
+
+function selectedIds(): string[] {
+  const state = useSidebarSelectionStore.getState();
+  if (!state.active) return [];
+  return [...state.selectedKeys].map((key) => key.replace("srv:", "")).sort();
+}
+
+// Cmd on macOS, Ctrl on Windows and Linux, matching the shortcut layer's `mod`.
+const MOD_KEY = getShortcutOs() === "mac" ? "Meta" : "Control";
+
+describe("sidebar workspace row presses", () => {
+  it("enters select mode on the Cmd/Ctrl+clicked row alone and toggles rows without navigating", async () => {
+    mountHost(["a", "b", "c", "d"].map(makeEntry));
+
+    await userEvent.click(row("a"));
+    expect(navigatedKeys).toEqual(["srv:a"]);
+    expect(useSidebarSelectionStore.getState().active).toBe(false);
+
+    await userEvent.click(row("c"), { modifiers: [MOD_KEY] });
+    expect(selectedIds()).toEqual(["c"]);
+
+    await userEvent.click(row("b"), { modifiers: [MOD_KEY] });
+    await userEvent.click(row("d"), { modifiers: [MOD_KEY] });
+    expect(selectedIds()).toEqual(["b", "c", "d"]);
+
+    await userEvent.click(row("c"), { modifiers: [MOD_KEY] });
+    expect(selectedIds()).toEqual(["b", "d"]);
+
+    // Plain clicks keep toggling while select mode is on.
+    await userEvent.click(row("a"));
+    expect(selectedIds()).toEqual(["a", "b", "d"]);
+    expect(navigatedKeys).toEqual(["srv:a"]);
+  });
+
+  it("enters select mode on the Shift+clicked row alone, then extends and shrinks the range", async () => {
+    mountHost(["a", "b", "c", "d", "e", "f"].map(makeEntry));
+
+    await userEvent.click(row("b"), { modifiers: ["Shift"] });
+    expect(selectedIds()).toEqual(["b"]);
+
+    await userEvent.click(row("e"), { modifiers: ["Shift"] });
+    expect(selectedIds()).toEqual(["b", "c", "d", "e"]);
+
+    await userEvent.click(row("c"), { modifiers: ["Shift"] });
+    expect(selectedIds()).toEqual(["b", "c"]);
+
+    // Cmd/Ctrl+click moves the anchor; the next Shift range grows from there and keeps b..c.
+    await userEvent.click(row("f"), { modifiers: [MOD_KEY] });
+    await userEvent.click(row("e"), { modifiers: ["Shift"] });
+    expect(selectedIds()).toEqual(["b", "c", "e", "f"]);
+    expect(navigatedKeys).toEqual([]);
+  });
+});
+
 describe("SidebarSelectionHost", () => {
   it("shows a persistent sidebar toast while selecting, updates without Shift, and exits via button or Escape", async () => {
     mountHost([makeEntry("a"), makeEntry("b"), makeEntry("c")]);
@@ -173,14 +239,14 @@ describe("SidebarSelectionHost", () => {
 
     // Enter select mode via Shift+click on "a", then plain-click "c" without Shift.
     act(() => {
-      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { shiftKey: true });
+      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { range: true });
     });
     expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
       "1 selected",
     );
 
     act(() => {
-      useSidebarSelectionStore.getState().pressWorkspace("srv:c", { shiftKey: false });
+      useSidebarSelectionStore.getState().pressWorkspace("srv:c", { range: false });
     });
     expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
       "2 selected",
@@ -201,8 +267,8 @@ describe("SidebarSelectionHost", () => {
 
     // Re-enter with Shift+click, then Shift+click "c" for a range of 3, and exit with Escape.
     act(() => {
-      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { shiftKey: true });
-      useSidebarSelectionStore.getState().pressWorkspace("srv:c", { shiftKey: true });
+      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { range: true });
+      useSidebarSelectionStore.getState().pressWorkspace("srv:c", { range: true });
     });
     expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
       "3 selected",
@@ -246,7 +312,7 @@ describe("SidebarSelectionHost", () => {
     // Enter select mode then deselect the only row -> 0 selected.
     act(() => {
       useSidebarSelectionStore.getState().enter("srv:a");
-      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { shiftKey: false });
+      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { range: false });
     });
     expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
       "0 selected",

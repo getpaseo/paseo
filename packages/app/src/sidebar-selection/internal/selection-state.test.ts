@@ -3,7 +3,6 @@ import {
   enterWorkspaceSelection,
   exitWorkspaceSelection,
   INITIAL_WORKSPACE_SELECTION_STATE,
-  isShiftPressEvent,
   reconcileWorkspaceSelection,
   selectWorkspaceRange,
   toggleWorkspaceSelection,
@@ -51,6 +50,35 @@ describe("sidebar workspace selection state", () => {
     expect([...backward.selectedKeys].sort()).toEqual(["ws-2", "ws-3", "ws-4"]);
   });
 
+  it("replaces the previous Shift range so a closer Shift+click shrinks it, like Finder", () => {
+    const visible = ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5", "ws-6"];
+    let state = enterWorkspaceSelection("ws-1");
+    state = toggleWorkspaceSelection(state, "ws-3");
+
+    state = selectWorkspaceRange(state, "ws-6", visible);
+    expect([...state.selectedKeys].sort()).toEqual(["ws-1", "ws-3", "ws-4", "ws-5", "ws-6"]);
+
+    state = selectWorkspaceRange(state, "ws-4", visible);
+    expect([...state.selectedKeys].sort()).toEqual(["ws-1", "ws-3", "ws-4"]);
+
+    // Crossing over the anchor flips the range without dropping the earlier pick.
+    state = selectWorkspaceRange(state, "ws-2", visible);
+    expect([...state.selectedKeys].sort()).toEqual(["ws-1", "ws-2", "ws-3"]);
+    expect(state.anchorKey).toBe("ws-3");
+  });
+
+  it("commits the Shift range once a toggle moves the anchor", () => {
+    const visible = ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5", "ws-6"];
+    let state = enterWorkspaceSelection("ws-1");
+    state = selectWorkspaceRange(state, "ws-3", visible);
+    state = toggleWorkspaceSelection(state, "ws-5");
+
+    // The new anchor is ws-5; shrinking its range must keep ws-1..ws-3.
+    state = selectWorkspaceRange(state, "ws-6", visible);
+    state = selectWorkspaceRange(state, "ws-5", visible);
+    expect([...state.selectedKeys].sort()).toEqual(["ws-1", "ws-2", "ws-3", "ws-5"]);
+  });
+
   it("falls back to adding the target when the anchor is no longer in the visible list", () => {
     const state = selectWorkspaceRange(enterWorkspaceSelection("ws-hidden"), "ws-2", [
       "ws-1",
@@ -77,17 +105,5 @@ describe("sidebar workspace selection state", () => {
 
   it("resets completely on exit", () => {
     expect(exitWorkspaceSelection()).toBe(INITIAL_WORKSPACE_SELECTION_STATE);
-  });
-
-  it("detects Shift on direct, nativeEvent, or hardware modifier payloads", () => {
-    expect(isShiftPressEvent({ shiftKey: true })).toBe(true);
-    expect(isShiftPressEvent({ nativeEvent: { shiftKey: true } })).toBe(true);
-    expect(isShiftPressEvent({ shiftKey: false, nativeEvent: { shiftKey: false } })).toBe(false);
-    expect(isShiftPressEvent(null)).toBe(false);
-
-    // Native GestureResponderEvent omits shiftKey; falls back to hardware Shift state.
-    const nativeResponderEvent = { nativeEvent: { locationX: 12, locationY: 8 } };
-    expect(isShiftPressEvent(nativeResponderEvent, () => false)).toBe(false);
-    expect(isShiftPressEvent(nativeResponderEvent, () => true)).toBe(true);
   });
 });

@@ -14,4 +14,5 @@ export type { HardwareKeyboardEvent } from "./internal/sources/hardware";
 export { usesDesktopBindings, supportsConfigurableComposerSendKeys } from "./internal/conventions";
 export type { BrowserKeyboardPolicy } from "./internal/sources/electron-browser";
 export { useHardwareKeyboardPresent } from "./availability";
-export { isShiftKeyDown } from "./internal/shift-modifier";
+export { readPressModifiers } from "./internal/press-modifiers";
+export type { PressModifiers } from "./internal/press-modifiers";
