@@ -25,10 +25,12 @@ import type {
   AgentTimelineBackend,
   RetiredChildSelector,
   TimelineBackendAppendResult,
+  TimelineBackendCommitProviderSwitchResult,
   TimelineBackendRetireResult,
   TimelineChild,
   TimelineEntry,
   TimelineHead,
+  TimelineProviderSwitchIntent,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -127,10 +129,18 @@ CREATE TABLE timeline_retired_keys (
 );
 `;
 
+const SCHEMA_V2 = `
+ALTER TABLE timeline_scopes ADD COLUMN provider_switch TEXT;
+ALTER TABLE timeline_scopes ADD COLUMN active_segment_start_seq INTEGER NOT NULL DEFAULT 0;
+`;
+
 /** The timeline store's schema in the daemon database. */
 export const timelineSchema: SchemaModule = {
   name: "timeline",
-  migrations: [{ up: (sql) => sql.exec(SCHEMA_V1) }],
+  migrations: [
+    { up: (sql) => sql.exec(SCHEMA_V1) },
+    { breaking: true, up: (sql) => sql.exec(SCHEMA_V2) },
+  ],
 };
 
 interface ScopeRecord {
@@ -142,6 +152,8 @@ interface ScopeRecord {
   active_max_seq_end: number;
   retirement_count: number;
   rewind: string | null;
+  provider_switch: string | null;
+  active_segment_start_seq: number;
   descriptor: string | null;
   child_retired: number;
 }
@@ -173,7 +185,7 @@ interface RetirementRecord {
 
 const SCOPE_COLUMNS =
   "id, epoch, next_seq, min_seq, active_count, active_max_seq_end, retirement_count, rewind, " +
-  "descriptor, child_retired";
+  "provider_switch, active_segment_start_seq, descriptor, child_retired";
 const SHAPE_COLUMNS = "seq_start, turn_id, turn_trigger, item_type";
 const ACTIVE = "scope_id = ? AND retired_by IS NULL";
 
@@ -262,6 +274,49 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
     });
   }
 
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): TimelineHead {
+    return this.database.write((sql) => {
+      const record = requireScope(sql, scope);
+      record.provider_switch = providerSwitch ? JSON.stringify(providerSwitch) : null;
+      sql.run(
+        "UPDATE timeline_scopes SET provider_switch = ? WHERE id = ?",
+        record.provider_switch,
+        record.id,
+      );
+      return describe(record);
+    });
+  }
+
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): TimelineBackendCommitProviderSwitchResult {
+    return this.database.write((sql) => {
+      const record = requireScope(sql, scope);
+      const timestamp = new Date().toISOString();
+      const row = buildSourceRow(input.markerEntry, record.next_seq, timestamp);
+      foldSourceRow(sql, record, row);
+      record.next_seq = row.seq + 1;
+      if (record.min_seq === 0) record.min_seq = row.seq;
+      record.provider_switch = input.nextIntent
+        ? JSON.stringify({ ...input.nextIntent, markerSeq: row.seq })
+        : null;
+      saveScopeCounters(sql, record);
+      sql.run(
+        "UPDATE timeline_scopes SET provider_switch = ? WHERE id = ?",
+        record.provider_switch,
+        record.id,
+      );
+      return { row, head: describe(record) };
+    });
+  }
+
   retire(
     scope: TimelineScope,
     input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
@@ -284,7 +339,10 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
         if (row.item.type === "tool_call") {
           addRetiredKey(sql, record.id, "identity", row.item.callId);
         }
-        if (row.turnId !== undefined && !hasActiveTurn(sql, record.id, row.turnId)) {
+        if (
+          row.turnId !== undefined &&
+          !hasActiveTurn(sql, record.id, row.turnId, record.active_segment_start_seq)
+        ) {
           addRetiredKey(sql, record.id, "turn", row.turnId);
         }
       }
@@ -359,12 +417,19 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
     scope: TimelineScope,
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): AgentTimelineRow | null {
     return this.database.write((sql) => {
       const { id } = requireScope(sql, scope);
       const record = findSubmittedPromptRecord(sql, id, clientMessageId);
       if (!record) return null;
-      const row = { ...parseRow(record), providerMessageId };
+      const row = {
+        ...parseRow(record),
+        providerMessageId,
+        ...(options?.providerPromptText !== undefined
+          ? { providerPromptText: options.providerPromptText }
+          : {}),
+      };
       saveRow(sql, id, row);
       return row;
     });
@@ -376,8 +441,8 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
     options?: { turnId?: string },
   ): ProjectedTimelineRow | null {
     return this.database.write((sql) => {
-      const { id } = requireScope(sql, scope);
-      const footer = turnFooterSeq(sql, id, options?.turnId);
+      const { id, active_segment_start_seq } = requireScope(sql, scope);
+      const footer = turnFooterSeq(sql, id, options?.turnId, active_segment_start_seq);
       if (footer === null) return null;
       const record = sql.get<RowRecord>(
         "SELECT seq_start, item_type, row FROM timeline_rows WHERE scope_id = ? AND seq_start = ?",
@@ -407,6 +472,7 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
           minSeq: record.min_seq,
           nextSeq: record.next_seq,
           retirementCount: record.retirement_count,
+          activeSegmentStartSeq: record.active_segment_start_seq,
         },
         options,
         selectPage: (page) => new StoredPageSelection(sql, record).select(page),
@@ -475,7 +541,11 @@ function describe(record: ScopeRecord): TimelineHead {
     seq: record.next_seq - 1,
     size: record.active_count,
     retirementCount: record.retirement_count,
+    activeSegmentStartSeq: record.active_segment_start_seq,
     rewind: record.rewind ? (JSON.parse(record.rewind) as TimelineRewindIntent) : null,
+    providerSwitch: record.provider_switch
+      ? (JSON.parse(record.provider_switch) as TimelineProviderSwitchIntent)
+      : null,
   };
 }
 
@@ -531,7 +601,9 @@ function createScope(sql: WriteSql, scope: TimelineScope, seed: TimelineSeed): S
       );
   const nextSeq = sourceRows.reduce((next, row) => Math.max(next, row.seq + 1), startSeq);
   // A seed is already in memory; projecting it there reuses the projection's seeding rules.
-  const rows = new TimelineProjection(sourceRows).getRows();
+  const projection = new TimelineProjection(sourceRows);
+  const rows = projection.getRows();
+  const activeSegmentStartSeq = projection.getActiveSegmentStartSeq();
   const record: ScopeRecord = {
     id: 0,
     epoch: seed.epoch ?? randomUUID(),
@@ -541,24 +613,30 @@ function createScope(sql: WriteSql, scope: TimelineScope, seed: TimelineSeed): S
     active_max_seq_end: 0,
     retirement_count: 0,
     rewind: null,
+    provider_switch: null,
+    active_segment_start_seq: activeSegmentStartSeq,
     descriptor: null,
     child_retired: 0,
   };
   record.id = sql.get<{ id: number }>(
     "INSERT INTO timeline_scopes (agent_id, subagent_id, epoch, next_seq, min_seq, " +
-      "active_count, active_max_seq_end, retirement_count) VALUES (?, ?, ?, ?, ?, ?, 0, 0) " +
-      "RETURNING id",
+      "active_count, active_max_seq_end, retirement_count, active_segment_start_seq) " +
+      "VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?) RETURNING id",
     scope.agentId,
     scope.subagentId ?? null,
     record.epoch,
     record.next_seq,
     record.min_seq,
     record.active_count,
+    record.active_segment_start_seq,
   )!.id;
   const liveIdentityAt = new Map<string, number>();
   for (const row of rows) {
     const identity = timelineItemIdentity(row.item);
-    if (identity !== null) liveIdentityAt.set(identity, row.seqStart);
+    if (identity !== null) {
+      if (row.item.type === "tool_call" && row.seqStart <= activeSegmentStartSeq) continue;
+      liveIdentityAt.set(identity, row.seqStart);
+    }
   }
   const ranges: (TimelineSeqRange & { rowSeqStart: number })[] = [];
   for (const row of rows) {
@@ -611,6 +689,15 @@ function foldSourceRow(sql: WriteSql, record: ScopeRecord, row: AgentTimelineRow
     saveRow(sql, record.id, fold.row);
     coverSourceSeq(sql, record, row.seq, fold.row);
     return;
+  }
+  if (fold.row.item.type === "provider_switch") {
+    record.active_segment_start_seq = fold.row.seqStart;
+    sql.run(
+      "UPDATE timeline_rows SET identity_live = 0 " +
+        "WHERE scope_id = ? AND identity_live = 1 AND item_type = 'tool_call'",
+      record.id,
+    );
+    sql.run("DELETE FROM timeline_retired_keys WHERE scope_id = ?", record.id);
   }
   if (identity !== null) {
     sql.run(
@@ -680,12 +767,13 @@ function insertSourceRange(
 function saveScopeCounters(sql: WriteSql, record: ScopeRecord): void {
   sql.run(
     "UPDATE timeline_scopes SET next_seq = ?, min_seq = ?, active_count = ?, " +
-      "active_max_seq_end = ?, retirement_count = ? WHERE id = ?",
+      "active_max_seq_end = ?, retirement_count = ?, active_segment_start_seq = ? WHERE id = ?",
     record.next_seq,
     record.min_seq,
     record.active_count,
     record.active_max_seq_end,
     record.retirement_count,
+    record.active_segment_start_seq,
     record.id,
   );
 }
@@ -847,11 +935,17 @@ function findSubmittedPromptRecord(
   );
 }
 
-function hasActiveTurn(sql: ReadSql, scopeId: number, turnId: string): boolean {
+function hasActiveTurn(
+  sql: ReadSql,
+  scopeId: number,
+  turnId: string,
+  activeSegmentStartSeq: number,
+): boolean {
   return (
     sql.get(
-      `SELECT 1 FROM timeline_rows WHERE ${ACTIVE} AND turn_id = ? LIMIT 1`,
+      `SELECT 1 FROM timeline_rows WHERE ${ACTIVE} AND seq_start > ? AND turn_id = ? LIMIT 1`,
       scopeId,
+      activeSegmentStartSeq,
       turnId,
     ) !== undefined
   );
@@ -889,7 +983,12 @@ function continuesShape(previous: RowShape, next: RowShape): boolean {
  * The row a completed turn's metrics go on: the turn's last assistant message, else its last row
  * when that row is a tool call. Mirrors `TimelineProjection.stampTurnMetrics`.
  */
-function turnFooterSeq(sql: ReadSql, scopeId: number, turnId: string | undefined): number | null {
+function turnFooterSeq(
+  sql: ReadSql,
+  scopeId: number,
+  turnId: string | undefined,
+  activeSegmentStartSeq: number,
+): number | null {
   const tail = sql.get<RowShape>(
     `SELECT ${SHAPE_COLUMNS} FROM timeline_rows WHERE ${ACTIVE} ORDER BY seq_start DESC LIMIT 1`,
     scopeId,
@@ -899,11 +998,12 @@ function turnFooterSeq(sql: ReadSql, scopeId: number, turnId: string | undefined
   if (turnId !== undefined) {
     last =
       sql.get<RowShape>(
-        `SELECT ${SHAPE_COLUMNS} FROM timeline_rows WHERE ${ACTIVE} AND turn_id = ? ` +
+        `SELECT ${SHAPE_COLUMNS} FROM timeline_rows WHERE ${ACTIVE} AND seq_start > ? AND turn_id = ? ` +
           "ORDER BY seq_start DESC LIMIT 1",
         scopeId,
+        activeSegmentStartSeq,
         turnId,
-      ) ?? (tail.turn_id === null ? tail : undefined);
+      ) ?? (tail.seq_start > activeSegmentStartSeq && tail.turn_id === null ? tail : undefined);
   }
   if (!last) return null;
   let next: RowShape | undefined;

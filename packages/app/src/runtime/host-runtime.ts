@@ -83,8 +83,10 @@ import {
 } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
+import { clearStagedProviderSwitch, getStagedProviderSwitch } from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
@@ -2903,8 +2905,16 @@ export class HostRuntimeStore {
         write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
       },
       submitMessage: async ({ text, attachments }) => {
-        const supportsForgeAttachments =
-          useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
+        const currentSession = useSessionStore.getState().sessions[serverId];
+        const supportsForgeAttachments = currentSession?.serverInfo?.features?.forgeSearch === true;
+        const supportsProviderSwitching =
+          currentSession?.serverInfo?.features?.providerSwitching === true;
+        const liveProvider = currentSession?.agents.get(agentId)?.provider;
+        const rawStagedSwitch = supportsProviderSwitching
+          ? getStagedProviderSwitch(serverId, agentId)
+          : null;
+        const stagedProviderSwitch =
+          rawStagedSwitch && rawStagedSwitch.provider !== liveProvider ? rawStagedSwitch : null;
         await dispatchComposerAgentMessage({
           client,
           agentId,
@@ -2915,6 +2925,13 @@ export class HostRuntimeStore {
           }),
           encodeImages,
           submission: createMessageSubmissionWriter(serverId),
+          stagedProviderSwitch,
+          onProviderSwitchCommitted: (agent) => {
+            clearStagedProviderSwitch(serverId, agentId);
+            if (agent) {
+              this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
+            }
+          },
           // The queue drains when the agent goes idle, but the agent can start a turn of its own
           // in that same moment (a wake-up after background work). Steering folds the message
           // into that turn instead of interrupting it; with no turn running, the daemon starts
@@ -2958,6 +2975,10 @@ export class HostRuntimeStore {
 
   acceptAgentSnapshot(serverId: string, agent: Agent): Agent {
     return this.requireDirectory(serverId).acceptAgent(agent);
+  }
+
+  tryAcceptAgentSnapshot(serverId: string, agent: Agent): Agent | null {
+    return this.directorySyncByServer.get(serverId)?.acceptAgent(agent) ?? null;
   }
 
   archiveAgentSnapshot(serverId: string, agentId: string, archivedAt: string): void {

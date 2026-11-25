@@ -229,7 +229,9 @@ describe.each(
       seq: 1,
       size: 1,
       retirementCount: 0,
+      activeSegmentStartSeq: 0,
       rewind: null,
+      providerSwitch: null,
     });
     await expect(timeline.readRows(child)).rejects.toBeInstanceOf(UnknownTimelineError);
   });

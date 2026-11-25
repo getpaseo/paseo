@@ -206,6 +206,10 @@ export const ptBR: TranslationResources = {
       pasteImageFailed: "Falha ao colar a imagem",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "Trocando para {{provider}} na próxima mensagem",
+      switchingAfterTurn: "Trocará para {{provider}} após este turno",
+    },
     clientCommands: {
       archiveAgent: "Arquivar o agente atual",
       freshDraft: "Arquivar este agente e iniciar um novo rascunho",
@@ -439,6 +443,13 @@ export const ptBR: TranslationResources = {
     },
     turnFooter: {
       workedFor: "Trabalhou por {{duration}}",
+    },
+    providerSwitch: {
+      switched: "Trocado de {{from}} para {{to}}",
+      contextSummary: "{{count}} itens transferidos ({{chars}} / {{budget}} caracteres)",
+      trimmed: "Cortado: {{reasons}}",
+      reasonTailWindow: "histórico anterior além da janela",
+      reasonCharBudget: "limite de caracteres",
     },
     compaction: {
       loading: "Compactando...",

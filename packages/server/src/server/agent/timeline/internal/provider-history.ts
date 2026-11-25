@@ -24,8 +24,16 @@ export function planProviderHistory(input: {
   rows: readonly ProjectedTimelineRow[];
   prompts: readonly TimelinePrompt[];
   provider: readonly TimelineEntry[];
+  activeSegmentStartSeq?: number;
 }): ProviderHistoryPlan {
-  const owned = ownedPrompts(input.rows, input.prompts);
+  const segmentStart = input.activeSegmentStartSeq ?? 0;
+  const segmentRows =
+    segmentStart > 0 ? input.rows.filter((row) => row.seqStart > segmentStart) : input.rows;
+  const segmentPrompts =
+    segmentStart > 0
+      ? input.prompts.filter((prompt) => prompt.seqStart > segmentStart)
+      : input.prompts;
+  const owned = ownedPrompts(segmentRows, segmentPrompts);
   const provider = providerPrompts(input.provider);
   if ([...owned.prompts, ...provider].some((prompt) => prompt.id === undefined)) {
     return { kind: "diverged", reason: "A prompt has no provider id" };
@@ -61,7 +69,10 @@ function ownedPrompts(
     if (!prompt) continue;
     trailingUndeliveredPrompt = prompt.submitted && !prompt.providerMessageId;
     if (!trailingUndeliveredPrompt) {
-      acknowledged.push({ id: prompt.providerMessageId ?? prompt.messageId, text: row.item.text });
+      acknowledged.push({
+        id: prompt.providerMessageId ?? prompt.messageId,
+        text: row.providerPromptText ?? row.item.text,
+      });
     }
   }
   return { prompts: acknowledged, trailingUndeliveredPrompt };

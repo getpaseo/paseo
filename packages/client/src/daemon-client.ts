@@ -127,6 +127,8 @@ import type {
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
+  AgentProviderSwitchRequest,
+  AgentProviderSwitchResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -507,6 +509,28 @@ export interface SendMessageOptions {
   activeTurnBehavior?: AgentActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export interface SwitchAgentProviderOptions {
+  provider: AgentProvider;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  providerOptions?: Record<string, unknown>;
+  text: string;
+  messageId?: string;
+  images?: Array<{ data: string; mimeType: string }>;
+  attachments?: AgentProviderSwitchRequest["attachments"];
+}
+
+export class AgentProviderSwitchError extends Error {
+  constructor(
+    message: string,
+    readonly agent?: AgentSnapshotPayload,
+  ) {
+    super(message);
+    this.name = "AgentProviderSwitchError";
+  }
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -4337,6 +4361,56 @@ export class DaemonClient {
       ...(payload.activeTurnBehavior ? { activeTurnBehavior: payload.activeTurnBehavior } : {}),
       ...(payload.guidance ? { guidance: payload.guidance } : {}),
     };
+  }
+
+  async switchAgentProvider(
+    agentId: string,
+    options: SwitchAgentProviderOptions,
+  ): Promise<{ agent?: AgentSnapshotPayload }> {
+    if (this.lastServerInfoMessage?.features?.providerSwitching !== true) {
+      throw new Error("Update the Paseo host to switch providers in an existing chat.");
+    }
+    const requestId = this.createRequestId();
+    const messageId = options.messageId ?? crypto.randomUUID();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider.switch.request",
+      requestId,
+      agentId,
+      provider: options.provider,
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(options.modeId !== undefined ? { modeId: options.modeId } : {}),
+      ...(options.thinkingOptionId !== undefined
+        ? { thinkingOptionId: options.thinkingOptionId }
+        : {}),
+      ...(options.providerOptions !== undefined
+        ? { providerOptions: options.providerOptions }
+        : {}),
+      text: options.text,
+      messageId,
+      images: options.images,
+      attachments: options.attachments,
+    });
+    const payload: AgentProviderSwitchResponseMessage["payload"] = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.provider.switch.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new AgentProviderSwitchError(
+        payload.error ?? "switchAgentProvider rejected",
+        payload.agent,
+      );
+    }
+    return payload.agent ? { agent: payload.agent } : {};
   }
 
   /** The behavior to put on the wire for this host. */

@@ -317,6 +317,7 @@ export interface AgentTimelineCursorState {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  activeSegmentStartSeq?: number;
   retainedRanges?: Array<{
     startSeq: number;
     endSeq: number;

@@ -172,6 +172,23 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
+    kind: z.literal("provider_switch"),
+    fromProvider: AgentProviderSchema,
+    toProvider: AgentProviderSchema,
+    fromModel: z.string().nullable().optional(),
+    toModel: z.string().nullable().optional(),
+    fromSessionId: z.string().nullable().optional(),
+    toSessionId: z.string().nullable().optional(),
+    context: z.strictObject({
+      includedItems: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+      charCount: z.number().int().nonnegative(),
+      budgetChars: z.number().int().positive(),
+      omittedReasons: z.array(z.string()).optional(),
+    }),
+  }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
     provider: AgentProviderSchema,
     turnMetrics: z.array(AgentMetricSchema).optional(),
@@ -371,6 +388,7 @@ const StoredTimelineSchema = z.strictObject({
       epoch: z.string(),
       startSeq: z.number().int().nonnegative(),
       endSeq: z.number().int().nonnegative(),
+      activeSegmentStartSeq: z.number().int().nonnegative().optional(),
     })
     .nullable(),
   hasOlder: z.boolean(),
@@ -482,6 +500,23 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
   }
 }
 
+function serializeProviderSwitchItem(
+  base: ReturnType<typeof timelineBase>,
+  item: Extract<StreamItem, { kind: "provider_switch" }>,
+): StoredTimelineItem {
+  return {
+    ...base,
+    kind: item.kind,
+    fromProvider: item.fromProvider,
+    toProvider: item.toProvider,
+    ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+    ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+    ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+    ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+    context: item.context,
+  };
+}
+
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   const base = timelineBase(item);
   switch (item.kind) {
@@ -527,6 +562,8 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "provider_switch":
+      return serializeProviderSwitchItem(base, item);
     case "tool_call":
       if (item.payload.source !== "agent") return null;
       return {
@@ -577,6 +614,23 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
     };
   }
   return deserializeBuiltinTimelineItem(item);
+}
+
+function deserializeProviderSwitchItem(
+  base: { id: string; timelineCursor?: TimelinePosition; turnId?: string; timestamp: Date },
+  item: Extract<StoredTimelineItem, { kind: "provider_switch" }>,
+): StreamItem {
+  return {
+    ...base,
+    kind: item.kind,
+    fromProvider: item.fromProvider,
+    toProvider: item.toProvider,
+    ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+    ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+    ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+    ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+    context: item.context,
+  };
 }
 
 function deserializeBuiltinTimelineItem(
@@ -631,6 +685,8 @@ function deserializeBuiltinTimelineItem(
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "provider_switch":
+      return deserializeProviderSwitchItem(base, item);
     case "tool_call": {
       const tool = item.item;
       if (tool.type !== "tool_call") {
@@ -862,7 +918,14 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
     agentId: timeline.agentId,
     items,
     range: canPersistCoverage
-      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+      ? {
+          epoch: range.epoch,
+          startSeq: range.startSeq,
+          endSeq: range.endSeq,
+          ...(range.activeSegmentStartSeq !== undefined
+            ? { activeSegmentStartSeq: range.activeSegmentStartSeq }
+            : {}),
+        }
       : null,
     hasOlder: canPersistCoverage ? timeline.hasOlder : false,
     ...(timeline.unsettledTurn

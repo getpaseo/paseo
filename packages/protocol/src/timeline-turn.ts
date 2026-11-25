@@ -19,6 +19,7 @@ export function isTimelineTurnTrigger(item: {
 }): boolean {
   return (
     item.type === "user_message" ||
+    item.type === "provider_switch" ||
     (item.type === "tool_call" && (item.agentMessage !== undefined || item.name === "heartbeat"))
   );
 }

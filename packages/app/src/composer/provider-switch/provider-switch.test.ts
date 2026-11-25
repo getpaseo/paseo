@@ -1,0 +1,462 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentProviderSwitchError } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { dispatchComposerAgentMessage } from "@/composer/actions";
+import { isPromptInActiveSegment } from "@/components/rewind/use-rewind-capabilities";
+import { collapseTurns } from "@/agent-stream/turn-collapse/model";
+import {
+  processAgentStreamEvent,
+  processTimelineResponse,
+} from "@/timeline/session-stream-reducers";
+import { ReplicaCache } from "@/runtime/replica-cache";
+import type { ReplicaRow, ReplicaRowStore } from "@/runtime/replica-cache/row-store";
+import { HostRuntimeStore } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ProviderSwitchItem, StreamItem, UserMessageItem } from "@/types/stream";
+import { getStagedProviderSwitch, useStagedProviderSwitchStore } from "./index";
+
+function createInMemoryRowStore(): ReplicaRowStore {
+  const rows = new Map<string, ReplicaRow>();
+  const keyOf = (r: { serverId: string; kind: string; id: string }) =>
+    `${r.serverId}:${r.kind}:${r.id}`;
+  return {
+    async open() {},
+    async read(serverId, kinds, ids) {
+      const kindSet = new Set(kinds);
+      const idSet = ids ? new Set(ids) : null;
+      return [...rows.values()].filter(
+        (r) => r.serverId === serverId && kindSet.has(r.kind) && (!idSet || idSet.has(r.id)),
+      );
+    },
+    async readAll() {
+      const byServer = new Map<string, ReplicaRow[]>();
+      for (const row of rows.values()) {
+        const list = byServer.get(row.serverId) ?? [];
+        list.push(row);
+        byServer.set(row.serverId, list);
+      }
+      return [...byServer.entries()].map(([serverId, list]) => ({ serverId, rows: list }));
+    },
+    async apply(changes) {
+      for (const del of changes.deletes) rows.delete(keyOf(del));
+      for (const up of changes.upserts) rows.set(keyOf(up), up);
+    },
+    async deleteHost(serverId) {
+      for (const [k, v] of rows) if (v.serverId === serverId) rows.delete(k);
+    },
+    async renameHost() {},
+    async clear() {
+      rows.clear();
+    },
+  };
+}
+
+const TS = "2026-11-25T10:00:00.000Z";
+
+function agentSnapshot(provider: string): AgentSnapshotPayload {
+  return {
+    id: "agent-1",
+    provider,
+    cwd: "/repo",
+    model: null,
+    thinkingOptionId: null,
+    createdAt: TS,
+    updatedAt: TS,
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: true,
+      supportsRewindConversation: true,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+  };
+}
+
+describe("app provider switching integration", () => {
+  beforeEach(() => {
+    useStagedProviderSwitchStore.setState({ stagedByKey: new Map() });
+  });
+
+  it("dispatches switchAgentProvider when staged and handles pre-commit vs post-commit failures", async () => {
+    const committed: Array<AgentSnapshotPayload | undefined> = [];
+    const sendAgentMessage = vi.fn().mockResolvedValue(undefined);
+    const switchAgentProvider = vi.fn().mockResolvedValue({ agent: agentSnapshot("codex") });
+    const submission = {
+      begin: vi.fn(),
+      accept: vi.fn(),
+      reject: vi.fn(),
+    };
+
+    const staged = {
+      provider: "codex",
+      model: "gpt-5.4",
+      thinkingOptionId: "high",
+      modeId: "auto",
+      providerOptions: {},
+    };
+
+    // Success path
+    await dispatchComposerAgentMessage({
+      client: {
+        sendAgentMessage,
+        switchAgentProvider,
+        uploadFile: vi.fn(),
+      },
+      agentId: "agent-1",
+      text: "Continue with Codex",
+      attachments: [],
+      encodeImages: async () => [],
+      submission,
+      stagedProviderSwitch: staged,
+      onProviderSwitchCommitted: (agent) => committed.push(agent),
+    });
+
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(switchAgentProvider).toHaveBeenCalledTimes(1);
+    expect(committed).toEqual([expect.objectContaining({ provider: "codex" })]);
+    expect(submission.accept).toHaveBeenCalledTimes(1);
+
+    // Pre-commit failure: onProviderSwitchCommitted MUST NOT run
+    committed.length = 0;
+    switchAgentProvider.mockRejectedValueOnce(new Error("Codex CLI unavailable"));
+    await expect(
+      dispatchComposerAgentMessage({
+        client: { sendAgentMessage, switchAgentProvider, uploadFile: vi.fn() },
+        agentId: "agent-1",
+        text: "Retry",
+        attachments: [],
+        encodeImages: async () => [],
+        submission,
+        stagedProviderSwitch: staged,
+        onProviderSwitchCommitted: (agent) => committed.push(agent),
+      }),
+    ).rejects.toThrow("Codex CLI unavailable");
+    expect(committed).toEqual([]);
+
+    // Post-commit start failure (AgentProviderSwitchError with .agent): MUST commit live agent snapshot
+    switchAgentProvider.mockRejectedValueOnce(
+      new AgentProviderSwitchError("Rate limited", agentSnapshot("codex")),
+    );
+    await expect(
+      dispatchComposerAgentMessage({
+        client: { sendAgentMessage, switchAgentProvider, uploadFile: vi.fn() },
+        agentId: "agent-1",
+        text: "Retry 2",
+        attachments: [],
+        encodeImages: async () => [],
+        submission,
+        stagedProviderSwitch: staged,
+        onProviderSwitchCommitted: (agent) => committed.push(agent),
+      }),
+    ).rejects.toThrow("Rate limited");
+    expect(committed).toEqual([expect.objectContaining({ provider: "codex" })]);
+  });
+
+  it("advances activeSegmentStartSeq immediately on live provider_switch events and scopes rewind eligibility", () => {
+    const preSwitchPrompt: UserMessageItem = {
+      kind: "user_message",
+      id: "u1",
+      messageId: "u1",
+      text: "Claude prompt",
+      timestamp: new Date(TS),
+      timelineCursor: { epoch: "ep-1", seq: 1, anchorSeq: 1 },
+    };
+
+    const liveResult = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "provider_switch",
+          fromProvider: "claude",
+          toProvider: "codex",
+          fromModel: "sonnet",
+          toModel: "gpt-5.4",
+          fromSessionId: "s1",
+          toSessionId: null,
+          context: { includedItems: 2, truncated: false, charCount: 100, budgetChars: 100_000 },
+        },
+      },
+      seq: 3,
+      epoch: "ep-1",
+      currentTail: [preSwitchPrompt],
+      currentHead: [],
+      currentCursor: { epoch: "ep-1", startSeq: 1, endSeq: 2 },
+      hasAuthoritativeBaseline: true,
+      timestamp: new Date(TS),
+    });
+
+    expect(liveResult.cursor?.activeSegmentStartSeq).toBe(3);
+    expect(liveResult.tail.some((item) => item.kind === "provider_switch")).toBe(true);
+
+    // Pre-switch prompt (anchor 1 <= 3) is NOT rewindable; post-switch prompt (anchor 4 > 3) IS!
+    expect(
+      isPromptInActiveSegment(
+        preSwitchPrompt.timelineCursor,
+        liveResult.cursor?.activeSegmentStartSeq,
+      ),
+    ).toBe(false);
+    expect(
+      isPromptInActiveSegment({ seq: 4, anchorSeq: 4 }, liveResult.cursor?.activeSegmentStartSeq),
+    ).toBe(true);
+
+    // Timeline page response also propagates activeSegmentStartSeq
+    const pageResult = processTimelineResponse({
+      payload: {
+        agentId: "agent-1",
+        direction: "tail",
+        projection: "projected",
+        reset: true,
+        epoch: "ep-1",
+        window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 4 },
+        hasNewer: false,
+        hasOlder: false,
+        activeSegmentStartSeq: 3,
+        entries: [
+          {
+            seqStart: 1,
+            seqEnd: 1,
+            provider: "claude",
+            timestamp: TS,
+            item: { type: "user_message", text: "Claude prompt", messageId: "u1" },
+          },
+          {
+            seqStart: 3,
+            seqEnd: 3,
+            provider: "codex",
+            timestamp: TS,
+            item: {
+              type: "provider_switch",
+              fromProvider: "claude",
+              toProvider: "codex",
+              context: { includedItems: 1, truncated: false, charCount: 50, budgetChars: 100_000 },
+            },
+          },
+        ],
+        error: null,
+      },
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      isInitializing: true,
+      hasActiveInitDeferred: false,
+      initRequestDirection: "tail",
+      sendingClientMessageIds: [],
+    });
+
+    expect(pageResult.cursor?.activeSegmentStartSeq).toBe(3);
+  });
+
+  it("persists provider_switch items and activeSegmentStartSeq in ReplicaCache and keeps markers visible when turns collapse", async () => {
+    const rowStore = createInMemoryRowStore();
+    const cache = new ReplicaCache(rowStore);
+    cache.setHosts(["srv-1"]);
+    const switchItem: ProviderSwitchItem = {
+      kind: "provider_switch",
+      id: "provider_switch:ep-1:3",
+      timestamp: new Date(TS),
+      timelineCursor: { epoch: "ep-1", seq: 3, anchorSeq: 3 },
+      fromProvider: "claude",
+      toProvider: "codex",
+      fromModel: "sonnet",
+      toModel: "gpt-5.4",
+      fromSessionId: "s1",
+      toSessionId: null,
+      context: {
+        includedItems: 2,
+        truncated: true,
+        charCount: 150,
+        budgetChars: 100_000,
+        omittedReasons: ["tail_window_limit"],
+      },
+    };
+    const items: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "u1",
+        messageId: "u1",
+        text: "Hello",
+        timestamp: new Date(TS),
+        timelineCursor: { epoch: "ep-1", seq: 1, anchorSeq: 1 },
+      },
+      switchItem,
+    ];
+
+    cache.commitTimeline("srv-1", "agent-1", {
+      agentId: "agent-1",
+      items,
+      range: { epoch: "ep-1", startSeq: 1, endSeq: 3, activeSegmentStartSeq: 3 },
+      hasOlder: false,
+    });
+    await cache.flush();
+
+    const restored = await cache.readTimeline("srv-1", "agent-1");
+    expect(restored?.range?.activeSegmentStartSeq).toBe(3);
+    expect(restored?.items.find((i) => i.kind === "provider_switch")).toMatchObject({
+      kind: "provider_switch",
+      fromProvider: "claude",
+      toProvider: "codex",
+      context: { truncated: true, omittedReasons: ["tail_window_limit"] },
+    });
+
+    // Turn collapse keeps provider_switch visible
+    const collapsed = collapseTurns({
+      tail: [
+        items[0]!,
+        {
+          kind: "tool_call",
+          id: "tc1",
+          timestamp: new Date(TS),
+          payload: {
+            source: "agent",
+            data: {
+              provider: "claude",
+              callId: "c1",
+              name: "read",
+              status: "completed",
+              error: null,
+              detail: { type: "read", filePath: "a.ts" },
+            },
+          },
+        },
+        switchItem,
+        {
+          kind: "assistant_message",
+          id: "a1",
+          text: "Done",
+          timestamp: new Date(TS),
+        },
+      ],
+      isLatestTurnOpen: false,
+      expandedHostIds: new Set(),
+      getGroupedCalls: () => undefined,
+      previousSummaryRowsByHostId: new Map(),
+    });
+    expect(collapsed.tail.some((item) => item.kind === "provider_switch")).toBe(true);
+  });
+
+  it("blocks M2 drain while M1's staged provider switch is in-flight, then sends M2 normally to P2", async () => {
+    const serverId = "srv_multi_queue_switch";
+    let resolveSwitch!: (value: { agent: AgentSnapshotPayload }) => void;
+    const switchPromise = new Promise<{ agent: AgentSnapshotPayload }>((resolve) => {
+      resolveSwitch = resolve;
+    });
+    const switchedCalls: string[] = [];
+    const sentCalls: string[] = [];
+    const fakeClient = {
+      switchAgentProvider: vi.fn(async (_agentId: string, opts: { text: string }) => {
+        switchedCalls.push(opts.text);
+        return await switchPromise;
+      }),
+      sendAgentMessage: vi.fn(async (_agentId: string, text: string) => {
+        sentCalls.push(text);
+      }),
+      uploadFile: vi.fn(),
+    } as unknown as DaemonClient;
+
+    const runtime = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient,
+        connectToDaemon: async () => ({ client: fakeClient, serverId, hostname: null }),
+        getClientId: async () => "cid_multi_queue_switch",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(serverId, fakeClient, 1);
+    useSessionStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [serverId]: {
+          ...state.sessions[serverId]!,
+          serverInfo: {
+            serverId,
+            hostname: "localhost",
+            version: "0.18.0",
+            features: { providerSwitching: true },
+          },
+        },
+      },
+    }));
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("claude"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m1", text: "First queued switch prompt", attachments: [] },
+            { id: "m2", text: "Second queued follow-up", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.4",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: {},
+    });
+
+    // M1 begins switching
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(switchedCalls).toEqual(["First queued switch prompt"]);
+    });
+
+    // Concurrent drain trigger while M1's switch is still in-flight MUST NOT drain M2!
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    expect(sentCalls).toEqual([]);
+    expect(switchedCalls).toHaveLength(1);
+    expect(useSessionStore.getState().sessions[serverId]?.queuedMessages.get("agent-1")).toEqual([
+      { id: "m2", text: "Second queued follow-up", attachments: [] },
+    ]);
+
+    // M1 switch completes -> staged switch clears -> M2 drains as a plain sendAgentMessage to Codex!
+    resolveSwitch({ agent: agentSnapshot("codex") });
+    await vi.waitFor(() => {
+      expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
+    });
+
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(sentCalls).toEqual(["Second queued follow-up"]);
+    });
+    expect(switchedCalls).toHaveLength(1);
+    sessionStore.clearSession(serverId);
+  });
+});

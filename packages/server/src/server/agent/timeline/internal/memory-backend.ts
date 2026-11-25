@@ -10,11 +10,13 @@ import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.
 import type {
   AgentTimelineBackend,
   TimelineBackendAppendResult,
+  TimelineBackendCommitProviderSwitchResult,
   RetiredChildSelector,
   TimelineBackendRetireResult,
   TimelineChild,
   TimelineEntry,
   TimelineHead,
+  TimelineProviderSwitchIntent,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -32,6 +34,7 @@ interface MemoryTimelineState {
   retired: ProjectedTimelineRow[];
   retirementCount: number;
   rewind: TimelineRewindIntent | null;
+  providerSwitch: TimelineProviderSwitchIntent | null;
   /** Child scopes only. */
   descriptor: ProviderSubagentDescriptor | null;
   childRetired: boolean;
@@ -73,6 +76,7 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       retired: [],
       retirementCount: 0,
       rewind: null,
+      providerSwitch: null,
       descriptor: null,
       childRetired: false,
     };
@@ -154,6 +158,34 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     return this.describe(state);
   }
 
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): TimelineHead {
+    const state = this.requireState(scope);
+    state.providerSwitch = providerSwitch ? structuredClone(providerSwitch) : null;
+    return this.describe(state);
+  }
+
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): TimelineBackendCommitProviderSwitchResult {
+    const state = this.requireState(scope);
+    const timestamp = new Date().toISOString();
+    const row = buildSourceRow(input.markerEntry, state.nextSeq, timestamp);
+    state.projection.append(row);
+    state.nextSeq = row.seq + 1;
+    if (state.minSeq === 0) state.minSeq = row.seq;
+    state.providerSwitch = input.nextIntent
+      ? structuredClone({ ...input.nextIntent, markerSeq: row.seq })
+      : null;
+    return { row: cloneRow(row), head: this.describe(state) };
+  }
+
   retire(
     scope: TimelineScope,
     input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
@@ -188,10 +220,12 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     scope: TimelineScope,
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): AgentTimelineRow | null {
     return this.requireState(scope).projection.enrichSubmittedUserMessage(
       clientMessageId,
       providerMessageId,
+      options,
     );
   }
 
@@ -218,7 +252,13 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
   fetch(scope: TimelineScope, options: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(scope);
     return fetchTimelinePage({
-      history: state,
+      history: {
+        epoch: state.epoch,
+        minSeq: state.minSeq,
+        nextSeq: state.nextSeq,
+        retirementCount: state.retirementCount,
+        activeSegmentStartSeq: state.projection.getActiveSegmentStartSeq(),
+      },
       options,
       selectPage: (page) => state.projection.selectPage(page),
     });
@@ -243,7 +283,9 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       seq: state.nextSeq - 1,
       size: state.projection.size,
       retirementCount: state.retirementCount,
+      activeSegmentStartSeq: state.projection.getActiveSegmentStartSeq(),
       rewind: state.rewind ? { ...state.rewind } : null,
+      providerSwitch: state.providerSwitch ? structuredClone(state.providerSwitch) : null,
     };
   }
 

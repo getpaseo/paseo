@@ -9,6 +9,13 @@ export interface AgentTimelineRow {
   readonly provider?: AgentProvider;
   readonly turnId?: string;
   readonly providerMessageId?: string;
+  /**
+   * Daemon-internal provider-facing prompt text (e.g. including rendered attachments/handoff).
+   * Used for reload reconciliation; never emitted over the wire.
+   */
+  readonly providerPromptText?: string;
+  /** True when a submitted prompt was rejected before the provider accepted any turn; never emitted over the wire. */
+  readonly rejected?: boolean;
   /** Metrics of the turn this row carries the footer for. */
   readonly turnMetrics?: AgentMetric[];
 }
@@ -59,4 +66,6 @@ export interface AgentTimelineFetchResult {
   retirements: TimelineRetirement[];
   /** Retirements of this history so far. */
   retirementCount: number;
+  /** Seq of the latest active provider_switch marker, or 0 if never switched. */
+  activeSegmentStartSeq: number;
 }

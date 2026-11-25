@@ -89,6 +89,7 @@ import {
 } from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -130,7 +131,11 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  AgentProviderSwitchStartError,
+  AgentRunCancellationError,
+} from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -1572,12 +1577,13 @@ export class Session {
     return owner;
   }
 
-  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
-  // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
+  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2,
+  // provider switches in v0.18.0. Remove each gate after its client floor advances.
   private supportsTimelineItem(item: { type: string }, source?: object): boolean {
     let capability: ClientCapability;
     if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
     else if (item.type === "plugin") capability = CLIENT_CAPS.pluginTimelineItems;
+    else if (item.type === "provider_switch") capability = CLIENT_CAPS.timelineProviderSwitches;
     else return true;
     return source ? this.supportsForSource(capability, source) : this.supports(capability);
   }
@@ -3266,6 +3272,8 @@ export class Session {
     switch (msg.type) {
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg, source);
+      case "agent.provider.switch.request":
+        return this.handleAgentProviderSwitchRequest(msg, source);
       default:
         return undefined;
     }
@@ -8782,6 +8790,7 @@ export class Session {
             ...(this.appliesRewinds(source)
               ? { retirements: fetchedControlTimeline.retirements }
               : {}),
+            activeSegmentStartSeq: fetchedControlTimeline.activeSegmentStartSeq,
             entries: entries.map((entry) => {
               const payloadEntry = {
                 // A row keeps the provider that wrote it; older rows have none.
@@ -9249,6 +9258,140 @@ export class Session {
     if (!this.supports(CLIENT_CAPS.agentActiveTurnBehaviors))
       return requested === "interrupt" ? "interrupt" : "queue";
     return requested ?? "queue";
+  }
+
+  private async handleAgentProviderSwitchRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider.switch.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) {
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            accepted: false,
+            error: resolved.error,
+          },
+        },
+        source,
+      );
+      return;
+    }
+
+    const agentId = resolved.agentId;
+    try {
+      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const send = async (beforeDispatch: () => Promise<void>) => {
+        const switched = await this.agentManager.switchAgentProvider(agentId, {
+          toProvider: msg.provider,
+          model: msg.model,
+          modeId: msg.modeId,
+          thinkingOptionId: msg.thinkingOptionId,
+          providerOptions: msg.providerOptions,
+          prompt,
+          messageId: msg.messageId,
+          beforeDispatch,
+        });
+        const stored = await this.agentStorage.get(agentId);
+        if (stored && !stored.title && !stored.lastUserMessageAt) {
+          const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: msg.text });
+          if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+        }
+        try {
+          const dispatchResult = await startAgentRun(
+            this.agentManager,
+            agentId,
+            switched.handoffPrompt,
+            this.sessionLogger,
+            {
+              idleOnly: true,
+              runOptions: { clientMessageId: msg.messageId },
+            },
+          );
+          if (dispatchResult.disposition === "turn_started") {
+            await waitForAgentRunStartWithTimeout(
+              this.agentManager,
+              agentId,
+              dispatchResult.started,
+              this.delivery.requestSignal,
+            );
+          }
+        } catch (startError) {
+          const liveAgent = this.agentManager.getAgent(agentId) ?? switched.agent;
+          throw new AgentProviderSwitchStartError(liveAgent, startError);
+        }
+      };
+
+      await this.messageReceipts.send({
+        agentId,
+        messageId: msg.messageId,
+        request: {
+          kind: "provider_switch",
+          provider: msg.provider,
+          model: msg.model ?? null,
+          modeId: msg.modeId ?? null,
+          thinkingOptionId: msg.thinkingOptionId ?? null,
+          providerOptions: msg.providerOptions ?? null,
+          prompt,
+        },
+        send,
+      });
+
+      const agentPayload = await this.getAgentPayloadById(agentId);
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: true,
+            ...(agentPayload ? { agent: agentPayload } : {}),
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      if (this.delivery.requestSignal.aborted) return;
+      if (error instanceof AgentProviderSwitchStartError) {
+        this.handleAgentRunError(
+          agentId,
+          error.cause ?? error,
+          "Failed to start turn after provider switch",
+        );
+        const agentPayload =
+          (await this.getAgentPayloadById(agentId)) ?? toAgentPayload(error.agent);
+        this.emitForSource(
+          {
+            type: "agent.provider.switch.response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              agent: agentPayload,
+              error: errorToFriendlyMessage(error),
+            },
+          },
+          source,
+        );
+        return;
+      }
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: errorToFriendlyMessage(error),
+          },
+        },
+        source,
+      );
+    }
   }
 
   private async handleSendAgentMessageRequest(

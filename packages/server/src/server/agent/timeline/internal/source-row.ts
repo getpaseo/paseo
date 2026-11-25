@@ -14,6 +14,10 @@ export function buildSourceRow(
     ...(entry.provider ? { provider: entry.provider } : {}),
     ...(entry.turnId ? { turnId: entry.turnId } : {}),
     ...(entry.providerMessageId ? { providerMessageId: entry.providerMessageId } : {}),
+    ...(entry.providerPromptText !== undefined
+      ? { providerPromptText: entry.providerPromptText }
+      : {}),
+    ...(entry.rejected ? { rejected: true } : {}),
     ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
   };
 }

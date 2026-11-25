@@ -7,7 +7,7 @@ import { LaunchWrapUnsupportedError, ProviderOptionsValidationError } from "./pr
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
-import { AgentTurnChangedError } from "./agent-prompt.js";
+import { AgentTurnBusyError, AgentTurnChangedError } from "./agent-prompt.js";
 import { lastAssistantMessageText, TimelineProjection } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -68,6 +68,8 @@ import {
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
+  type ProviderSwitchContextSummary,
+  type ProviderSwitchTimelineItem,
   RewindAppliedError,
   RewindNotAppliedError,
 } from "./agent-sdk-types.js";
@@ -85,7 +87,19 @@ import {
   foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
-import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import {
+  appendUniquePreviousSession,
+  type SerializableAgentConfig,
+  type StoredAgentRecord,
+  type AgentStorage,
+} from "./agent-storage.js";
+import {
+  buildProviderSwitchHandoff,
+  HANDOFF_TAIL_LIMIT,
+  prependHandoffAttachment,
+  promptHasChatHistoryAttachment,
+  renderProviderPromptText,
+} from "./provider-switch/index.js";
 import type { AgentOwner } from "./agent-owner.js";
 import type {
   AgentTimelineFetchOptions,
@@ -100,6 +114,7 @@ import {
   type TimelinePrompts,
   type TimelineEntry,
   type TimelineIngestResult,
+  type TimelineProviderSwitchIntent,
   type TimelineRetirementCommit,
   type TimelineRewindIntent,
   type TimelineScope,
@@ -175,11 +190,59 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+function toSerializableAgentConfig(config: AgentSessionConfig): SerializableAgentConfig {
+  return {
+    ...(config.modeId ? { modeId: config.modeId } : {}),
+    ...(config.model ? { model: config.model } : {}),
+    ...(config.thinkingOptionId ? { thinkingOptionId: config.thinkingOptionId } : {}),
+    ...(config.providerOptions !== undefined ? { providerOptions: config.providerOptions } : {}),
+    ...(config.toolPolicy
+      ? {
+          toolPolicy: { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) },
+        }
+      : {}),
+    ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}),
+    ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
+  };
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
     this.name = "AgentManagerShuttingDownError";
   }
+}
+
+/**
+ * Thrown when a provider switch committed (the live agent is now on the target provider)
+ * but starting the first turn on the new provider failed.
+ */
+export class AgentProviderSwitchStartError extends Error {
+  constructor(
+    readonly agent: ManagedAgent,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "AgentProviderSwitchStartError";
+  }
+}
+
+export interface SwitchAgentProviderInput {
+  toProvider: AgentProvider;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  providerOptions?: ProviderOptions | null;
+  prompt: AgentPromptInput;
+  messageId: string;
+  beforeDispatch?: () => Promise<void>;
+}
+
+export interface SwitchAgentProviderResult {
+  agent: ManagedAgent;
+  handoffPrompt: AgentPromptInput;
+  markerSeq: number;
+  context: ProviderSwitchContextSummary;
 }
 
 type RunCancellationCause = "reload" | "replace" | "rewind" | "stop";
@@ -945,6 +1008,127 @@ export interface RetiredInternalAgent {
   lastMessage: string | null;
 }
 
+function toPersistenceHandle(
+  stored: NonNullable<StoredAgentRecord["persistence"]>,
+): AgentPersistenceHandle {
+  return {
+    provider: stored.provider,
+    sessionId: stored.sessionId,
+    ...(stored.nativeHandle !== undefined ? { nativeHandle: stored.nativeHandle } : {}),
+    ...(stored.metadata ? { metadata: stored.metadata } : {}),
+  };
+}
+
+function toResumeConfigFromStored(storedRecord: StoredAgentRecord): AgentSessionConfig {
+  return {
+    provider: storedRecord.provider,
+    cwd: storedRecord.cwd,
+    modeId: storedRecord.lastModeId ?? storedRecord.config?.modeId ?? undefined,
+    model: storedRecord.config?.model ?? undefined,
+    thinkingOptionId: storedRecord.config?.thinkingOptionId ?? undefined,
+    providerOptions: storedRecord.config?.providerOptions ?? undefined,
+    toolPolicy: storedRecord.config?.toolPolicy ?? undefined,
+    systemPrompt: storedRecord.config?.systemPrompt ?? undefined,
+    mcpServers: storedRecord.config?.mcpServers ?? undefined,
+  };
+}
+
+function toResumeOptionsFromStored(storedRecord: StoredAgentRecord) {
+  return {
+    createdAt: new Date(storedRecord.createdAt),
+    updatedAt: new Date(storedRecord.updatedAt),
+    lastUserMessageAt: storedRecord.lastUserMessageAt
+      ? new Date(storedRecord.lastUserMessageAt)
+      : null,
+    labels: storedRecord.labels,
+    metadata: storedRecord.metadata,
+    workspaceId: storedRecord.workspaceId,
+    owner: storedRecord.owner,
+    background: storedRecord.background,
+    attention: extractAttention(storedRecord),
+  };
+}
+
+function buildSwitchTargetSessionConfig(
+  input: SwitchAgentProviderInput,
+  source: {
+    cwd: string;
+    baseConfig: Partial<AgentSessionConfig> | StoredAgentRecord["config"] | undefined;
+    internal: boolean;
+    persistedTitle: string | null;
+  },
+): AgentSessionConfig {
+  return stripInternalPaseoMcpServer({
+    provider: input.toProvider,
+    cwd: source.cwd,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.modeId ? { modeId: input.modeId } : {}),
+    ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
+    ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    ...(source.baseConfig?.toolPolicy ? { toolPolicy: source.baseConfig.toolPolicy } : {}),
+    ...(source.baseConfig?.systemPrompt ? { systemPrompt: source.baseConfig.systemPrompt } : {}),
+    ...(source.baseConfig?.mcpServers ? { mcpServers: source.baseConfig.mcpServers } : {}),
+    ...(source.internal ? { internal: true } : {}),
+    ...(source.persistedTitle ? { title: source.persistedTitle } : {}),
+  });
+}
+
+function buildInitialRegisterPersistOptions(
+  title: string | null,
+  previousSessions: AgentPersistenceHandle[] | undefined,
+): { title: string | null; previousSessions?: AgentPersistenceHandle[] } {
+  return previousSessions !== undefined ? { title, previousSessions } : { title };
+}
+
+function extractSwitchSourceFromLive(
+  live: ActiveManagedAgent,
+  storedRecord: StoredAgentRecord | null,
+) {
+  return {
+    fromProvider: live.provider,
+    fromPersistence: live.persistence ?? null,
+    fromModel: live.runtimeInfo?.model ?? live.config.model ?? null,
+    cwd: live.cwd,
+    workspaceId: live.workspaceId,
+    labels: live.labels,
+    metadata: live.metadata,
+    owner: live.owner,
+    background: live.background,
+    launchEnv: live.launchEnv,
+    createdAt: live.createdAt,
+    lastUserMessageAt: live.lastUserMessageAt,
+    baseConfig: live.config as Partial<AgentSessionConfig>,
+    internal: Boolean(live.internal || storedRecord?.internal),
+    titleCandidate: live.config.title ?? storedRecord?.title ?? undefined,
+    storedTitle: storedRecord?.title ?? null,
+  };
+}
+
+function extractSwitchSourceFromStored(storedRecord: StoredAgentRecord) {
+  return {
+    fromProvider: storedRecord.provider,
+    fromPersistence: storedRecord.persistence
+      ? toPersistenceHandle(storedRecord.persistence)
+      : null,
+    fromModel: storedRecord.runtimeInfo?.model ?? storedRecord.config?.model ?? null,
+    cwd: storedRecord.cwd,
+    workspaceId: storedRecord.workspaceId,
+    labels: storedRecord.labels ?? {},
+    metadata: storedRecord.metadata ?? {},
+    owner: storedRecord.owner,
+    background: storedRecord.background ?? false,
+    launchEnv: storedRecord.launchEnv,
+    createdAt: new Date(storedRecord.createdAt),
+    lastUserMessageAt: storedRecord.lastUserMessageAt
+      ? new Date(storedRecord.lastUserMessageAt)
+      : null,
+    baseConfig: storedRecord.config ?? undefined,
+    internal: Boolean(storedRecord.internal),
+    titleCandidate: storedRecord.title ?? undefined,
+    storedTitle: storedRecord.title ?? null,
+  };
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
@@ -987,6 +1171,10 @@ export class AgentManager {
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
+  private readonly pendingSubmittedPrompts = new Map<
+    string,
+    { displayText: string; providerPromptText: string }
+  >();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -2102,9 +2290,358 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, async () => {
+        await this.reconcilePendingProviderSwitchUnlocked(agentId);
         return (await this.reloadSession(agentId, overrides)).agent;
       }),
     );
+  }
+
+  /**
+   * Reconciles any open durable provider-switch intent left behind by a crash or partial failure.
+   * Safe to call before loading a stored agent or inspecting its history.
+   */
+  async reconcilePendingProviderSwitch(agentId: string): Promise<void> {
+    const scope: TimelineScope = { agentId };
+    const head = await this.timeline.describe(scope);
+    if (!head?.providerSwitch) return;
+    await this.runLifecycleMutation(agentId, () =>
+      this.reconcilePendingProviderSwitchUnlocked(agentId),
+    );
+  }
+
+  private async reconcilePendingProviderSwitchUnlocked(agentId: string): Promise<void> {
+    const scope: TimelineScope = { agentId };
+    const head = await this.timeline.describe(scope);
+    const intent = head?.providerSwitch;
+    if (!intent) return;
+    if (intent.phase === "preparing") {
+      await this.timeline.abandonProviderSwitch(scope, intent.id);
+      return;
+    }
+    if (this.registry) {
+      const record = await this.registry.get(agentId);
+      if (record) {
+        const previousSessions = appendUniquePreviousSession(
+          record.previousSessions,
+          intent.fromPersistence,
+        );
+        const repaired: StoredAgentRecord = {
+          ...record,
+          provider: intent.toProvider,
+          config: intent.toConfig ?? null,
+          lastModeId: intent.toConfig?.modeId ?? null,
+          persistence: intent.targetPersistence ?? null,
+          ...(previousSessions ? { previousSessions } : {}),
+          controls: undefined,
+          runtimeInfo: undefined,
+          sessionMetrics: undefined,
+          lastStatus: "closed",
+          updatedAt: new Date().toISOString(),
+        };
+        await this.registry.upsert(repaired);
+      }
+    }
+    await this.timeline.completeProviderSwitch(scope, intent.id);
+  }
+
+  /**
+   * Switches an existing Paseo agent to a fresh session on a different provider under the same
+   * `agentId`, preserving visible history, recording a durable `provider_switch` marker, and
+   * returning the handoff-enriched prompt for turn 1 on the new provider.
+   */
+  switchAgentProvider(
+    agentId: string,
+    input: SwitchAgentProviderInput,
+  ): Promise<SwitchAgentProviderResult> {
+    const resolvedAgentId = validateAgentId(agentId, "switchAgentProvider");
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(resolvedAgentId, () =>
+        this.switchAgentProviderUnlocked(resolvedAgentId, input),
+      ),
+    );
+  }
+
+  private async ensureSourceAgentReadyForSwitch(
+    agentId: string,
+    scope: TimelineScope,
+    storedRecord: StoredAgentRecord | null,
+  ): Promise<ActiveManagedAgent | null> {
+    if (storedRecord?.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`);
+    }
+    const existingLive = this.agents.get(agentId) ?? null;
+    if (existingLive) {
+      if (this.hasInFlightRun(agentId) || existingLive.activeForegroundTurnId) {
+        throw new AgentTurnBusyError(`Cannot switch provider while agent ${agentId} is running`);
+      }
+      if (existingLive.pendingPermissions.size > 0) {
+        throw new Error(
+          `Cannot switch provider while agent ${agentId} has pending permission requests`,
+        );
+      }
+      await this.settleOpenRewind(existingLive, { judge: false });
+      return existingLive;
+    }
+    if (!storedRecord) {
+      throw new AgentNotFoundError(agentId);
+    }
+    return await this.prepareDormantAgentForSwitch(agentId, scope, storedRecord);
+  }
+
+  private async prepareDormantAgentForSwitch(
+    agentId: string,
+    scope: TimelineScope,
+    storedRecord: StoredAgentRecord,
+  ): Promise<ActiveManagedAgent | null> {
+    const existingHead = await this.timeline.describe(scope);
+    if (existingHead?.rewind) {
+      if (!existingHead.rewind.cut) {
+        throw new RewindOutcomeUnknownError();
+      }
+      const completion = await this.timeline.completeRewind(scope, existingHead.rewind.id, {
+        publish: (commit) => this.publishRetirement(agentId, commit),
+      });
+      if (completion.kind === "unpublished") {
+        this.logger.error(
+          { err: completion.error, agentId },
+          "Failed to publish committed rewind before provider switch",
+        );
+      }
+      return null;
+    }
+    if (existingHead) {
+      return null;
+    }
+    if (!storedRecord.persistence) {
+      await this.timeline.open(scope);
+      return null;
+    }
+    const handle = toPersistenceHandle(storedRecord.persistence);
+    await this.resumeAgentFromPersistenceInternal(
+      handle,
+      toResumeConfigFromStored(storedRecord),
+      agentId,
+      toResumeOptionsFromStored(storedRecord),
+    );
+    return this.requireSessionAgent(agentId);
+  }
+
+  private async extractSwitchSourceContext(
+    agentId: string,
+    existingLive: ActiveManagedAgent | null,
+    storedRecord: StoredAgentRecord | null,
+  ) {
+    const raw = existingLive
+      ? extractSwitchSourceFromLive(existingLive, storedRecord)
+      : extractSwitchSourceFromStored(storedRecord!);
+    const persistedTitle = await this.resolveInitialPersistedTitle(
+      agentId,
+      {
+        provider: raw.fromProvider,
+        cwd: raw.cwd,
+        title: raw.titleCandidate,
+      },
+      raw.storedTitle,
+    );
+    return {
+      ...raw,
+      persistedTitle,
+    };
+  }
+
+  private async closeLiveSessionForSwitch(
+    existingLive: ActiveManagedAgent | null,
+    agentId: string,
+  ): Promise<void> {
+    if (!existingLive) return;
+    await this.closeReloadedSession(existingLive.session, agentId);
+    await this.drainSessionEvents(agentId);
+    await this.cancelRunningProviderSubagents(agentId);
+    this.clearProviderBackgroundWork(agentId);
+    await this.prepareAgentForClosure(existingLive, "provider switched");
+  }
+
+  private async switchAgentProviderUnlocked(
+    agentId: string,
+    input: SwitchAgentProviderInput,
+  ): Promise<SwitchAgentProviderResult> {
+    this.assertAcceptingAgentRegistrations();
+    await this.reconcilePendingProviderSwitchUnlocked(agentId);
+
+    const scope: TimelineScope = { agentId };
+    const storedRecord = this.registry ? await this.registry.get(agentId) : null;
+    const existingLive = await this.ensureSourceAgentReadyForSwitch(agentId, scope, storedRecord);
+    const source = await this.extractSwitchSourceContext(agentId, existingLive, storedRecord);
+    if (input.toProvider === source.fromProvider) {
+      throw new Error(`Agent ${agentId} is already using provider '${input.toProvider}'`);
+    }
+
+    this.requireEnabledProvider(input.toProvider);
+    const targetClient = await this.requireAvailableClient({ provider: input.toProvider });
+    const tail = await this.timeline.fetch(scope, {
+      direction: "tail",
+      limit: HANDOFF_TAIL_LIMIT,
+      wholeTurns: true,
+    });
+    const handoff = buildProviderSwitchHandoff({
+      rows: tail.rows,
+      hasOlder: tail.hasOlder,
+      fromProvider: source.fromProvider,
+      toProvider: input.toProvider,
+      agentTitle: source.persistedTitle,
+      cwd: source.cwd,
+    });
+
+    const targetConfig = buildSwitchTargetSessionConfig(input, source);
+    const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
+    const previousPaseoToolPolicy = this.paseoToolPolicies.get(agentId);
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      targetConfig,
+      agentId,
+      { env: source.launchEnv },
+    );
+
+    let targetSession: AgentSession | undefined;
+    let intent: TimelineProviderSwitchIntent | null = null;
+    let committed = false;
+    let handedToRegistration = false;
+
+    try {
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      const launchContext = await this.buildLaunchContext(
+        agentId,
+        targetClient,
+        storedConfig.cwd,
+        paseoToolPolicy,
+        source.launchEnv,
+        {
+          reason: "create",
+          purpose: "interactive",
+          workspaceId: source.workspaceId ?? null,
+          title: source.persistedTitle,
+          background: source.background,
+          labels: source.labels,
+          metadata: source.metadata,
+        },
+      );
+      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      const launchedOptions = this.launchOptionsFor({
+        client: targetClient,
+        own: storedConfig.providerOptions,
+      });
+
+      targetSession = await targetClient.createSession(providerLaunchConfig, launchContext);
+      await this.requireExternalMcpSupport(targetSession, providerLaunchConfig, launchContext);
+      const targetRuntimeInfo = await targetSession.getRuntimeInfo().catch(() => undefined);
+      const targetPersistence = normalizePersistenceForConfig(
+        targetSession.describePersistence(),
+        storedConfig,
+      );
+
+      intent = await this.timeline.beginProviderSwitch(scope, {
+        messageId: input.messageId,
+        fromProvider: source.fromProvider,
+        fromPersistence: source.fromPersistence,
+        fromModel: source.fromModel,
+        toProvider: input.toProvider,
+        toConfig: toSerializableAgentConfig(storedConfig),
+        targetPersistence,
+        context: handoff.summary,
+      });
+
+      await this.closeLiveSessionForSwitch(existingLive, agentId);
+      this.assertAcceptingAgentRegistrations();
+      await input.beforeDispatch?.();
+
+      const markerItem: ProviderSwitchTimelineItem = {
+        type: "provider_switch",
+        fromProvider: source.fromProvider,
+        toProvider: input.toProvider,
+        fromModel: source.fromModel,
+        toModel: targetRuntimeInfo?.model ?? storedConfig.model ?? null,
+        fromSessionId: source.fromPersistence?.sessionId ?? null,
+        toSessionId: targetPersistence?.sessionId ?? null,
+        context: handoff.summary,
+      };
+      const commitResult = await this.timeline.commitProviderSwitch(scope, intent.id, {
+        markerEntry: { provider: input.toProvider, item: markerItem },
+        targetPersistence,
+        publish: (commit) =>
+          this.publishTimelineEvent(
+            agentId,
+            { type: "timeline", item: markerItem, provider: input.toProvider },
+            commit,
+          ),
+      });
+      if (commitResult.kind === "absent") {
+        throw new Error(`Provider switch intent '${intent.id}' disappeared before commit`);
+      }
+      if (commitResult.kind === "unpublished") {
+        this.logger.error(
+          { err: commitResult.error, agentId },
+          "Failed to publish committed provider switch marker",
+        );
+      }
+      committed = true;
+
+      const previousSessions = appendUniquePreviousSession(
+        storedRecord?.previousSessions,
+        source.fromPersistence,
+      );
+      handedToRegistration = true;
+      const switchedAgent = await this.registerSession(targetSession, storedConfig, agentId, {
+        launchedOptions,
+        labels: source.labels,
+        metadata: source.metadata,
+        workspaceId: source.workspaceId,
+        owner: source.owner,
+        background: source.background,
+        launchEnv: source.launchEnv,
+        createdAt: source.createdAt,
+        updatedAt: new Date(),
+        lastUserMessageAt: source.lastUserMessageAt,
+        initialTitle: source.persistedTitle,
+        previousSessions,
+        restoring: true,
+      });
+
+      await this.timeline.completeProviderSwitch(scope, intent.id);
+
+      return {
+        agent: switchedAgent,
+        handoffPrompt: prependHandoffAttachment(input.prompt, handoff.attachment),
+        markerSeq: commitResult.row.seq,
+        context: handoff.summary,
+      };
+    } catch (error) {
+      if (!committed && intent) {
+        await this.timeline.abandonProviderSwitch(scope, intent.id).catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      if (!handedToRegistration) {
+        this.restoreToolPolicyOnSwitchFailure(
+          agentId,
+          hadPreviousPaseoToolPolicy,
+          previousPaseoToolPolicy,
+        );
+        if (targetSession) {
+          await this.closeUnregisteredSession(targetSession);
+        }
+      }
+    }
+  }
+
+  private restoreToolPolicyOnSwitchFailure(
+    agentId: string,
+    hadPrevious: boolean,
+    previous: ProviderPaseoToolsPolicy | undefined,
+  ): void {
+    if (hadPrevious) {
+      this.paseoToolPolicies.set(agentId, previous);
+    } else {
+      this.paseoToolPolicies.delete(agentId);
+    }
   }
 
   private reloadSession(
@@ -3501,6 +4038,65 @@ export class AgentManager {
     });
   }
 
+  private async maybeAttachEmptySegmentHandoff(
+    agent: ActiveManagedAgent,
+    prompt: AgentPromptInput,
+  ): Promise<AgentPromptInput> {
+    if (promptHasChatHistoryAttachment(prompt)) return prompt;
+    const scope: TimelineScope = { agentId: agent.id };
+    const head = await this.timeline.describe(scope);
+    if (!head || head.activeSegmentStartSeq <= 0) return prompt;
+    const { rows: promptRows } = await this.timeline.readPrompts(scope);
+    const hasAcceptedSegmentPrompt = promptRows.some(
+      (row) =>
+        row.seqStart > head.activeSegmentStartSeq &&
+        (!row.rejected || row.providerMessageId !== undefined),
+    );
+    if (hasAcceptedSegmentPrompt) return prompt;
+
+    const beforePage = await this.timeline.fetch(scope, {
+      direction: "before",
+      cursor: { epoch: head.epoch, seq: head.activeSegmentStartSeq },
+      limit: HANDOFF_TAIL_LIMIT,
+      wholeTurns: true,
+    });
+    const markerPage = await this.timeline.fetch(scope, {
+      direction: "before",
+      cursor: { epoch: head.epoch, seq: head.activeSegmentStartSeq + 1 },
+      limit: 1,
+    });
+    const markerRow = markerPage.rows.find((r) => r.seqStart === head.activeSegmentStartSeq);
+    const fromProvider =
+      markerRow?.item.type === "provider_switch" ? markerRow.item.fromProvider : agent.provider;
+    const stored = this.registry ? await this.registry.get(agent.id) : null;
+    const handoff = buildProviderSwitchHandoff({
+      rows: beforePage.rows,
+      hasOlder: beforePage.hasOlder,
+      fromProvider,
+      toProvider: agent.provider,
+      agentTitle: stored?.title ?? agent.config.title ?? null,
+      cwd: agent.cwd,
+    });
+    return prependHandoffAttachment(prompt, handoff.attachment);
+  }
+
+  private trackPendingSubmittedPrompt(
+    options: AgentRunOptions | undefined,
+    effectivePrompt: AgentPromptInput,
+  ): void {
+    if (!options?.clientMessageId) return;
+    this.pendingSubmittedPrompts.set(options.clientMessageId, {
+      displayText: submittedPromptText(effectivePrompt),
+      providerPromptText: renderProviderPromptText(effectivePrompt),
+    });
+  }
+
+  private clearPendingSubmittedPrompt(options: AgentRunOptions | undefined): void {
+    if (options?.clientMessageId) {
+      this.pendingSubmittedPrompts.delete(options.clientMessageId);
+    }
+  }
+
   private async startPendingForegroundTurn(params: {
     agent: ActiveManagedAgent;
     agentId: string;
@@ -3508,27 +4104,38 @@ export class AgentManager {
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
     promptStart?: ForegroundPromptStart;
-  }): Promise<string | null> {
+  }): Promise<{ turnId: string; effectivePrompt: AgentPromptInput } | null> {
     const { agent, agentId, pendingRun, prompt, options, promptStart } = params;
     if (promptStart?.admit?.() === false) {
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       return null;
     }
+    let effectivePrompt = prompt;
     try {
       // A rewind still open from an earlier failure must settle before the conversation moves on.
       await this.settleOpenRewind(agent, { judge: false });
-      const result = await agent.session.startTurn(prompt, options);
+      effectivePrompt = await this.maybeAttachEmptySegmentHandoff(agent, prompt);
+      this.trackPendingSubmittedPrompt(options, effectivePrompt);
+      const result = await agent.session.startTurn(effectivePrompt, options);
       if (pendingRun.settled) {
+        this.clearPendingSubmittedPrompt(options);
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
-      return result.turnId;
+      return { turnId: result.turnId, effectivePrompt };
     } catch (error) {
+      this.clearPendingSubmittedPrompt(options);
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
           if (options?.clientMessageId) {
-            await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-              messageId: options.clientMessageId,
-            });
+            await this.recordSubmittedPrompt(
+              agent,
+              effectivePrompt,
+              options.clientMessageId,
+              "rejected",
+              {
+                messageId: options.clientMessageId,
+              },
+            );
           }
           await this.handleStreamEvent(agent, {
             type: "turn_canceled",
@@ -3560,9 +4167,15 @@ export class AgentManager {
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
         if (options?.clientMessageId) {
-          await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-            messageId: options.clientMessageId,
-          });
+          await this.recordSubmittedPrompt(
+            agent,
+            effectivePrompt,
+            options.clientMessageId,
+            "rejected",
+            {
+              messageId: options.clientMessageId,
+            },
+          );
         }
         await this.handleStreamEvent(agent, {
           type: "turn_failed",
@@ -3710,9 +4323,8 @@ export class AgentManager {
     promptStart?.bind(pendingRun);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
-      let turnId: string | null;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
-      turnId = await this.startPendingForegroundTurn({
+      const startedTurn = await this.startPendingForegroundTurn({
         agent,
         agentId,
         pendingRun,
@@ -3720,7 +4332,7 @@ export class AgentManager {
         options,
         promptStart,
       });
-      if (turnId === null) {
+      if (startedTurn === null) {
         const canceledEvent: AgentStreamEvent = {
           type: "turn_canceled",
           provider: agent.provider,
@@ -3729,6 +4341,7 @@ export class AgentManager {
         yield canceledEvent;
         return;
       }
+      const { turnId, effectivePrompt } = startedTurn;
 
       if (isReplacement) {
         agent.pendingReplacement = false;
@@ -3760,20 +4373,27 @@ export class AgentManager {
         // Not awaited: the start is already settled, so awaiting would let live provider events
         // run ahead of the staged ones below. The timeline commits writes in call order, and
         // stream handling waits for it before publishing anything else.
+        const clientMessageId = options.clientMessageId;
         const write = this.recordSubmittedPrompt(
           agent,
-          prompt,
-          options.clientMessageId,
+          effectivePrompt,
+          clientMessageId,
           "accepted",
           {
-            messageId: options.clientMessageId,
+            messageId: clientMessageId,
             turnId,
             providerMessageId:
               stagedSubmittedPromptEcho?.item.type === "user_message"
                 ? stagedSubmittedPromptEcho.item.messageId
                 : undefined,
+            providerPromptText:
+              stagedSubmittedPromptEcho?.item.type === "user_message"
+                ? stagedSubmittedPromptEcho.item.text
+                : renderProviderPromptText(effectivePrompt),
           },
-        );
+        ).finally(() => {
+          this.pendingSubmittedPrompts.delete(clientMessageId);
+        });
         this.trackTimelineWrite(agent.id, write);
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
@@ -4449,6 +5069,7 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    await this.reconcilePendingProviderSwitch(agentId);
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       agent = await this.ensureInteractiveSession(agentId);
@@ -4918,6 +5539,7 @@ export class AgentManager {
       launchedOptions: ProviderOptions;
       restoring?: boolean;
       initialTitle?: string | null;
+      previousSessions?: AgentPersistenceHandle[];
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
@@ -4995,9 +5617,10 @@ export class AgentManager {
       }
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
-      await this.persistSnapshot(managed, {
-        title: initialPersistedTitle,
-      });
+      await this.persistSnapshot(
+        managed,
+        buildInitialRegisterPersistOptions(initialPersistedTitle, options?.previousSessions),
+      );
       this.assertAgentRegistrationActive(managed);
       if (!options?.publishWhenReady) {
         this.emitState(managed, { persist: false });
@@ -5466,7 +6089,11 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      previousSessions?: AgentPersistenceHandle[];
+    },
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -6112,6 +6739,8 @@ export class AgentManager {
     turnId?: string,
     options?: {
       providerMessageId?: string;
+      providerPromptText?: string;
+      rejected?: boolean;
       notifyWaiters?: boolean;
       onRecorded?: () => void;
     },
@@ -6129,6 +6758,10 @@ export class AgentManager {
         provider,
         ...(turnId !== undefined ? { turnId } : {}),
         ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+        ...(options?.providerPromptText !== undefined
+          ? { providerPromptText: options.providerPromptText }
+          : {}),
+        ...(options?.rejected ? { rejected: true } : {}),
       },
       {
         publish: (commit) => {
@@ -6244,7 +6877,12 @@ export class AgentManager {
     prompt: AgentPromptInput,
     clientMessageId: string,
     outcome: "accepted" | "rejected",
-    options?: { messageId?: string; providerMessageId?: string; turnId?: string },
+    options?: {
+      messageId?: string;
+      providerMessageId?: string;
+      providerPromptText?: string;
+      turnId?: string;
+    },
   ): Promise<void> {
     const items = projectAgentMessages({
       type: "user_message",
@@ -6252,11 +6890,18 @@ export class AgentManager {
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
+    const providerPromptText = options?.providerPromptText ?? renderProviderPromptText(prompt);
     const writes: Promise<void>[] = [];
     for (const item of items) {
       // Human attempts stay in history on rejection; delivery notifications require acceptance.
       if (outcome === "rejected" && item.type !== "user_message") continue;
-      writes.push(this.recordSubmittedPromptItem(agent, item, options));
+      writes.push(
+        this.recordSubmittedPromptItem(agent, item, {
+          ...options,
+          ...(item.type === "user_message" ? { providerPromptText } : {}),
+          ...(outcome === "rejected" ? { rejected: true } : {}),
+        }),
+      );
     }
     await Promise.all(writes);
   }
@@ -6265,10 +6910,19 @@ export class AgentManager {
   private recordSubmittedPromptItem(
     agent: ActiveManagedAgent,
     item: AgentTimelineItem,
-    options?: { providerMessageId?: string; turnId?: string },
+    options?: {
+      providerMessageId?: string;
+      providerPromptText?: string;
+      rejected?: boolean;
+      turnId?: string;
+    },
   ): Promise<void> {
     return this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, {
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+      ...(options?.providerPromptText !== undefined
+        ? { providerPromptText: options.providerPromptText }
+        : {}),
+      ...(options?.rejected ? { rejected: true } : {}),
       onRecorded: () => {
         this.touchUpdatedAt(agent);
         if (item.type === "user_message") agent.lastUserMessageAt = new Date();
@@ -6287,11 +6941,17 @@ export class AgentManager {
     const scope: TimelineScope = { agentId: agent.id };
     const existing = await this.timeline.findSubmittedPrompt(scope, clientMessageId);
     if (!existing) {
+      const pending = this.pendingSubmittedPrompts.get(clientMessageId);
       await this.recordSubmittedPromptItem(
         agent,
-        { ...item, messageId: clientMessageId },
+        {
+          ...item,
+          text: pending ? pending.displayText : item.text,
+          messageId: clientMessageId,
+        },
         {
           ...(messageId ? { providerMessageId: messageId } : {}),
+          providerPromptText: item.text,
           ...(turnId ? { turnId } : {}),
         },
       );
@@ -6299,7 +6959,9 @@ export class AgentManager {
     }
     if (existing.item.type !== "user_message") return false;
     if (messageId) {
-      await this.timeline.attachProviderMessageId(scope, clientMessageId, messageId);
+      await this.timeline.attachProviderMessageId(scope, clientMessageId, messageId, {
+        providerPromptText: item.text,
+      });
     }
     return true;
   }

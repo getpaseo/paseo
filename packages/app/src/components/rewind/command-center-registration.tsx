@@ -10,7 +10,11 @@ import { useToast } from "@/contexts/toast-context";
 import type { AgentScreenReadySyncState } from "@/hooks/use-agent-screen-state-machine";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import { useRewindAgentMutation } from "./use-rewind-agent-mutation";
-import { isRewindableMessage, useRewindMenuItems } from "./use-rewind-capabilities";
+import {
+  isPromptInActiveSegment,
+  isRewindableMessage,
+  useRewindMenuItems,
+} from "./use-rewind-capabilities";
 
 export function RewindCommandCenterRegistration({
   serverId,
@@ -42,10 +46,16 @@ export function RewindCommandCenterRegistration({
     if (timeline.status !== "synced" || timeline.newer === "available") {
       return undefined;
     }
-    return (
+    const candidate =
       session.agentStreamHead.get(agentId)?.findLast((item) => item.kind === "user_message") ??
-      timeline.items.findLast((item) => item.kind === "user_message")
-    );
+      timeline.items.findLast((item) => item.kind === "user_message");
+    if (
+      !candidate ||
+      !isPromptInActiveSegment(candidate.timelineCursor, timeline.range?.activeSegmentStartSeq)
+    ) {
+      return undefined;
+    }
+    return candidate;
   });
   const { rewindAgent, isPending } = useRewindAgentMutation({
     serverId,
