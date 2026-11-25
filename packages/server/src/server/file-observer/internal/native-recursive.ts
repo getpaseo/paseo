@@ -12,6 +12,7 @@ const MAX_TRACKED_ENTRIES = 250_000;
 // same paths at a fraction of the cost.
 const MAX_CONCURRENT_CLASSIFICATIONS = 32;
 const MAX_QUEUED_CLASSIFICATIONS = 2_048;
+const SCAN_TREE_YIELD_INTERVAL = 32;
 const AUDIT_QUIET_MS = 500;
 const AUDIT_MAX_DIRTY_MS = 5_000;
 const OPTIONAL_AUDIT_QUIET_MS = 8_000;
@@ -272,6 +273,7 @@ class NativeRecursiveBackend implements ObservationBackend {
     const directories = new Set<string>();
     const entries = new Map<string, DirectoryEntry>();
     const pending = [root];
+    let scannedDirectories = 0;
     while (pending.length > 0 && this.host.isActive()) {
       const directory = pending.pop();
       if (!directory) continue;
@@ -301,6 +303,10 @@ class NativeRecursiveBackend implements ObservationBackend {
         }
       }
       entries.set(directory, entry);
+      if (++scannedDirectories % SCAN_TREE_YIELD_INTERVAL === 0) {
+        await new Promise<void>((done) => setImmediate(done));
+        if (!this.host.isActive()) return { directories, entries, files };
+      }
     }
     return { directories, entries, files };
   }
@@ -730,6 +736,7 @@ class NativeRecursiveBackend implements ObservationBackend {
 
   private assertWithinLimit(entryCount: number): void {
     if (entryCount <= MAX_TRACKED_ENTRIES) return;
+    this.host.metrics.directoryLimitFailureCount += 1;
     throw new Error(
       `Recursive file observation exceeded ${MAX_TRACKED_ENTRIES} entries under ${this.host.root}`,
     );
