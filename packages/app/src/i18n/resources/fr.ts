@@ -117,6 +117,8 @@ export const fr: TranslationResources = {
       groupByProject: "Grouper par projet",
       groupByStatus: "Grouper par statut",
       copyBrowserHostName: "Copier le nom de l’hôte du navigateur",
+      profileGroupLabel: "Profil",
+      profileSearchKeywords: "profil appliquer un profil profil d'agent préréglage",
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle model",
@@ -1852,6 +1854,7 @@ export const fr: TranslationResources = {
     defaultModel: "Par défaut",
     profiles: "Profils",
     providers: "Fournisseurs",
+    models: "Modèles",
     model: "Modèle",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d’agent",

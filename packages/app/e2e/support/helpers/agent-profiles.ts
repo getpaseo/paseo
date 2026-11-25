@@ -449,6 +449,28 @@ async function boxTop(locator: Locator): Promise<number> {
   return box.y;
 }
 
+export async function searchModelPicker(page: Page, query: string): Promise<void> {
+  await pickerViewport(page).getByTestId("model-search-input").fill(query);
+}
+
+/** A search lists matching profiles first, then the matching models under their own heading. */
+export async function expectProfileSearchResult(
+  page: Page,
+  input: { name: string; model?: { provider: string; modelId: string } },
+): Promise<void> {
+  const viewport = pickerViewport(page);
+  const row = profilePickerRow(page, input.name);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  if (!input.model) {
+    await expect(viewport.getByText("Models", { exact: true })).toHaveCount(0);
+    return;
+  }
+  const matchedModel = modelRow(page, input.model);
+  await expect(viewport.getByText("Models", { exact: true })).toBeVisible();
+  await expect(matchedModel).toBeVisible();
+  expect(await boxTop(row)).toBeLessThan(await boxTop(matchedModel));
+}
+
 export async function applyProfileFromPicker(page: Page, name: string): Promise<void> {
   await profilePickerRow(page, name).click();
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });

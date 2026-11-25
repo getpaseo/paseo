@@ -1209,6 +1209,7 @@ export const AgentControls = memo(function AgentControls({
       ownerKey: agentId,
       provider: agentProvider,
       providerDefinitions: modeProviderDefinitions,
+      profiles: agentProfiles,
       models: {
         providers: agentModelSelectorProviders,
         selectedProvider: agentProvider,
@@ -1226,6 +1227,7 @@ export const AgentControls = memo(function AgentControls({
     [
       activeModelId,
       agentOptionControls,
+      agentProfiles,
       client,
       agentId,
       agentModelSelectorProviders,
@@ -1448,6 +1450,7 @@ export function DraftAgentControls({
       ownerKey: draftId,
       provider: selectedProvider,
       providerDefinitions,
+      profiles: agentProfiles,
       models: {
         providers: modelSelectorProviders,
         selectedProvider,
@@ -1469,6 +1472,7 @@ export function DraftAgentControls({
       draftId,
       selectedProvider,
       providerDefinitions,
+      agentProfiles,
       modelSelectorProviders,
       effectiveModelId,
       onSelectProviderAndModel,
