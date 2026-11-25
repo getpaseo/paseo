@@ -143,6 +143,8 @@ class E2EFakeClient implements AgentClient {
   readonly sessions: E2EFakeSession[] = [];
   failNextCreate: Error | null = null;
   failNextTurn: Error | null = null;
+  availabilityGate: Promise<void> | null = null;
+  onAvailabilityCheckStarted: (() => void) | null = null;
   createSessionGate: Promise<void> | null = null;
   onCreateSessionStarted: (() => void) | null = null;
   turnCompletionGate: Promise<void> | null = null;
@@ -154,6 +156,12 @@ class E2EFakeClient implements AgentClient {
   ) {}
 
   async isAvailable(): Promise<boolean> {
+    this.onAvailabilityCheckStarted?.();
+    if (this.availabilityGate) {
+      const gate = this.availabilityGate;
+      this.availabilityGate = null;
+      await gate;
+    }
     return true;
   }
   async fetchCatalog() {
@@ -679,6 +687,16 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
+    let resolveCodexAvail!: () => void;
+    codex.availabilityGate = new Promise<void>((resolve) => {
+      resolveCodexAvail = resolve;
+    });
+    let resolveCodexAvailStarted!: () => void;
+    const codexAvailStarted = new Promise<void>((resolve) => {
+      resolveCodexAvailStarted = resolve;
+    });
+    codex.onAvailabilityCheckStarted = resolveCodexAvailStarted;
+
     let resolveCodexCreate!: () => void;
     codex.createSessionGate = new Promise<void>((resolve) => {
       resolveCodexCreate = resolve;
@@ -694,6 +712,15 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
       text: "Switch to Codex",
       messageId: "msg-ep-sw",
     });
+    await codexAvailStarted;
+
+    // An older client omitting expectedProvider during the availability check MUST also reject.
+    const legacyDuringAvail = client2.client.setAgentModel(agent.id, "claude-opus-avail").then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    resolveCodexAvail();
     await codexCreateStarted;
 
     // Both a current client sending expectedProvider: "claude" AND an older client omitting
@@ -711,14 +738,19 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     resolveCodexCreate();
-    const [switched, staleEditOutcome, legacyEditOutcome] = await Promise.all([
+    const [switched, availEditOutcome, staleEditOutcome, legacyEditOutcome] = await Promise.all([
       switchPromise,
+      legacyDuringAvail,
       staleModelEdit,
       legacyModelEdit,
     ]);
     expect(switched.agent?.provider).toBe("codex");
 
-    // Both stale Claude model edits MUST reject instead of applying to Codex!
+    // All three stale Claude model edits MUST reject instead of applying to Codex!
+    expect(availEditOutcome.status).toBe("rejected");
+    if (availEditOutcome.status === "rejected") {
+      expect(String(availEditOutcome.error)).toMatch(/switching providers/i);
+    }
     expect(staleEditOutcome.status).toBe("rejected");
     if (staleEditOutcome.status === "rejected") {
       expect(String(staleEditOutcome.error)).toMatch(/provider 'claude'.*now using 'codex'/i);

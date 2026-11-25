@@ -1182,7 +1182,7 @@ export class AgentManager {
     { readonly openedAt: number }
   >();
   private readonly collectingRuntimes = new Set<string>();
-  private readonly switchingAgentIds = new Set<string>();
+  private readonly switchingAgentCounts = new Map<string, number>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
   private readonly pendingSubmittedPrompts = new Map<
@@ -2368,10 +2368,21 @@ export class AgentManager {
     input: SwitchAgentProviderInput,
   ): Promise<SwitchAgentProviderResult> {
     const resolvedAgentId = validateAgentId(agentId, "switchAgentProvider");
+    this.switchingAgentCounts.set(
+      resolvedAgentId,
+      (this.switchingAgentCounts.get(resolvedAgentId) ?? 0) + 1,
+    );
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, () =>
         this.switchAgentProviderUnlocked(resolvedAgentId, input),
-      ),
+      ).finally(() => {
+        const remaining = (this.switchingAgentCounts.get(resolvedAgentId) ?? 1) - 1;
+        if (remaining <= 0) {
+          this.switchingAgentCounts.delete(resolvedAgentId);
+        } else {
+          this.switchingAgentCounts.set(resolvedAgentId, remaining);
+        }
+      }),
     );
   }
 
@@ -2692,7 +2703,6 @@ export class AgentManager {
     };
 
     try {
-      this.switchingAgentIds.add(agentId);
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       const launchContext = await this.buildLaunchContext(
         agentId,
@@ -2814,7 +2824,6 @@ export class AgentManager {
       }
       throw error;
     } finally {
-      this.switchingAgentIds.delete(agentId);
       releaseSwitchRunLock();
       if (!handedToRegistration) {
         this.restoreToolPolicyOnSwitchFailure(
@@ -3505,7 +3514,7 @@ export class AgentManager {
     agentId: string,
     options?: { expectedProvider?: AgentProvider },
   ): void {
-    if (!options?.expectedProvider && this.switchingAgentIds.has(agentId)) {
+    if (!options?.expectedProvider && this.switchingAgentCounts.has(agentId)) {
       throw new Error(
         `Cannot update settings while agent ${agentId} is switching providers without specifying expectedProvider`,
       );
