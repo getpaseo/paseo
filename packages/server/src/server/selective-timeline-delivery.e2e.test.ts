@@ -183,6 +183,7 @@ async function connect(input: {
   timelineReplacementInvalidation?: boolean;
   timelineNotifications?: boolean;
   pluginTimelineItems?: boolean;
+  liveCompactionProgress?: boolean;
   workspaceSetupBlocked?: boolean;
   ownedSubscriptions?: boolean;
 }): Promise<ConnectedClient> {
@@ -198,6 +199,7 @@ async function connect(input: {
       [CLIENT_CAPS.ownedSubscriptions]: input.ownedSubscriptions ?? false,
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
       [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
+      [CLIENT_CAPS.liveCompactionProgress]: input.liveCompactionProgress ?? false,
       [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
       ...(input.timelineNotifications === undefined
         ? {}
@@ -773,6 +775,66 @@ class CompatibilityProvider extends MockLoadTestAgentClient {
     return this.session;
   }
 }
+
+test("live compaction progress reaches capable clients only and is not written to history", async () => {
+  await daemon.close();
+  const provider = new CompatibilityProvider();
+  daemon = await createTestPaseoDaemon({ isDev: true, agentClients: { mock: provider } });
+  const legacy = await connect({ clientId: "compaction-legacy", selective: false });
+  const capable = await connect({
+    clientId: "compaction-capable",
+    selective: false,
+    liveCompactionProgress: true,
+  });
+  const agent = await capable.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    model: "ten-second-stream",
+  });
+  const turn = { provider: "mock", turnId: "compact" } as const;
+  const loading = {
+    type: "compaction",
+    status: "loading",
+    trigger: "manual",
+    liveOnly: true,
+  } as const;
+  const completed = { type: "compaction", status: "completed", trigger: "manual" } as const;
+  provider.session.push({ ...turn, type: "turn_started" });
+  provider.session.push({ ...turn, type: "timeline", item: loading });
+  provider.session.push({ ...turn, type: "timeline", item: completed });
+  provider.session.push({ ...turn, type: "turn_completed" });
+  function confirmed(message: SessionOutboundMessage): boolean {
+    return (
+      message.type === "agent_stream" &&
+      message.payload.agentId === agent.id &&
+      message.payload.event.type === "timeline" &&
+      message.payload.event.item.type === "compaction" &&
+      message.payload.event.item.status === "completed"
+    );
+  }
+  await Promise.all([
+    capable.next(confirmed, "capable completion"),
+    legacy.next(confirmed, "legacy completion"),
+  ]);
+  for (const [client, expected] of [
+    [capable, [loading, completed]],
+    [legacy, [completed]],
+  ] as const) {
+    const compactions = client.messages.flatMap((message) =>
+      message.type === "agent_stream" &&
+      message.payload.agentId === agent.id &&
+      message.payload.event.type === "timeline" &&
+      message.payload.event.item.type === "compaction"
+        ? [message.payload.event.item]
+        : [],
+    );
+    expect(compactions).toEqual(expected);
+    const history = await client.client.fetchAgentTimeline(agent.id, { projection: "canonical" });
+    expect(
+      history.entries.map((row) => row.item).filter((item) => item.type === "compaction"),
+    ).toEqual([completed]);
+  }
+});
 
 test("plugin items are gated in provider child streams, child fetches, and rewind replay", async () => {
   await daemon.close();

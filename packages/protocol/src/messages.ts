@@ -808,6 +808,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
+    liveOnly: z.literal(true).optional(),
   }),
   z.object({
     type: z.literal("plugin"),

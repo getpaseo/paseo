@@ -29,6 +29,7 @@ import type {
   AcpRequest,
   AcpToolCallSnapshot,
   AcpTransformer,
+  AcpTurnObserver,
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
@@ -407,6 +408,7 @@ interface ActivePrompt {
   crossedEndTurn: boolean;
   replyState: DeferredReplyState;
   deferred: DeferredTurnState | null;
+  observers?: AcpTurnObserver[];
 }
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
@@ -425,6 +427,7 @@ class AcpRuntime {
   readonly connection: ClientSideConnection;
   agentCapabilities: AgentCapabilities = {};
   nativeSessionId = "";
+  private agentVersion?: string;
   private readonly child: ChildProcessWithoutNullStreams | null;
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
@@ -441,6 +444,7 @@ class AcpRuntime {
   private modes: NewSessionResponse["modes"] = null;
   private commandWaiter: (() => void) | null = null;
   private receivedInitialCommands = false;
+  private advertisedCommands?: Set<string>;
   private messageSequence = 0;
   /**
    * Fallback ids for streamed chunks that carry no `messageId`, one per
@@ -534,6 +538,7 @@ class AcpRuntime {
         ? await Promise.race([initialize, spawnFailure])
         : await initialize;
       runtime.agentCapabilities = initialized.agentCapabilities ?? {};
+      runtime.agentVersion = initialized.agentInfo?.version;
       return runtime;
     } catch (error) {
       await runtime.close();
@@ -804,6 +809,8 @@ class AcpRuntime {
       replyState: "idle",
       deferred: null,
     };
+    this.activePrompt = activePrompt;
+    this.observePrompt(activePrompt, prompt);
     // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
     // while earlier session updates are still queued. Apply them before the turn ends.
     const settled = this.call(
@@ -831,7 +838,13 @@ class AcpRuntime {
           await this.settleDeferredPrompt(activePrompt);
           return undefined;
         }
-        this.finishPromptTurn(turnId, state);
+        if (state === "completed" && activePrompt.observers) {
+          await Promise.all(activePrompt.observers.map((observer) => observer.flush()));
+        }
+        this.finishPromptTurn(
+          turnId,
+          activePrompt.observers && activePrompt.cancelling ? "canceled" : state,
+        );
         return undefined;
       },
       async (error): Promise<void> => {
@@ -842,10 +855,32 @@ class AcpRuntime {
       },
     );
     activePrompt.settled = settled;
-    this.activePrompt = activePrompt;
     void settled.finally(() => {
       if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
     });
+  }
+
+  private observePrompt(active: ActivePrompt, prompt: readonly ContentBlock[]): void {
+    if (!this.transformers.some((transformer) => transformer.observeTurn)) return;
+    const first = prompt[0];
+    const text = prompt.length === 1 && first?.type === "text" ? first.text.trim() : "";
+    const command = text.startsWith("/") ? text.slice(1) : undefined;
+    const context = {
+      nativeSessionId: this.nativeSessionId,
+      agentVersion: this.agentVersion,
+      args: this.options.launch?.args ?? this.options.options.command?.slice(1) ?? [],
+      env: { ...(this.options.launch?.env ?? process.env), ...this.options.env },
+      turnId: active.turnId,
+      command: command && this.advertisedCommands?.has(command) ? command : undefined,
+      emit: (item: ProviderTimelineItem) => {
+        if (this.activePrompt !== active || this.closing || this.processFailed) return;
+        this.emit({ type: "timeline.item", sessionId: this.options.boundarySessionId, item });
+      },
+    };
+    for (const transformer of this.transformers) {
+      const observer = transformer.observeTurn?.(context);
+      if (observer) (active.observers ??= []).push(observer);
+    }
   }
 
   async interrupt(): Promise<boolean> {
@@ -1473,6 +1508,17 @@ class AcpRuntime {
     return id;
   }
 
+  private publishAvailableCommands(commands: ProviderCommand[]): void {
+    if (this.transformers.some((transformer) => transformer.observeTurn)) {
+      this.advertisedCommands = new Set(
+        commands.filter((command) => command.kind !== "skill").map((command) => command.name),
+      );
+    }
+    this.emit({ type: "session.commands", sessionId: this.options.boundarySessionId, commands });
+    this.receivedInitialCommands = true;
+    this.commandWaiter?.();
+  }
+
   private reduceStateUpdate(update: SessionUpdate, wireSeq: number): void {
     if (update.sessionUpdate === "plan") {
       this.emit({
@@ -1504,9 +1550,7 @@ class AcpRuntime {
         }
         return entry;
       });
-      this.emit({ type: "session.commands", sessionId: this.options.boundarySessionId, commands });
-      this.receivedInitialCommands = true;
-      this.commandWaiter?.();
+      this.publishAvailableCommands(commands);
       return;
     }
     if (update.sessionUpdate === "current_mode_update") {
@@ -1537,6 +1581,7 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
+      for (const observer of this.activePrompt?.observers ?? []) observer.usage();
       this.noteDeferredUsageUpdate(wireSeq);
       return;
     }
@@ -1733,6 +1778,7 @@ class AcpRuntime {
         failureMessage ? { type: "fail", error: { message: failureMessage } } : { type: "cancel" },
       );
     }
+    for (const observer of this.activePrompt?.observers ?? []) observer.stop();
     this.commandWaiter?.();
     this.commandWaiter = null;
   }
@@ -1744,6 +1790,10 @@ class AcpRuntime {
     options?: { preserveQualifyingOpenTools?: boolean; suppressTrailingToolEcho?: boolean },
   ): void {
     this.fallbackChunkIds.clear();
+    if (this.activePrompt?.turnId === turnId) {
+      for (const observer of this.activePrompt.observers ?? []) observer.stop();
+      this.activePrompt.observers = undefined;
+    }
     this.terminalizeTransientItems(state, options);
     this.finishTurnPermissions(turnId);
     if (state === "failed") {
@@ -1889,9 +1939,14 @@ class AcpRuntime {
       this.finishPromptTurn(active.turnId, "failed", outcome.error);
       return;
     }
+    if (outcome.type === "complete" && active.observers) {
+      await Promise.all(active.observers.map((observer) => observer.flush()));
+    }
     this.finishPromptTurn(
       active.turnId,
-      outcome.type === "cancel" ? "canceled" : "completed",
+      outcome.type === "cancel" || (active.observers && active.cancelling)
+        ? "canceled"
+        : "completed",
       undefined,
       {
         preserveQualifyingOpenTools: outcome.type === "complete" && !outcome.terminalizeTools,

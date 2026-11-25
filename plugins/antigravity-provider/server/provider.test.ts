@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
@@ -886,3 +887,148 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
     await connection.close();
   }
 });
+
+it.each(["manual", "auto", "canceled", "failed", "no-op"] as const)(
+  "live Antigravity compaction settles %s from current-turn evidence",
+  async (outcome) => {
+    const nativeId = "11111111-1111-4111-8111-111111111111";
+    const { directory, launch } = await launchAgent(`
+        const { existsSync, watch } = require("node:fs");
+        const { createInterface } = require("node:readline");
+        const idForSession = ${JSON.stringify(nativeId)};
+        const outcome = ${JSON.stringify(outcome)};
+        const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+        const update = (update) => send({ method: "session/update", params: { sessionId: idForSession, update } });
+        let prompt;
+        createInterface({ input: process.stdin }).on("line", (line) => {
+          const { id, method } = JSON.parse(line);
+          if (method === "initialize") {
+            send({ id, result: { protocolVersion: 1,
+              agentInfo: { name: "Antigravity ACP Server", version: "1.5.14" } } });
+          } else if (method === "session/new") {
+            send({ id, result: { sessionId: idForSession, modes: {
+              currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+            } } });
+            update({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Compact" }] });
+          } else if (method === "session/prompt") {
+            let usageSent = false;
+            const check = () => {
+              if (!usageSent && existsSync("usage")) {
+                usageSent = true;
+                for (const used of [140, 141]) update({ sessionUpdate: "usage_update", used, size: 1048576 });
+              }
+              if (!existsSync("finish")) return;
+              watcher.close();
+              if (outcome === "failed") send({ id, error: { code: -32603, message: "generation failed" } });
+              else send({ id, result: { stopReason: "end_turn" } });
+            };
+            const watcher = watch(".", check);
+            prompt = { id, watcher };
+            check();
+          } else if (method === "session/cancel" && prompt) {
+            prompt.watcher.close();
+            send({ id: prompt.id, result: { stopReason: "cancelled" } });
+          }
+        });
+      `);
+    const gemini = path.join(directory, "gemini");
+    const conversations = path.join(gemini, "native", "conversations");
+    await mkdir(conversations, { recursive: true });
+    const db = new DatabaseSync(path.join(conversations, `${nativeId}.db`));
+    db.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)");
+    // agy 1.5.14 steps: step_type 23 = CHECKPOINT, status 3 = DONE.
+    db.exec("INSERT INTO steps VALUES (1, 23, 3)");
+    const connection = await createAntigravityProvider().connect({
+      launch: {
+        ...launch,
+        args: [...launch.args, "--gemini-dir", gemini, "--app-data-dir", "native"],
+      },
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.command"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    const markers = () =>
+      events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.type === "compaction" ? [event.item] : [],
+      );
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open",
+        sessionId: "test",
+        history: "skip",
+        config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: true },
+      });
+      await expect
+        .poll(() =>
+          events.find((event) => event.type === "session.ready" || event.type === "request.failed"),
+        )
+        .toMatchObject({ type: "session.ready" });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "test",
+        prompt: {
+          clientMessageId: "current",
+          delivery: "auto",
+          input:
+            outcome === "auto"
+              ? { type: "message", content: [{ type: "text", text: "Continue" }] }
+              : { type: "command", name: "compact", arguments: "" },
+        },
+      });
+      await expect
+        .poll(() =>
+          events.some((event) => event.type === "session.turn" && event.state === "started"),
+        )
+        .toBe(true);
+      const terminal = () =>
+        events.find((event) => event.type === "session.turn" && event.state !== "started");
+      if (outcome !== "auto") {
+        await expect.poll(markers).toEqual([
+          expect.objectContaining({
+            type: "compaction",
+            status: "loading",
+            trigger: "manual",
+            liveOnly: true,
+          }),
+        ]);
+        expect(terminal()).toBeUndefined();
+      }
+      const loading = markers()[0];
+      if (outcome === "auto" || outcome === "manual") {
+        db.exec("INSERT INTO steps VALUES (2, 23, 3), (3, 14, 3), (4, 23, 3)");
+        await writeFile(path.join(directory, "usage"), "");
+        await expect
+          .poll(() => markers().filter((item) => item.status === "completed").length)
+          .toBe(1);
+        expect(terminal()).toBeUndefined();
+      }
+      if (outcome === "canceled") {
+        await connection.send({
+          type: "session.interrupt",
+          sessionId: "test",
+          requestId: "interrupt",
+        });
+      } else {
+        await writeFile(path.join(directory, "finish"), "");
+      }
+      await expect.poll(terminal).toMatchObject({
+        state: outcome === "canceled" || outcome === "failed" ? outcome : "completed",
+      });
+      const completed = markers().filter((item) => item.status === "completed");
+      if (outcome === "manual")
+        expect(completed).toEqual([
+          expect.objectContaining({ id: loading?.id, trigger: "manual" }),
+        ]);
+      else if (outcome === "auto") {
+        expect(markers()).toEqual([
+          expect.objectContaining({ status: "completed", trigger: "auto" }),
+        ]);
+      } else expect(completed).toEqual([]);
+    } finally {
+      await connection.close();
+      db.close();
+    }
+  },
+);

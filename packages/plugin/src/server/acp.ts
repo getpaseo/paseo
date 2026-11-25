@@ -134,6 +134,23 @@ export type AcpVendorUpdate =
   | { type: "timeline"; item: ProviderTimelineItem }
   | { type: "notice"; notice: ProviderNotice };
 
+export interface AcpTurnObservation {
+  nativeSessionId: string;
+  agentVersion?: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string | undefined>>;
+  turnId: string;
+  /** An exact slash command the native agent advertised for this session. */
+  command?: string;
+  emit(item: ProviderTimelineItem): void;
+}
+
+export interface AcpTurnObserver {
+  usage(): void;
+  flush(): Promise<void>;
+  stop(): void;
+}
+
 export interface AcpTransformer {
   /** Decode an older saved session and supply extension metadata for session/new or session/load. */
   sessionOpen?(context: {
@@ -141,6 +158,9 @@ export interface AcpTransformer {
     systemPrompt?: string;
     agentMetadata: JsonValue;
   }): { sessionId?: string; metadata?: Readonly<Record<string, JsonValue>> };
+
+  /** Observe local state only while a prompt admitted by the ACP adapter is running. */
+  observeTurn?(context: AcpTurnObservation): AcpTurnObserver | undefined;
 
   discover?(
     catalog: ProviderCatalog,

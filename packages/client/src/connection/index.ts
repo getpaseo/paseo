@@ -143,6 +143,7 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.timelineReplacementInvalidation]: true,
   [CLIENT_CAPS.timelineNotifications]: true,
   [CLIENT_CAPS.pluginTimelineItems]: true,
+  [CLIENT_CAPS.liveCompactionProgress]: true,
   [CLIENT_CAPS.workspaceSetupBlocked]: true,
   [CLIENT_CAPS.workspaceSetupObservation]: true,
   [CLIENT_CAPS.pluginBinaryPayloads]: true,

@@ -688,6 +688,8 @@ export type ProviderTimelineItem =
       status: "loading" | "completed";
       trigger?: "auto" | "manual";
       preTokens?: number;
+      /** Progress that has no confirmed outcome yet. Cleared by the turn's terminal event. */
+      liveOnly?: true;
     })
   | (ProviderTimelineIdentity & {
       type: "plugin";
@@ -1453,6 +1455,7 @@ const timelineItemSchema: z.ZodType<ProviderTimelineItem> = z.union([
       status: z.enum(["loading", "completed"]),
       trigger: z.enum(["auto", "manual"]).optional(),
       preTokens: z.number().optional(),
+      liveOnly: z.literal(true).optional(),
     })
     .strip(),
   z

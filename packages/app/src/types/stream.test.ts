@@ -1487,6 +1487,47 @@ describe("stream reducer canonical tool calls", () => {
     );
   });
 
+  it.each(["completed", "canceled", "failed", "no checkpoint"] as const)(
+    "settles only the matching live compaction on %s",
+    (outcome) => {
+      const timestamp = new Date("2025-01-01T10:50:00Z");
+      const load = (turnId: string) =>
+        ({
+          type: "timeline",
+          provider: "antigravity",
+          turnId,
+          item: { type: "compaction", status: "loading", trigger: "manual", liveOnly: true },
+        }) as const;
+      const older = reduceStreamUpdate([], load("other-turn"), timestamp);
+      const loading = reduceStreamUpdate(older, load("compact-turn"), timestamp);
+      const id = loading.at(-1)?.id;
+      const turn = { provider: "antigravity", turnId: "compact-turn" } as const;
+      let settled = loading;
+      if (outcome === "completed") {
+        settled = reduceStreamUpdate(
+          settled,
+          {
+            ...turn,
+            type: "timeline",
+            item: { type: "compaction", status: "completed", trigger: "manual" },
+          },
+          timestamp,
+        );
+      }
+      let terminal: AgentStreamEventPayload = { ...turn, type: "turn_completed" };
+      if (outcome === "failed")
+        terminal = { ...turn, type: "turn_failed", error: "generation failed" };
+      if (outcome === "canceled")
+        terminal = { ...turn, type: "turn_canceled", reason: "user interrupted" };
+      settled = reduceStreamUpdate(settled, terminal, timestamp);
+      expect(settled).toEqual(
+        outcome === "completed"
+          ? [...older, expect.objectContaining({ id, status: "completed", turnId: "compact-turn" })]
+          : older,
+      );
+    },
+  );
+
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {
     const state = hydrateStreamState([
       {
