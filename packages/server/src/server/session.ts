@@ -9304,10 +9304,9 @@ export class Session {
           providerOptions: msg.providerOptions,
           prompt,
           messageId: msg.messageId,
-          admitFirstTurn: async (result, releaseAdmissionLock) => {
+          admitFirstTurn: async (result, switchReservationToken) => {
             try {
               await beforeDispatch();
-              releaseAdmissionLock();
               admitted.dispatch = await startAgentRun(
                 this.agentManager,
                 agentId,
@@ -9316,6 +9315,7 @@ export class Session {
                 {
                   idleOnly: true,
                   skipPluginReload: true,
+                  switchReservationToken,
                   runOptions: { clientMessageId: msg.messageId },
                 },
               );

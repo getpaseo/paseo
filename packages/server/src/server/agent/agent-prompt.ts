@@ -45,6 +45,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** Exclusive switch reservation token handed off from `switchAgentProvider` into `streamAgent`. */
+  switchReservationToken?: string;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -171,7 +173,7 @@ export async function startAgentRun(
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
-  const promptStart = new ForegroundPromptStart(agentId, admit);
+  const promptStart = new ForegroundPromptStart(agentId, admit, options?.switchReservationToken);
   try {
     return await startAgentRunWithPluginRecovery(
       agentManager,
@@ -199,7 +201,12 @@ async function startAgentRunInner(
   const steered = options?.idleOnly
     ? null
     : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options, promptStart);
-  if (options?.idleOnly && agentManager.hasInFlightRun(agentId)) {
+  if (
+    options?.idleOnly &&
+    agentManager.hasInFlightRun(agentId, {
+      ignoreSwitchReservationToken: options.switchReservationToken,
+    })
+  ) {
     throw new AgentTurnBusyError(`Agent ${agentId} is running`);
   }
   if (steered?.disposition === "steered") {

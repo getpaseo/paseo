@@ -240,14 +240,14 @@ export interface SwitchAgentProviderInput {
   messageId: string;
   /**
    * Optional hook invoked while the switch still holds exclusive admission on `agentId`,
-   * after the target session is registered. Callers use this to save a delivery receipt,
-   * call `releaseAdmissionLock()`, and immediately admit the first turn so `hasInFlightRun`
-   * is true before any overlapping switch can enter. Must not invoke lifecycle-mutating
-   * `AgentManager` methods on `agentId`.
+   * after the target session is registered. Callers pass `switchReservationToken` into
+   * `startAgentRun` / `streamAgent` so the first turn atomically swaps the switch reservation
+   * for its foreground run without waking `waitForAgentEvent` mid-handoff. Must not invoke
+   * lifecycle-mutating `AgentManager` methods on `agentId`.
    */
   admitFirstTurn?: (
     switched: SwitchAgentProviderResult,
-    releaseAdmissionLock: () => void,
+    switchReservationToken: string,
   ) => Promise<void>;
 }
 
@@ -1183,6 +1183,10 @@ export class AgentManager {
   >();
   private readonly collectingRuntimes = new Set<string>();
   private readonly switchingAgentCounts = new Map<string, number>();
+  private readonly providerSwitchReservations = new Map<
+    string,
+    { token: string; promise: Promise<void>; resolve: () => void }
+  >();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
   private readonly pendingSubmittedPrompts = new Map<
@@ -1497,7 +1501,36 @@ export class AgentManager {
     return Boolean(this.agents.get(agentId)?.session?.steerActiveTurn);
   }
 
-  hasInFlightRun(agentId: string): boolean {
+  private reserveProviderSwitch(agentId: string): { token: string; release: () => void } {
+    let resolveReservation!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolveReservation = res;
+    });
+    const token = randomUUID();
+    const reservation = { token, promise, resolve: resolveReservation };
+    this.providerSwitchReservations.set(agentId, reservation);
+    return {
+      token,
+      release: () => this.releaseProviderSwitchReservation(agentId, token),
+    };
+  }
+
+  private releaseProviderSwitchReservation(agentId: string, token: string): void {
+    const current = this.providerSwitchReservations.get(agentId);
+    if (!current || current.token !== token) return;
+    this.providerSwitchReservations.delete(agentId);
+    current.resolve();
+  }
+
+  private hasOtherProviderSwitchReservation(agentId: string, ignoreToken?: string): boolean {
+    const current = this.providerSwitchReservations.get(agentId);
+    return current !== undefined && current.token !== ignoreToken;
+  }
+
+  hasInFlightRun(agentId: string, options?: { ignoreSwitchReservationToken?: string }): boolean {
+    if (this.hasOtherProviderSwitchReservation(agentId, options?.ignoreSwitchReservationToken)) {
+      return true;
+    }
     const agent = this.agents.get(agentId);
     if (!agent) {
       return false;
@@ -2583,19 +2616,13 @@ export class AgentManager {
 
   private async runWithSwitchAdmissionLock<T>(
     agentId: string,
-    fn: (releaseAdmissionLock: () => void) => Promise<T>,
+    fn: (switchReservationToken: string) => Promise<T>,
   ): Promise<T> {
-    let lock: PendingForegroundRun | null = this.runs.createPendingRun(agentId);
-    const release = () => {
-      if (!lock) return;
-      const token = lock.token;
-      lock = null;
-      this.runs.settleForegroundRun(agentId, token);
-    };
+    const reservation = this.reserveProviderSwitch(agentId);
     try {
-      return await fn(release);
+      return await fn(reservation.token);
     } finally {
-      release();
+      reservation.release();
     }
   }
 
@@ -2694,13 +2721,7 @@ export class AgentManager {
     let intent: TimelineProviderSwitchIntent | null = null;
     let committed = false;
     let handedToRegistration = false;
-    let switchRunLock: PendingForegroundRun | null = null;
-    const releaseSwitchRunLock = () => {
-      if (!switchRunLock) return;
-      const token = switchRunLock.token;
-      switchRunLock = null;
-      this.runs.settleForegroundRun(agentId, token);
-    };
+    let switchReservation: { token: string; release: () => void } | null = null;
 
     try {
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
@@ -2735,11 +2756,12 @@ export class AgentManager {
       );
 
       // Re-verify idle right before committing/closing the source session, then immediately
-      // reserve the foreground run slot without yielding so no turn or rewind can sneak in.
+      // reserve exclusive switch admission without yielding so no turn or rewind can sneak in
+      // and waitForAgentEvent follows this chat seamlessly through session replacement.
       this.assertSourceAgentIdleForSwitch(agentId, existingLive);
-      switchRunLock = this.runs.createPendingRun(agentId);
+      switchReservation = this.reserveProviderSwitch(agentId);
 
-      // Read handoff AFTER reserving the foreground turn slot and settling any open rewind so
+      // Read handoff AFTER reserving switch admission and settling any open rewind so
       // the marker context and first prompt reflect the exact active history.
       const handoff = await this.buildActiveSwitchHandoff(
         scope,
@@ -2760,10 +2782,6 @@ export class AgentManager {
       });
 
       await this.closeLiveSessionForSwitch(existingLive, agentId);
-      if (existingLive) {
-        // prepareAgentForClosure clears the run map; re-reserve until first-turn admission.
-        switchRunLock = this.runs.createPendingRun(agentId);
-      }
       this.assertAcceptingAgentRegistrations();
 
       const markerItem: ProviderSwitchTimelineItem = {
@@ -2815,7 +2833,7 @@ export class AgentManager {
         context: handoff.summary,
       };
       if (input.admitFirstTurn) {
-        await input.admitFirstTurn(result, releaseSwitchRunLock);
+        await input.admitFirstTurn(result, switchReservation.token);
       }
       return result;
     } catch (error) {
@@ -2824,7 +2842,7 @@ export class AgentManager {
       }
       throw error;
     } finally {
-      releaseSwitchRunLock();
+      switchReservation?.release();
       if (!handedToRegistration) {
         this.restoreToolPolicyOnSwitchFailure(
           agentId,
@@ -3195,6 +3213,7 @@ export class AgentManager {
       !agent.internal &&
       agent.activeForegroundTurnId === null &&
       !this.runs.hasRun(agent.id) &&
+      !this.providerSwitchReservations.has(agent.id) &&
       !agent.pendingReplacement &&
       agent.pendingPermissions.size === 0 &&
       agent.inFlightPermissionResponses.size === 0 &&
@@ -4562,7 +4581,12 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    const switchReservationToken = promptStart?.switchReservationToken;
+    if (
+      existingAgent.activeForegroundTurnId ||
+      this.runs.hasRun(agentId) ||
+      this.hasOtherProviderSwitchReservation(agentId, switchReservationToken)
+    ) {
       this.logger.trace(
         {
           agentId,
@@ -4584,6 +4608,9 @@ export class AgentManager {
 
     const pendingRun = this.runs.createPendingRun(agentId);
     promptStart?.bind(pendingRun);
+    if (switchReservationToken) {
+      this.releaseProviderSwitchReservation(agentId, switchReservationToken);
+    }
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
@@ -5225,7 +5252,9 @@ export class AgentManager {
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
     if (!run) {
-      return { status: "not_running" };
+      return this.providerSwitchReservations.has(agentId)
+        ? { status: "refused" }
+        : { status: "not_running" };
     }
     if (cause === "stop") {
       for (const listener of this.stopListeners) listener(agentId);
@@ -5578,12 +5607,27 @@ export class AgentManager {
     return lastAssistantMessageText(timeline.map((item) => ({ item })));
   }
 
+  /** Wait for an in-flight provider switch reservation and/or starting foreground run. */
+  private async waitForForegroundStart(agentId: string): Promise<void> {
+    while (true) {
+      const reservation = this.providerSwitchReservations.get(agentId);
+      if (reservation) {
+        await reservation.promise;
+        continue;
+      }
+      await this.runs.waitForForegroundStart(agentId);
+      if (!this.providerSwitchReservations.has(agentId)) {
+        return;
+      }
+    }
+  }
+
   /** A provider start has no deadline of its own, so the caller's abort ends the wait for it. */
   private async waitForForegroundStartUnlessAborted(
     agentId: string,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    if (!signal) return await this.runs.waitForForegroundStart(agentId);
+    if (!signal) return await this.waitForForegroundStart(agentId);
     if (signal.aborted) throw createAbortError(signal, "wait_for_agent aborted");
     let onAbort: () => void = () => undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -5591,7 +5635,7 @@ export class AgentManager {
       signal.addEventListener("abort", onAbort, { once: true });
     });
     try {
-      await Promise.race([this.runs.waitForForegroundStart(agentId), aborted]);
+      await Promise.race([this.waitForForegroundStart(agentId), aborted]);
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
@@ -5601,11 +5645,12 @@ export class AgentManager {
     agentId: string,
     options?: WaitForAgentOptions,
   ): Promise<WaitForAgentResult> {
-    if (!this.getAgent(agentId)) {
+    if (!this.getAgent(agentId) && !this.providerSwitchReservations.has(agentId)) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    // A starting run publishes its running state only once its turn starts. Until then the
-    // replayed state below is the idle state before the run, which would end the wait early.
+    // A provider switch or starting run publishes its running state only once the replacement
+    // session is registered and its turn starts. Until then the replayed state below is either
+    // absent or the idle state before the run, which would fail or end the wait early.
     await this.waitForForegroundStartUnlessAborted(agentId, options?.signal);
     const snapshot = this.getAgent(agentId);
     if (!snapshot) {

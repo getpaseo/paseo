@@ -50,6 +50,7 @@ class FakeSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ) => Promise<void> | void;
+  private readonly onClose?: () => Promise<void> | void;
   private readonly persistAfterFirstTurn: boolean;
   private readonly echoBeforeStartResolves: boolean;
 
@@ -64,6 +65,7 @@ class FakeSession implements AgentSession {
       prompt: AgentPromptInput,
       options?: AgentRunOptions,
     ) => Promise<void> | void;
+    onClose?: () => Promise<void> | void;
   }) {
     this.id = params.id;
     this.provider = params.provider;
@@ -71,6 +73,7 @@ class FakeSession implements AgentSession {
     this.persistAfterFirstTurn = params.persistAfterFirstTurn ?? false;
     this.echoBeforeStartResolves = params.echoBeforeStartResolves ?? false;
     this.onStartTurn = params.onStartTurn;
+    this.onClose = params.onClose;
   }
 
   emit(event: AgentStreamEvent): void {
@@ -166,6 +169,9 @@ class FakeSession implements AgentSession {
     return this.persistence;
   }
   async close(): Promise<void> {
+    if (this.onClose) {
+      await this.onClose();
+    }
     this.closed = true;
   }
 }
@@ -184,6 +190,7 @@ class FakeClient implements AgentClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ) => Promise<void> | void;
+  onClose?: () => Promise<void> | void;
 
   constructor(readonly provider: AgentProvider) {}
 
@@ -206,7 +213,9 @@ class FakeClient implements AgentClient {
         : { provider: this.provider, sessionId: id },
       persistAfterFirstTurn: this.persistAfterFirstTurn,
       echoBeforeStartResolves: this.echoBeforeStartResolves,
-      onStartTurn: this.onStartTurn,
+      onStartTurn: (activeSession, prompt, options) =>
+        this.onStartTurn?.(activeSession, prompt, options),
+      onClose: () => this.onClose?.(),
     });
     this.createdSessions.push(session);
     return session;
@@ -545,6 +554,93 @@ describe("AgentManager provider switching", () => {
     expect(afterRewindDelivered).toContain("<chat-history-summary>");
     expect(afterRewindDelivered).toContain("Claude context turn");
     expect(afterRewindDelivered).toContain("After rewind prompt");
+  });
+
+  it("keeps waitForAgentEvent following the same chat across provider-switch session replacement while blocking overlapping turns", async () => {
+    const { cwd, manager, claude, codex } = createHarness();
+    const logger = createTestLogger();
+
+    const created = await manager.createAgent({ provider: "claude", cwd }, randomUUID(), {});
+    await runAndWaitIdle(manager, created.id, "Before switch", "msg-before");
+
+    let notifySourceClosing!: () => void;
+    const sourceClosing = new Promise<void>((resolve) => {
+      notifySourceClosing = resolve;
+    });
+    let releaseSourceClose!: () => void;
+    const sourceCloseGate = new Promise<void>((resolve) => {
+      releaseSourceClose = resolve;
+    });
+    claude.onClose = async () => {
+      notifySourceClosing();
+      await sourceCloseGate;
+    };
+
+    let notifyTargetTurnStarting!: () => void;
+    const targetTurnStarting = new Promise<void>((resolve) => {
+      notifyTargetTurnStarting = resolve;
+    });
+    let releaseTargetTurn!: () => void;
+    const targetTurnGate = new Promise<void>((resolve) => {
+      releaseTargetTurn = resolve;
+    });
+    codex.onStartTurn = async () => {
+      notifyTargetTurnStarting();
+      await targetTurnGate;
+    };
+
+    const switchPromise = manager.switchAgentProvider(created.id, {
+      toProvider: "codex",
+      prompt: "After switch",
+      messageId: "msg-after",
+      admitFirstTurn: async (result, switchReservationToken) => {
+        const dispatch = await startAgentRun(manager, created.id, result.handoffPrompt, logger, {
+          idleOnly: true,
+          skipPluginReload: true,
+          switchReservationToken,
+          runOptions: { clientMessageId: "msg-after" },
+        });
+        expect(dispatch.disposition).toBe("turn_started");
+      },
+    });
+
+    // Wait until the switch holds its reservation and is closing the source session.
+    await sourceClosing;
+
+    // Overlap protection remains enforced while the switch reservation is held.
+    expect(manager.hasInFlightRun(created.id)).toBe(true);
+    expect(() => manager.streamAgent(created.id, "Overlapping prompt")).toThrow(
+      /already has an active run/,
+    );
+    await expect(manager.cancelAgentRun(created.id)).resolves.toEqual({ status: "refused" });
+
+    // Start waitForAgentEvent right before prepareAgentForClosure deletes the source session.
+    let waitSettled = false;
+    const waitResultPromise = manager.waitForAgentEvent(created.id).then((res) => {
+      waitSettled = true;
+      return res;
+    });
+
+    // Aborting another waiter during the switch reservation still rejects promptly.
+    const abortController = new AbortController();
+    const abortedWait = manager.waitForAgentEvent(created.id, { signal: abortController.signal });
+    abortController.abort();
+    await expect(abortedWait).rejects.toThrow(/aborted/i);
+
+    // Let source close finish, register Codex, and atomically hand off into Codex's first turn.
+    releaseSourceClose();
+    await targetTurnStarting;
+
+    // Waiter MUST NOT have thrown "Agent not found" or resolved early during session replacement.
+    await Promise.resolve();
+    expect(waitSettled).toBe(false);
+
+    // Complete Codex's turn and confirm the waiter receives Codex's reply on the same chat.
+    releaseTargetTurn();
+    await switchPromise;
+    const waitResult = await waitResultPromise;
+    expect(waitResult.status).toBe("idle");
+    expect(waitResult.lastMessage).toBe("codex reply 1");
   });
 });
 
