@@ -4563,6 +4563,47 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 
+  test("importSession reads a wrapped session on a server started behind the wrap", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const metadataClient = new TestOpenCodeClient();
+    const resumedClient = new TestOpenCodeClient();
+    const cwd = "/workspace/repo";
+    const selectedSession = {
+      id: "ses_selected",
+      directory: cwd,
+      title: "Selected session",
+      time: { created: 2000, updated: 3000 },
+    };
+    metadataClient.sessionGetResponse = { data: selectedSession };
+    metadataClient.sessionMessagesResponse = { data: [] };
+    resumedClient.sessionGetResponse = { data: selectedSession };
+    resumedClient.sessionMessagesResponse = { data: [] };
+    runtime.enqueueClient(metadataClient);
+    runtime.enqueueClient(resumedClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "import"] as const;
+
+    const imported = await client.importSession(
+      { providerHandleId: "ses_selected", cwd },
+      {
+        config: { provider: "opencode", cwd },
+        storedConfig: { provider: "opencode", cwd },
+        launchContext: { env: { PASEO_AGENT_ID: "imported" }, wrap },
+      },
+    );
+    await imported.session.close();
+
+    expect(runtime.acquisitions.map((acquisition) => [acquisition.kind, acquisition.wrap])).toEqual(
+      [
+        ["dedicated", wrap],
+        ["dedicated", wrap],
+      ],
+    );
+  });
+
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();

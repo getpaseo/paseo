@@ -1308,6 +1308,29 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("imports a wrapped session through one wrapped server, from the first session lookup", async () => {
+    const server = new V2Harness();
+    // Import restores the session's agent.
+    server.api.session.switchAgent = async () => undefined;
+    const requests: unknown[] = [];
+    const runtime = {
+      acquire: async (input?: { wrap?: readonly [string, ...string[]] }) => {
+        requests.push(input?.wrap);
+        return server.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "import"] as const;
+    const config = { provider: "opencode", cwd: "/tmp/project" } as const;
+    const imported = await client.importSession(
+      { providerHandleId: "session", cwd: "/tmp/project" },
+      { config, storedConfig: config, launchContext: { agentId: "agent", wrap } },
+    );
+    await imported.session.close();
+    expect(requests).toEqual([wrap]);
+  });
+
   test("rejects MCP servers without the Paseo bridge before creating an OpenCode session", async () => {
     const harness = new V2Harness();
     const client = new OpenCodeV2AgentClient({
