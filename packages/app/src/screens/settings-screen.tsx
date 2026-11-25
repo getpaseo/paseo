@@ -1686,8 +1686,10 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   // Compact values draw each group as an island of tiles; desktop keeps a plain list.
+  // Use vertical margin rather than padding so trailing empty group padding cannot
+  // intersect the scrollport top alone and capture browser scroll anchoring.
   group: {
-    paddingVertical: theme.spacing[2],
+    marginVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     gap: { xs: theme.spacing[1], md: theme.spacing[0.5] },
   },
