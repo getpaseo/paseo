@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pino from "pino";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
@@ -1905,210 +1905,229 @@ export default function contribute() {
     ]);
   }, 120_000);
 
-  it("preserves dependencies and metadata, and reloads without npm", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
-    roots.push(home);
-    const previousConfig = process.env.npm_config_userconfig;
-    const previousPath = process.env.PATH;
+  let home: string;
+  let service: PluginService;
+  let openService: () => PluginService;
+  let previousConfig: string | undefined;
+  let previousPath: string | undefined;
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
+    previousConfig = process.env.npm_config_userconfig;
+    previousPath = process.env.PATH;
     process.env.npm_config_userconfig = registry.userconfig;
     const store = createStore(home);
-    const open = () =>
+    openService = () =>
       bindTestSessionHost(
         new PluginService(pino({ level: "silent" }), store, "0.8.0", {
           managedSources: new ManagedPluginSources(home),
         }),
       );
-    let service = open();
-    try {
-      await service.start();
-      const installed = await service.installSource({ source: "npm:paseo-fixture-plugin@^1.0.0" });
-      expect(installed).toMatchObject({
-        id: "npm-review",
-        status: "running",
-        installation: {
-          identity: { kind: "npm", packageName: "paseo-fixture-plugin", pluginPath: "." },
-          currentRevision: "1.1.0",
-        },
-      });
-      expect(installed.commit).toBeUndefined();
-      expect(installed.remote).toBeUndefined();
-      expect(
-        service
-          .getLogs("npm-review")
-          .map((entry) => entry.message)
-          .join("\n"),
-      ).toContain("dependency loaded");
-      const installRoot = path.dirname(path.dirname(installed.path));
-      expect(
-        JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))[
-          "npm-review"
-        ],
-      ).toEqual({ kind: "npm" });
-      expect(
-        JSON.parse(await readFile(path.join(installRoot, "package-lock.json"), "utf8")).packages[
-          "node_modules/paseo-fixture-dependency"
-        ].version,
-      ).toBe("1.0.0");
-      for (const [source, id, version] of [
-        ["npm:paseo-fixture-plugin@1.0.0", "exact", "1.0.0"],
-        ["paseo-fixture-plugin@stable", "tag", "1.0.0"],
-        ["npm:@paseo-fixture/review", "scoped", "2.0.0"],
-      ]) {
-        expect(await service.installSource({ source, id })).toMatchObject({
-          id,
+    service = openService();
+    await service.start();
+  });
+
+  afterEach(async () => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousConfig === undefined) delete process.env.npm_config_userconfig;
+    else process.env.npm_config_userconfig = previousConfig;
+    registry.setTag("paseo-fixture-plugin", "latest", "1.1.0");
+    await service.stopAllPlugins();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  afterAll(async () => {
+    await registry?.close();
+  });
+
+  it("preserves dependencies and metadata, and reloads without npm", async () => {
+    const installed = await service.installSource({ source: "npm:paseo-fixture-plugin@^1.0.0" });
+    expect(installed).toMatchObject({
+      id: "npm-review",
+      status: "running",
+      installation: {
+        identity: { kind: "npm", packageName: "paseo-fixture-plugin", pluginPath: "." },
+        currentRevision: "1.1.0",
+      },
+    });
+    expect(installed.commit).toBeUndefined();
+    expect(installed.remote).toBeUndefined();
+    expect(
+      service
+        .getLogs("npm-review")
+        .map((entry) => entry.message)
+        .join("\n"),
+    ).toContain("dependency loaded");
+    const installRoot = path.dirname(path.dirname(installed.path));
+    expect(
+      JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))["npm-review"],
+    ).toEqual({ kind: "npm" });
+    expect(
+      JSON.parse(await readFile(path.join(installRoot, "package-lock.json"), "utf8")).packages[
+        "node_modules/paseo-fixture-dependency"
+      ].version,
+    ).toBe("1.0.0");
+    expect(
+      await service.installSource({ source: "npm:@paseo-fixture/review", id: "scoped" }),
+    ).toMatchObject({
+      id: "scoped",
+      status: "running",
+      installation: { currentRevision: "2.0.0" },
+    });
+    expect(registry.requests).not.toContain("/@getpaseo/plugin");
+    await expect(service.installSource({ source: "npm:paseo-fixture-plugin" })).rejects.toThrow(
+      "already configured",
+    );
+    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+    await service.disablePlugin("scoped");
+    await service.stopAllPlugins();
+    const recordsPath = path.join(home, "plugins", "sources.json");
+    const oldRecords = JSON.parse(await readFile(recordsPath, "utf8"));
+    Object.assign(oldRecords["npm-review"], {
+      requestedSpec: "0.0.1",
+      version: "0.0.1",
+      packageName: "obsolete",
+      installRoot: "/obsolete",
+      integrity: "obsolete",
+    });
+    await writeFile(recordsPath, JSON.stringify(oldRecords));
+    process.env.PATH = path.join(home, "no-executables");
+    service = openService();
+    await service.start();
+    expect(await service.listPlugins()).toMatchObject(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "npm-review",
           status: "running",
-          installation: { currentRevision: version },
-        });
-      }
-      const [preview] = await service.previewUpdates({ pluginId: "exact" });
-      expect(preview).toMatchObject({
-        outcome: "update",
-        current: { currentRevision: "1.0.0" },
-        target: { version: "1.1.0" },
-      });
-      const before = (await service.listPlugins()).find((item) => item.id === "exact")!;
-      await service.disablePlugin("exact");
-      registry.setTag("paseo-fixture-plugin", "latest", "2.0.0");
-      const results = await service.applyUpdates([
-        { ...preview!.proposal!, id: "missing-plugin" },
-        preview!.proposal!,
-      ]);
-      expect(results).toMatchObject([
-        { outcome: "error" },
-        {
-          outcome: "updated",
-          plugin: { enabled: false, installation: { currentRevision: "1.1.0" } },
-        },
-      ]);
-      expect(results[1]?.plugin?.installation?.identity).toEqual(before.installation?.identity);
-      registry.setTag("paseo-fixture-plugin", "latest", "1.1.0");
-      expect(await service.applyUpdates([preview!.proposal!])).toMatchObject([
-        { outcome: "error", error: expect.stringContaining("changed since review") },
-      ]);
-      await service.enablePlugin("exact");
-      const [future] = await service.previewUpdates({
-        pluginId: "exact",
-        target: { kind: "npm", version: "future" },
-      });
-      expect(await service.applyUpdates([future!.proposal!])).toMatchObject([
-        { outcome: "updated", plugin: { installation: { currentRevision: "2.0.0" } } },
-      ]);
-      const [newer] = await service.previewUpdates({ pluginId: "exact" });
-      expect(newer).toMatchObject({
-        outcome: "installed-newer",
-        current: { currentRevision: "2.0.0" },
-        target: { version: "1.1.0" },
-      });
-      expect(newer?.proposal).toBeUndefined();
-      const [downgrade] = await service.previewUpdates({
-        pluginId: "exact",
-        target: { kind: "npm", version: "1.0.0" },
-      });
-      const wrongArtifact = {
-        ...downgrade!.proposal!,
-        target: { ...downgrade!.proposal!.target, integrity: "sha512-invalid" },
-      };
-      expect(await service.applyUpdates([wrongArtifact])).toMatchObject([{ outcome: "error" }]);
-      expect(await service.applyUpdates([downgrade!.proposal!])).toMatchObject([
-        { outcome: "updated", plugin: { installation: { currentRevision: "1.0.0" } } },
-      ]);
-      expect((await service.previewUpdates({ pluginId: "exact" }))[0]?.outcome).toBe("update");
-      await expect(service.updateSources("exact")).rejects.toThrow("Update the client");
-      const prepared = await service.installSource({
-        source: "npm:paseo-prepared-plugin@1.0.0:nested",
-      });
-      expect(prepared).toMatchObject({ id: "prepared", status: "running" });
-      expect(await readFile(path.join(prepared.path, "server/generated.js"), "utf8")).toBe(
-        "export default 42;",
-      );
-      expect(prepared.installation).toMatchObject({ identity: { pluginPath: "nested" } });
-      await service.removePlugin("prepared");
-      expect(registry.requests).not.toContain("/@getpaseo/plugin");
-      await expect(service.installSource({ source: "npm:missing-plugin" })).rejects.toThrow();
-      await expect(
-        service.installSource({ source: "npm:paseo-fixture-plugin", ref: "main" }),
-      ).rejects.toThrow("--ref is only valid for Git");
-      await expect(service.installSource({ source: "npm:paseo-fixture-plugin" })).rejects.toThrow(
-        "already configured",
-      );
+          installation: installed.installation,
+        }),
+        expect.objectContaining({ id: "scoped", enabled: false, status: "disabled" }),
+      ]),
+    );
+    expect(await service.reloadPlugin("npm-review")).toMatchObject({
+      status: "running",
+      installation: installed.installation,
+    });
+    await expect(
+      service.installSource({ source: "npm:paseo-fixture-plugin", id: "missing-npm" }),
+    ).rejects.toThrow("npm is required on the daemon host");
+    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+    const packagePath = path.join(installed.path, "package.json");
+    const packageJson = await readFile(packagePath, "utf8");
+    await writeFile(packagePath, JSON.stringify({ ...JSON.parse(packageJson), version: "99.0.0" }));
+    const corrupt = (await service.listPlugins()).find((plugin) => plugin.id === "npm-review")!;
+    expect(corrupt.status).toBe("running");
+    expect(corrupt.installation).toEqual({ identity: installed.installation!.identity });
+    expect((await service.previewUpdates({ pluginId: "npm-review" }))[0]).toMatchObject({
+      outcome: "error",
+      error: expect.stringContaining("Installed revision is unavailable"),
+    });
+    expect(await service.reloadPlugin("npm-review")).toMatchObject({ status: "running" });
+    await writeFile(packagePath, packageJson);
+    await service.removePlugin("npm-review");
+    await expect(stat(installRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))["npm-review"],
+    ).toBeUndefined();
+  }, 120_000);
+
+  it("applies reviewed npm updates and downgrades", async () => {
+    expect(
+      await service.installSource({ source: "npm:paseo-fixture-plugin@1.0.0", id: "exact" }),
+    ).toMatchObject({
+      id: "exact",
+      status: "running",
+      installation: { currentRevision: "1.0.0" },
+    });
+    const [preview] = await service.previewUpdates({ pluginId: "exact" });
+    expect(preview).toMatchObject({
+      outcome: "update",
+      current: { currentRevision: "1.0.0" },
+      target: { version: "1.1.0" },
+    });
+    const before = (await service.listPlugins()).find((item) => item.id === "exact")!;
+    await service.disablePlugin("exact");
+    registry.setTag("paseo-fixture-plugin", "latest", "2.0.0");
+    const results = await service.applyUpdates([
+      { ...preview!.proposal!, id: "missing-plugin" },
+      preview!.proposal!,
+    ]);
+    expect(results).toMatchObject([
+      { outcome: "error" },
+      {
+        outcome: "updated",
+        plugin: { enabled: false, installation: { currentRevision: "1.1.0" } },
+      },
+    ]);
+    expect(results[1]?.plugin?.installation?.identity).toEqual(before.installation?.identity);
+    registry.setTag("paseo-fixture-plugin", "latest", "1.1.0");
+    expect(await service.applyUpdates([preview!.proposal!])).toMatchObject([
+      { outcome: "error", error: expect.stringContaining("changed since review") },
+    ]);
+    await service.enablePlugin("exact");
+    const [future] = await service.previewUpdates({
+      pluginId: "exact",
+      target: { kind: "npm", version: "future" },
+    });
+    expect(await service.applyUpdates([future!.proposal!])).toMatchObject([
+      { outcome: "updated", plugin: { installation: { currentRevision: "2.0.0" } } },
+    ]);
+    const [newer] = await service.previewUpdates({ pluginId: "exact" });
+    expect(newer).toMatchObject({
+      outcome: "installed-newer",
+      current: { currentRevision: "2.0.0" },
+      target: { version: "1.1.0" },
+    });
+    expect(newer?.proposal).toBeUndefined();
+    const [downgrade] = await service.previewUpdates({
+      pluginId: "exact",
+      target: { kind: "npm", version: "1.0.0" },
+    });
+    const wrongArtifact = {
+      ...downgrade!.proposal!,
+      target: { ...downgrade!.proposal!.target, integrity: "sha512-invalid" },
+    };
+    expect(await service.applyUpdates([wrongArtifact])).toMatchObject([{ outcome: "error" }]);
+    expect(await service.applyUpdates([downgrade!.proposal!])).toMatchObject([
+      { outcome: "updated", plugin: { installation: { currentRevision: "1.0.0" } } },
+    ]);
+    expect((await service.previewUpdates({ pluginId: "exact" }))[0]?.outcome).toBe("update");
+    await expect(service.updateSources("exact")).rejects.toThrow("Update the client");
+  }, 120_000);
+
+  it("prepares npm plugins and cleans up rejected installations", async () => {
+    expect(
+      await service.installSource({ source: "paseo-fixture-plugin@stable", id: "tag" }),
+    ).toMatchObject({
+      id: "tag",
+      status: "running",
+      installation: { currentRevision: "1.0.0" },
+    });
+    const prepared = await service.installSource({
+      source: "npm:paseo-prepared-plugin@1.0.0:nested",
+    });
+    expect(prepared).toMatchObject({ id: "prepared", status: "running" });
+    expect(await readFile(path.join(prepared.path, "server/generated.js"), "utf8")).toBe(
+      "export default 42;",
+    );
+    expect(prepared.installation).toMatchObject({ identity: { pluginPath: "nested" } });
+    await service.removePlugin("prepared");
+    await expect(service.installSource({ source: "npm:missing-plugin" })).rejects.toThrow();
+    await expect(
+      service.installSource({ source: "npm:paseo-fixture-plugin", ref: "main" }),
+    ).rejects.toThrow("--ref is only valid for Git");
+    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+    for (const name of [
+      "bad-manifest",
+      "bad-build",
+      "bad-requirements",
+      "bad-code",
+      "bad-activation",
+    ]) {
+      await expect(service.installSource({ source: `npm:${name}`, id: name })).rejects.toThrow();
+      expect((await service.listPlugins()).map((plugin) => plugin.id)).toEqual(["tag"]);
       expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
-      for (const name of [
-        "bad-manifest",
-        "bad-build",
-        "bad-requirements",
-        "bad-code",
-        "bad-activation",
-      ]) {
-        await expect(service.installSource({ source: `npm:${name}`, id: name })).rejects.toThrow();
-        expect((await service.listPlugins()).map((plugin) => plugin.id)).toEqual([
-          "exact",
-          "npm-review",
-          "scoped",
-          "tag",
-        ]);
-        expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
-      }
-      await service.disablePlugin("scoped");
-      await service.stopAllPlugins();
-      const recordsPath = path.join(home, "plugins", "sources.json");
-      const oldRecords = JSON.parse(await readFile(recordsPath, "utf8"));
-      Object.assign(oldRecords["npm-review"], {
-        requestedSpec: "0.0.1",
-        version: "0.0.1",
-        packageName: "obsolete",
-        installRoot: "/obsolete",
-        integrity: "obsolete",
-      });
-      await writeFile(recordsPath, JSON.stringify(oldRecords));
-      process.env.PATH = path.join(home, "no-executables");
-      service = open();
-      await service.start();
-      expect(await service.listPlugins()).toMatchObject(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "npm-review",
-            status: "running",
-            installation: installed.installation,
-          }),
-          expect.objectContaining({ id: "scoped", enabled: false, status: "disabled" }),
-        ]),
-      );
-      expect(await service.reloadPlugin("npm-review")).toMatchObject({
-        status: "running",
-        installation: installed.installation,
-      });
-      await expect(
-        service.installSource({ source: "npm:paseo-fixture-plugin", id: "missing-npm" }),
-      ).rejects.toThrow("npm is required on the daemon host");
-      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
-      const packagePath = path.join(installed.path, "package.json");
-      const packageJson = await readFile(packagePath, "utf8");
-      await writeFile(
-        packagePath,
-        JSON.stringify({ ...JSON.parse(packageJson), version: "99.0.0" }),
-      );
-      const corrupt = (await service.listPlugins()).find((plugin) => plugin.id === "npm-review")!;
-      expect(corrupt.status).toBe("running");
-      expect(corrupt.installation).toEqual({ identity: installed.installation!.identity });
-      expect((await service.previewUpdates({ pluginId: "npm-review" }))[0]).toMatchObject({
-        outcome: "error",
-        error: expect.stringContaining("Installed revision is unavailable"),
-      });
-      expect(await service.reloadPlugin("npm-review")).toMatchObject({ status: "running" });
-      await writeFile(packagePath, packageJson);
-      await service.removePlugin("npm-review");
-      await expect(stat(installRoot)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(
-        JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))[
-          "npm-review"
-        ],
-      ).toBeUndefined();
-    } finally {
-      process.env.PATH = previousPath;
-      if (previousConfig === undefined) delete process.env.npm_config_userconfig;
-      else process.env.npm_config_userconfig = previousConfig;
-      await service.stopAllPlugins();
-      await registry.close();
     }
   }, 120_000);
 });
