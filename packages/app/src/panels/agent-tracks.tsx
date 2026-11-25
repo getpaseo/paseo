@@ -4,6 +4,7 @@ import { BackgroundWorkTrack, createHostBackgroundWorkModel } from "@/background
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { AgentTaskList } from "@/composer/task-list";
 import { ComposerTrackBar } from "@/composer/tracks";
+import { ComposerPrWatch } from "@/git/pull-request-panel/composer-watch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import { useSettings } from "@/hooks/use-settings";
@@ -122,6 +123,12 @@ export const AgentTracks = memo(function AgentTracks({
   return (
     <ComposerTrackBar>
       <BackgroundWorkTrack model={backgroundModel} count={backgroundWorkCount} />
+      <ComposerPrWatch
+        serverId={serverId}
+        workspaceId={workspaceId}
+        agentId={agentId}
+        backgroundWork={backgroundModel}
+      />
       {parentAgentId ? <ParentAgentPill serverId={serverId} parentAgentId={parentAgentId} /> : null}
       <AgentTaskList tasks={tasks} />
       <SubagentsTrack

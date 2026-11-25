@@ -1033,6 +1033,9 @@ export const zhCN: TranslationResources = {
           addingToChat: "正在添加...",
         },
         watch: {
+          manage: "可以在后台工作中停止监视。",
+          thisAgent: "让此代理监视",
+          watching: "正在监视 {{reference}}",
           action: "监视 {{abbreviation}}",
           recipient: "将更新发送给",
           noAgents: "在此工作区打开一个代理即可开始监视。",

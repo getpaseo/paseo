@@ -206,6 +206,7 @@ export default defineConfig({
       "expo-router/react-navigation",
       "@testing-library/react",
       "@tanstack/react-query",
+      "zustand/traditional",
       "@tanstack/react-virtual",
       "@legendapp/list/react-native",
       "react-i18next",

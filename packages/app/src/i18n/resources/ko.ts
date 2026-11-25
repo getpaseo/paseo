@@ -1048,6 +1048,9 @@ export const ko: TranslationResources = {
           addingToChat: "추가 중...",
         },
         watch: {
+          manage: "백그라운드 작업에서 모니터링을 중지할 수 있습니다.",
+          thisAgent: "이 에이전트로 모니터링",
+          watching: "{{reference}} 모니터링 중",
           action: "{{abbreviation}} 모니터링",
           recipient: "업데이트 수신 대상",
           noAgents: "모니터링을 시작하려면 이 작업 공간에서 에이전트를 여세요.",

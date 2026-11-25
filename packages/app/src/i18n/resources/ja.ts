@@ -1055,6 +1055,9 @@ export const ja: TranslationResources = {
           addingToChat: "追加中...",
         },
         watch: {
+          manage: "この監視はバックグラウンド作業から停止できます。",
+          thisAgent: "このエージェントで監視",
+          watching: "{{reference}} を監視中",
           action: "{{abbreviation}} を監視",
           recipient: "更新の送信先",
           noAgents: "監視を開始するには、このワークスペースでエージェントを開いてください。",

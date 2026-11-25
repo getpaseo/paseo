@@ -1041,6 +1041,9 @@ export const ar: TranslationResources = {
           addingToChat: "جارٍ الإضافة...",
         },
         watch: {
+          manage: "أوقِف هذه المراقبة من الأعمال في الخلفية.",
+          thisAgent: "المراقبة باستخدام هذا الوكيل",
+          watching: "مراقبة {{reference}}",
           action: "مراقبة {{abbreviation}}",
           recipient: "إرسال التحديثات إلى",
           noAgents: "افتح وكيلاً في مساحة العمل هذه لبدء المراقبة.",

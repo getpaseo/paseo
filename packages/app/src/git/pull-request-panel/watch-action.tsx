@@ -7,43 +7,111 @@ import { resolveAgentLabel } from "@/agent-presentation";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { PressHighlight } from "@/components/ui/press-highlight";
-import { useToast } from "@/contexts/toast-context";
 import { getFocusedAgentId } from "@/plugins/command-center/context";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { settingsStyles } from "@/styles/settings";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import type { PrState } from "./data";
+import { useStartPrWatch } from "./use-start-watch";
 
-interface WatchSetupProps {
+interface PrWatchTarget {
   serverId: string;
   workspaceId: string;
   url: string;
   title: string;
   abbreviation: string;
-  style: StyleProp<ViewStyle>;
 }
 
 export function PullRequestWatchAction({
   state,
   workspaceId,
-  ...setup
-}: Omit<WatchSetupProps, "workspaceId"> & {
+  style,
+  ...target
+}: Omit<PrWatchTarget, "workspaceId"> & {
   workspaceId?: string | null;
   state: PrState;
+  style: StyleProp<ViewStyle>;
 }) {
-  if (!workspaceId || (state !== "open" && state !== "draft")) return null;
-  return <WatchSetup {...setup} workspaceId={workspaceId} />;
+  const { t } = useTranslation();
+  const { open, dialog } = usePrWatchSetup(
+    workspaceId && (state === "open" || state === "draft") ? { ...target, workspaceId } : null,
+  );
+  if (!open) return null;
+  return (
+    <>
+      <Button variant="ghost" size="sm" onPress={open} style={style} testID="pr-pane-watch">
+        {t("workspace.git.pr.watch.action", { abbreviation: target.abbreviation })}
+      </Button>
+      {dialog}
+    </>
+  );
 }
 
-function WatchSetup({ serverId, workspaceId, url, title, abbreviation, style }: WatchSetupProps) {
+export function usePrWatchSetup(target: PrWatchTarget | null) {
+  const nextGeneration = useRef(0);
+  const [session, setSession] = useState<{
+    generation: number;
+    target: PrWatchTarget;
+    focusedId: string | null;
+    visible: boolean;
+  } | null>(null);
+  const open = useCallback(() => {
+    if (!target) return;
+    const layout =
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[
+        `${target.serverId}:${target.workspaceId}`
+      ];
+    const focusedId = getFocusedAgentId(layout ?? null);
+    setSession({ generation: ++nextGeneration.current, target, focusedId, visible: true });
+  }, [target]);
+  const close = useCallback((generation: number) => {
+    setSession((current) =>
+      current?.generation === generation ? { ...current, visible: false } : current,
+    );
+  }, []);
+  const matches =
+    session?.target.url === target?.url &&
+    session?.target.serverId === target?.serverId &&
+    session?.target.workspaceId === target?.workspaceId;
+  if (session && !matches) setSession(null);
+  return {
+    open: target ? open : null,
+    dialog:
+      session && matches ? (
+        <WatchSetup
+          key={session.generation}
+          {...session.target}
+          visible={session.visible}
+          focusedId={session.focusedId}
+          generation={session.generation}
+          onClose={close}
+        />
+      ) : null,
+  };
+}
+
+function WatchSetup({
+  serverId,
+  workspaceId,
+  url,
+  title,
+  abbreviation,
+  visible,
+  focusedId,
+  generation,
+  onClose,
+}: PrWatchTarget & {
+  visible: boolean;
+  focusedId: string | null;
+  generation: number;
+  onClose: (generation: number) => void;
+}) {
   const { t } = useTranslation();
-  const toast = useToast();
-  const client = useHostRuntimeClient(serverId);
-  // COMPAT(agentChangeRequestSubscribe): added after v0.17.4, remove after 2027-05-25.
-  const supported = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.agentChangeRequestSubscribe === true,
+  const { supported, pending, error, setError, start } = useStartPrWatch(
+    serverId,
+    url,
+    abbreviation,
   );
   const agents = useSessionStore(
     useShallow((state) =>
@@ -57,55 +125,24 @@ function WatchSetup({ serverId, workspaceId, url, title, abbreviation, style }: 
     ),
   );
 
-  const [visible, setVisible] = useState(false);
-  const [agentId, setAgentId] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const submitting = useRef(false);
+  const [agentId, setAgentId] = useState(() => {
+    const focused = agents.find((agent) => agent.id === focusedId);
+    return focused?.id ?? (agents.length === 1 ? agents[0].id : null);
+  });
   const selectedId = agents.find((agent) => agent.id === agentId)?.id;
   const label = t("workspace.git.pr.watch.action", { abbreviation });
   const header = useMemo(() => ({ title: label }), [label]);
-
-  const open = useCallback(() => {
-    if (!error) {
-      const layout =
-        useWorkspaceLayoutStore.getState().layoutByWorkspace[`${serverId}:${workspaceId}`];
-      const focusedId = getFocusedAgentId(layout ?? null);
-      const focused = agents.find((agent) => agent.id === focusedId);
-      setAgentId(focused?.id ?? (agents.length === 1 ? agents[0].id : null));
-    }
-    setVisible(true);
-  }, [agents, error, serverId, workspaceId]);
-
-  const close = useCallback(() => setVisible(false), []);
-  const select = useCallback((id: string) => {
-    setAgentId(id);
-    setError(null);
-  }, []);
-
+  const close = useCallback(() => onClose(generation), [generation, onClose]);
+  const select = useCallback(
+    (id: string) => {
+      setAgentId(id);
+      setError(null);
+    },
+    [setError],
+  );
   const confirm = useCallback(async () => {
-    if (submitting.current || !supported || !selectedId) return;
-    if (!client) {
-      setError(t("workspace.git.pr.watch.disconnected"));
-      return;
-    }
-    submitting.current = true;
-    setPending(true);
-    setError(null);
-    try {
-      if (!(await client.subscribeAgentChangeRequest({ agentId: selectedId, url }))) {
-        setError(t("workspace.git.pr.watch.closed", { abbreviation }));
-        return;
-      }
-      setVisible(false);
-      toast.show(t("workspace.git.pr.watch.started"), { variant: "success" });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("workspace.git.pr.watch.failed"));
-    } finally {
-      submitting.current = false;
-      setPending(false);
-    }
-  }, [abbreviation, client, selectedId, supported, t, toast, url]);
+    if (selectedId && (await start(selectedId))) close();
+  }, [close, selectedId, start]);
 
   const hasAgents = agents.length > 0;
   const footer = useMemo(
@@ -123,54 +160,42 @@ function WatchSetup({ serverId, workspaceId, url, title, abbreviation, style }: 
   else if (!hasAgents) unavailableMessage = t("workspace.git.pr.watch.noAgents");
 
   return (
-    <>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={pending}
-        onPress={open}
-        style={style}
-        testID="pr-pane-watch"
-      >
-        {label}
-      </Button>
-      <AdaptiveModalSheet
-        header={header}
-        visible={visible}
-        onClose={close}
-        desktopMaxWidth={420}
-        testID="pr-watch-setup"
-        footer={footer}
-      >
-        {unavailableMessage ? (
-          <Text style={styles.body}>{unavailableMessage}</Text>
-        ) : (
-          <>
-            <Text style={styles.title} numberOfLines={2}>
-              {title}
-            </Text>
-            <Text style={styles.body}>{t("workspace.git.pr.watch.recipient")}</Text>
-            <View style={settingsStyles.card} accessibilityRole="radiogroup">
-              {agents.map((agent, index) => (
-                <RecipientRow
-                  key={agent.id}
-                  agent={agent}
-                  selected={selectedId === agent.id}
-                  disabled={pending}
-                  withBorder={index > 0}
-                  onSelect={select}
-                />
-              ))}
-            </View>
-          </>
-        )}
-        {error ? (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={close}
+      desktopMaxWidth={420}
+      testID="pr-watch-setup"
+      footer={footer}
+    >
+      {unavailableMessage ? (
+        <Text style={styles.body}>{unavailableMessage}</Text>
+      ) : (
+        <>
+          <Text style={styles.title} numberOfLines={2}>
+            {title}
           </Text>
-        ) : null}
-      </AdaptiveModalSheet>
-    </>
+          <Text style={styles.body}>{t("workspace.git.pr.watch.recipient")}</Text>
+          <View style={settingsStyles.card} accessibilityRole="radiogroup">
+            {agents.map((agent, index) => (
+              <RecipientRow
+                key={agent.id}
+                agent={agent}
+                selected={selectedId === agent.id}
+                disabled={pending}
+                withBorder={index > 0}
+                onSelect={select}
+              />
+            ))}
+          </View>
+        </>
+      )}
+      {error ? (
+        <Text accessibilityRole="alert" style={styles.error}>
+          {error}
+        </Text>
+      ) : null}
+    </AdaptiveModalSheet>
   );
 }
 

@@ -1,12 +1,19 @@
-import React, { act } from "react";
+import React, { act, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { page } from "vitest/browser";
+import { View } from "react-native";
+import { ComposerTrackBar } from "@/composer/tracks";
+import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getHostRuntimeStore, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { agent as agentFixture } from "@/plugins/client-state/fixtures";
+import {
+  agent as agentFixture,
+  workspace as workspaceFixture,
+} from "@/plugins/client-state/fixtures";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
@@ -16,6 +23,10 @@ import { ToastApiProvider } from "@/contexts/toast-context";
 import type { ToastApi } from "@/components/toast-host";
 import type { PrPaneCheck, PrPaneData } from "./data";
 import { PullRequestPane } from "./pane";
+import { ComposerPrWatch } from "./composer-watch";
+import { createBackgroundWorkModel } from "@/background-work/model";
+import { checkoutPrStatusQueryKey, checkoutStatusQueryKey } from "@/git/query-keys";
+import { WorkspaceActions } from "@/git/workspace-actions";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -73,21 +84,13 @@ const HOME_INDICATOR_INSETS = { top: 0, right: 0, bottom: 34, left: 0 };
 
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
 
-function renderPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
+function renderFixture(children: ReactNode, insets = NO_INSETS) {
   act(() =>
     root?.render(
       <SafeAreaInsetsContext.Provider value={insets}>
         <ToastApiProvider api={silentToasts}>
           <GestureHandlerRootView style={FILL_STYLE}>
-            <BottomSheetModalProvider>
-              <PullRequestPane
-                serverId="server-1"
-                workspaceId={workspaceId}
-                cwd="/repo"
-                data={data}
-                activityLoading={false}
-              />
-            </BottomSheetModalProvider>
+            <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
           </GestureHandlerRootView>
         </ToastApiProvider>
       </SafeAreaInsetsContext.Provider>,
@@ -95,7 +98,20 @@ function renderPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) 
   );
 }
 
-function mountPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
+function renderPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
+  renderFixture(
+    <PullRequestPane
+      serverId="server-1"
+      workspaceId={workspaceId}
+      cwd="/repo"
+      data={data}
+      activityLoading={false}
+    />,
+    insets,
+  );
+}
+
+function mountFixture() {
   container = document.createElement("div");
   container.style.height = `${PANE_HEIGHT}px`;
   container.style.width = "600px";
@@ -104,8 +120,13 @@ function mountPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
   container.style.flexDirection = "column";
   document.body.appendChild(container);
   root = createRoot(container);
+  return container;
+}
+
+function mountPane(data: PrPaneData, insets = NO_INSETS, workspaceId?: string) {
+  const fixture = mountFixture();
   renderPane(data, insets, workspaceId);
-  const pane = container.querySelector<HTMLElement>('[data-testid="pr-pane"]');
+  const pane = fixture.querySelector<HTMLElement>('[data-testid="pr-pane"]');
   if (!pane) throw new Error("The pull request pane did not render");
   return pane;
 }
@@ -267,7 +288,7 @@ describe("Watch PR", () => {
   const subscribe =
     vi.fn<NonNullable<HostRuntimeSnapshot["client"]>["subscribeAgentChangeRequest"]>();
 
-  function showPane(agents: Agent[], supported = true, focusedId?: string) {
+  function seedHost(agents: Agent[], supported = true, focusedId?: string) {
     subscribe.mockReset().mockResolvedValue(true);
     const runtime = getHostRuntimeStore();
     const snapshot = runtime.getSnapshot.bind(runtime);
@@ -300,6 +321,12 @@ describe("Watch PR", () => {
       features: supported ? { agentChangeRequestSubscribe: true } : {},
     });
     store.setAgents(serverId, new Map(agents.map((item) => [item.id, item])));
+    store.setWorkspaces(
+      serverId,
+      new Map([
+        [workspaceId, { ...workspaceFixture, id: workspaceId, workspaceDirectory: "/repo" }],
+      ]),
+    );
     const layout = useWorkspaceLayoutStore.getState();
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
     if (focusedId) {
@@ -309,8 +336,108 @@ describe("Watch PR", () => {
         intent: "reveal",
       });
     }
+  }
+
+  function showPane(agents: Agent[], supported = true, focusedId?: string) {
+    seedHost(agents, supported, focusedId);
     mountPane(pr, NO_INSETS, workspaceId);
   }
+
+  function setupGitQueries() {
+    const client = new QueryClient();
+    client.setQueryData(checkoutPrStatusQueryKey(serverId, "/repo"), {
+      githubFeaturesEnabled: true,
+      status: { ...pr, mergeable: "UNKNOWN", checksStatus: "pending" },
+      forge: "github",
+    });
+    client.setQueryData(checkoutStatusQueryKey(serverId, "/repo"), {
+      isGit: true,
+      cwd: "/repo",
+      currentBranch: "feature",
+    });
+    return client;
+  }
+
+  it.each([1150, 390])(
+    "watches with the composer agent at %s px and tracks the daemon inventory",
+    async (width) => {
+      await page.viewport(width, 760);
+      seedHost([agent("focused"), agent("composer")], true, "focused");
+      type Observe = Parameters<typeof createBackgroundWorkModel>[0]["observe"];
+      let receive: Parameters<Observe>[0]["update"] = () => {};
+      const model = createBackgroundWorkModel({
+        list: async () => [],
+        observe: ({ update }) => {
+          receive = update;
+          return () => {};
+        },
+      });
+      const query = setupGitQueries();
+      mountFixture();
+      renderFixture(
+        <QueryClientProvider client={query}>
+          <MobilePanelsProvider>
+            <View style={FILL_STYLE}>
+              <ComposerTrackBar>
+                <ComposerPrWatch
+                  serverId={serverId}
+                  workspaceId={workspaceId}
+                  agentId="composer"
+                  backgroundWork={model}
+                />
+              </ComposerTrackBar>
+            </View>
+          </MobilePanelsProvider>
+        </QueryClientProvider>,
+      );
+      const pill = page.getByTestId("composer-pr-watch");
+      await act(() => pill.click());
+      await act(() => page.getByTestId("composer-pr-watch-start").click());
+      expect(subscribe).toHaveBeenCalledExactlyOnceWith({ agentId: "composer", url: pr.url });
+      await expect.element(page.getByTestId("pr-watch-agent-focused")).not.toBeInTheDocument();
+      act(() =>
+        receive([
+          {
+            id: "opaque",
+            kind: "monitor",
+            description: "acme/widgets #42",
+            changeRequestUrl: pr.url,
+            startedAt: "2026-11-25T00:00:00Z",
+          },
+        ]),
+      );
+      await expect.element(pill).toHaveTextContent("Watching #42");
+      act(() => receive([]));
+      await expect.element(pill).toHaveTextContent("PR #42");
+      await act(async () => {
+        query.setQueryData(checkoutPrStatusQueryKey(serverId, "/repo"), {
+          githubFeaturesEnabled: true,
+          status: { ...pr, state: "closed" },
+          forge: "github",
+        });
+      });
+      await expect.element(pill).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens the shared recipient dialog from Git actions", async () => {
+    await page.viewport(1150, 780);
+    seedHost([agent("selected")]);
+    const query = setupGitQueries();
+    mountFixture();
+    renderFixture(
+      <QueryClientProvider client={query}>
+        <WorkspaceActions serverId={serverId} workspaceId={workspaceId} cwd="/repo" />
+      </QueryClientProvider>,
+    );
+    await act(() => page.getByTestId("changes-primary-cta-caret").click());
+    await act(() => page.getByRole("menuitem", { name: "Watch PR…" }).click());
+    await expect
+      .element(page.getByTestId("pr-watch-agent-selected"))
+      .toHaveAttribute("aria-checked", "true");
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    expect(subscribe).toHaveBeenCalledExactlyOnceWith({ agentId: "selected", url: pr.url });
+  });
 
   it("preselects the focused workspace agent and preserves selection after an error", async () => {
     await page.viewport(1150, 780);

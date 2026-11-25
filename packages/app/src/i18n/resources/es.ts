@@ -1075,6 +1075,9 @@ export const es: TranslationResources = {
           addingToChat: "Añadiendo...",
         },
         watch: {
+          manage: "Detén este seguimiento en las tareas en segundo plano.",
+          thisAgent: "Seguir con este agente",
+          watching: "Siguiendo {{reference}}",
           action: "Seguir {{abbreviation}}",
           recipient: "Enviar novedades a",
           noAgents: "Abre un agente en este espacio de trabajo para iniciar el seguimiento.",

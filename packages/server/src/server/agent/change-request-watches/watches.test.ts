@@ -142,6 +142,7 @@ test("lists and stops each agent's subscription through the background work regi
     const [second] = h.backgroundWork.list("second");
     expect(first).toMatchObject({
       description: "owner/repo #42",
+      changeRequestUrl: url,
       kind: "monitor",
       canStop: true,
     });

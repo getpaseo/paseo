@@ -5275,6 +5275,7 @@ export const AgentBackgroundWorkItemSchema = z.object({
   kind: z.string(),
   description: z.string().nullable(),
   command: z.string().optional(),
+  changeRequestUrl: z.string().optional(),
   startedAt: z.string(),
   canStop: z.boolean().optional(),
   stopToken: z.string().optional(),

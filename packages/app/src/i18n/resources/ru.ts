@@ -1060,6 +1060,9 @@ export const ru: TranslationResources = {
           addingToChat: "Добавление...",
         },
         watch: {
+          manage: "Остановить отслеживание можно в фоновых задачах.",
+          thisAgent: "Следить с этим агентом",
+          watching: "Отслеживается {{reference}}",
           action: "Следить за {{abbreviation}}",
           recipient: "Отправлять обновления агенту",
           noAgents: "Откройте агента в этом рабочем пространстве, чтобы начать отслеживание.",

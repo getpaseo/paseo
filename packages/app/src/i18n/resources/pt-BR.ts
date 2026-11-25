@@ -1065,6 +1065,9 @@ export const ptBR: TranslationResources = {
           addingToChat: "Adicionando...",
         },
         watch: {
+          manage: "Pare este acompanhamento nos trabalhos em segundo plano.",
+          thisAgent: "Acompanhar com este agente",
+          watching: "Acompanhando {{reference}}",
           action: "Acompanhar {{abbreviation}}",
           recipient: "Enviar atualizações para",
           noAgents: "Abra um agente neste espaço de trabalho para iniciar o acompanhamento.",

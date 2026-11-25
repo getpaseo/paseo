@@ -16,6 +16,7 @@ export type GitActionId =
   | "push"
   | "pull-and-push"
   | "pr"
+  | "watch-pr"
   | "merge-pr-squash"
   | "merge-pr-merge"
   | "merge-pr-rebase"
@@ -158,7 +159,7 @@ export interface BuildGitActionsInput extends SyncRemotes {
   behindOfOrigin: number | null;
   shouldPromoteArchive: boolean;
   shipDefault: "merge" | "pr";
-  runtime: Record<GitActionId, GitActionRuntimeState>;
+  runtime: Record<Exclude<GitActionId, "watch-pr">, GitActionRuntimeState>;
 }
 
 type PullRequestActionId = Extract<

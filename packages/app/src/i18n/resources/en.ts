@@ -1052,6 +1052,9 @@ export const en = {
           addingToChat: "Adding...",
         },
         watch: {
+          manage: "Stop this watch in Background work.",
+          thisAgent: "Watch with this agent",
+          watching: "Watching {{reference}}",
           action: "Watch {{abbreviation}}",
           recipient: "Send updates to",
           noAgents: "Open an agent in this workspace to start a watch.",

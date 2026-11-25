@@ -12,6 +12,7 @@ export interface AgentBackgroundWorkInput {
 
 export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
   startedAt: string;
+  changeRequestUrl?: string;
   stopToken?: string;
 }
 
@@ -25,6 +26,7 @@ export interface DaemonBackgroundWorkInput extends DaemonBackgroundWorkKey {
   kind: string;
   description: string | null;
   startedAt: string;
+  changeRequestUrl?: string;
   countsAsRunning?: boolean;
   stop: () => Promise<void>;
 }
@@ -94,7 +96,15 @@ export class AgentBackgroundWorkStore {
   }
 
   setDaemonBackgroundWork(input: DaemonBackgroundWorkInput): AgentBackgroundWorkItem[] | null {
-    const { agentId, kind, description, startedAt, countsAsRunning = true, stop } = input;
+    const {
+      agentId,
+      kind,
+      description,
+      startedAt,
+      changeRequestUrl,
+      countsAsRunning = true,
+      stop,
+    } = input;
     const id = daemonItemId(input);
     const items = this.daemonItems.get(agentId) ?? new Map<string, DaemonBackgroundWork>();
     const previous = items.get(id);
@@ -103,6 +113,7 @@ export class AgentBackgroundWorkStore {
       kind,
       description,
       startedAt,
+      ...(changeRequestUrl ? { changeRequestUrl } : {}),
       canStop: true,
       stopToken: previous?.item.stopToken ?? randomUUID(),
     };
@@ -177,6 +188,7 @@ function sameItems(
         item.kind === other.kind &&
         item.description === other.description &&
         item.command === other.command &&
+        item.changeRequestUrl === other.changeRequestUrl &&
         item.canStop === other.canStop &&
         item.stopToken === other.stopToken &&
         item.startedAt === other.startedAt
