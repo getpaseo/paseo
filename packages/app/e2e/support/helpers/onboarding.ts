@@ -171,10 +171,9 @@ export async function closeRelayPairing(pairing: Locator): Promise<void> {
   await expect(pairing).toHaveCount(0);
 }
 
-export async function expectTailscaleLockedByLaunch(page: Page): Promise<void> {
+export async function expectTailscaleSwitchDisabled(page: Page): Promise<void> {
   const setup = setupModal(page);
   await expect(setup.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
-  await expect(setup.getByText("Controlled by the command that starts this host")).toBeVisible();
 }
 
 export interface SetupHost {

@@ -15,7 +15,7 @@ import {
   closeRelayPairing,
   emptyHome,
   loadingScreen,
-  expectTailscaleLockedByLaunch,
+  expectTailscaleSwitchDisabled,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
@@ -403,10 +403,10 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await continueSetup(page);
     });
 
-    await test.step("Phone shows the Tailscale launch lock and pairs over relay", async () => {
+    await test.step("Phone shows a disabled Tailscale switch and pairs over relay", async () => {
       await expectSetupStep(page, "Take your agents with you");
       await page.screenshot({ path: testInfo.outputPath("5-phone.png") });
-      await expectTailscaleLockedByLaunch(page);
+      await expectTailscaleSwitchDisabled(page);
       const pairing = await openRelayPairingFromSetup(page);
       await expect(pairing.getByText("Enable relay?", { exact: true })).toBeVisible();
       await enableRelayAndExpectOffer(page);
