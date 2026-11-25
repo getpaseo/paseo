@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -93,6 +93,17 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
   const { profiles, mutateProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const [request, setRequest] = useState<EditorRequest | null>(null);
+  const mountedRef = useRef(true);
+  const dismissSavedToastRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      dismissSavedToastRef.current?.();
+      dismissSavedToastRef.current = null;
+    };
+  }, []);
 
   const undoCreate = useCallback(
     async (profileId: string): Promise<void> => {
@@ -111,19 +122,26 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
       const created: AgentProfile = { id: generateAgentProfileId(), ...value };
       try {
         const written = await mutateProfiles((current) => [...current, created]);
-        if (!written) {
-          return null;
+        if (!written || !mountedRef.current) {
+          return written ? created : null;
         }
+        dismissSavedToastRef.current?.();
         let dismiss: (() => void) | null = null;
+        const clearToast = () => {
+          dismiss?.();
+          if (dismissSavedToastRef.current === dismiss) {
+            dismissSavedToastRef.current = null;
+          }
+        };
         dismiss = toast.show(
           createProfileSavedToast({
             name: created.name,
             onEdit: () => {
-              dismiss?.();
+              clearToast();
               setRequest({ mode: "edit", profile: created });
             },
             onUndo: () => {
-              dismiss?.();
+              clearToast();
               void undoCreate(created.id);
             },
           }),
@@ -133,6 +151,7 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
             testID: "model-profile-created-toast",
           },
         );
+        dismissSavedToastRef.current = dismiss;
         return created;
       } catch (error) {
         toast.error(toErrorMessage(error));
