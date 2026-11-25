@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, autoUpdater as electronAutoUpdater, BrowserWindow } from "electron";
 import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
@@ -9,6 +9,7 @@ import {
   createAppUpdateService,
   type AppUpdateCheckResult,
   type AppUpdateDownloadProgress,
+  type AppUpdateInstallLaunchResult,
   type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
@@ -172,6 +173,109 @@ function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): 
   }
 }
 
+export interface QuitAndInstallEventSource {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+function formatLaunchError(error: unknown): string {
+  return error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : String(error);
+}
+
+export function runElectronQuitAndInstall({
+  platform,
+  updater,
+  nativeUpdater,
+  appEvents,
+  isSilent,
+  isForceRunAfter,
+  signal,
+}: {
+  platform: NodeJS.Platform;
+  updater: QuitAndInstallEventSource & {
+    quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  };
+  nativeUpdater?: QuitAndInstallEventSource;
+  appEvents?: QuitAndInstallEventSource;
+  isSilent: boolean;
+  isForceRunAfter: boolean;
+  signal?: AbortSignal;
+}): Promise<AppUpdateInstallLaunchResult> {
+  if (platform !== "darwin" || typeof nativeUpdater?.on !== "function") {
+    let launchError: unknown = null;
+    const captureLaunchError = (error: unknown) => {
+      launchError ??= error;
+    };
+    updater.on("error", captureLaunchError);
+    try {
+      updater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      launchError ??= error;
+    } finally {
+      updater.removeListener?.("error", captureLaunchError);
+    }
+    if (launchError !== null) {
+      return Promise.resolve({ started: false, errorMessage: formatLaunchError(launchError) });
+    }
+    return Promise.resolve({ started: true });
+  }
+
+  // With autoInstallOnAppQuit disabled, electron-updater's MacUpdater starts
+  // native Squirrel preparation asynchronously inside quitAndInstall(). Keep
+  // the install promise pending until Squirrel hands off to quit or fails.
+  return new Promise<AppUpdateInstallLaunchResult>((resolve) => {
+    let settled = false;
+    const finish = (result: AppUpdateInstallLaunchResult) => {
+      if (settled) return;
+      settled = true;
+      updater.removeListener?.("error", handleError);
+      nativeUpdater.removeListener?.("error", handleError);
+      nativeUpdater.removeListener?.("update-not-available", handleNotAvailable);
+      nativeUpdater.removeListener?.("before-quit-for-update", handleQuitStarted);
+      if (!isForceRunAfter) {
+        appEvents?.removeListener?.("before-quit", handleQuitStarted);
+      }
+      signal?.removeEventListener("abort", handleAbort);
+      resolve(result);
+    };
+
+    const handleError = (error: unknown) => {
+      finish({ started: false, errorMessage: formatLaunchError(error) });
+    };
+    const handleNotAvailable = () => {
+      finish({ started: false, errorMessage: "Update could not be prepared for installation." });
+    };
+    const handleQuitStarted = () => {
+      finish({ started: true });
+    };
+    const handleAbort = () => {
+      finish({ started: false, errorMessage: "Update installation was deferred." });
+    };
+
+    if (signal?.aborted) {
+      handleAbort();
+      return;
+    }
+
+    updater.on("error", handleError);
+    nativeUpdater.on("error", handleError);
+    nativeUpdater.on("update-not-available", handleNotAvailable);
+    nativeUpdater.on("before-quit-for-update", handleQuitStarted);
+    if (!isForceRunAfter) {
+      appEvents?.on("before-quit", handleQuitStarted);
+    }
+    signal?.addEventListener("abort", handleAbort, { once: true });
+
+    try {
+      updater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      handleError(error);
+    }
+  });
+}
+
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
   private configuration: AppUpdateRuntimeConfiguration | null = null;
@@ -252,10 +356,12 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): {
-    started: boolean;
-    errorMessage?: string;
-  } {
+  quitAndInstall({
+    targetVersion,
+    isSilent,
+    isForceRunAfter,
+    signal,
+  }: AppUpdateInstallRequest): Promise<AppUpdateInstallLaunchResult> {
     broadcastDownloadProgress(null);
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
@@ -263,28 +369,15 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       isSilent,
       isForceRunAfter,
     });
-    let launchError: unknown = null;
-    const captureLaunchError = (error: unknown) => {
-      launchError ??= error;
-    };
-    autoUpdater.on("error", captureLaunchError);
-    try {
-      autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
-    } catch (error) {
-      launchError ??= error;
-    } finally {
-      if (typeof autoUpdater.removeListener === "function") {
-        autoUpdater.removeListener("error", captureLaunchError);
-      }
-    }
-    if (launchError !== null) {
-      const errorMessage =
-        launchError instanceof Error && typeof launchError.message === "string"
-          ? launchError.message
-          : String(launchError);
-      return { started: false, errorMessage };
-    }
-    return { started: true };
+    return runElectronQuitAndInstall({
+      platform: process.platform,
+      updater: autoUpdater,
+      nativeUpdater: electronAutoUpdater,
+      appEvents: app,
+      isSilent,
+      isForceRunAfter,
+      signal,
+    });
   }
 }
 
@@ -314,12 +407,14 @@ export async function checkForAppUpdate({
   releaseChannel,
   intent,
   autoDownload = true,
+  shouldCheck,
   shouldAutoDownload,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
   autoDownload?: boolean;
+  shouldCheck?: () => boolean | Promise<boolean>;
   shouldAutoDownload?: () => boolean | Promise<boolean>;
 }): Promise<AppUpdateCheckResult> {
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
@@ -328,6 +423,7 @@ export async function checkForAppUpdate({
     releaseChannel,
     intent,
     autoDownload,
+    shouldCheck,
     shouldAutoDownload,
   });
   updateLifecycleLog.checkCompleted({

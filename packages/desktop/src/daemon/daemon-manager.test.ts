@@ -242,6 +242,7 @@ describe("daemon-manager commands", () => {
       releaseChannel: "stable",
       intent: "automatic",
       autoDownload: false,
+      shouldCheck: expect.any(Function),
       shouldAutoDownload: expect.any(Function),
     });
 
@@ -252,12 +253,14 @@ describe("daemon-manager commands", () => {
       releaseChannel: "stable",
       intent: "manual",
       autoDownload: false,
+      shouldCheck: undefined,
       shouldAutoDownload: expect.any(Function),
     });
 
     mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "automatic" } };
     await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
     const lastCall = mocks.checkForAppUpdate.mock.calls.at(-1)?.[0] as {
+      shouldCheck: () => Promise<boolean>;
       shouldAutoDownload: () => Promise<boolean>;
     };
     expect(lastCall).toMatchObject({
@@ -266,8 +269,10 @@ describe("daemon-manager commands", () => {
       intent: "automatic",
       autoDownload: true,
     });
+    expect(await lastCall.shouldCheck()).toBe(true);
     expect(await lastCall.shouldAutoDownload()).toBe(true);
     mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "off" } };
+    expect(await lastCall.shouldCheck()).toBe(false);
     expect(await lastCall.shouldAutoDownload()).toBe(false);
   });
 });

@@ -64,6 +64,7 @@ export interface AppUpdateInstallRequest {
   targetVersion: string;
   isSilent: boolean;
   isForceRunAfter: boolean;
+  signal?: AbortSignal;
 }
 
 export interface AppUpdateInstallLaunchResult {
@@ -76,7 +77,9 @@ export interface AppUpdateRuntime {
   setAutoDownload?(enabled: boolean): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
   downloadUpdate(targetVersion: string): Promise<unknown>;
-  quitAndInstall(input: AppUpdateInstallRequest): AppUpdateInstallLaunchResult | void;
+  quitAndInstall(
+    input: AppUpdateInstallRequest,
+  ): Promise<AppUpdateInstallLaunchResult | void> | AppUpdateInstallLaunchResult | void;
 }
 
 export interface AppUpdateService {
@@ -85,6 +88,7 @@ export interface AppUpdateService {
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
+    shouldCheck?: () => boolean | Promise<boolean>;
     shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult>;
   downloadAndInstallUpdate(
@@ -147,17 +151,20 @@ async function performQuitAndInstall(
     targetVersion,
     onBeforeQuit,
     restart,
+    signal,
   }: {
     targetVersion: string;
     onBeforeQuit?: () => Promise<void>;
     restart: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  const launch = runtime.quitAndInstall({
+  const launch = await runtime.quitAndInstall({
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
+    signal,
   });
   if (launch && !launch.started) {
     throw new Error(launch.errorMessage ?? "Failed to launch update installer.");
@@ -224,6 +231,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     releaseChannel: AppReleaseChannel,
     intent: AppUpdateCheckIntent,
     autoDownload: boolean,
+    shouldCheck?: () => boolean | Promise<boolean>,
     shouldAutoDownload?: () => boolean | Promise<boolean>,
   ): void {
     if (configuredReleaseChannel !== releaseChannel) {
@@ -236,6 +244,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       releaseChannel,
       autoDownload,
       shouldAdmitUpdate: async (info) => {
+        if (shouldCheck && !(await shouldCheck())) {
+          return false;
+        }
         const parsed = rolloutManifestSchema.parse(info);
         const admitted = shouldAdmitAppUpdate({
           channel: releaseChannel,
@@ -307,17 +318,61 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     return result;
   }
 
+  function resolveAvailableUpdateResult(
+    currentVersion: string,
+    info: RuntimeUpdateInfo,
+  ): AppUpdateCheckResult {
+    const latestVersion = info.version;
+    if (latestVersion === currentVersion) {
+      clearUpdateState();
+      return buildCheckResult({
+        currentVersion,
+        hasUpdate: false,
+        readyToInstall: false,
+      });
+    }
+
+    cachedUpdateInfo = info;
+    const readyToInstall = isReadyToInstallVersion(latestVersion);
+    const errorMessage =
+      preparationError?.version === latestVersion ? preparationError.message : null;
+    if (!errorMessage) {
+      preparationError = null;
+    }
+    if (
+      !readyToInstall &&
+      !errorMessage &&
+      currentAutoDownload &&
+      preparingUpdateVersion === null
+    ) {
+      preparingUpdateVersion = latestVersion;
+    }
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: true,
+      readyToInstall,
+      downloading:
+        !readyToInstall &&
+        !errorMessage &&
+        (currentAutoDownload || preparingUpdateVersion === latestVersion),
+      info,
+      errorMessage,
+    });
+  }
+
   async function checkForAppUpdate({
     currentVersion,
     releaseChannel,
     intent,
     autoDownload = true,
+    shouldCheck,
     shouldAutoDownload,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
+    shouldCheck?: () => boolean | Promise<boolean>;
     shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult> {
     if (!deps.isPackaged()) {
@@ -329,13 +384,34 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     return runCheckExclusively(async () => {
+      if (shouldCheck && !(await shouldCheck())) {
+        return buildCheckResult({
+          currentVersion,
+          hasUpdate: false,
+          readyToInstall: false,
+        });
+      }
       if (intent === "manual") {
         preparationError = null;
       }
-      configureRuntime(releaseChannel, intent, autoDownload, shouldAutoDownload);
+      const effectiveAutoDownload = shouldAutoDownload ? await shouldAutoDownload() : autoDownload;
+      configureRuntime(
+        releaseChannel,
+        intent,
+        effectiveAutoDownload,
+        shouldCheck,
+        shouldAutoDownload,
+      );
 
       try {
         const result = await deps.runtime.checkForUpdates();
+        if (shouldCheck && !(await shouldCheck())) {
+          return buildCheckResult({
+            currentVersion,
+            hasUpdate: false,
+            readyToInstall: false,
+          });
+        }
         if (!result || !result.updateInfo) {
           clearUpdateState();
           return buildCheckResult({
@@ -362,45 +438,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           });
         }
 
-        const info = result.updateInfo;
-        const latestVersion = info.version;
-        const hasUpdate = latestVersion !== currentVersion;
-
-        if (hasUpdate) {
-          cachedUpdateInfo = info;
-          const readyToInstall = isReadyToInstallVersion(latestVersion);
-          const errorMessage =
-            preparationError?.version === latestVersion ? preparationError.message : null;
-          if (!errorMessage) {
-            preparationError = null;
-          }
-          if (
-            !readyToInstall &&
-            !errorMessage &&
-            currentAutoDownload &&
-            preparingUpdateVersion === null
-          ) {
-            preparingUpdateVersion = latestVersion;
-          }
-          return buildCheckResult({
-            currentVersion,
-            hasUpdate: true,
-            readyToInstall,
-            downloading:
-              !readyToInstall &&
-              !errorMessage &&
-              (currentAutoDownload || preparingUpdateVersion === latestVersion),
-            info,
-            errorMessage,
-          });
-        }
-
-        clearUpdateState();
-        return buildCheckResult({
-          currentVersion,
-          hasUpdate: false,
-          readyToInstall: false,
-        });
+        return resolveAvailableUpdateResult(currentVersion, result.updateInfo);
       } catch (error) {
         deps.reportCheckError?.(error);
         return buildCheckResult({
@@ -548,6 +586,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
+        signal,
       });
 
       return {

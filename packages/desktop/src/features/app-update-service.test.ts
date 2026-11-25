@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createAppUpdateService,
@@ -1145,6 +1145,40 @@ describe("app update service", () => {
       downloading: false,
       latestVersion: "1.2.4",
     });
+  });
+
+  it("skips a queued automatic check after Off is saved while an earlier check is in flight", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    let allowAutomaticChecks = true;
+    const firstCheck = runtime.deferNextCheck();
+
+    const firstPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+      shouldCheck: async () => allowAutomaticChecks,
+      shouldAutoDownload: async () => allowAutomaticChecks,
+    });
+    const queuedPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+      shouldCheck: async () => allowAutomaticChecks,
+      shouldAutoDownload: async () => allowAutomaticChecks,
+    });
+
+    await vi.waitFor(() => {
+      expect(runtime.checkCount).toBe(1);
+    });
+    allowAutomaticChecks = false;
+    firstCheck.resolve({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    const [firstResult, queuedResult] = await Promise.all([firstPending, queuedPending]);
+    expect(runtime.checkCount).toBe(1);
+    expect(firstResult.hasUpdate).toBe(false);
+    expect(queuedResult.hasUpdate).toBe(false);
   });
 
   it("reports installer launch failures instead of success on both cached and downloaded paths", async () => {

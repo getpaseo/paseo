@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +46,7 @@ vi.mock("electron", () => ({
     getPath: vi.fn(),
     isPackaged: true,
   },
+  autoUpdater: undefined,
   BrowserWindow: {
     getAllWindows: getAllWindowsMock,
   },
@@ -61,6 +63,7 @@ import {
   downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
+  runElectronQuitAndInstall,
   shouldAdmitToRollout,
   shouldInstallAppUpdateOnQuit,
 } from "./auto-updater";
@@ -236,6 +239,58 @@ describe("checkForAppUpdate", () => {
       errorMessage: "EROFS: read-only file system",
     });
     consoleError.mockRestore();
+  });
+
+  it("waits on macOS until Squirrel either reports an async preparation error or signals quit", async () => {
+    const updater = Object.assign(new EventEmitter(), {
+      quitAndInstall: vi.fn(),
+    });
+    const nativeUpdater = new EventEmitter();
+    const appEvents = new EventEmitter();
+
+    const failedInstall = runElectronQuitAndInstall({
+      platform: "darwin",
+      updater,
+      nativeUpdater,
+      appEvents,
+      isSilent: false,
+      isForceRunAfter: true,
+    });
+    expect(
+      await Promise.race([failedInstall.then(() => "settled"), Promise.resolve("pending")]),
+    ).toBe("pending");
+
+    nativeUpdater.emit("error", new Error("Code signature invalid"));
+    await expect(failedInstall).resolves.toEqual({
+      started: false,
+      errorMessage: "Code signature invalid",
+    });
+    expect(updater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
+
+    const restartInstall = runElectronQuitAndInstall({
+      platform: "darwin",
+      updater,
+      nativeUpdater,
+      appEvents,
+      isSilent: false,
+      isForceRunAfter: true,
+    });
+    nativeUpdater.emit("before-quit-for-update");
+    await expect(restartInstall).resolves.toEqual({ started: true });
+
+    const quitInstall = runElectronQuitAndInstall({
+      platform: "darwin",
+      updater,
+      nativeUpdater,
+      appEvents,
+      isSilent: true,
+      isForceRunAfter: false,
+    });
+    appEvents.emit("before-quit");
+    await expect(quitInstall).resolves.toEqual({ started: true });
+    expect(appEvents.listenerCount("before-quit")).toBe(0);
   });
 
   it("logs the update handoff with current and selected target versions", () => {
