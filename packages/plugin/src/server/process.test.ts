@@ -107,13 +107,18 @@ test("a Windows cmd.exe launch refuses an argument with a line break before it s
 
 // Only cmd.exe reads cmd.exe quoting. A shell the caller names parses the line by its own rules.
 test("a Windows launch quotes for cmd.exe only when cmd.exe parses the command line", () => {
-  for (const shell of [true, "cmd.exe", "C:\\Windows\\System32\\CMD.EXE"]) {
-    expect(onWindows("echo", ["hello", "a & b"], shell).args).toEqual([
-      "/d",
-      "/s",
-      "/c",
-      '"echo hello ^"a^ ^&^ b^""',
-    ]);
+  // `shell: true` runs the child's ComSpec; a cmd.exe the caller names runs as named.
+  for (const [shell, cmd] of [
+    [true, windowsEnv.ComSpec],
+    ["cmd.exe", "cmd.exe"],
+    ["D:\\Tools\\CMD.EXE", "D:\\Tools\\CMD.EXE"],
+  ] as const) {
+    expect(onWindows("echo", ["hello", "a & b"], shell)).toEqual({
+      command: cmd,
+      args: ["/d", "/s", "/c", '"echo hello ^"a^ ^&^ b^""'],
+      shell: false,
+      windowsVerbatimArguments: true,
+    });
   }
   for (const shell of ["bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe", "pwsh"]) {
     expect(onWindows("echo", ["'a & b'", "line\nbreak"], shell)).toEqual({

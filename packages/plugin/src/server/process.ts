@@ -76,8 +76,9 @@ export function resolveSpawnInvocation(
   if (!commandScript && !namesCmd(requestedShell) && !builtin) {
     return { command: target, args: [...args], shell: false };
   }
+  // A cmd.exe the caller names runs the line; otherwise the child's ComSpec does.
   return {
-    command: windowsCommandShell(env),
+    command: typeof requestedShell === "string" ? requestedShell : windowsCommandShell(env),
     args: ["/d", "/s", "/c", windowsCommandLine(target, args, { commandScript })],
     shell: false,
     windowsVerbatimArguments: true,
