@@ -6,7 +6,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
+import { execCommand, spawnProcess } from "../../../../utils/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -29,7 +29,7 @@ function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWi
 }
 
 function resolveClaudeSpawnCommand(
-  spawnOptions: SpawnOptions,
+  spawnOptions: Pick<SpawnOptions, "command" | "args">,
   runtimeSettings?: ProviderRuntimeSettings,
 ): { command: string; args: string[] } {
   const commandConfig = runtimeSettings?.command;
@@ -53,11 +53,44 @@ function resolveClaudeSpawnCommand(
   };
 }
 
+type ClaudeLaunchEnvironment = Pick<ClaudeQueryContext, "runtimeSettings" | "launchEnv">;
+
+function createClaudeSpawnEnvSpec(
+  baseEnv: SpawnOptions["env"],
+  { runtimeSettings, launchEnv }: ClaudeLaunchEnvironment,
+) {
+  const spec = createProviderEnvSpec({ baseEnv, runtimeSettings, overlays: [launchEnv] });
+  // Session-open hooks may supply a client identity. Clear inherited SDK/parent identities.
+  spec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
+  return spec;
+}
+
+export interface ClaudeLaunchVersionProbe extends ClaudeLaunchEnvironment {
+  executable: string;
+  cwd: string;
+  env: SpawnOptions["env"];
+}
+
+export function probeClaudeLaunchVersion(
+  launch: ClaudeLaunchVersionProbe,
+): Promise<{ stdout: string; stderr: string }> {
+  const { command, args } = resolveClaudeSpawnCommand(
+    { command: launch.executable, args: ["--version"] },
+    launch.runtimeSettings,
+  );
+  return execCommand(command, args, {
+    ...createClaudeSpawnEnvSpec(launch.env, launch),
+    cwd: launch.cwd,
+    shell: false,
+    timeout: 5_000,
+  });
+}
+
 function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -68,14 +101,7 @@ function applyRuntimeSettingsToClaudeOptions(
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
       const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
-      const providerEnvSpec = createProviderEnvSpec({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
-      // Session-open hooks may explicitly supply a client identity. Keep inherited
-      // SDK/parent identities cleared while honoring this launch-only contribution.
-      providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
+      const providerEnvSpec = createClaudeSpawnEnvSpec(spawnOptions.env, context);
       const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)

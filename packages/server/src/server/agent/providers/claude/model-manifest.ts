@@ -347,6 +347,27 @@ export function supportsIndependentClaudeUltracode(version: string | undefined):
   return version === undefined || compareVersions(version, "2.1.284") >= 0;
 }
 
+/**
+ * The Claude Code version bundled with the Agent SDK release that documents
+ * `mcpServersDelivery: "initialize"`. The SDK only guarantees that delivery for
+ * the bundled Claude Code or newer: an older binary exits on an unknown flag or
+ * has its session ended by the SDK.
+ */
+export const CLAUDE_MCP_SERVERS_VIA_INITIALIZE_MIN_VERSION = "2.1.326";
+
+/**
+ * Whether MCP servers can reach Claude Code over stdin instead of `--mcp-config`
+ * on its command line, where any local user can read their headers and env.
+ * An unknown version (a wrapper command) stays on the command line so the
+ * session still starts.
+ */
+export function supportsClaudeMcpServersViaInitialize(version: string | undefined): boolean {
+  return (
+    version !== undefined &&
+    compareVersions(version, CLAUDE_MCP_SERVERS_VIA_INITIALIZE_MIN_VERSION) >= 0
+  );
+}
+
 export interface ClaudeDisabledThinkingResolution {
   supported: boolean;
   fallbackThinkingOptionId: string | undefined;
