@@ -34,7 +34,7 @@ Workspace archive runs lifecycle teardown from the exact `cwd` but removes only 
 `worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
 checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
 
-Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
+Paseo persists most stores as JSON files, and agent timelines in the [daemon database](#daemon-database). JSON data is validated at runtime with Zod schemas. Most JSON stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. JSON stores have no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
@@ -53,6 +53,7 @@ $PASEO_HOME/
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
 ├── local-credential                     # Per-run local client credential (mode 0600)
+├── paseo.db                             # Daemon database (SQLite, with -wal and -shm files)
 ├── daemon.log                           # Default log file (path configurable)
 ├── agents/
 │   └── {sanitized-cwd}/
@@ -181,11 +182,39 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 ---
 
-## Runtime-only Agent Timelines
+## Daemon database
 
-Agent timelines are not written to `$PASEO_HOME`. `AgentTimeline` owns each agent's history behind
-a backend, and the only backend is in memory, so a daemon restart loses it and the next resume
-imports provider history. See [owned history](timeline-sync.md#owned-history).
+`$PASEO_HOME/paseo.db` is one SQLite file that the daemon opens at startup with `node:sqlite`
+(`packages/server/src/server/database/`). Agent timelines are its only store today. Each store is a
+`SchemaModule`: its own table-name prefix and an append-only list of migrations.
+
+- **Migrations.** Startup runs every module's pending migrations in one transaction, so a failed
+  migration leaves the file as it was. `schema_versions` records each module's version and
+  `min_reader_version`. Mark a migration `breaking` when an older daemon cannot read the result,
+  for example a dropped or renamed column. An older daemon then refuses to start with
+  `DatabaseSchemaTooNewError`. Additive migrations leave older daemons working, and they ignore
+  modules they do not know. This matters because the app and the daemon update separately, and a
+  user can run an older daemon on the same `$PASEO_HOME`.
+- **Failure.** A file that SQLite cannot open stops the daemon with `DatabaseOpenError`, which
+  names the path. The daemon does not delete or recreate the file.
+- **Durability.** The database uses WAL with `synchronous = NORMAL`. A power loss can drop the
+  last commits but does not corrupt the file.
+- **Checkpoints.** A checkpoint syncs the file to disk and takes up to 100 ms. SQLite's
+  auto-checkpoint runs it on the committing thread, which stalled the event loop during streaming.
+  The daemon turns it off and checkpoints from a worker thread with its own connection. If the
+  worker exits, the daemon turns auto-checkpoint back on.
+- **Transactions.** `write` and `read` callbacks are synchronous, so a transaction never spans an
+  `await` and transactions never interleave.
+- **Node.** `node:sqlite` needs Node 22.16 or later. Node 22 prints an experimental warning once,
+  when the daemon opens the database.
+
+### Agent timelines
+
+`AgentTimeline` owns each agent's history, and its SQLite backend stores the projected rows, the
+source ranges, retirements, the open rewind, and provider children in `timeline_*` tables. The text
+of a streamed assistant or reasoning message is stored as one chunk per source event, beside its
+row, so a chunk never rewrites the message. An earlier file store rewrote the whole transcript on
+every update. See [owned history](timeline-sync.md#owned-history).
 
 ---
 

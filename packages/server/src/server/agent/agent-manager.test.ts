@@ -6898,6 +6898,50 @@ test("archiveSnapshot restoring an earlier archive time on a loaded agent keeps 
   expect(events.at(-1)?.updatedAt.getTime()).toBeGreaterThanOrEqual(unarchivedAt);
 });
 
+test("a turn ends even when the timeline fails to record how it ended", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-terminal-record-failure-"));
+  class FailingTurnClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new FailingTurnClient();
+  const backend = new DeferredTimelineBackend();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    timeline: new AgentTimeline(backend),
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  // The turn's error message is the write that fails.
+  backend.failNextAppend = true;
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Selected model is at capacity.",
+  });
+  await failed;
+  expect(manager.getAgent(agent.id)?.lifecycle).toBe("error");
+  // The failed turn no longer holds the agent: its next turn runs and records.
+  const runningAgain = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "next-turn" });
+  await runningAgain;
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

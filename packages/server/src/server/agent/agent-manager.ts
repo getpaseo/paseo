@@ -535,6 +535,16 @@ interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
 
+interface StreamEventDispatch {
+  agent: ActiveManagedAgent;
+  event: AgentStreamEvent;
+  options: HandleStreamEventOptions | undefined;
+  isForegroundEvent: boolean;
+  eventTurnId: string | undefined;
+  terminalDisposition: ActiveTurnTerminalDisposition;
+  flags: StreamEventFlags;
+}
+
 interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
@@ -5575,11 +5585,9 @@ export class AgentManager {
       );
     }
 
-    event = await this.settleTurnMetrics({ agent, event, options, terminalDisposition });
-
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
-    const dispatchPromise = this.dispatchStreamEventByType({
+    event = await this.recordStreamEvent({
       agent,
       event,
       options,
@@ -5588,9 +5596,6 @@ export class AgentManager {
       terminalDisposition,
       flags,
     });
-    if (dispatchPromise) {
-      await dispatchPromise;
-    }
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
@@ -5702,15 +5707,26 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private dispatchStreamEventByType(params: {
-    agent: ActiveManagedAgent;
-    event: AgentStreamEvent;
-    options: HandleStreamEventOptions | undefined;
-    isForegroundEvent: boolean;
-    eventTurnId: string | undefined;
-    terminalDisposition: ActiveTurnTerminalDisposition;
-    flags: StreamEventFlags;
-  }): Promise<void> | undefined {
+  /** Stamps the turn's metrics and applies the event by type, returning the event as stamped. */
+  private async recordStreamEvent(params: StreamEventDispatch): Promise<AgentStreamEvent> {
+    const { agent, options, eventTurnId } = params;
+    let { event } = params;
+    try {
+      event = await this.settleTurnMetrics({ ...params, event });
+      await this.dispatchStreamEventByType({ ...params, event });
+    } catch (error) {
+      // A turn that ended must stop holding the agent and its waiters, even when its record
+      // failed to write; otherwise the agent stays running until the daemon restarts.
+      if (options?.fromHistory || !isTurnTerminalEvent(event)) throw error;
+      this.logger.error(
+        { err: error, agentId: agent.id, turnId: eventTurnId, eventType: event.type },
+        "Failed to record how the turn ended",
+      );
+    }
+    return event;
+  }
+
+  private dispatchStreamEventByType(params: StreamEventDispatch): Promise<void> | undefined {
     const { agent, event, options, isForegroundEvent, eventTurnId, terminalDisposition, flags } =
       params;
     switch (event.type) {

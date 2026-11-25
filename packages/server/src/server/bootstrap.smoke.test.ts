@@ -22,7 +22,7 @@ import {
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
-import { ensureAgentLoaded } from "./agent/agent-loading.js";
+import { ensureAgentLoaded, loadAgentHistory } from "./agent/agent-loading.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
@@ -94,59 +94,54 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("keeps timeline activity in memory and removes obsolete timeline files at startup", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-cleanup-"));
+  test("stores timelines in paseo.db and serves them after a restart without loading the agent", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-restart-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const obsoleteTimelineDirectory = path.join(paseoHome, "agent-timelines");
     const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
     await mkdir(obsoleteTimelineDirectory, { recursive: true });
     await writeFile(path.join(obsoleteTimelineDirectory, "obsolete.json"), "{}\n", "utf-8");
-
-    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
     try {
-      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      const first = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+      let agentId: string;
+      try {
+        await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+        const agent = await first.daemon.agentManager.createAgent(
+          { provider: "codex", cwd: agentCwd },
+          undefined,
+          { workspaceId: undefined },
+        );
+        agentId = agent.id;
+        await first.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "assistant_message",
+          text: "kept across the restart",
+        });
+        await first.daemon.agentManager.flush();
+      } finally {
+        await first.close();
+      }
+      await access(path.join(paseoHome, "paseo.db"));
 
-      const agent = await daemonHandle.daemon.agentManager.createAgent(
-        { provider: "codex", cwd: agentCwd },
-        undefined,
-        { workspaceId: undefined },
-      );
-      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
-        type: "assistant_message",
-        text: "timeline stays in memory",
-      });
-      await daemonHandle.daemon.agentManager.flush();
-
-      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      const second = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+      try {
+        const { agentManager, agentStorage } = second.daemon;
+        const source = await loadAgentHistory(agentId, {
+          agentManager,
+          agentStorage,
+          logger: pino({ level: "silent" }),
+          purpose: "history",
+        });
+        expect(source.kind).toBe("stored");
+        const page = await agentManager.fetchTimeline(agentId, { direction: "tail" });
+        expect(page.rows.map((row) => row.item)).toContainEqual({
+          type: "assistant_message",
+          text: "kept across the restart",
+        });
+        expect(agentManager.getAgent(agentId)).toBeNull();
+      } finally {
+        await second.close();
+      }
     } finally {
-      await daemonHandle.close();
-      await Promise.all([
-        rm(paseoHomeRoot, { recursive: true, force: true }),
-        rm(agentCwd, { recursive: true, force: true }),
-      ]);
-    }
-  });
-
-  test("does not create a timeline directory for live timeline activity", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-memory-"));
-    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
-    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
-    const timelineDirectory = path.join(daemonHandle.paseoHome, "agent-timelines");
-    try {
-      const agent = await daemonHandle.daemon.agentManager.createAgent(
-        { provider: "codex", cwd: agentCwd },
-        undefined,
-        { workspaceId: undefined },
-      );
-      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
-        type: "assistant_message",
-        text: "timeline stays in memory",
-      });
-      await daemonHandle.daemon.agentManager.flush();
-
-      await expect(access(timelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await daemonHandle.close();
       await Promise.all([
         rm(paseoHomeRoot, { recursive: true, force: true }),
         rm(agentCwd, { recursive: true, force: true }),

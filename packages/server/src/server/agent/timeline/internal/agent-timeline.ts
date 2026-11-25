@@ -72,6 +72,14 @@ export type TimelineRewindVerdict =
   | { kind: "absent" };
 
 /** Another rewind is open on the history; it must settle first. */
+/** The timeline was closed for shutdown; it takes no more operations. */
+export class TimelineClosedError extends Error {
+  constructor() {
+    super("The agent timeline is closed");
+    this.name = "TimelineClosedError";
+  }
+}
+
 export class TimelineRewindPendingError extends Error {
   constructor(readonly intent: TimelineRewindIntent) {
     super("Another rewind of this conversation has not settled");
@@ -153,6 +161,7 @@ export interface TimelineAppendOptions {
 export class AgentTimeline {
   private readonly tails = new Map<string, Promise<void>>();
   private readonly sizes = new Map<string, number>();
+  private closed = false;
 
   constructor(private readonly backend: AgentTimelineBackend = new MemoryTimelineBackend()) {}
 
@@ -474,7 +483,18 @@ export class AgentTimeline {
    * Callers use it so an event published outside the timeline cannot overtake queued writes.
    */
   settled(scope: TimelineScope): Promise<void> {
+    // A closed timeline takes no operations, so the ones already queued are all there is.
+    if (this.closed) return this.tails.get(scope.agentId) ?? Promise.resolve();
     return this.run(scope, settledOperation);
+  }
+
+  /**
+   * Refuses new operations with `TimelineClosedError` and resolves once every operation called
+   * before it has finished. The daemon calls it before closing the store.
+   */
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.all(this.tails.values());
   }
 
   /** Projected row count as of the last committed write, for diagnostics. */
@@ -507,6 +527,7 @@ export class AgentTimeline {
   }
 
   private run<T>(scope: TimelineScope, operation: () => T | Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new TimelineClosedError());
     const key = scope.agentId;
     const previous = this.tails.get(key) ?? Promise.resolve();
     const result = previous.then(operation);

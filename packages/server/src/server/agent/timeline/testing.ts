@@ -1,4 +1,8 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { onTestFinished } from "vitest";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { nextTestDatabasePath } from "../../test-utils/test-database-path.js";
+import { openDaemonDatabase, type DaemonDatabase } from "../../database/index.js";
 import type { AgentMetric, AgentTimelineItem } from "../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
@@ -22,6 +26,7 @@ import type {
   TimelineSeed,
 } from "./internal/backend.js";
 import { MemoryTimelineBackend } from "./internal/memory-backend.js";
+import { SqliteTimelineBackend, timelineSchema } from "./internal/sqlite-backend.js";
 
 /**
  * Testing entry point of the timeline module. Production code imports `./index.js`.
@@ -39,7 +44,25 @@ export interface InspectableTimelineBackend extends AgentTimelineBackend {
 export const TIMELINE_CONTRACT_BACKENDS: ReadonlyArray<{
   name: string;
   create: () => InspectableTimelineBackend;
-}> = [{ name: "memory", create: () => new MemoryTimelineBackend() }];
+}> = [
+  { name: "memory", create: () => new MemoryTimelineBackend() },
+  { name: "sqlite", create: () => new SqliteTimelineBackend(openTestTimelineDatabase()) },
+];
+
+/**
+ * Opens a fresh file-backed timeline database, closed when the calling test finishes, in a
+ * directory removed when the process exits. Pass the path of an earlier database to reopen it, as
+ * a daemon restart does.
+ */
+export function openTestTimelineDatabase(file?: string): DaemonDatabase {
+  const database = openDaemonDatabase({
+    path: file ?? nextTestDatabasePath(),
+    modules: [timelineSchema],
+    logger: createTestLogger(),
+  });
+  onTestFinished(() => database.close());
+  return database;
+}
 
 /**
  * Wraps a backend: defers every call by a turn of the event loop, the shape of an I/O-backed

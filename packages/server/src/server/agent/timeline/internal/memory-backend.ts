@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
 import type { AgentMetric, AgentTimelineItem } from "../../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
@@ -22,6 +21,8 @@ import type {
   TimelineSeed,
 } from "./backend.js";
 import { UnknownTimelineError } from "./backend.js";
+import { fetchTimelinePage } from "./fetch-page.js";
+import { buildSourceRow } from "./source-row.js";
 
 interface MemoryTimelineState {
   epoch: string;
@@ -37,8 +38,6 @@ interface MemoryTimelineState {
   childRetired: boolean;
 }
 
-const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
-
 function scopeKey(scope: TimelineScope): string {
   return scope.subagentId === undefined
     ? scope.agentId
@@ -53,17 +52,6 @@ function cloneRow<T extends AgentTimelineRow>(row: T): T {
   return { ...row };
 }
 
-function buildRow(entry: TimelineEntry, seq: number, timestamp: string): AgentTimelineRow {
-  return {
-    seq,
-    timestamp: entry.timestamp ?? timestamp,
-    item: entry.item,
-    ...(entry.turnId ? { turnId: entry.turnId } : {}),
-    ...(entry.providerMessageId ? { providerMessageId: entry.providerMessageId } : {}),
-    ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
-  };
-}
-
 /** Volatile backend: history lives in process memory and is lost when the daemon exits. */
 export class MemoryTimelineBackend implements AgentTimelineBackend {
   private readonly states = new Map<string, MemoryTimelineState>();
@@ -73,7 +61,9 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     const startSeq = seed.nextSeq ?? 1;
     const rows = seed.rows?.length
       ? seed.rows.map(cloneRow)
-      : (seed.entries ?? []).map((entry, index) => buildRow(entry, startSeq + index, timestamp));
+      : (seed.entries ?? []).map((entry, index) =>
+          buildSourceRow(entry, startSeq + index, timestamp),
+        );
     const nextSeq = rows.reduce((next, row) => Math.max(next, row.seq + 1), startSeq);
     const projection = new TimelineProjection(rows);
     const state: MemoryTimelineState = {
@@ -137,7 +127,9 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
   append(scope: TimelineScope, entries: readonly TimelineEntry[]): TimelineBackendAppendResult {
     const state = this.requireState(scope);
     const timestamp = new Date().toISOString();
-    const rows = entries.map((entry, index) => buildRow(entry, state.nextSeq + index, timestamp));
+    const rows = entries.map((entry, index) =>
+      buildSourceRow(entry, state.nextSeq + index, timestamp),
+    );
     for (const row of rows) {
       state.projection.append(row);
       state.nextSeq = row.seq + 1;
@@ -233,48 +225,11 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
 
   fetch(scope: TimelineScope, options: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(scope);
-    const direction = options.direction ?? "tail";
-    const cursor = options.cursor;
-    const hasRows = state.minSeq !== 0;
-    const window = { minSeq: state.minSeq, maxSeq: state.nextSeq - 1, nextSeq: state.nextSeq };
-    const staleCursor =
-      cursor !== undefined &&
-      (cursor.epoch !== state.epoch ||
-        (cursor.retirementCount !== undefined && cursor.retirementCount !== state.retirementCount));
-    const gap =
-      !staleCursor &&
-      direction === "after" &&
-      cursor !== undefined &&
-      hasRows &&
-      cursor.seq < state.minSeq - 1;
-    const reset = staleCursor || gap;
-    const page = state.projection.selectPage({
-      bounds: window,
-      direction: reset ? "tail" : direction,
-      cursorSeq: cursor?.seq,
-      limit: options.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT,
-      wholeTurns: options.wholeTurns,
+    return fetchTimelinePage({
+      history: state,
+      options,
+      selectPage: (page) => state.projection.selectPage(page),
     });
-    return {
-      epoch: state.epoch,
-      direction,
-      reset,
-      staleCursor,
-      gap,
-      window,
-      hasOlder: page.hasOlder,
-      hasNewer: page.hasNewer,
-      startSeq: page.startSeq,
-      endSeq: page.endSeq,
-      // Stored rows are already within budget; this bounds assistant and reasoning merges.
-      rows: page.entries.map((entry) =>
-        Object.assign({ seq: entry.seqEnd }, entry, {
-          item: limitAgentTimelineItemContent(entry.item),
-        }),
-      ),
-      retirements: page.retirements,
-      retirementCount: state.retirementCount,
-    };
   }
 
   readRows(scope: TimelineScope): ProjectedTimelineRow[] {

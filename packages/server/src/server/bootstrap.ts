@@ -14,7 +14,7 @@ import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm, stat } from "fs/promises";
+import { mkdir, open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { getCachedHostMachineKind, primeHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
@@ -149,6 +149,8 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { createStoredAgentTimeline, timelineSchema } from "./agent/timeline/index.js";
+import { openDaemonDatabase } from "./database/index.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -650,6 +652,13 @@ export async function createPaseoDaemon(
       "Failed to remove obsolete agent timeline data",
     );
   });
+  await mkdir(config.paseoHome, { recursive: true });
+  const database = openDaemonDatabase({
+    path: path.join(config.paseoHome, "paseo.db"),
+    modules: [timelineSchema],
+    logger: rootLogger.child({ module: "database" }),
+  });
+  const timeline = createStoredAgentTimeline(database);
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
@@ -1055,6 +1064,7 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    timeline,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
@@ -2059,6 +2069,8 @@ export async function createPaseoDaemon(
         httpServer.closeAllConnections();
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
+      await timeline.close();
+      database.close();
       throw error;
     }
   };
@@ -2133,6 +2145,8 @@ export async function createPaseoDaemon(
     if (wsServer) {
       await wsServer.close();
     }
+    await timeline.close();
+    database.close();
     forgeResolver.dispose();
     await serviceProxy.stopStandalone();
     // Force-drop remaining sockets so httpServer.close() resolves promptly.

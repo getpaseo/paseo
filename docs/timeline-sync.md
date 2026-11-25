@@ -54,11 +54,11 @@ deleting the agent, or a provider removing one of its own children, deletes hist
 `AgentTimeline` serializes every operation of one agent, child scopes included, and keeps its
 state in an `AgentTimelineBackend`: the sequence, the rows and retirements, prompt identities, the
 open rewind, and the children. The backend contract suite is `agent-timeline.test.ts`, run over
-`TIMELINE_CONTRACT_BACKENDS` in `timeline/testing.ts`. The only backend keeps everything in
-memory, so a daemon restart loses the owned history: the next resume imports provider history into
-a new epoch, and clients take the destructive reset below. Rewinds retired before the restart come
-back if the provider history still holds them. Retained history costs memory for every loaded,
-closed or archived agent until the daemon exits or the agent is deleted.
+`TIMELINE_CONTRACT_BACKENDS` in `timeline/testing.ts`. The daemon uses the SQLite backend in the
+[daemon database](data-model.md#daemon-database). History, retirements, the open rewind, and
+provider children survive a daemon restart in the same epoch, so clients keep their cursors. A
+closed or archived agent holds no history in memory. Each fetch reads the page from the database
+and starts no provider. The memory backend serves tests.
 
 An open rewind is stored with the history. Resuming an agent whose history holds one settles it
 before the agent takes prompts: a recorded provider cut is committed, and an unknown outcome is
