@@ -44,7 +44,6 @@ import {
   AgentProfileRow,
   ROSTER_COL_PROFILE_WIDTH,
   ROSTER_COL_RUNTIME_WIDTH,
-  ROSTER_GRIP_WIDTH,
   ROSTER_TRAILING_WIDTH,
 } from "./agent-profile-row";
 
@@ -90,7 +89,6 @@ function RosterTableHeader(): ReactElement {
   const { t } = useTranslation();
   return (
     <View style={styles.tableHeader}>
-      <View style={styles.tableHeaderGripSpacer} />
       <View style={styles.tableHeaderColumns}>
         <Text style={[styles.tableHeaderText, styles.colProfileHeader]} numberOfLines={1}>
           {t("settings.host.agentProfiles.columns.profile")}
@@ -1030,15 +1028,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
     gap: theme.spacing[2],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
-  },
-  tableHeaderGripSpacer: {
-    width: ROSTER_GRIP_WIDTH,
-    flexShrink: 0,
   },
   tableHeaderColumns: {
     flex: 1,

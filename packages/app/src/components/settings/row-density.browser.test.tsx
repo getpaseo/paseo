@@ -100,4 +100,28 @@ describe("settings row density", () => {
       titleFontSize("card-row", "Card row"),
     );
   });
+
+  it("keeps a row with a long summary one line tall on a phone-width card", () => {
+    container = document.createElement("div");
+    // A 393pt phone less the sheet's side padding.
+    container.style.width = "360px";
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <SettingsCard>
+          <SettingsRow label="Text only" testID="text-row" />
+          <SettingsCollapsibleRow
+            label="Customize settings"
+            summary="Auto mode · Medium · 2 features · Add a note for when to use it"
+            testID="long-summary"
+          >
+            <SettingsRow label="Nested" />
+          </SettingsCollapsibleRow>
+        </SettingsCard>,
+      ),
+    );
+
+    expect(heightOf("long-summary-toggle")).toBe(heightOf("text-row"));
+  });
 });
