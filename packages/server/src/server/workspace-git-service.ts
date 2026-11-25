@@ -44,7 +44,11 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { isPathInsideRoot, looksLikeDefiniteWindowsPath } from "../utils/path.js";
+import {
+  areEquivalentPaths,
+  isPathInsideRoot,
+  looksLikeDefiniteWindowsPath,
+} from "../utils/path.js";
 import {
   createRunGitCommand,
   runGitCommand,
@@ -2458,23 +2462,42 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return gitDir;
   }
 
+  /**
+   * `git rev-parse --git-common-dir` resolves against the caller's cwd spelling, so on Windows
+   * `D:\Repo\.git` and `d:\repo\.git` can name one repository. Reuse the first spelling seen.
+   */
+  private findRepoTarget(repoGitRoot: string): RepoGitTarget | undefined {
+    const exact = this.repoTargets.get(repoGitRoot);
+    if (exact || !looksLikeDefiniteWindowsPath(repoGitRoot)) return exact;
+    for (const [key, target] of this.repoTargets) {
+      if (areEquivalentPaths(key, repoGitRoot)) return target;
+    }
+    return undefined;
+  }
+
+  private linkRepoTarget(repoTarget: RepoGitTarget, workspaceTarget: WorkspaceGitTarget): void {
+    // Later lookups and detach read the workspace's key, so it must name the shared target.
+    workspaceTarget.repoGitRoot = repoTarget.repoGitRoot;
+    repoTarget.workspaceKeys.add(workspaceTarget.cwd);
+  }
+
   private async ensureRepoTarget(workspaceTarget: WorkspaceGitTarget): Promise<void> {
     const repoGitRoot = workspaceTarget.repoGitRoot;
     if (!repoGitRoot || !this.isActiveObservedWorkspaceTarget(workspaceTarget)) {
       return;
     }
 
-    const existingTarget = this.repoTargets.get(repoGitRoot);
+    const existingTarget = this.findRepoTarget(repoGitRoot);
     if (existingTarget) {
-      existingTarget.workspaceKeys.add(workspaceTarget.cwd);
+      this.linkRepoTarget(existingTarget, workspaceTarget);
       return;
     }
 
     const paths = await GitObservationPaths.create(repoGitRoot);
     if (!this.isActiveObservedWorkspaceTarget(workspaceTarget)) return;
-    const establishedTarget = this.repoTargets.get(repoGitRoot);
+    const establishedTarget = this.findRepoTarget(repoGitRoot);
     if (establishedTarget) {
-      establishedTarget.workspaceKeys.add(workspaceTarget.cwd);
+      this.linkRepoTarget(establishedTarget, workspaceTarget);
       return;
     }
     const repoTarget: RepoGitTarget = {
