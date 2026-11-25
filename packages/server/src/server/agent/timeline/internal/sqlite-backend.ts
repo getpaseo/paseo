@@ -1062,7 +1062,14 @@ class StoredPageSelection {
 
   private selectBefore(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
     const endSeq = Math.min(input.bounds.maxSeq, (input.cursorSeq ?? input.bounds.maxSeq + 1) - 1);
-    if (endSeq < input.bounds.minSeq) {
+    const lastInPage = this.sql.get<RowShape>(
+      `SELECT ${SHAPE_COLUMNS} FROM timeline_rows WHERE ${ACTIVE} AND seq_start <= ? ` +
+        "ORDER BY seq_start DESC LIMIT 1",
+      this.scopeId,
+      endSeq,
+    );
+    // No active row starts by `endSeq`, as when a rewind retired everything before the cursor.
+    if (endSeq < input.bounds.minSeq || !lastInPage) {
       return {
         entries: [],
         startSeq: null,
@@ -1082,13 +1089,7 @@ class StoredPageSelection {
       this.scopeId,
       endSeq,
     );
-    const lastInPage = this.sql.get<RowShape>(
-      `SELECT ${SHAPE_COLUMNS} FROM timeline_rows WHERE ${ACTIVE} AND seq_start <= ? ` +
-        "ORDER BY seq_start DESC LIMIT 1",
-      this.scopeId,
-      endSeq,
-    );
-    if (input.wholeTurns && after && lastInPage) {
+    if (input.wholeTurns && after) {
       // Choose the window before extending the right edge, so a prompt jump cannot lose its
       // target when the next turn is arbitrarily large.
       let previous = lastInPage;
