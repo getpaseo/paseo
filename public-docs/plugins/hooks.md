@@ -31,7 +31,7 @@ Names follow `subject.operation.position`: the subject, the operation, then `bef
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, MCP servers, and a launch wrap each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -49,22 +49,22 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                   | Handler may change                                             |
-| ------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                          |
-| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                |
-| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                               |
-| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
-| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
-| `agent.create.after`      | no    | `{ agent }`                               |                                                                |
-| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
-| `agent.close.after`       | no    | `{ agent }`                               |                                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                |
+| Hook                      | Waits | Payload                                   | Handler may change                                                     |
+| ------------------------- | ----- | ----------------------------------------- | ---------------------------------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                                  |
+| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                        |
+| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                        |
+| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                                       |
+| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                         |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                           |
+| `agent.create.after`      | no    | `{ agent }`                               |                                                                        |
+| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, `wrap` |
+| `agent.close.after`       | no    | `{ agent }`                               |                                                                        |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                        |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                        |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                        |
+| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                        |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                        |
 
 ## Shared payloads
 
@@ -283,7 +283,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before
 
-Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, and `wrap` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
 Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
 
@@ -316,18 +316,36 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 }
 ```
 
-| Field         | Values                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | String or `null`                                                                                                        |
-| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
-| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                       |
-| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
-| `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                      |
-| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
-| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                   |
-| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
-| `purpose`     | `interactive`, `history`                                                                                                |
-| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+| Field         | Values                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workspaceId` | String or `null`                                                                                                                                 |
+| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                                                    |
+| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                                                |
+| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                                                        |
+| `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                                               |
+| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).                                   |
+| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                                            |
+| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                                          |
+| `purpose`     | `interactive`, `history`                                                                                                                         |
+| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides.                          |
+| `wrap`        | Optional `[executable, ...args]` to start the harness behind. See [Run the harness behind a launch wrap](#run-the-harness-behind-a-launch-wrap). |
+
+### Run the harness behind a launch wrap
+
+Return `wrap` to start the provider's harness as `[...wrap, command, ...args]`, for example under a sandbox:
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  wrap: ["/usr/local/bin/sandbox-run", "--profile", "agent"],
+}));
+```
+
+- The executable must be an absolute path. Paseo runs it without a shell, except Windows script launchers, which go through cmd.exe like any provider launcher. Each element stays one argument.
+- Only a provider whose provider snapshot entry has `launchWrap: true` applies a wrap. Read it with `paseo.providers.snapshot()` in `agent.create.before` and choose a provider there. A wrap for any other provider fails the open; it is never dropped. A host without wrap support rejects the field and fails the open too.
+- A later hook may omit `wrap` or return the same value. A different value fails the open.
+- History opens keep the wrap. It is not saved on the agent; every open asks the hooks again.
+- The wrap covers the session's harness process only. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
 
 ### Append instructions on every session opening
 

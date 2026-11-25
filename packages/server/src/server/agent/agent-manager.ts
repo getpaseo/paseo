@@ -1,5 +1,5 @@
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
-import { ProviderOptionsValidationError } from "./provider-options.js";
+import { LaunchWrapUnsupportedError, ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
@@ -6516,6 +6516,7 @@ export class AgentManager {
     let appendSystemPrompt: string[] | undefined;
     let mcpServers: AgentSessionConfig["mcpServers"];
     let mcpServerOwners: Record<string, string> | undefined;
+    let wrap: AgentLaunchContext["wrap"];
     if (this.pluginLifecycle) {
       const request = {
         agentId,
@@ -6533,15 +6534,18 @@ export class AgentManager {
       };
       const transformed = await this.pluginLifecycle.before("agent.open.before", request);
       env = transformed.env;
+      wrap = transformed.wrap;
       if (request.purpose === "interactive") {
         this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
         appendSystemPrompt = transformed.appendSystemPrompt;
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }
+      await this.admitLaunchWrap(agentId, client, wrap);
     }
     const context: AgentLaunchContext = {
       agentId,
+      wrap,
       ...pluginPromptContext(appendSystemPrompt),
       mcpServers,
       mcpServerOwners,
@@ -6571,6 +6575,21 @@ export class AgentManager {
     }
     this.sessionOpenGenerations.set(agentId, generation);
     return context;
+  }
+
+  /** Admit a wrapped open only for a provider that applies the wrap; nothing has started yet. */
+  private async admitLaunchWrap(
+    agentId: string,
+    client: AgentClient,
+    wrap: AgentLaunchContext["wrap"],
+  ): Promise<void> {
+    if (!wrap) return;
+    try {
+      await requireLaunchWrap(client);
+    } catch (error) {
+      this.detachPluginTools(agentId);
+      throw error;
+    }
   }
 
   private resolveProviderLaunchConfig(
@@ -6732,4 +6751,9 @@ function pluginPromptContext(
   appendSystemPrompt: string[] | undefined,
 ): Pick<AgentLaunchContext, "appendSystemPrompt"> {
   return appendSystemPrompt?.length ? { appendSystemPrompt } : {};
+}
+
+async function requireLaunchWrap(client: AgentClient): Promise<void> {
+  if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
+  await client.requireLaunchWrap?.();
 }

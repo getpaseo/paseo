@@ -8257,25 +8257,36 @@ export class CodexAppServerAgentClient implements AgentClient {
     environment: Record<string, string>;
     goalsEnabled?: boolean;
     agentId?: string;
+    wrap?: AgentLaunchContext["wrap"];
   }): Promise<() => ChildProcessWithoutNullStreams> {
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
-    const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
-    const args = [...launchPrefix.args, "app-server"];
+    const resolvedPrefix = await processPort.resolvePrefix({
+      runtimeSettings: this.runtimeSettings,
+    });
+    const appServerArgs = [...resolvedPrefix.args, "app-server"];
     if (options.goalsEnabled) {
-      args.push("--enable", "goals");
+      appServerArgs.push("--enable", "goals");
     }
+    // Every spawn from this closure, including reconnects and startup retries, carries the wrap.
+    const { command, args } = options.wrap
+      ? {
+          command: options.wrap[0],
+          args: [...options.wrap.slice(1), resolvedPrefix.command, ...appServerArgs],
+        }
+      : { command: resolvedPrefix.command, args: appServerArgs };
     return () => {
       this.logger.trace(
         {
           agentId: options.agentId,
           provider: CODEX_PROVIDER,
-          launchPrefix,
+          command,
+          args,
           goalsEnabled: options.goalsEnabled === true,
         },
         "provider.codex.spawn",
       );
       const child = processPort.spawn({
-        command: launchPrefix.command,
+        command,
         args,
         options: {
           detached: process.platform !== "win32",
@@ -8324,6 +8335,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      wrap: launchContext?.wrap,
     });
     const session = new CodexAppServerAgentSession(
       sessionConfig,
@@ -8361,6 +8373,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      wrap: launchContext?.wrap,
     });
     const session = new CodexAppServerAgentSession(
       merged,

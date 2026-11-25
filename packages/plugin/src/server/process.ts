@@ -33,15 +33,41 @@ function hasPathSeparator(value: string): boolean {
 
 function shouldUseWindowsShell(
   command: string,
-  requestedShell?: boolean | string,
+  requestedShell: boolean | string | undefined,
+  platform: NodeJS.Platform,
 ): boolean | string {
-  if (isWindowsCommandScript(command)) {
+  if (isWindowsCommandScript(command, platform)) {
     return true;
   }
   if (requestedShell !== undefined) {
     return requestedShell;
   }
-  return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
+  return platform === "win32" && !hasPathSeparator(command) && !extname(command);
+}
+
+export interface SpawnInvocation {
+  command: string;
+  args: string[];
+  shell: boolean | string;
+}
+
+/**
+ * How `spawnProcess` and `execCommand` start `command` on `platform`. On Windows a command script
+ * or a bare name runs through cmd.exe, so the command and every argument are quoted for it.
+ */
+export function resolveSpawnInvocation(
+  command: string,
+  args: readonly string[],
+  requestedShell: boolean | string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): SpawnInvocation {
+  const shell = shouldUseWindowsShell(command, requestedShell, platform);
+  if (platform !== "win32" || shell === false) return { command, args: [...args], shell };
+  return {
+    command: quoteWindowsCommand(command, platform),
+    args: args.map((argument) => quoteWindowsArgument(argument, platform)),
+    shell,
+  };
 }
 
 /** Launch a CLI with Windows command-script handling and argv quoting. The caller owns env. */
@@ -57,17 +83,12 @@ export function spawnProcess(
   options?: SpawnOptions,
 ): ChildProcess {
   const spawnOptions = options ?? {};
-  const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
+  const invocation = resolveSpawnInvocation(command, args, spawnOptions.shell);
 
-  const shouldQuoteForShell = isWindows && shell !== false;
-  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
-
-  return spawn(resolvedCommand, resolvedArgs, {
+  return spawn(invocation.command, invocation.args, {
     ...spawnOptions,
     env: options?.env,
-    shell,
+    shell: invocation.shell,
     signal: options?.signal,
     windowsHide: true,
   });
@@ -78,13 +99,9 @@ export async function execCommand(
   args: string[],
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
-  const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, options?.shell);
-  const shouldQuoteForShell = isWindows && shell !== false;
-  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
+  const invocation = resolveSpawnInvocation(command, args, options?.shell);
 
-  return execFileAsync(resolvedCommand, resolvedArgs, {
+  return execFileAsync(invocation.command, invocation.args, {
     cwd: options?.cwd,
     env: options?.env,
     encoding: options?.encoding ?? "utf8",
@@ -92,7 +109,7 @@ export async function execCommand(
     killSignal: options?.killSignal,
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,
-    shell,
+    shell: invocation.shell,
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }

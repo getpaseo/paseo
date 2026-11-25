@@ -181,6 +181,8 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
     description: options.description,
     icon: options.icon,
     command: options.command,
+    // Each command-based session spawns its own process, so it can run behind that session's wrap.
+    ...(hasCommand ? { launchWrap: true } : {}),
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

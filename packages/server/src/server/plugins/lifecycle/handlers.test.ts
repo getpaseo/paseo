@@ -229,7 +229,7 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }, { background: 
         paseo,
       ),
     ).rejects.toThrow(
-      "agent.open.before hooks can only change env, tools, mcpServers, and appendSystemPrompt",
+      "agent.open.before hooks can only change env, tools, mcpServers, appendSystemPrompt, and wrap",
     );
   },
 );
@@ -396,5 +396,86 @@ test("session-open instructions compose, survive old hooks, and are ignored for 
     { ...input, purpose: "history" },
     paseo,
   );
+  expect(history).not.toHaveProperty("appendSystemPrompt");
+});
+
+const openInput = {
+  agentId: "agent",
+  workspaceId: null,
+  provider: "codex",
+  cwd: "/project",
+  reason: "resume",
+  purpose: "interactive",
+  env: {},
+  title: null,
+  labels: {},
+  metadata: {},
+  tools: [],
+  mcpServers: {},
+};
+
+type OpenHookResult = (request: Record<string, unknown>) => Record<string, unknown>;
+
+/** Runs `results` as successive `agent.open.before` hooks of one plugin. */
+async function invokeOpen(results: OpenHookResult[], input: Record<string, unknown> = openInput) {
+  const hooks = new PluginHookHandlers(() => {});
+  for (const result of results) {
+    hooks.addHook("agent.open.before", async ({ request }) => result(request) as never);
+  }
+  return await hooks.invoke("open", "agent.open.before", input, paseo);
+}
+
+const withWrap =
+  (...wrap: string[]): OpenHookResult =>
+  (request) => ({ ...request, wrap });
+
+test("a session-open hook can select a launch wrap", async () => {
+  expect(await invokeOpen([withWrap("/usr/local/bin/sandbox", "--profile", "a b")])).toMatchObject({
+    wrap: ["/usr/local/bin/sandbox", "--profile", "a b"],
+  });
+});
+
+test("a session-open hook result with an unknown key fails the open", async () => {
+  await expect(invokeOpen([(request) => ({ ...request, notAHookField: true })])).rejects.toThrow(
+    /notAHookField/,
+  );
+});
+
+test.each<[string, OpenHookResult, Record<string, unknown>]>([
+  [
+    "omits it",
+    ({ wrap: _wrap, ...request }) => ({ ...request, env: { LATER: "1" } }),
+    { wrap: ["/usr/local/bin/sandbox"], env: { LATER: "1" } },
+  ],
+  ["repeats it", withWrap("/usr/local/bin/sandbox"), { wrap: ["/usr/local/bin/sandbox"] }],
+])("an earlier wrap stays when a later session-open hook %s", async (_case, later, expected) => {
+  expect(await invokeOpen([withWrap("/usr/local/bin/sandbox"), later])).toMatchObject(expected);
+});
+
+test.each<[string, OpenHookResult[], string]>([
+  [
+    "a later hook returns a different wrap",
+    [withWrap("/usr/local/bin/sandbox"), withWrap("/usr/local/bin/other")],
+    "cannot change a wrap",
+  ],
+  ["the executable is relative", [withWrap("sandbox")], "must be absolute"],
+  ["the executable is empty", [withWrap("")], "must be absolute"],
+])("a session-open wrap fails the open when %s", async (_case, results, message) => {
+  await expect(invokeOpen(results)).rejects.toThrow(message);
+});
+
+test("a history open keeps the wrap while tools and MCP servers are stripped", async () => {
+  const history = await invokeOpen(
+    [
+      (request) => ({
+        ...request,
+        wrap: ["/usr/local/bin/sandbox"],
+        mcpServers: { extra: { type: "stdio", command: "/bin/server" } },
+        appendSystemPrompt: ["history"],
+      }),
+    ],
+    { ...openInput, purpose: "history" },
+  );
+  expect(history).toMatchObject({ wrap: ["/usr/local/bin/sandbox"], tools: [], mcpServers: {} });
   expect(history).not.toHaveProperty("appendSystemPrompt");
 });
