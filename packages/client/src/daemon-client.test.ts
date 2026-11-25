@@ -754,13 +754,14 @@ class DaemonClientSession {
   private readonly daemon = new FakeDaemon();
   private readonly client: DaemonClient;
 
-  constructor() {
+  constructor(options: { livenessHeartbeat?: boolean } = {}) {
     this.client = new DaemonClient({
       url: "ws://test",
       clientId: "clsk_heartbeat_test",
       logger: noopLogger,
       reconnect: { enabled: false },
       transportFactory: () => this.daemon.transport,
+      ...options,
     });
     clients.push(this.client);
   }
@@ -1127,6 +1128,7 @@ test("advertises client capabilities in hello", async () => {
     clientType: "cli",
     protocolVersion: 1,
     capabilities: {
+      agent_active_turn_behaviors: true,
       all_providers: true,
       selective_agent_timeline: true,
       timeline_replacement_invalidation: true,
@@ -1622,6 +1624,106 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   await vi.advanceTimersByTimeAsync(1);
   await expect(responsePromise).rejects.toThrow("No response to fetch_agent_request after 60000ms");
 });
+
+test.each([
+  [
+    "archive_workspace_request",
+    (client: DaemonClient) => client.archiveWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "archive_workspace_response" as const,
+      payload: {
+        requestId,
+        workspaceId: "workspace-1",
+        archivedAt: "2026-01-01T00:00:00.000Z",
+        error: null,
+      },
+    }),
+  ],
+  [
+    "paseo_worktree_archive_request",
+    (client: DaemonClient) => client.archivePaseoWorktree({ worktreePath: "/repo/worktree" }),
+    (requestId: string) => ({
+      type: "paseo_worktree_archive_response" as const,
+      payload: { requestId, success: true, removedAgents: [], error: null },
+    }),
+  ],
+  [
+    "workspace.recovery.restore.request",
+    (client: DaemonClient) => client.restoreWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.recovery.restore.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "workspace.archive.undo.request",
+    (client: DaemonClient) => client.undoWorkspaceArchive("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.archive.undo.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "open_project_request",
+    (client: DaemonClient) => client.openProject("/repo/worktree"),
+    (requestId: string) => ({
+      type: "open_project_response" as const,
+      payload: { requestId, workspace: null, error: null },
+    }),
+  ],
+  [
+    "create_paseo_worktree_request",
+    (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
+    (requestId: string) => ({
+      type: "create_paseo_worktree_response" as const,
+      payload: { requestId, workspace: null, error: null, setupTerminalId: null },
+    }),
+  ],
+] as const)(
+  "waits on %s across queued and bounded daemon stages until response or disconnect",
+  async (_type, run, buildResponse) => {
+    useHeartbeatClock();
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "worktree-lifecycle-wait-test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+
+    const connecting = client.connect();
+    transport.triggerOpen();
+    await connecting;
+
+    const pending = run(client);
+    const sentFrame = JSON.parse(assertStr(transport.sent.at(-1))) as {
+      message: { requestId: string };
+    };
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(200_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    transport.triggerMessage(wrapSessionMessage(buildResponse(sentFrame.message.requestId)));
+    await expect(pending).resolves.not.toThrow();
+
+    const disconnected = run(client);
+    transport.triggerClose({ code: 1006, reason: "gone" });
+    await expect(disconnected).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
+  },
+);
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {
   useHeartbeatClock();
@@ -3292,6 +3394,18 @@ test("starts pinging one interval after connecting and holds the cadence", async
 
   await session.advance(20_001);
   expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("a client with the liveness heartbeat off never pings on its own", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession({ livenessHeartbeat: false });
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(60_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual([]);
 });
 
 test("stops pinging once the connection is gone", async () => {
@@ -6459,6 +6573,108 @@ test("fetches scoped recent provider sessions", async () => {
   });
 });
 
+test.each([
+  {
+    scenario: "successful rows after the default RPC deadline",
+    delayMs: 61_000,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [
+        {
+          providerId: "slow-acp",
+          providerLabel: "Slow ACP",
+          providerHandleId: "slow-session",
+          cwd: "/tmp/import-listing",
+          title: "Slow provider session",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    },
+  },
+  {
+    scenario: "the server's provider timeout after ninety seconds",
+    delayMs: 90_001,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [],
+      providerErrors: [
+        {
+          provider: "slow-acp",
+          message: "Timed out listing importable sessions for provider 'slow-acp' after 90000ms",
+        },
+      ],
+    },
+  },
+])("recent provider listing receives $scenario", async ({ delayMs, payload }) => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_deadline",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const outcome = client
+    .fetchRecentProviderSessions({
+      requestId: "recent-listing-deadline",
+      providers: ["slow-acp"],
+      limit: 1,
+    })
+    .then(
+      (response) => ({ status: "success", response }),
+      (error: unknown) => ({ status: "error", error }),
+    );
+
+  await vi.advanceTimersByTimeAsync(delayMs);
+  transport.triggerMessage(
+    wrapSessionMessage({ type: "fetch_recent_provider_sessions_response", payload }),
+  );
+
+  expect(await outcome).toEqual({ status: "success", response: payload });
+  expect(client.isConnected).toBe(true);
+});
+
+test("recent provider listing still expires when the daemon never answers", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_no_response",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const errors: unknown[] = [];
+  const listing = client
+    .fetchRecentProviderSessions({ providers: ["slow-acp"] })
+    .catch((error: unknown) => {
+      errors.push(error);
+    });
+
+  await vi.advanceTimersByTimeAsync(90_001);
+  expect(errors).toEqual([]);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(errors).toEqual([
+    expect.objectContaining({
+      name: "DaemonConnectionError",
+      code: "DAEMON_REQUEST_TIMEOUT",
+    }),
+  ]);
+  await listing;
+  expect(client.isConnected).toBe(true);
+});
+
 test("imports an agent by provider handle id", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -8727,6 +8943,97 @@ test.each([false, true])(
     await send;
   },
 );
+
+describe("agent sender active-turn behaviors", () => {
+  async function connect(features: Record<string, boolean>) {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "agent-behaviors",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { agentMessageProvenance: true, ...features } });
+    await connecting;
+    return { client, transport };
+  }
+
+  function respond(
+    transport: ReturnType<typeof createMockTransport>,
+    payload: Record<string, unknown> = {},
+  ) {
+    const request = parseSentFrame(transport.sent.at(-1));
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+          ...payload,
+        },
+      }),
+    );
+    return request;
+  }
+
+  test("a capable host gets the behavior as asked and returns the applied behavior with guidance", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    const send = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "steer",
+    });
+    const request = respond(transport, {
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+    expect(request.activeTurnBehavior).toBe("steer");
+    await expect(send).resolves.toEqual({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+  });
+
+  test("an older host gets its own agent default for queue and refuses a steer", async () => {
+    const { client, transport } = await connect({});
+    const queued = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "queue",
+    });
+    const request = respond(transport, { deliveryStatus: "queued" });
+    expect("activeTurnBehavior" in request).toBe(false);
+    await expect(queued).resolves.toEqual({ deliveryStatus: "queued" });
+
+    const interrupt = client.sendAgentMessage("recipient", "stop", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "interrupt",
+    });
+    expect(respond(transport, { deliveryStatus: "queued" }).activeTurnBehavior).toBe("interrupt");
+    await interrupt;
+
+    const sentBefore = transport.sent.length;
+    await expect(
+      client.sendAgentMessage("recipient", "now", {
+        sourceAgentId: "sender",
+        activeTurnBehavior: "steer",
+      }),
+    ).rejects.toThrow("Update the Paseo host to steer a running turn from an agent");
+    expect(transport.sent).toHaveLength(sentBefore);
+  });
+
+  test("queue needs an agent sender", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    await expect(
+      client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" }),
+    ).rejects.toThrow('activeTurnBehavior "queue" needs an agent sender');
+    expect(transport.sent).toHaveLength(0);
+  });
+});
 
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
   const mock = createMockTransport();

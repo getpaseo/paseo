@@ -20,6 +20,14 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Picker trigger tooltips
+
+Keep the picker surface outside `TooltipTrigger`. React focus events bubble
+through portals, so putting the surface inside the trigger makes focus in its
+search field look like focus on the button when a shortcut opens the picker.
+For new `ComboboxTrigger` buttons, pass the hint through the `tooltip` prop. An
+explicit `TooltipTrigger` wrapper is also safe when it wraps only the button.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow
@@ -137,6 +145,22 @@ quietly relying on:
   This is why app-wide providers wrap `PortalProvider` rather than the reverse.
 
 The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
+
+### The portal patch
+
+`patches/@gorhom+portal+1.0.14.patch` moves portal state out of the provider's
+context value and into a store each `PortalHost` subscribes to. Upstream keeps
+every host's portals in one context value at the app root, so each portal mount,
+update and unmount changed that value and React searched every mounted fiber
+for consumers. That cost grows with the retained panels: a hover card took
+about 3 ms of it in a fresh window and 16 ms after a few hours. With the store,
+a portal change renders only its own host.
+
+Do not put per-overlay state in a context that wraps the app for the same
+reason. Give the consumers a store to subscribe to.
+
+The patch also keys each portal in its host (upstream PR #62). Without the key,
+closing one overlay remounted every later overlay in the same host.
 
 ## Gotcha 3 — Keyboard layout and portal anchors
 

@@ -2,7 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import React, { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { disclosureAnchor } from "./native-disclosure-hold";
 
 // The native chat timeline runs on the patched LegendList (patches/@legendapp+list+3.7.1.patch).
@@ -40,6 +40,7 @@ function wait(ms: number): Promise<void> {
 }
 
 const LIST_STYLE = { flex: 1 };
+const ESTIMATED_LIST_SIZE = { width: 300, height: VIEWPORT_HEIGHT };
 const rowStyles = new Map<number, { height: number }>();
 
 function rowStyle(height: number) {
@@ -87,6 +88,10 @@ function holdOnly(heldRowId: string) {
 
 function keyExtractor(item: Row) {
   return item.id;
+}
+
+function rowHeight(item: Row) {
+  return item.height;
 }
 
 function mountList(heldRowId: string) {
@@ -263,4 +268,143 @@ it("keeps measured row sizes while the list is not laid out", async () => {
   await wait(150);
 
   expect(rows.map((row) => list.rowSize(row.id))).toEqual([40, 40, 40]);
+});
+
+it("expands the draw distance of a placed end-anchored list without moving its bottom row", async () => {
+  const rows: Row[] = Array.from({ length: 99 }, (_, index) => ({
+    id: `row-${index}`,
+    height: index % 2 === 0 ? 20 : 60,
+  }));
+  const lastRow = { id: "last-row", height: 180 };
+  rows.push(lastRow);
+  const listRef = React.createRef<LegendListRef>();
+
+  function render(drawDistance: number) {
+    act(() => {
+      root.render(
+        <LegendList
+          ref={listRef}
+          data={rows}
+          renderItem={renderRow}
+          keyExtractor={keyExtractor}
+          estimatedListSize={ESTIMATED_LIST_SIZE}
+          recycleItems={false}
+          getEstimatedItemSize={rowHeight}
+          drawDistance={drawDistance}
+          alignItemsAtEnd
+          initialScrollAtEnd
+          style={LIST_STYLE}
+        />,
+      );
+    });
+  }
+
+  render(50);
+  await wait(300);
+  const initial = listRef.current?.getState();
+  const lastRowTop = initial?.positionByKey(lastRow.id);
+  expect(initial?.sizes.get(lastRow.id)).toBe(lastRow.height);
+  expect(initial?.sizes.size).toBeLessThan(8);
+  expect(initial?.scroll).toBe(Number(lastRowTop) + lastRow.height - VIEWPORT_HEIGHT);
+
+  render(1000);
+  await wait(150);
+
+  const expanded = listRef.current?.getState();
+  expect(expanded?.sizes.size).toBeGreaterThan(20);
+  expect(expanded?.scroll).toBe(initial?.scroll);
+  expect(expanded?.positionByKey(lastRow.id)).toBe(lastRowTop);
+});
+
+it.each([2, 4])("reveals an end-anchored list with a footer %sx the viewport", async (scale) => {
+  const rows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+    id: `row-${index}`,
+    height: 40,
+  }));
+  const footerHeight = VIEWPORT_HEIGHT * scale;
+  const listRef = React.createRef<LegendListRef>();
+  const footer = React.createElement(View, { style: rowStyle(footerHeight) });
+  const onReady = vi.fn();
+
+  act(() => {
+    root.render(
+      <LegendList
+        ref={listRef}
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={keyExtractor}
+        estimatedListSize={ESTIMATED_LIST_SIZE}
+        getEstimatedItemSize={rowHeight}
+        drawDistance={50}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        ListFooterComponent={footer}
+        onReady={onReady}
+        style={LIST_STYLE}
+      />,
+    );
+  });
+  await expect
+    .poll(async () => {
+      await wait(16);
+      return onReady.mock.calls.length;
+    })
+    .toBe(1);
+  expect(listRef.current?.getState().scroll).toBe(
+    rows.length * 40 + footerHeight - VIEWPORT_HEIGHT,
+  );
+});
+
+const END_PADDED_CONTENT_STYLE = { paddingBottom: 125 };
+
+it("reveals buffered rows when the scroll view takes over initial end positioning", () => {
+  const rowSize = 40;
+  const rows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+    id: `row-${index}`,
+    height: rowSize,
+  }));
+  const listRef = React.createRef<LegendListRef>();
+  const onReady = vi.fn();
+
+  act(() => {
+    root.render(
+      <LegendList
+        ref={listRef}
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={keyExtractor}
+        estimatedListSize={ESTIMATED_LIST_SIZE}
+        getFixedItemSize={rowHeight}
+        drawDistance={120}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        contentContainerStyle={END_PADDED_CONTENT_STYLE}
+        onReady={onReady}
+        style={LIST_STYLE}
+      />,
+    );
+  });
+  const list = listRef.current;
+  if (!list) throw new Error("The list did not mount");
+  const scroller: unknown = list.getScrollableNode();
+  if (!(scroller instanceof HTMLElement)) throw new Error("The list has no scroll element");
+  const endOffset =
+    rows.length * rowSize + END_PADDED_CONTENT_STYLE.paddingBottom - VIEWPORT_HEIGHT;
+
+  act(() => {
+    // Deliver the scroll view's observed end offset before canceling the list's initial scroll.
+    // Keep both calls in one task so a later layout pass cannot complete the reveal for them.
+    scroller.scrollTop = endOffset;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(onReady).not.toHaveBeenCalled();
+    list.cancelScroll();
+  });
+  const state = list.getState();
+  expect(state.scroll).toBe(endOffset);
+  expect(state.start).toBeNull();
+  expect(state.endBuffered).toBe(rows.length - 1);
+  expect(state.sizeAtIndex(rows.length - 1)).toBe(rowSize);
+  expect(onReady).toHaveBeenCalledTimes(1);
 });

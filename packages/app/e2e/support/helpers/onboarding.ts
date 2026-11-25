@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
+import { addProjectFlow, addProjectFlowInput, expectAddProjectTab } from "./add-project-flow";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
@@ -86,6 +86,17 @@ export function setupModal(page: Page): Locator {
   return page.getByTestId("onboarding-modal").getByRole("dialog");
 }
 
+/** A sheet opened from a setup step, which should sit exactly on the setup card. */
+export function setupSheet(page: Page, testID: "provider-settings-sheet" | "add-provider-sheet") {
+  return page.getByTestId(testID).getByRole("dialog");
+}
+
+export async function expectSheetCoversSetupCard(page: Page, sheet: Locator): Promise<void> {
+  await expect(sheet).toBeVisible();
+  const card = await setupModal(page).boundingBox();
+  await expect.poll(() => sheet.boundingBox()).toEqual(card);
+}
+
 export async function expectSetupStep(page: Page, title: string): Promise<void> {
   await expect(setupModal(page).getByRole("heading", { name: title, exact: true })).toBeVisible({
     timeout: 60_000,
@@ -111,7 +122,7 @@ export async function skipSetup(page: Page): Promise<void> {
 export async function addProjectFromSetup(page: Page, projectPath: string): Promise<void> {
   await setupModal(page).getByRole("button", { name: "Add project", exact: true }).click();
   await expect(addProjectFlow(page)).toBeVisible({ timeout: 30_000 });
-  await chooseAddProjectMethod(page, "directory-search");
+  await expectAddProjectTab(page, "existing");
   await addProjectFlowInput(page).fill(projectPath);
   await page.keyboard.press("Enter");
   await expect(addProjectFlow(page)).toHaveCount(0, { timeout: 30_000 });
@@ -185,7 +196,7 @@ export interface SetupHost {
 /**
  * An isolated host whose only agent history is the Claude sessions given here, so suggestions
  * never depend on the machine running the test. Its HOME is a scratch folder, so the skills setup
- * installs never land in the real ~/.agents, ~/.claude or ~/.codex. `withBrokenProvider` adds a
+ * installs never land in the real ~/.agents, ~/.claude, ~/.codex, or ~/.gemini/config. `withBrokenProvider` adds a
  * provider that cannot start.
  */
 export async function startSetupHost(

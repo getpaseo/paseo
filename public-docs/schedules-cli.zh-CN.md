@@ -8,7 +8,7 @@ nav: CLI
 
 `paseo schedule` 在终端中创建和管理新建 Agent 的[定时任务](/docs/schedules)，适用于无界面的机器和脚本。每次运行都会启动一个新的 Agent。
 
-默认情况下，每次运行结束时都会归档其工作区。CLI 没有 **Archive on finish** 参数；要让之后的运行工作区保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-workspaces)。
+默认情况下，每次运行结束时都会归档其工作区。向 `paseo schedule create` 或 `paseo schedule update` 传入 `--no-archive-on-finish`，即可[让之后的运行工作区保持活跃](/docs/schedules#keep-run-workspaces)；它对应应用中的 **Archive on finish** 选项。
 
 ## 创建 {#create}
 
@@ -94,6 +94,7 @@ paseo schedule pause <id>
 paseo schedule resume <id>
 paseo schedule run-once <id>
 paseo schedule update <id> --every 10m --max-runs 6
+paseo schedule update <id> --no-archive-on-finish
 paseo schedule delete <id>
 ```
 

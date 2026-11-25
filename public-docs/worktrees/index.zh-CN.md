@@ -40,9 +40,18 @@ worktree 默认存放在 `$PASEO_HOME/worktrees/` 下，按源检出路径的哈
 3. 对照基础分支审查 diff
 4. 合并或归档该工作区；使用该 worktree 的最后一个工作区被归档后，Paseo 会运行 teardown 并删除 worktree
 
-定时任务的运行默认会在结束时归档其工作区。在定时任务的应用表单中关闭 **Archive on finish**，即可[保留运行工作区](/docs/schedules#keep-run-workspaces)及其 worktree，直到你手动归档。
+定时任务的运行默认会在结束时归档其工作区。关闭 **Archive on finish**，即可[保留运行工作区](/docs/schedules#keep-run-workspaces)及其 worktree，直到你手动归档。
 
 ## 创建由 worktree 支撑的工作区 {#create-a-worktree-backed-workspace}
+
+在应用中，将 **隔离** 设为 **新建 worktree**，然后选择一个分支或 Pull Request。在列表旁边选择新 worktree 如何处理你的选择：
+
+- **新建分支** 从它创建一个新分支。分支默认使用这个选项。
+- **检出** 直接在该分支上工作。Pull Request 默认使用这个选项。
+
+从 Pull Request 新建分支时，新分支从 Pull Request 的最新提交开始，并且没有上游分支。推送不会进入 Pull Request 的分支。工作区的基础分支是 Pull Request 的分支。对于来自 fork 的 Pull Request，基础分支是该 Pull Request 要合并进的分支。
+
+Git 同一时间只允许一个 worktree 检出某个分支。如果你检出的分支已经在某个 worktree 中，Paseo 会在 **已有 worktree** 下选中那个 worktree，而不是再复制一份。
 
 下面的示例以当前目录作为源检出。传入 `--path ~/dev/my-app` 可以从另一个检出创建工作区。
 
@@ -79,6 +88,16 @@ paseo workspace create \
 ```
 
 当 Paseo 无法从源检出推断代码托管平台时，添加 `--forge <name>`。
+
+## 在已有 worktree 中工作 {#work-in-an-existing-worktree}
+
+要在磁盘上已有的 worktree 中继续工作，将 **隔离** 设为 **已有 worktree** 并选择它。列表显示仓库的所有 git worktree，包括你用 `git worktree add` 创建的。工作区沿用该 worktree 当前检出的分支。Paseo 不会创建分支，也不会运行 setup。
+
+在 CLI 中，在该 worktree 的目录上创建一个本地工作区：
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app-feature
+```
 
 ## 使用 .worktreeinclude 复制本地文件 {#copy-local-files-with-worktreeinclude}
 

@@ -49,7 +49,7 @@ paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 
 ## Paseo 中继 {#paseo-relay}
 
-中继无需 Tailscale、端口转发或网络配置即可工作。流量是端到端加密的。
+中继无需 Tailscale、端口转发或网络配置即可工作。流量经过[端到端加密](/docs/security)。
 
 在你启用之前，中继是关闭的。
 

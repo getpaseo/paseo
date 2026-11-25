@@ -1,3 +1,11 @@
+---
+title: Build a sidebar view
+description: Replace the content of Paseo's sidebar with your own React Native view.
+nav: Sidebar views
+order: 47
+category: Plugins
+---
+
 # Build a sidebar view
 
 A sidebar view replaces the content between Paseo's header and footer. You receive theme tokens,
@@ -108,8 +116,12 @@ Existing workspace panels can continue passing a host-local string ID to `useWor
 `serverId`, `label` and connection `status` fields.
 
 Workspace snapshots include `project`, `pinnedAt`, `labels`, `background`, `branch`,
-`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). Use `indicator` and the
-localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
+`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). `parentWorkspace` is the ref
+of the workspace whose agent created this one, on the same host. The app requires Paseo 0.18.
+It is null when the host records no parent, as for root workspaces. The parent may be archived, so `useWorkspace` can
+return null for it. Nest dispatched workspaces with
+`useWorkspaces({ where: (item) => item.parentWorkspace?.key === reference.key })`. Use
+`indicator` and the localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
 status. Agent snapshots include their workspace and parent refs, `background`, and
 `backgroundWork.count`. Project snapshots provide
 `displayName`, `rootPath`, `kind` and `iconRevision`.

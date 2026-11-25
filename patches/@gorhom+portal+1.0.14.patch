@@ -1,0 +1,468 @@
+diff --git a/node_modules/@gorhom/portal/lib/commonjs/components/portalHost/PortalHost.js b/node_modules/@gorhom/portal/lib/commonjs/components/portalHost/PortalHost.js
+index 72ba2a7..e2f32a5 100644
+--- a/node_modules/@gorhom/portal/lib/commonjs/components/portalHost/PortalHost.js
++++ b/node_modules/@gorhom/portal/lib/commonjs/components/portalHost/PortalHost.js
+@@ -34,7 +34,11 @@ const PortalHostComponent = ({
+   }, []); //#endregion
+   //#region render
+ 
+-  return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, state.map(item => item.node)); //#endregion
++  // Backport of https://github.com/gorhom/react-native-portal/pull/62: without a key, removing a
++  // portal shifts the ones after it and React remounts them.
++  return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, state.map(item => /*#__PURE__*/_react.default.createElement(_react.default.Fragment, {
++    key: item.name
++  }, item.node))); //#endregion
+ };
+ 
+ const PortalHost = /*#__PURE__*/(0, _react.memo)(PortalHostComponent);
+diff --git a/node_modules/@gorhom/portal/lib/commonjs/components/portalProvider/PortalProvider.js b/node_modules/@gorhom/portal/lib/commonjs/components/portalProvider/PortalProvider.js
+index 3b2a494..af6616e 100644
+--- a/node_modules/@gorhom/portal/lib/commonjs/components/portalProvider/PortalProvider.js
++++ b/node_modules/@gorhom/portal/lib/commonjs/components/portalProvider/PortalProvider.js
+@@ -11,9 +11,7 @@ var _PortalHost = require("../portalHost/PortalHost");
+ 
+ var _portal = require("../../contexts/portal");
+ 
+-var _constants = require("../../state/constants");
+-
+-var _reducer = require("../../state/reducer");
++var _store = require("../../state/store");
+ 
+ function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
+ 
+@@ -24,11 +22,11 @@ const PortalProviderComponent = ({
+   shouldAddRootHost = true,
+   children
+ }) => {
+-  const [state, dispatch] = (0, _react.useReducer)(_reducer.reducer, _constants.INITIAL_STATE);
++  const [store] = (0, _react.useState)(_store.createPortalStore);
+   return /*#__PURE__*/_react.default.createElement(_portal.PortalDispatchContext.Provider, {
+-    value: dispatch
++    value: store.dispatch
+   }, /*#__PURE__*/_react.default.createElement(_portal.PortalStateContext.Provider, {
+-    value: state
++    value: store
+   }, children, shouldAddRootHost && /*#__PURE__*/_react.default.createElement(_PortalHost.PortalHost, {
+     name: rootHostName
+   })));
+diff --git a/node_modules/@gorhom/portal/lib/commonjs/hooks/usePortalState.js b/node_modules/@gorhom/portal/lib/commonjs/hooks/usePortalState.js
+index 7a18089..77a8e24 100644
+--- a/node_modules/@gorhom/portal/lib/commonjs/hooks/usePortalState.js
++++ b/node_modules/@gorhom/portal/lib/commonjs/hooks/usePortalState.js
+@@ -10,13 +10,15 @@ var _react = require("react");
+ var _portal = require("../contexts/portal");
+ 
+ const usePortalState = hostName => {
+-  const state = (0, _react.useContext)(_portal.PortalStateContext);
++  const store = (0, _react.useContext)(_portal.PortalStateContext);
+ 
+-  if (state === null) {
++  if (store === null) {
+     throw new Error("'PortalStateContext' cannot be null, please add 'PortalProvider' to the root component.");
+   }
+ 
+-  return state[hostName] || [];
++  const getPortals = () => store.getPortals(hostName);
++
++  return (0, _react.useSyncExternalStore)(store.subscribe, getPortals, getPortals);
+ };
+ 
+ exports.usePortalState = usePortalState;
+diff --git a/node_modules/@gorhom/portal/lib/commonjs/state/reducer.js b/node_modules/@gorhom/portal/lib/commonjs/state/reducer.js
+index 158e729..cd50661 100644
+--- a/node_modules/@gorhom/portal/lib/commonjs/state/reducer.js
++++ b/node_modules/@gorhom/portal/lib/commonjs/state/reducer.js
+@@ -31,17 +31,15 @@ const addUpdatePortal = (state, hostName, portalName, node) => {
+    */
+ 
+ 
+-  const index = state[hostName].findIndex(item => item.name === portalName);
+-
+-  if (index !== -1) {
+-    state[hostName][index].node = node;
+-  } else {
+-    state[hostName].push({
+-      name: portalName,
+-      node
+-    });
+-  }
+-
++  // Paseo patch: a changed host gets a new array, so the store can hand each host its own
++  // snapshot and only the host whose portals changed renders.
++  const portals = state[hostName];
++  const index = portals.findIndex(item => item.name === portalName);
++  const portal = {
++    name: portalName,
++    node
++  };
++  state[hostName] = index !== -1 ? portals.map(item => item.name === portalName ? portal : item) : [...portals, portal];
+   return state;
+ };
+ 
+@@ -56,7 +54,11 @@ const removePortal = (state, hostName, portalName) => {
+   }
+ 
+   const index = state[hostName].findIndex(item => item.name === portalName);
+-  if (index !== -1) state[hostName].splice(index, 1);
++
++  if (index !== -1) {
++    state[hostName] = state[hostName].filter(item => item.name !== portalName);
++  }
++
+   return state;
+ };
+ 
+diff --git a/node_modules/@gorhom/portal/lib/commonjs/state/store.js b/node_modules/@gorhom/portal/lib/commonjs/state/store.js
+new file mode 100644
+index 0000000..0da9a5c
+--- /dev/null
++++ b/node_modules/@gorhom/portal/lib/commonjs/state/store.js
+@@ -0,0 +1,34 @@
++"use strict";
++
++Object.defineProperty(exports, "__esModule", {
++  value: true
++});
++exports.createPortalStore = void 0;
++
++var _constants = require("./constants");
++
++var _reducer = require("./reducer");
++
++const NO_PORTALS = [];
++// Paseo patch: portal state lives in a store, outside React state. Held in the provider's context
++// value it changed on every portal add, update and remove, and React then walked every fiber under
++// the provider (the whole app) to find the hosts consuming it. Hosts subscribe here instead.
++const createPortalStore = () => {
++  let state = _constants.INITIAL_STATE;
++  const listeners = new Set();
++  return {
++    getPortals: hostName => state[hostName] || NO_PORTALS,
++    dispatch: action => {
++      state = (0, _reducer.reducer)(state, action);
++      listeners.forEach(listener => listener());
++    },
++    subscribe: listener => {
++      listeners.add(listener);
++      return () => {
++        listeners.delete(listener);
++      };
++    }
++  };
++};
++
++exports.createPortalStore = createPortalStore;
+diff --git a/node_modules/@gorhom/portal/lib/module/components/portalHost/PortalHost.js b/node_modules/@gorhom/portal/lib/module/components/portalHost/PortalHost.js
+index d22cc16..e492b4b 100644
+--- a/node_modules/@gorhom/portal/lib/module/components/portalHost/PortalHost.js
++++ b/node_modules/@gorhom/portal/lib/module/components/portalHost/PortalHost.js
+@@ -21,7 +21,11 @@ const PortalHostComponent = ({
+   }, []); //#endregion
+   //#region render
+ 
+-  return /*#__PURE__*/React.createElement(React.Fragment, null, state.map(item => item.node)); //#endregion
++  // Backport of https://github.com/gorhom/react-native-portal/pull/62: without a key, removing a
++  // portal shifts the ones after it and React remounts them.
++  return /*#__PURE__*/React.createElement(React.Fragment, null, state.map(item => /*#__PURE__*/React.createElement(React.Fragment, {
++    key: item.name
++  }, item.node))); //#endregion
+ };
+ 
+ export const PortalHost = /*#__PURE__*/memo(PortalHostComponent);
+diff --git a/node_modules/@gorhom/portal/lib/module/components/portalProvider/PortalProvider.js b/node_modules/@gorhom/portal/lib/module/components/portalProvider/PortalProvider.js
+index 522a08a..d2e07b6 100644
+--- a/node_modules/@gorhom/portal/lib/module/components/portalProvider/PortalProvider.js
++++ b/node_modules/@gorhom/portal/lib/module/components/portalProvider/PortalProvider.js
+@@ -1,19 +1,18 @@
+-import React, { memo, useReducer } from 'react';
++import React, { memo, useState } from 'react';
+ import { PortalHost } from '../portalHost/PortalHost';
+ import { PortalDispatchContext, PortalStateContext } from '../../contexts/portal';
+-import { INITIAL_STATE } from '../../state/constants';
+-import { reducer } from '../../state/reducer';
++import { createPortalStore } from '../../state/store';
+ 
+ const PortalProviderComponent = ({
+   rootHostName = 'root',
+   shouldAddRootHost = true,
+   children
+ }) => {
+-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
++  const [store] = useState(createPortalStore);
+   return /*#__PURE__*/React.createElement(PortalDispatchContext.Provider, {
+-    value: dispatch
++    value: store.dispatch
+   }, /*#__PURE__*/React.createElement(PortalStateContext.Provider, {
+-    value: state
++    value: store
+   }, children, shouldAddRootHost && /*#__PURE__*/React.createElement(PortalHost, {
+     name: rootHostName
+   })));
+diff --git a/node_modules/@gorhom/portal/lib/module/hooks/usePortalState.js b/node_modules/@gorhom/portal/lib/module/hooks/usePortalState.js
+index c82cc71..daee3ac 100644
+--- a/node_modules/@gorhom/portal/lib/module/hooks/usePortalState.js
++++ b/node_modules/@gorhom/portal/lib/module/hooks/usePortalState.js
+@@ -1,12 +1,14 @@
+-import { useContext } from 'react';
++import { useContext, useSyncExternalStore } from 'react';
+ import { PortalStateContext } from '../contexts/portal';
+ export const usePortalState = hostName => {
+-  const state = useContext(PortalStateContext);
++  const store = useContext(PortalStateContext);
+ 
+-  if (state === null) {
++  if (store === null) {
+     throw new Error("'PortalStateContext' cannot be null, please add 'PortalProvider' to the root component.");
+   }
+ 
+-  return state[hostName] || [];
++  const getPortals = () => store.getPortals(hostName);
++
++  return useSyncExternalStore(store.subscribe, getPortals, getPortals);
+ };
+ //# sourceMappingURL=usePortalState.js.map
+\ No newline at end of file
+diff --git a/node_modules/@gorhom/portal/lib/module/state/reducer.js b/node_modules/@gorhom/portal/lib/module/state/reducer.js
+index cad5f28..51f7124 100644
+--- a/node_modules/@gorhom/portal/lib/module/state/reducer.js
++++ b/node_modules/@gorhom/portal/lib/module/state/reducer.js
+@@ -23,17 +23,15 @@ const addUpdatePortal = (state, hostName, portalName, node) => {
+    */
+ 
+ 
+-  const index = state[hostName].findIndex(item => item.name === portalName);
+-
+-  if (index !== -1) {
+-    state[hostName][index].node = node;
+-  } else {
+-    state[hostName].push({
+-      name: portalName,
+-      node
+-    });
+-  }
+-
++  // Paseo patch: a changed host gets a new array, so the store can hand each host its own
++  // snapshot and only the host whose portals changed renders.
++  const portals = state[hostName];
++  const index = portals.findIndex(item => item.name === portalName);
++  const portal = {
++    name: portalName,
++    node
++  };
++  state[hostName] = index !== -1 ? portals.map(item => item.name === portalName ? portal : item) : [...portals, portal];
+   return state;
+ };
+ 
+@@ -48,7 +46,11 @@ const removePortal = (state, hostName, portalName) => {
+   }
+ 
+   const index = state[hostName].findIndex(item => item.name === portalName);
+-  if (index !== -1) state[hostName].splice(index, 1);
++
++  if (index !== -1) {
++    state[hostName] = state[hostName].filter(item => item.name !== portalName);
++  }
++
+   return state;
+ };
+ 
+diff --git a/node_modules/@gorhom/portal/lib/module/state/store.js b/node_modules/@gorhom/portal/lib/module/state/store.js
+new file mode 100644
+index 0000000..2c94075
+--- /dev/null
++++ b/node_modules/@gorhom/portal/lib/module/state/store.js
+@@ -0,0 +1,23 @@
++import { INITIAL_STATE } from './constants';
++import { reducer } from './reducer';
++const NO_PORTALS = [];
++// Paseo patch: portal state lives in a store, outside React state. Held in the provider's context
++// value it changed on every portal add, update and remove, and React then walked every fiber under
++// the provider (the whole app) to find the hosts consuming it. Hosts subscribe here instead.
++export const createPortalStore = () => {
++  let state = INITIAL_STATE;
++  const listeners = new Set();
++  return {
++    getPortals: hostName => state[hostName] || NO_PORTALS,
++    dispatch: action => {
++      state = reducer(state, action);
++      listeners.forEach(listener => listener());
++    },
++    subscribe: listener => {
++      listeners.add(listener);
++      return () => {
++        listeners.delete(listener);
++      };
++    }
++  };
++};
+diff --git a/node_modules/@gorhom/portal/src/components/portalHost/PortalHost.tsx b/node_modules/@gorhom/portal/src/components/portalHost/PortalHost.tsx
+index 62a2103..699765e 100644
+--- a/node_modules/@gorhom/portal/src/components/portalHost/PortalHost.tsx
++++ b/node_modules/@gorhom/portal/src/components/portalHost/PortalHost.tsx
+@@ -20,7 +20,15 @@ const PortalHostComponent = ({ name }: PortalHostProps) => {
+   //#endregion
+ 
+   //#region render
+-  return <>{state.map(item => item.node)}</>;
++  // Backport of https://github.com/gorhom/react-native-portal/pull/62: without a key, removing a
++  // portal shifts the ones after it and React remounts them.
++  return (
++    <>
++      {state.map(item => (
++        <React.Fragment key={item.name}>{item.node}</React.Fragment>
++      ))}
++    </>
++  );
+   //#endregion
+ };
+ 
+diff --git a/node_modules/@gorhom/portal/src/components/portalProvider/PortalProvider.tsx b/node_modules/@gorhom/portal/src/components/portalProvider/PortalProvider.tsx
+index 8350171..f91273a 100644
+--- a/node_modules/@gorhom/portal/src/components/portalProvider/PortalProvider.tsx
++++ b/node_modules/@gorhom/portal/src/components/portalProvider/PortalProvider.tsx
+@@ -1,11 +1,10 @@
+-import React, { memo, useReducer } from 'react';
++import React, { memo, useState } from 'react';
+ import { PortalHost } from '../portalHost/PortalHost';
+ import {
+   PortalDispatchContext,
+   PortalStateContext,
+ } from '../../contexts/portal';
+-import { INITIAL_STATE } from '../../state/constants';
+-import { reducer } from '../../state/reducer';
++import { createPortalStore } from '../../state/store';
+ import type { PortalProviderProps } from './types';
+ 
+ const PortalProviderComponent = ({
+@@ -13,10 +12,10 @@ const PortalProviderComponent = ({
+   shouldAddRootHost = true,
+   children,
+ }: PortalProviderProps) => {
+-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
++  const [store] = useState(createPortalStore);
+   return (
+-    <PortalDispatchContext.Provider value={dispatch}>
+-      <PortalStateContext.Provider value={state}>
++    <PortalDispatchContext.Provider value={store.dispatch}>
++      <PortalStateContext.Provider value={store}>
+         {children}
+         {shouldAddRootHost && <PortalHost name={rootHostName} />}
+       </PortalStateContext.Provider>
+diff --git a/node_modules/@gorhom/portal/src/contexts/portal.ts b/node_modules/@gorhom/portal/src/contexts/portal.ts
+index 2e3a46f..85ff020 100644
+--- a/node_modules/@gorhom/portal/src/contexts/portal.ts
++++ b/node_modules/@gorhom/portal/src/contexts/portal.ts
+@@ -1,10 +1,7 @@
+ import { createContext } from 'react';
++import type { PortalStore } from '../state/store';
+ import type { ActionTypes } from '../state/types';
+-import type { PortalType } from '../types';
+ 
+-export const PortalStateContext = createContext<Record<
+-  string,
+-  Array<PortalType>
+-> | null>(null);
++export const PortalStateContext = createContext<PortalStore | null>(null);
+ export const PortalDispatchContext =
+   createContext<React.Dispatch<ActionTypes> | null>(null);
+diff --git a/node_modules/@gorhom/portal/src/hooks/usePortalState.ts b/node_modules/@gorhom/portal/src/hooks/usePortalState.ts
+index 64bb180..d9877c3 100644
+--- a/node_modules/@gorhom/portal/src/hooks/usePortalState.ts
++++ b/node_modules/@gorhom/portal/src/hooks/usePortalState.ts
+@@ -1,14 +1,16 @@
+-import { useContext } from 'react';
++import { useContext, useSyncExternalStore } from 'react';
+ import { PortalStateContext } from '../contexts/portal';
+ 
+ export const usePortalState = (hostName: string) => {
+-  const state = useContext(PortalStateContext);
++  const store = useContext(PortalStateContext);
+ 
+-  if (state === null) {
++  if (store === null) {
+     throw new Error(
+       "'PortalStateContext' cannot be null, please add 'PortalProvider' to the root component."
+     );
+   }
+ 
+-  return state[hostName] || [];
++  const getPortals = () => store.getPortals(hostName);
++
++  return useSyncExternalStore(store.subscribe, getPortals, getPortals);
+ };
+diff --git a/node_modules/@gorhom/portal/src/state/reducer.ts b/node_modules/@gorhom/portal/src/state/reducer.ts
+index 37f2414..1370244 100644
+--- a/node_modules/@gorhom/portal/src/state/reducer.ts
++++ b/node_modules/@gorhom/portal/src/state/reducer.ts
+@@ -38,15 +38,15 @@ const addUpdatePortal = (
+   /**
+    * updated portal, if it was already added.
+    */
+-  const index = state[hostName].findIndex(item => item.name === portalName);
+-  if (index !== -1) {
+-    state[hostName][index].node = node;
+-  } else {
+-    state[hostName].push({
+-      name: portalName,
+-      node,
+-    });
+-  }
++  // Paseo patch: a changed host gets a new array, so the store can hand each host its own
++  // snapshot and only the host whose portals changed renders.
++  const portals = state[hostName];
++  const index = portals.findIndex(item => item.name === portalName);
++  const portal = { name: portalName, node };
++  state[hostName] =
++    index !== -1
++      ? portals.map(item => (item.name === portalName ? portal : item))
++      : [...portals, portal];
+   return state;
+ };
+ 
+@@ -65,7 +65,9 @@ const removePortal = (
+   }
+ 
+   const index = state[hostName].findIndex(item => item.name === portalName);
+-  if (index !== -1) state[hostName].splice(index, 1);
++  if (index !== -1) {
++    state[hostName] = state[hostName].filter(item => item.name !== portalName);
++  }
+   return state;
+ };
+ 
+diff --git a/node_modules/@gorhom/portal/src/state/store.ts b/node_modules/@gorhom/portal/src/state/store.ts
+new file mode 100644
+index 0000000..4acf035
+--- /dev/null
++++ b/node_modules/@gorhom/portal/src/state/store.ts
+@@ -0,0 +1,30 @@
++import { INITIAL_STATE } from './constants';
++import { reducer } from './reducer';
++import type { PortalType } from '../types';
++import type { ActionTypes } from './types';
++
++const NO_PORTALS: Array<PortalType> = [];
++
++// Paseo patch: portal state lives in a store, outside React state. Held in the provider's context
++// value it changed on every portal add, update and remove, and React then walked every fiber under
++// the provider (the whole app) to find the hosts consuming it. Hosts subscribe here instead.
++export const createPortalStore = () => {
++  let state: Record<string, Array<PortalType>> = INITIAL_STATE;
++  const listeners = new Set<() => void>();
++
++  return {
++    getPortals: (hostName: string) => state[hostName] || NO_PORTALS,
++    dispatch: (action: ActionTypes) => {
++      state = reducer(state, action);
++      listeners.forEach(listener => listener());
++    },
++    subscribe: (listener: () => void) => {
++      listeners.add(listener);
++      return () => {
++        listeners.delete(listener);
++      };
++    },
++  };
++};
++
++export type PortalStore = ReturnType<typeof createPortalStore>;

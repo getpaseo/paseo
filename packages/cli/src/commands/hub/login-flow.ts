@@ -40,7 +40,7 @@ interface CliLoginFlowOptions {
   hub: Pick<HubHttpClient, "startCliAuthorization" | "pollCliAuthorization">;
   waiter: LoginWaiter;
   browser: BrowserOpener;
-  instructions(verificationUri: string, userCode: string): void;
+  instructions(message: string): void;
   openBrowser: boolean;
 }
 
@@ -49,7 +49,9 @@ export class CliLoginFlow {
 
   async authorize(origin: string): Promise<string> {
     const authorization = await this.options.hub.startCliAuthorization(origin);
-    this.options.instructions(authorization.verificationUri, authorization.userCode);
+    this.options.instructions(
+      `Open ${authorization.verificationUriComplete} to approve CLI login (code: ${authorization.userCode})`,
+    );
     if (this.options.openBrowser) {
       await this.options.browser.open(authorization.verificationUriComplete).catch(() => undefined);
     }
@@ -84,8 +86,8 @@ export function createCliLoginFlow(hub: HubHttpClient): CliLoginFlow {
       now: Date.now,
     },
     browser: new SystemBrowser(),
-    instructions(verificationUri, userCode) {
-      process.stderr.write(`Open ${verificationUri} and enter code ${userCode}\n`);
+    instructions(message) {
+      process.stderr.write(`${message}\n`);
     },
     openBrowser: process.stderr.isTTY === true,
   });

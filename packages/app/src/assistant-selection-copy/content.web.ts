@@ -2,19 +2,23 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import {
   createCodeClipboardContent,
-  createMarkdownClipboardContent,
+  createSelectionClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
+  MARKDOWN_ADMONITION_TITLE_ATTRIBUTE,
+  MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,
   MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
+  MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
+  MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
 } from "./markup";
@@ -56,40 +60,126 @@ function copySemanticAttributes(original: Element, copy: Element): void {
   }
 }
 
-const turndown = new TurndownService({
-  bulletListMarker: "-",
-  codeBlockStyle: "fenced",
-  emDelimiter: "_",
-  strongDelimiter: "**",
-});
-turndown.use(gfm);
-turndown.addRule("escapedGfmTableCell", {
-  filter: ["th", "td"],
-  replacement: (content, node) => {
-    const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
-    const prefix = index === 0 ? "| " : " ";
-    return `${prefix}${content.replace(/\|/g, "\\|")} |`;
-  },
-});
-turndown.addRule("gfmStrikethrough", {
-  filter: ["del", "s"],
-  replacement: (content) => `~~${content}~~`,
-});
-turndown.addRule("compactListItem", {
-  filter: "li",
-  replacement: (content, node, options) => {
-    const item = content
-      .replace(/^\n+/, "")
-      .replace(/\n+$/, "\n")
-      // Every non-empty line, so indented code lines stay inside the item.
-      .replace(/\n(?=[^\n])/g, "\n    ");
-    const parent = node.parentElement;
-    if (parent?.nodeName !== "OL") {
-      return `${options.bulletListMarker} ${item}\n`;
-    }
-    return `${node.getAttribute("value")}. ${item}\n`;
-  },
-});
+function createTurndown(flavor: "markdown" | "plain"): TurndownService {
+  const turndown = new TurndownService({
+    bulletListMarker: "-",
+    codeBlockStyle: "fenced",
+    emDelimiter: "_",
+    strongDelimiter: "**",
+  });
+  turndown.use(gfm);
+  // text/plain still carries tables as GFM syntax, so a cell's pipe stays escaped there.
+  turndown.addRule("escapedGfmTableCell", {
+    filter: ["th", "td"],
+    replacement: (content, node) => {
+      const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
+      const prefix = index === 0 ? "| " : " ";
+      return `${prefix}${content.replace(/\|/g, "\\|")} |`;
+    },
+  });
+  // A link Paseo recognized pastes as the text the reply showed. Rich paste keeps it as a
+  // link when it points to a web page, such as a forge reference.
+  turndown.addRule("recognizedLink", {
+    filter: (node) =>
+      node.nodeName === "A" &&
+      node.hasAttribute(MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE) &&
+      (flavor === "plain" || !isWebUrl(node.getAttribute("href") ?? "")),
+    replacement: (content) => content,
+  });
+  if (flavor === "markdown") {
+    // Turndown leaves `<` unescaped, so displayed text such as `<http://localhost>`
+    // would render back into text/html as an autolink.
+    const escapeMarkdown = turndown.escape.bind(turndown);
+    turndown.escape = (text) => escapeMarkdown(text).replace(/</g, "\\<");
+  } else {
+    turndown.escape = (text) => text;
+  }
+  // An admonition copies as its `> [!TYPE]` source.
+  turndown.addRule("admonition", {
+    filter: (node) => node.hasAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE),
+    replacement: (content, node) => {
+      const type = (node as Element)
+        .getAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE)!
+        .toUpperCase();
+      const body = content.replace(/^\n+|\n+$/g, "");
+      return `\n\n${`[!${type}]\n${body}`.replace(/^/gm, "> ")}\n\n`;
+    },
+  });
+  turndown.addRule("gfmStrikethrough", {
+    filter: ["del", "s"],
+    replacement: (content) => `~~${content}~~`,
+  });
+  turndown.addRule("compactListItem", {
+    filter: "li",
+    replacement: (content, node, options) => {
+      const item = content
+        .replace(/^\n+/, "")
+        .replace(/\n+$/, "\n")
+        // Every non-empty line, so indented code lines stay inside the item.
+        .replace(/\n(?=[^\n])/g, "\n    ");
+      const parent = node.parentElement;
+      if (parent?.nodeName !== "OL") {
+        return `${options.bulletListMarker} ${item}\n`;
+      }
+      return `${node.getAttribute("value")}. ${item}\n`;
+    },
+  });
+  return turndown;
+}
+
+function isWebUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
+const markdownTurndown = createTurndown("markdown");
+const plainTurndown = createTurndown("plain");
+
+/**
+ * A fence rendered as something other than its code, such as a Mermaid diagram, carries
+ * its source in an attribute. Put the code block back so the fence is what gets copied.
+ */
+function restoreFenceSources(container: Element): void {
+  for (const region of container.querySelectorAll(`[${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}]`)) {
+    const source = region.getAttribute(MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE);
+    if (source === null) continue;
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    const language = region.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
+    if (language) code.className = `language-${language}`;
+    code.textContent = source;
+    pre.append(code);
+    region.replaceWith(pre);
+  }
+}
+
+/**
+ * Clipboard payload for everything inside `element`, without the element's own syntax:
+ * a quote's body carries no `>` prefix. Null when there is nothing to copy.
+ */
+export function createElementClipboardContent(element: Element): MarkdownClipboardContent | null {
+  const container = document.createElement("div");
+  container.append(...Array.from(element.childNodes, (child) => child.cloneNode(true)));
+  const originals = element.querySelectorAll("*");
+  const copies = container.querySelectorAll("*");
+  originals.forEach((original, index) => copySemanticAttributes(original, copies[index]!));
+  restoreFenceSources(container);
+  restoreAdmonitions(container);
+  restoreMarkdownElements(container);
+  return clipboardContentFromMarkup(container);
+}
+
+function clipboardContentFromMarkup(container: HTMLElement): MarkdownClipboardContent | null {
+  const markdown = markdownTurndown.turndown(container).trim();
+  if (!markdown) {
+    return null;
+  }
+  // text/plain carries unescaped Markdown: a plain target shows backslashes literally.
+  // text/html is rendered from escaped Markdown, so literal Markdown characters stay
+  // literal in a rich target.
+  const plainText = plainTurndown.turndown(container).trim();
+  const content = createSelectionClipboardContent(markdown, plainText);
+  return { ...content, html: flattenClipboardListMarkup(content.html) };
+}
 
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,
@@ -116,13 +206,7 @@ export function createAssistantSelectionClipboardContent(
     container.append(cloneMarkdownSelection(part.range, part.message));
   }
   restoreMarkdownElements(container);
-
-  const markdown = turndown.turndown(container.innerHTML).trim();
-  if (!markdown) {
-    return null;
-  }
-  const content = createMarkdownClipboardContent(markdown);
-  return { ...content, html: flattenClipboardListMarkup(content.html) };
+  return clipboardContentFromMarkup(container);
 }
 
 /**
@@ -651,13 +735,15 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+  // Turndown escapes line-start Markdown per text node, so text split by an unwrapped
+  // element, such as `#` and ` for`, has to be one node to keep `# for` literal.
+  container.normalize();
 }
 
 /**
- * Each item carries its number before Turndown re-parses the HTML. Until then every
- * child of the list is one item, including a partly selected item demoted to a `p`.
- * The parser splits a `p` that holds a code block into several siblings, so counting
- * siblings afterwards numbers the next item too high.
+ * Assign item numbers before passing the DOM to Turndown. A partly selected item
+ * still takes its original list position when copied as a paragraph, so the following
+ * items keep their numbers.
  */
 function numberOrderedListItems(list: Element, start: number): void {
   Array.from(list.children).forEach((child, index) => {
@@ -665,6 +751,28 @@ function numberOrderedListItems(list: Element, start: number): void {
       child.setAttribute("value", String(start + index));
     }
   });
+}
+
+/**
+ * The library renders an admonition as a box with a generated title. Keep it a quote
+ * with its type, so it copies as its callout source rather than as the title's prose.
+ * Only a whole-element copy does this: a selection cannot tell from its cloned markup
+ * whether it holds the whole callout, so it copies the text it shows.
+ */
+function restoreAdmonitions(container: Element): void {
+  const admonitions = Array.from(
+    container.querySelectorAll(`[${MARKDOWN_ADMONITION_TYPE_ATTRIBUTE}]`),
+  );
+  for (const admonition of admonitions.toReversed()) {
+    admonition.querySelector(`:scope > [${MARKDOWN_ADMONITION_TITLE_ATTRIBUTE}]`)?.remove();
+    const quote = document.createElement("blockquote");
+    quote.setAttribute(
+      MARKDOWN_ADMONITION_TYPE_ATTRIBUTE,
+      admonition.getAttribute(MARKDOWN_ADMONITION_TYPE_ATTRIBUTE) ?? "note",
+    );
+    quote.append(...admonition.childNodes);
+    admonition.replaceWith(quote);
+  }
 }
 
 function unwrapIncompleteTables(container: HTMLElement): void {

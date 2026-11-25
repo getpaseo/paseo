@@ -52,6 +52,7 @@ export interface CreateWorktreeWorkspaceInput {
   worktreeRoot: string;
   branch: string | null;
   baseBranch: string | null;
+  worktreeManagerPluginId?: string | null;
   title: string | null;
   metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
@@ -273,14 +274,21 @@ export function createWorkspaceProvisioningService(deps: {
         checkout.isGit && checkout.isPaseoOwnedWorktree
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
+      const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
+      const { untrustedSource: inheritedUntrustedSource } = await resolveCheckoutUntrustedSource(
+        checkoutRoot,
+        baseMetadata?.untrustedSource,
+      );
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
         projectId: project.projectId,
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
+        worktreeManagerPluginId: baseMetadata?.worktreeManagerPluginId ?? null,
         title: title?.trim() || null,
         metadata: context?.metadata,
+        ...(inheritedUntrustedSource ? { untrustedSource: inheritedUntrustedSource } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),
@@ -320,6 +328,7 @@ export function createWorkspaceProvisioningService(deps: {
         baseBranch: input.baseBranch,
         mainRepoRoot: repoRoot,
       }),
+      worktreeManagerPluginId: input.worktreeManagerPluginId ?? null,
       title: input.title,
       metadata: input.metadata,
       createdAt: timestamp,
@@ -418,6 +427,49 @@ export function createWorkspaceProvisioningService(deps: {
     ).workspaceId;
   }
 
+  async function resolveCheckoutUntrustedSource(
+    checkoutRoot: string,
+    knownMetadataUntrustedSource?: UntrustedWorkspaceSource,
+  ): Promise<{ hasEvidence: boolean; untrustedSource: UntrustedWorkspaceSource | undefined }> {
+    const metadataUntrustedSource =
+      knownMetadataUntrustedSource ??
+      (await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null))?.untrustedSource;
+    if (metadataUntrustedSource) {
+      return { hasEvidence: true, untrustedSource: metadataUntrustedSource };
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+    const active = (await workspaceRegistry.listActive()).filter((candidate) =>
+      matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    );
+    if (active.length === 0) {
+      return { hasEvidence: false, untrustedSource: undefined };
+    }
+    return {
+      hasEvidence: true,
+      untrustedSource: active.find((candidate) => Boolean(candidate.untrustedSource))
+        ?.untrustedSource,
+    };
+  }
+
+  async function syncUnarchivedCheckoutUntrustedSource(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<PersistedWorkspaceRecord> {
+    const resolved = await resolveCheckoutUntrustedSource(workspace.worktreeRoot ?? workspace.cwd);
+    if (!resolved.hasEvidence) {
+      return workspace;
+    }
+    if (resolved.untrustedSource) {
+      return workspace.untrustedSource
+        ? workspace
+        : { ...workspace, untrustedSource: resolved.untrustedSource };
+    }
+    if (!workspace.untrustedSource) {
+      return workspace;
+    }
+    const { untrustedSource: _stale, ...approved } = workspace;
+    return approved;
+  }
+
   async function resolveRestoredAutoArchiveChangeRequestUrl(
     workspace: PersistedWorkspaceRecord,
   ): Promise<string | null> {
@@ -455,7 +507,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       });
       next = {
-        ...(placementUpdate?.workspace ?? workspace),
+        ...(await syncUnarchivedCheckoutUntrustedSource(placementUpdate?.workspace ?? workspace)),
         archivedAt: null,
         autoArchivedChangeRequestUrl,
         updatedAt: timestamp,

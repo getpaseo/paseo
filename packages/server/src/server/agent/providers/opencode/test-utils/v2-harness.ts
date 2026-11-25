@@ -27,12 +27,12 @@ export class V2Harness {
   readonly creates: SessionCreateInput[] = [];
   readonly prompts: string[] = [];
   readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
-  readonly mcpAdds: string[] = [];
   readonly instructions = new Map<string, string>();
   releases = 0;
   active = false;
   activeReads = 0;
   autoComplete = true;
+  sessionGetError: Error | null = null;
   constructor(private sequence = 0) {}
   private executions: SessionLogItem[] = [];
   startExecution() {
@@ -116,18 +116,8 @@ export class V2Harness {
     provider: { list: unexpected },
     command: { list: unexpected },
     skill: { list: unexpected },
-    mcp: {
-      add: async (input) => {
-        this.mcpAdds.push(input.server);
-      },
-      list: async (input) => ({
-        location: { directory: input?.location?.directory ?? this.info.location.directory },
-        data: this.mcpAdds.map((name) => ({
-          name,
-          status: { status: "connected" as const },
-        })),
-      }),
-    },
+    // Paseo hosts session MCP servers itself; OpenCode's location-wide MCP is never used.
+    mcp: { add: unexpected, list: unexpected },
     message: {
       list: async (input) => {
         if (input.cursor && input.order) throw new Error("cursor cannot be combined with order");
@@ -142,7 +132,10 @@ export class V2Harness {
         this.creates.push(input);
         return this.info;
       },
-      get: async () => this.info,
+      get: async () => {
+        if (this.sessionGetError) throw this.sessionGetError;
+        return this.info;
+      },
       list: async () => ({ data: [], cursor: {} }),
       active: async () => {
         this.activeReads += 1;

@@ -314,6 +314,8 @@ test("streams whole-file batches and answers a same-socket ping before the revis
         ).join("\n") + "\n";
       writeFileSync(join(cwd, `${file}.ts`), content);
     }
+    // Stage the fixture so Git reads the added files in bulk. They are still new relative to HEAD.
+    git(cwd, "add", ".");
     expect(ctx.client.getLastServerInfoMessage()).toMatchObject({
       features: { diffSubscription: true },
     });

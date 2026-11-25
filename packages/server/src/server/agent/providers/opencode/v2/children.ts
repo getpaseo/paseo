@@ -15,12 +15,17 @@ interface ChildrenOptions {
   id: string;
   emit(event: AgentStreamEvent): void;
   reconcilePermissions(id: string): Promise<void>;
-  bindChild?: (id: string) => void;
+  /** Prepares a newly seen descendant session. */
+  adoptChild?: (id: string) => Promise<void>;
 }
 export class SessionChildren {
   private readonly children = new Map<string, V2Timeline>();
   private readonly childStates = new Map<string, string>();
   constructor(private readonly options: ChildrenOptions) {}
+  /** Every descendant session seen so far. */
+  ids(): string[] {
+    return [...this.children.keys()];
+  }
   async observe(event: import("@opencode/client").OpenCodeEvent) {
     if (
       event.type === "session.created" &&
@@ -57,9 +62,9 @@ export class SessionChildren {
     await this.options.reconcilePermissions(info.id);
     let timeline = this.children.get(info.id);
     if (!timeline) {
-      timeline = new V2Timeline();
+      await this.options.adoptChild?.(info.id);
+      timeline = this.children.get(info.id) ?? new V2Timeline();
       this.children.set(info.id, timeline);
-      this.options.bindChild?.(info.id);
     }
     const active = await this.options.client().session.active();
     let status: "running" | "failed" | "canceled" | "completed" = "completed";

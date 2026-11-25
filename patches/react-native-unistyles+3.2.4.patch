@@ -1,322 +1,3 @@
-diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/registry.js b/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
-index 120ff60..d1ff102 100644
---- a/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
-+++ b/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
-@@ -10,6 +10,17 @@ class UnistylesRegistry {
-   stylesheets = new Map();
-   stylesCache = new Set();
-   stylesCounter = new Map();
-+  cleanupGeneration = 0;
-+  finalizerTokens = new WeakMap();
-+  finalizationRegistry = typeof FinalizationRegistry === 'undefined' ? undefined : new FinalizationRegistry(({
-+    hash,
-+    generation
-+  }) => {
-+    if (generation !== this.cleanupGeneration) {
-+      return;
-+    }
-+    this.decrementAndMaybeCleanup(hash);
-+  });
-   disposeListenersMap = new Map();
-   dependenciesMap = new Map();
-   constructor(services) {
-@@ -50,26 +61,48 @@ class UnistylesRegistry {
-     this.disposeListenersMap.set(stylesheet, dispose);
-   };
-   connect = (ref, hash) => {
--    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
--    stylesCounter.add(ref);
--    this.stylesCounter.set(hash, stylesCounter);
-+    this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1);
-+    if (!this.finalizationRegistry) {
-+      return;
-+    }
-+    const token = {};
-+    const tokensByHash = this.finalizerTokens.get(ref) ?? new Map();
-+    const tokens = tokensByHash.get(hash) ?? [];
-+    tokens.push(token);
-+    tokensByHash.set(hash, tokens);
-+    this.finalizerTokens.set(ref, tokensByHash);
-+    this.finalizationRegistry.register(ref, {
-+      hash,
-+      generation: this.cleanupGeneration
-+    }, token);
-   };
-   remove = (ref, hash) => {
--    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
--    stylesCounter.delete(ref);
--    if (stylesCounter.size === 0) {
--      // Move this to the end of the event loop so the element is removed from the DOM
--      return Promise.resolve().then(() => {
--        // Check if element is still in the DOM
--        if (document.querySelector(`.${hash}`)) {
--          return false;
--        }
--        this.css.remove(hash);
--        this.stylesCache.delete(hash);
--        return true;
--      });
-+    const token = this.finalizerTokens.get(ref)?.get(hash)?.pop();
-+    if (token) {
-+      this.finalizationRegistry?.unregister(token);
-+    }
-+    return this.decrementAndMaybeCleanup(hash);
-+  };
-+  decrementAndMaybeCleanup = hash => {
-+    const next = (this.stylesCounter.get(hash) ?? 0) - 1;
-+    if (next > 0) {
-+      this.stylesCounter.set(hash, next);
-+      return Promise.resolve(false);
-     }
--    return Promise.resolve(false);
-+    this.stylesCounter.delete(hash);
-+    // Move this to the end of the event loop so the element is removed from the DOM
-+    return Promise.resolve().then(() => {
-+      // Check if element is still in the DOM
-+      if ((this.stylesCounter.get(hash) ?? 0) > 0) {
-+        return false;
-+      }
-+      if (document.querySelector(`.${hash}`)) {
-+        return false;
-+      }
-+      this.css.remove(hash);
-+      this.stylesCache.delete(hash);
-+      return true;
-+    });
-   };
-   add = (value, forChild) => {
-     const generatedHash = (0, _utils.generateHash)(value);
-@@ -91,7 +124,10 @@ class UnistylesRegistry {
-     this.css.add(hash, value);
-   };
-   reset = () => {
-+    this.cleanupGeneration += 1;
-+    this.disposeListenersMap.forEach(dispose => dispose());
-     this.css.reset();
-+    this.stylesheets.clear();
-     this.stylesCache.clear();
-     this.dependenciesMap.clear();
-     this.disposeListenersMap.clear();
-diff --git a/node_modules/react-native-unistyles/lib/module/web/registry.js b/node_modules/react-native-unistyles/lib/module/web/registry.js
-index 6362f43..8e769f8 100644
---- a/node_modules/react-native-unistyles/lib/module/web/registry.js
-+++ b/node_modules/react-native-unistyles/lib/module/web/registry.js
-@@ -6,6 +6,17 @@ export class UnistylesRegistry {
-   stylesheets = new Map();
-   stylesCache = new Set();
-   stylesCounter = new Map();
-+  cleanupGeneration = 0;
-+  finalizerTokens = new WeakMap();
-+  finalizationRegistry = typeof FinalizationRegistry === 'undefined' ? undefined : new FinalizationRegistry(({
-+    hash,
-+    generation
-+  }) => {
-+    if (generation !== this.cleanupGeneration) {
-+      return;
-+    }
-+    this.decrementAndMaybeCleanup(hash);
-+  });
-   disposeListenersMap = new Map();
-   dependenciesMap = new Map();
-   constructor(services) {
-@@ -46,26 +57,48 @@ export class UnistylesRegistry {
-     this.disposeListenersMap.set(stylesheet, dispose);
-   };
-   connect = (ref, hash) => {
--    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
--    stylesCounter.add(ref);
--    this.stylesCounter.set(hash, stylesCounter);
-+    this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1);
-+    if (!this.finalizationRegistry) {
-+      return;
-+    }
-+    const token = {};
-+    const tokensByHash = this.finalizerTokens.get(ref) ?? new Map();
-+    const tokens = tokensByHash.get(hash) ?? [];
-+    tokens.push(token);
-+    tokensByHash.set(hash, tokens);
-+    this.finalizerTokens.set(ref, tokensByHash);
-+    this.finalizationRegistry.register(ref, {
-+      hash,
-+      generation: this.cleanupGeneration
-+    }, token);
-   };
-   remove = (ref, hash) => {
--    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
--    stylesCounter.delete(ref);
--    if (stylesCounter.size === 0) {
--      // Move this to the end of the event loop so the element is removed from the DOM
--      return Promise.resolve().then(() => {
--        // Check if element is still in the DOM
--        if (document.querySelector(`.${hash}`)) {
--          return false;
--        }
--        this.css.remove(hash);
--        this.stylesCache.delete(hash);
--        return true;
--      });
-+    const token = this.finalizerTokens.get(ref)?.get(hash)?.pop();
-+    if (token) {
-+      this.finalizationRegistry?.unregister(token);
-+    }
-+    return this.decrementAndMaybeCleanup(hash);
-+  };
-+  decrementAndMaybeCleanup = hash => {
-+    const next = (this.stylesCounter.get(hash) ?? 0) - 1;
-+    if (next > 0) {
-+      this.stylesCounter.set(hash, next);
-+      return Promise.resolve(false);
-     }
--    return Promise.resolve(false);
-+    this.stylesCounter.delete(hash);
-+    // Move this to the end of the event loop so the element is removed from the DOM
-+    return Promise.resolve().then(() => {
-+      // Check if element is still in the DOM
-+      if ((this.stylesCounter.get(hash) ?? 0) > 0) {
-+        return false;
-+      }
-+      if (document.querySelector(`.${hash}`)) {
-+        return false;
-+      }
-+      this.css.remove(hash);
-+      this.stylesCache.delete(hash);
-+      return true;
-+    });
-   };
-   add = (value, forChild) => {
-     const generatedHash = generateHash(value);
-@@ -87,7 +120,10 @@ export class UnistylesRegistry {
-     this.css.add(hash, value);
-   };
-   reset = () => {
-+    this.cleanupGeneration += 1;
-+    this.disposeListenersMap.forEach(dispose => dispose());
-     this.css.reset();
-+    this.stylesheets.clear();
-     this.stylesCache.clear();
-     this.dependenciesMap.clear();
-     this.disposeListenersMap.clear();
-diff --git a/node_modules/react-native-unistyles/src/web/registry.ts b/node_modules/react-native-unistyles/src/web/registry.ts
-index 39e0d9d..a21ba95 100644
---- a/node_modules/react-native-unistyles/src/web/registry.ts
-+++ b/node_modules/react-native-unistyles/src/web/registry.ts
-@@ -9,7 +9,24 @@ import { error, extractUnistyleDependencies, generateHash } from './utils'
- export class UnistylesRegistry {
-     private readonly stylesheets = new Map<StyleSheetWithSuperPowers<StyleSheet>, StyleSheet>()
-     private readonly stylesCache = new Set<string>()
--    private readonly stylesCounter = new Map<string, Set<HTMLElement>>()
-+    // Use counter instead of Set<HTMLElement> to avoid retaining detached DOM nodes
-+    // FR is a fallback when remove() is missed
-+    private readonly stylesCounter = new Map<string, number>()
-+    // Bumped on reset() so stale FR callbacks are ignored
-+    private cleanupGeneration = 0
-+    // Per-registration unregister token, so remove() cancels only its own registration
-+    private readonly finalizerTokens = new WeakMap<HTMLElement, Map<string, Array<object>>>()
-+    // FR isn't available on every runtime - fall back to counter-only cleanup
-+    private readonly finalizationRegistry =
-+        typeof FinalizationRegistry === 'undefined'
-+            ? undefined
-+            : new FinalizationRegistry<{ hash: string; generation: number }>(({ hash, generation }) => {
-+                  if (generation !== this.cleanupGeneration) {
-+                      return
-+                  }
-+
-+                  this.decrementAndMaybeCleanup(hash)
-+              })
-     private readonly disposeListenersMap = new Map<object, VoidFunction>()
-     private readonly dependenciesMap = new Map<StyleSheetWithSuperPowers<StyleSheet>, Set<UnistyleDependency>>()
-     readonly css: CSSState
-@@ -78,33 +95,61 @@ export class UnistylesRegistry {
-     }
- 
-     connect = (ref: HTMLElement, hash: string) => {
--        const stylesCounter = this.stylesCounter.get(hash) ?? new Set()
-+        this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1)
- 
--        stylesCounter.add(ref)
--        this.stylesCounter.set(hash, stylesCounter)
-+        if (!this.finalizationRegistry) {
-+            return
-+        }
-+
-+        const token = {}
-+        const tokensByHash = this.finalizerTokens.get(ref) ?? new Map<string, Array<object>>()
-+        const tokens = tokensByHash.get(hash) ?? []
-+
-+        tokens.push(token)
-+        tokensByHash.set(hash, tokens)
-+        this.finalizerTokens.set(ref, tokensByHash)
-+        this.finalizationRegistry.register(ref, { hash, generation: this.cleanupGeneration }, token)
-     }
- 
-     remove = (ref: HTMLElement, hash: string) => {
--        const stylesCounter = this.stylesCounter.get(hash) ?? new Set()
-+        const token = this.finalizerTokens.get(ref)?.get(hash)?.pop()
- 
--        stylesCounter.delete(ref)
-+        if (token) {
-+            this.finalizationRegistry?.unregister(token)
-+        }
- 
--        if (stylesCounter.size === 0) {
--            // Move this to the end of the event loop so the element is removed from the DOM
--            return Promise.resolve().then(() => {
--                // Check if element is still in the DOM
--                if (document.querySelector(`.${hash}`)) {
--                    return false
--                }
-+        return this.decrementAndMaybeCleanup(hash)
-+    }
-+
-+    private decrementAndMaybeCleanup = (hash: string): Promise<boolean> => {
-+        const next = (this.stylesCounter.get(hash) ?? 0) - 1
- 
--                this.css.remove(hash)
--                this.stylesCache.delete(hash)
-+        if (next > 0) {
-+            this.stylesCounter.set(hash, next)
- 
--                return true
--            })
-+            return Promise.resolve(false)
-         }
- 
--        return Promise.resolve(false)
-+        // Drop the empty bucket from the Map
-+        this.stylesCounter.delete(hash)
-+
-+        // Move this to the end of the event loop so the element is removed from the DOM
-+        return Promise.resolve().then(() => {
-+            // New connect raced in during the microtask
-+            if ((this.stylesCounter.get(hash) ?? 0) > 0) {
-+                return false
-+            }
-+
-+            // Check if element is still in the DOM
-+            if (document.querySelector(`.${hash}`)) {
-+                return false
-+            }
-+
-+            this.css.remove(hash)
-+            this.stylesCache.delete(hash)
-+
-+            return true
-+        })
-     }
- 
-     add = (value: UnistylesValues, forChild?: boolean) => {
-@@ -126,7 +171,11 @@ export class UnistylesRegistry {
-     }
- 
-     reset = () => {
-+        // Invalidate pending FR callbacks from this generation
-+        this.cleanupGeneration += 1
-+        this.disposeListenersMap.forEach((dispose) => dispose())
-         this.css.reset()
-+        this.stylesheets.clear()
-         this.stylesCache.clear()
-         this.dependenciesMap.clear()
-         this.disposeListenersMap.clear()
 diff --git a/node_modules/react-native-unistyles/android/build.gradle b/node_modules/react-native-unistyles/android/build.gradle
 index 195954b..c4ac28c 100644
 --- a/node_modules/react-native-unistyles/android/build.gradle
@@ -329,234 +10,6 @@ index 195954b..c4ac28c 100644
      namespace "com.unistyles"
  
      defaultConfig {
-diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
---- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
-+++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
-@@ -28,13 +28,14 @@
- 
-     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
-         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
-+        const { uniProps, ...componentProps } = narrowedProps
-         const styleClassNames = getClassName(narrowedProps.style, true)
-         const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle)
-         const { proxifiedRuntime, proxifiedTheme } = useProxifiedUnistyles()
- 
-         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
--        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
--            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
-+        const { key: uniPropsKey, ...unistyleProps } = uniProps
-+            ? uniProps(proxifiedTheme, proxifiedRuntime)
-             : {}
- 
-         const emptyStyles = narrowedProps.style
-@@ -46,7 +47,7 @@
-             : undefined
- 
-         const combinedProps = {
--            ...deepMergeObjects(mappingsProps, unistyleProps, props),
-+            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
-             ...(narrowedProps.style
-                 ? {
-                       // Override default component styles with undefined values to reset them
-diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
---- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
-+++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
-@@ -63,6 +63,7 @@
- 
-     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
-         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
-+        const { uniProps, ...componentProps } = narrowedProps
-         const NativeComponent = Component as ComponentType
- 
-         // @ts-ignore we don't know the type of the component
-@@ -89,15 +90,15 @@
-         }, [narrowedProps.style, narrowedProps.contentContainerStyle])
- 
-         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
--        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
--            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
-+        const { key: uniPropsKey, ...unistyleProps } = uniProps
-+            ? uniProps(proxifiedTheme, proxifiedRuntime)
-             : {}
- 
-         const styleSecrets = getSecrets(narrowedProps.style)
-         const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle)
- 
-         const finalProps = {
--            ...deepMergeObjects(mappingsProps, unistyleProps, props),
-+            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
-             ...(narrowedProps.style
-                 ? {
-                       style: styleSecrets.styles,
-diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
---- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
-+++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
-@@ -13,6 +13,7 @@
- export const withUnistyles = (Component, mappings) => {
-   return /*#__PURE__*/forwardRef((props, ref) => {
-     const narrowedProps = props;
-+    const { uniProps, ...componentProps } = narrowedProps;
-     const styleClassNames = getClassName(narrowedProps.style, true);
-     const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle);
-     const {
-@@ -26,10 +27,10 @@
-     const {
-       key: uniPropsKey,
-       ...unistyleProps
--    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
-+    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
-     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
-     const combinedProps = {
--      ...deepMergeObjects(mappingsProps, unistyleProps, props),
-+      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
-       ...(narrowedProps.style ? {
-         // Override default component styles with undefined values to reset them
-         style: emptyStyles
-diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
---- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
-+++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
-@@ -27,6 +27,7 @@
-   };
-   return /*#__PURE__*/forwardRef((props, ref) => {
-     const narrowedProps = props;
-+    const { uniProps, ...componentProps } = narrowedProps;
-     const NativeComponent = Component;
- 
-     // @ts-ignore we don't know the type of the component
-@@ -57,11 +58,11 @@
-     const {
-       key: uniPropsKey,
-       ...unistyleProps
--    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
-+    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
-     const styleSecrets = getSecrets(narrowedProps.style);
-     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
-     const finalProps = {
--      ...deepMergeObjects(mappingsProps, unistyleProps, props),
-+      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
-       ...(narrowedProps.style ? {
-         style: styleSecrets.styles
-       } : {}),
-diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
---- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
-+++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
-@@ -18,6 +18,7 @@
- const withUnistyles = (Component, mappings) => {
-   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
-     const narrowedProps = props;
-+    const { uniProps, ...componentProps } = narrowedProps;
-     const styleClassNames = (0, _getClassname.getClassName)(narrowedProps.style, true);
-     const contentContainerStyleClassNames = (0, _getClassname.getClassName)(narrowedProps.contentContainerStyle);
-     const {
-@@ -31,10 +32,10 @@
-     const {
-       key: uniPropsKey,
-       ...unistyleProps
--    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
-+    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
-     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
-     const combinedProps = {
--      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
-+      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
-       ...(narrowedProps.style ? {
-         // Override default component styles with undefined values to reset them
-         style: emptyStyles
-diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
---- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
-+++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
-@@ -32,6 +32,7 @@
-   };
-   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
-     const narrowedProps = props;
-+    const { uniProps, ...componentProps } = narrowedProps;
-     const NativeComponent = Component;
- 
-     // @ts-ignore we don't know the type of the component
-@@ -62,11 +63,11 @@
-     const {
-       key: uniPropsKey,
-       ...unistyleProps
--    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
-+    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
-     const styleSecrets = getSecrets(narrowedProps.style);
-     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
-     const finalProps = {
--      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
-+      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
-       ...(narrowedProps.style ? {
-         style: styleSecrets.styles
-       } : {}),
-diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
-index 305fa49..5957aa5 100644
---- a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
-+++ b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
-@@ -35,10 +35,17 @@ class UnistylesRuntime {
-     return this.darkMedia;
-   }
-   get colorScheme() {
-+    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
-+    // MediaQueryList change events while the document is hidden and drops the pending event
-+    // of any list whose `matches` was read before the document became visible again, which
-+    // would silence the adaptive-theme listeners registered on those two lists.
-+    if ((0, _utils.isServer)()) {
-+      return _types.ColorScheme.Unspecified;
-+    }
-     switch (true) {
--      case this.getLightMedia()?.matches:
-+      case window.matchMedia('(prefers-color-scheme: light)').matches:
-         return _types.ColorScheme.Light;
--      case this.getDarkMedia()?.matches:
-+      case window.matchMedia('(prefers-color-scheme: dark)').matches:
-         return _types.ColorScheme.Dark;
-       default:
-         return _types.ColorScheme.Unspecified;
-diff --git a/node_modules/react-native-unistyles/lib/module/web/runtime.js b/node_modules/react-native-unistyles/lib/module/web/runtime.js
-index 7f13a06..c487bee 100644
---- a/node_modules/react-native-unistyles/lib/module/web/runtime.js
-+++ b/node_modules/react-native-unistyles/lib/module/web/runtime.js
-@@ -31,10 +31,17 @@ export class UnistylesRuntime {
-     return this.darkMedia;
-   }
-   get colorScheme() {
-+    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
-+    // MediaQueryList change events while the document is hidden and drops the pending event
-+    // of any list whose `matches` was read before the document became visible again, which
-+    // would silence the adaptive-theme listeners registered on those two lists.
-+    if (isServer()) {
-+      return ColorScheme.Unspecified;
-+    }
-     switch (true) {
--      case this.getLightMedia()?.matches:
-+      case window.matchMedia('(prefers-color-scheme: light)').matches:
-         return ColorScheme.Light;
--      case this.getDarkMedia()?.matches:
-+      case window.matchMedia('(prefers-color-scheme: dark)').matches:
-         return ColorScheme.Dark;
-       default:
-         return ColorScheme.Unspecified;
-diff --git a/node_modules/react-native-unistyles/src/web/runtime.ts b/node_modules/react-native-unistyles/src/web/runtime.ts
-index a16dac0..6519858 100644
---- a/node_modules/react-native-unistyles/src/web/runtime.ts
-+++ b/node_modules/react-native-unistyles/src/web/runtime.ts
-@@ -41,8 +41,16 @@ export class UnistylesRuntime {
-     get colorScheme() {
-+        // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
-+        // MediaQueryList change events while the document is hidden and drops the pending event
-+        // of any list whose `matches` was read before the document became visible again, which
-+        // would silence the adaptive-theme listeners registered on those two lists.
-+        if (isServer()) {
-+            return ColorScheme.Unspecified
-+        }
-+
-         switch (true) {
--            case this.getLightMedia()?.matches:
-+            case window.matchMedia('(prefers-color-scheme: light)').matches:
-                 return ColorScheme.Light
--            case this.getDarkMedia()?.matches:
-+            case window.matchMedia('(prefers-color-scheme: dark)').matches:
-                 return ColorScheme.Dark
-             default:
-                 return ColorScheme.Unspecified
 diff --git a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt b/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt
 index 0f8d1f0..154a12a 100644
 --- a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt
@@ -760,4 +213,2290 @@ index 01026dc..3786ec4 100644
 +        });
  #else
          const auto& shadowTreeRegistry = UIManagerBinding::getBinding(rt)->getUIManager().getShadowTreeRegistry();
+ 
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+index 5a0d049..36d7db4 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+@@ -18,6 +18,7 @@ function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r
+ const withUnistyles = (Component, mappings) => {
+   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const styleClassNames = (0, _getClassname.getClassName)(narrowedProps.style, true);
+     const contentContainerStyleClassNames = (0, _getClassname.getClassName)(narrowedProps.contentContainerStyle);
+     const {
+@@ -31,10 +32,10 @@ const withUnistyles = (Component, mappings) => {
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
+     const combinedProps = {
+-      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
++      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
+index abaa2ee..000d8e3 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
+@@ -32,6 +32,7 @@ const withUnistyles = (Component, mappings) => {
+   };
+   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const NativeComponent = Component;
+ 
+     // @ts-ignore we don't know the type of the component
+@@ -62,11 +63,11 @@ const withUnistyles = (Component, mappings) => {
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const styleSecrets = getSecrets(narrowedProps.style);
+     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
+     const finalProps = {
+-      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
++      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         style: styleSecrets.styles
+       } : {}),
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/core.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/core.js
+index 1e28e32..2bee9e4 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/core.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/core.js
+@@ -3,9 +3,15 @@
+ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+-exports.convertToCSS = void 0;
++exports.getClassNameHash = exports.convertToCSS = void 0;
+ var _pseudo = require("../convert/pseudo");
+ var _utils = require("../utils");
++// hash:hover and hash::before belong to hash. Hashes have no colons, a forChild one keeps ' > *'
++const getClassNameHash = className => {
++  const pseudoIndex = className.indexOf(':');
++  return pseudoIndex === -1 ? className : className.slice(0, pseudoIndex);
++};
++exports.getClassNameHash = getClassNameHash;
+ const convertToCSS = (hash, value, state) => {
+   Object.entries(value).forEach(([styleKey, styleValue]) => {
+     if (styleKey[0] === '_') {
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/sheet.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/sheet.js
+new file mode 100644
+index 0000000..db1c970
+--- /dev/null
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/sheet.js
+@@ -0,0 +1,216 @@
++"use strict";
++
++Object.defineProperty(exports, "__esModule", {
++  value: true
++});
++exports.getSelector = exports.getDeclarations = exports.CSSSheet = void 0;
++var _utils = require("../utils");
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
++// CSSState used to rewrite the text of the style tag on every added and removed class, and the browser
++// then restyled the whole document. Rules now change one at a time through the CSSOM.
++
++// Styles without a media query get a group too, so every group is an ordinary child list of one top level rule
++const BASE_MEDIA_QUERY = '@media all';
++const getSelector = className => `.${className}`;
++exports.getSelector = getSelector;
++const getDeclarations = styles => {
++  let declarations = '';
++  for (const [propertyKey, value] of styles) {
++    if (value === undefined) {
++      continue;
++    }
++    declarations += `${(0, _utils.hyphenate)(propertyKey)}:${value};`;
++  }
++  return declarations;
++};
++exports.getDeclarations = getDeclarations;
++const insertRule = (parent, rule, index = parent.cssRules.length) => {
++  try {
++    return parent.cssRules[parent.insertRule(rule, index)];
++  } catch {
++    // The browser can't parse it, like a pseudo-element it doesn't support yet: a text sheet drops it too
++    return undefined;
++  }
++};
++const indexOfRule = (parent, rule) => Array.prototype.indexOf.call(parent.cssRules, rule);
++
++// Keeps the styles of CSSState in the style tag through the CSSOM, never its text, so another runtime keeps its rules
++class CSSSheet {
++  tag = null;
++  sheet = null;
++  groups = new Map();
++  themes = new Map();
++  hasServerStyles = false;
++  constructor(themesCSS, styles) {
++    this.themesCSS = themesCSS;
++    this.styles = styles;
++    if ((0, _utils.isServer)()) {
++      return;
++    }
++    const existingTag = document.getElementById('unistyles-web');
++    if (existingTag) {
++      this.tag = existingTag;
++      // A tag from another runtime has no text, its rules live in the CSSOM
++      this.hasServerStyles = Boolean(this.tag.textContent);
++      this.sheet = this.hasServerStyles ? null : this.tag.sheet;
++      return;
++    }
++    this.tag = document.createElement('style');
++    this.tag.id = 'unistyles-web';
++    document.head.appendChild(this.tag);
++    this.sheet = this.tag.sheet;
++  }
++  refresh = () => {
++    const sheet = this.getSheet();
++    if (sheet) {
++      this.insertGroups(sheet);
++    }
++  };
++  syncClass = (mediaQuery, className) => {
++    const sheet = this.getSheet();
++    if (!sheet) {
++      return;
++    }
++    this.insertGroups(sheet);
++    const group = this.groups.get(mediaQuery);
++    if (group) {
++      this.syncGroupClass(group, className, this.styles.get(mediaQuery)?.get(className));
++    }
++  };
++
++  // False only when the browser rejects the theme, so CSSState keeps the CSS that is applied
++  syncTheme = (key, css = this.themesCSS.get(key)) => {
++    const sheet = this.getThemeSheet();
++    const current = this.themes.get(key);
++    if (!sheet || css === undefined) {
++      return true;
++    }
++
++    // The theme goes last on every update, so it wins over the same theme of a runtime added to the tag later
++    const rule = insertRule(sheet, css);
++
++    // Inserted before the old rule goes, so a theme the browser rejects keeps the previous variables
++    if (!rule) {
++      return false;
++    }
++    const currentIndex = current ? indexOfRule(sheet, current) : -1;
++    if (currentIndex >= 0) {
++      sheet.deleteRule(currentIndex);
++    }
++    this.themes.set(key, rule);
++    return true;
++  };
++  reset = () => {
++    const sheet = this.tag?.sheet;
++    if (sheet && sheet === this.sheet) {
++      this.deleteOwnRules(sheet, new Set(Array.from(this.groups.values(), group => group?.rule)));
++    }
++    this.groups.clear();
++  };
++  getSheet = () => {
++    if (!this.tag) {
++      return null;
++    }
++    if (!this.tag.isConnected) {
++      document.head.appendChild(this.tag);
++    }
++
++    // Another runtime on the tag may have cleared the server text and filled the tag through the CSSOM already
++    if (this.hasServerStyles) {
++      this.hasServerStyles = false;
++      if (this.tag.textContent) {
++        this.tag.textContent = '';
++      }
++    }
++    const sheet = this.tag.sheet;
++
++    // A new sheet lost every rule: the server one was replaced, or the tag was rewritten or attached again
++    if (sheet && sheet !== this.sheet) {
++      this.sheet = sheet;
++      this.insertAll(sheet);
++    }
++    return sheet;
++  };
++  getThemeSheet = () => {
++    if (this.hasServerStyles) {
++      return this.tag?.sheet ?? null;
++    }
++    return this.getSheet();
++  };
++  insertAll = sheet => {
++    this.groups.clear();
++    // A theme added on top of server styles another runtime already replaced is still in this sheet
++    this.deleteOwnRules(sheet, new Set(this.themes.values()));
++    this.themes.clear();
++    this.themesCSS.forEach((_, key) => this.syncTheme(key));
++    this.insertGroups(sheet);
++    this.groups.forEach((group, mediaQuery) => {
++      if (!group) {
++        return;
++      }
++      this.styles.get(mediaQuery)?.forEach((styles, className) => this.syncGroupClass(group, className, styles));
++    });
++  };
++
++  // Every group of the styles map gets created, empty ones too, so a group appended later is always the last one
++  insertGroups = sheet => {
++    if (this.groups.size === this.styles.size) {
++      return;
++    }
++    this.styles.forEach((_, mediaQuery) => {
++      if (this.groups.has(mediaQuery)) {
++        return;
++      }
++      const rule = insertRule(sheet, `${mediaQuery || BASE_MEDIA_QUERY}{}`);
++      this.groups.set(mediaQuery, rule ? {
++        rule,
++        rules: [],
++        classes: new Map(),
++        rejected: new Map()
++      } : null);
++    });
++  };
++  syncGroupClass = (group, className, styles) => {
++    const current = group.classes.get(className);
++    if (!styles) {
++      group.rejected.delete(className);
++      if (current) {
++        const index = group.rules.indexOf(current.rule);
++        group.rule.deleteRule(index);
++        group.rules.splice(index, 1);
++        group.classes.delete(className);
++      }
++      return;
++    }
++    const declarations = getDeclarations(styles);
++    if (current) {
++      if (current.declarations !== declarations) {
++        current.rule.style.cssText = declarations;
++        current.declarations = declarations;
++      }
++      return;
++    }
++    if (group.rejected.get(className) === declarations) {
++      return;
++    }
++    const rule = insertRule(group.rule, `${getSelector(className)}{${declarations}}`);
++    if (rule) {
++      group.rules.push(rule);
++      group.classes.set(className, {
++        rule,
++        declarations
++      });
++      group.rejected.delete(className);
++      return;
++    }
++    group.rejected.set(className, declarations);
++  };
++  deleteOwnRules = (sheet, rules) => {
++    for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
++      if (rules.has(sheet.cssRules[index])) {
++        sheet.deleteRule(index);
++      }
++    }
++  };
++}
++exports.CSSSheet = CSSSheet;
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+index 7c7214e..d66bc3f 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+@@ -7,53 +7,75 @@ exports.CSSState = void 0;
+ var _convert = require("../convert");
+ var _utils = require("../utils");
+ var _core = require("./core");
+-const safeGetMap = (map, key) => {
+-  const nextLevelMap = map.get(key);
+-  if (!nextLevelMap) {
+-    const newMap = new Map();
+-    map.set(key, newMap);
+-    return newMap;
+-  }
+-  return nextLevelMap;
++var _sheet = require("./sheet");
++var _utils2 = require("./utils");
++const forEachClassName = (classNames, callback) => {
++  classNames?.forEach((names, mediaQuery) => names.forEach(className => callback(mediaQuery, className)));
+ };
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
+ class CSSState {
+-  mainMap = new Map();
+-  mqMap = new Map();
+-  styleTag = null;
++  mainMap = new Map([['', new Map()]]);
+   themesCSS = new Map();
++  owners = new Map();
++  sheet = new _sheet.CSSSheet(this.themesCSS, this.mainMap);
+   constructor(services) {
+     this.services = services;
+-    if ((0, _utils.isServer)()) {
+-      return;
+-    }
+-    const ssrTag = document.getElementById('unistyles-web');
+-    if (ssrTag) {
+-      this.styleTag = ssrTag;
+-      return;
+-    }
+-    this.styleTag = document.createElement('style');
+-    this.styleTag.id = 'unistyles-web';
+-    document.head.appendChild(this.styleTag);
+   }
+   set = ({
+     className,
+     propertyKey,
+     value,
+-    mediaQuery = '',
+-    isMq
++    mediaQuery = ''
+   }) => {
+-    const firstLevelMap = isMq ? this.mqMap : this.mainMap;
+-    const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery);
+-    const thirdLevelMap = safeGetMap(secondLevelMap, className);
++    const secondLevelMap = (0, _utils2.safeGetMap)(this.mainMap, mediaQuery);
++    const thirdLevelMap = (0, _utils2.safeGetMap)(secondLevelMap, className);
+     thirdLevelMap.set(propertyKey, value);
++
++    // The owner comes from the class name, so hydrated styles have one too
++    const owner = (0, _utils2.safeGetMap)(this.owners, (0, _core.getClassNameHash)(className));
++    const classNames = owner.get(mediaQuery) ?? new Set();
++    classNames.add(className);
++    owner.set(mediaQuery, classNames);
+   };
+   add = (hash, values) => {
+-    (0, _core.convertToCSS)(hash, (0, _convert.convertUnistyles)(values, this.services.runtime), this);
+-    this.recreate();
+-  };
+-  recreate = () => {
+-    if (this.styleTag) {
+-      this.styleTag.innerText = this.getStyles();
++    const styles = new Map();
++    (0, _core.convertToCSS)(hash, (0, _convert.convertUnistyles)(values, this.services.runtime), {
++      set: ({
++        className,
++        propertyKey,
++        value,
++        mediaQuery = ''
++      }) => {
++        (0, _utils2.safeGetMap)((0, _utils2.safeGetMap)(styles, mediaQuery), className).set(propertyKey, value);
++      }
++    });
++    const previousClassNames = this.owners.get(hash);
++    forEachClassName(previousClassNames, (mediaQuery, className) => {
++      this.mainMap.get(mediaQuery)?.get(className)?.clear();
++    });
++    this.owners.delete(hash);
++    styles.forEach((classes, mediaQuery) => {
++      classes.forEach((properties, className) => {
++        properties.forEach((value, propertyKey) => this.set({
++          mediaQuery,
++          className,
++          propertyKey,
++          value
++        }));
++      });
++    });
++    const classNames = this.owners.get(hash);
++    forEachClassName(previousClassNames, (mediaQuery, className) => {
++      if (!classNames?.get(mediaQuery)?.has(className)) {
++        this.mainMap.get(mediaQuery)?.delete(className);
++        this.sheet.syncClass(mediaQuery, className);
++      }
++    });
++    forEachClassName(classNames, this.sheet.syncClass);
++
++    // syncClass already brings back the rules the tag lost, refresh does it when nothing was synced
++    if (!previousClassNames && !classNames) {
++      this.sheet.refresh();
+     }
+   };
+   addTheme = (theme, values) => {
+@@ -67,62 +89,55 @@ class CSSState {
+       }
+     };
+     Object.entries(values).forEach(([key, value]) => convertToCSS(key, value));
++
+     if (theme === 'light' || theme === 'dark') {
+-      this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++      this.setThemeCSS(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++    }
++    this.setThemeCSS(theme, `:root.${theme}{${themeVars}}`);
++  };
++  setThemeCSS = (key, css) => {
++    if (this.sheet.syncTheme(key, css)) {
++      this.themesCSS.set(key, css);
+     }
+-    this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`);
+   };
+   remove = hash => {
+-    this.mainMap.forEach(styles => {
+-      styles.delete(hash);
++    const classNames = this.owners.get(hash);
++    this.owners.delete(hash);
++    forEachClassName(classNames, (mediaQuery, className) => {
++      this.mainMap.get(mediaQuery)?.delete(className);
++      this.sheet.syncClass(mediaQuery, className);
+     });
+-    this.mqMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
+-    this.recreate();
++    if (!classNames) {
++      this.sheet.refresh();
++    }
+   };
+   getStyles = () => {
+     let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {
+       return acc + themeCss;
+     }, '');
+-    const generate = (mediaQuery, secondLevelMap) => {
++    for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+       if (mediaQuery) {
+         styles += `${mediaQuery}{`;
+       }
+       for (const [className, thirdLevelMap] of secondLevelMap) {
+-        styles += `.${className}{`;
+-        for (const [propertyKey, value] of thirdLevelMap) {
+-          if (value === undefined) {
+-            continue;
+-          }
+-          styles += `${(0, _utils.hyphenate)(propertyKey)}:${value};`;
+-        }
+-        styles += '}';
++        styles += `${(0, _sheet.getSelector)(className)}{${(0, _sheet.getDeclarations)(thirdLevelMap)}}`;
+       }
+       if (mediaQuery) {
+         styles += '}';
+       }
+-    };
+-    for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+-      generate(mediaQuery, secondLevelMap);
+-    }
+-    for (const [mediaQuery, secondLevelMap] of this.mqMap) {
+-      generate(mediaQuery, secondLevelMap);
+     }
+     return styles;
+   };
+   getState = () => {
+-    const getState = map => {
+-      return Array.from(map).map(([mediaQuery, classNames]) => {
+-        return [mediaQuery, Array.from(classNames.entries()).map(([className, style]) => {
+-          return [className, Array.from(style.entries()).map(([property, value]) => {
+-            return [property, value];
+-          })];
++    const mainState = Array.from(this.mainMap).map(([mediaQuery, classNames]) => {
++      return [mediaQuery, Array.from(classNames.entries()).map(([className, style]) => {
++        return [className, Array.from(style.entries()).map(([property, value]) => {
++          return [property, value];
+         })];
+-      });
+-    };
+-    const mainState = getState(this.mainMap);
+-    const mqState = getState(this.mqMap);
++      })];
++    });
++    // Always empty, media query styles live in mainState. Kept for the shape hydrate reads
++    const mqState = [];
+     const config = this.services.state.getConfig();
+     return {
+       mainState,
+@@ -130,11 +145,12 @@ class CSSState {
+       config
+     };
+   };
+-  hydrate = ({
+-    mainState,
+-    mqState
+-  }) => {
+-    const hydrateState = (map, isMq = false) => {
++  hydrate = state => {
++    if (state === this.hydratedState) {
++      return;
++    }
++    this.hydratedState = state;
++    const hydrateState = map => {
+       map.forEach(([mediaQuery, classNames]) => {
+         classNames.forEach(([className, style]) => {
+           style.forEach(([propertyKey, value]) => {
+@@ -142,19 +158,22 @@ class CSSState {
+               className,
+               propertyKey,
+               value,
+-              mediaQuery,
+-              isMq
++              mediaQuery
+             });
+           });
++          this.sheet.syncClass(mediaQuery, className);
+         });
+       });
+     };
+-    hydrateState(mainState);
+-    hydrateState(mqState, true);
++    hydrateState(state.mainState);
++    hydrateState(state.mqState);
+   };
+   reset = () => {
+-    this.mqMap.clear();
+     this.mainMap.clear();
++    this.mainMap.set('', new Map());
++    this.owners.clear();
++    this.hydratedState = undefined;
++    this.sheet.reset();
+   };
+ }
+ exports.CSSState = CSSState;
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/utils.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/utils.js
+index e525d1b..d3d2c54 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/utils.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/utils.js
+@@ -3,8 +3,7 @@
+ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+-exports.safeGetMap = exports.getStylesFromState = void 0;
+-var _utils = require("../utils");
++exports.safeGetMap = void 0;
+ const safeGetMap = (map, key) => {
+   const nextLevelMap = map.get(key);
+   if (!nextLevelMap) {
+@@ -15,33 +14,4 @@ const safeGetMap = (map, key) => {
+   return nextLevelMap;
+ };
+ exports.safeGetMap = safeGetMap;
+-const getStylesFromState = state => {
+-  let styles = '';
+-  const generate = (mediaQuery, secondLevelMap) => {
+-    if (mediaQuery) {
+-      styles += `${mediaQuery}{`;
+-    }
+-    for (const [className, thirdLevelMap] of secondLevelMap) {
+-      styles += `.${className}{`;
+-      for (const [propertyKey, value] of thirdLevelMap) {
+-        if (value === undefined) {
+-          continue;
+-        }
+-        styles += `${(0, _utils.hyphenate)(propertyKey)}:${value};`;
+-      }
+-      styles += '}';
+-    }
+-    if (mediaQuery) {
+-      styles += '}';
+-    }
+-  };
+-  for (const [mediaQuery, secondLevelMap] of state.mainMap) {
+-    generate(mediaQuery, secondLevelMap);
+-  }
+-  for (const [mediaQuery, secondLevelMap] of state.mqMap) {
+-    generate(mediaQuery, secondLevelMap);
+-  }
+-  return styles;
+-};
+-exports.getStylesFromState = getStylesFromState;
+ //# sourceMappingURL=utils.js.map
+\ No newline at end of file
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/registry.js b/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
+index 120ff60..5e724b2 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/registry.js
+@@ -10,6 +10,17 @@ class UnistylesRegistry {
+   stylesheets = new Map();
+   stylesCache = new Set();
+   stylesCounter = new Map();
++  cleanupGeneration = 0;
++  finalizerTokens = new WeakMap();
++  finalizationRegistry = typeof FinalizationRegistry === 'undefined' ? undefined : new FinalizationRegistry(({
++    hash,
++    generation
++  }) => {
++    if (generation !== this.cleanupGeneration) {
++      return;
++    }
++    this.decrementAndMaybeCleanup(hash);
++  });
+   disposeListenersMap = new Map();
+   dependenciesMap = new Map();
+   constructor(services) {
+@@ -50,26 +61,48 @@ class UnistylesRegistry {
+     this.disposeListenersMap.set(stylesheet, dispose);
+   };
+   connect = (ref, hash) => {
+-    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
+-    stylesCounter.add(ref);
+-    this.stylesCounter.set(hash, stylesCounter);
++    this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1);
++    if (!this.finalizationRegistry) {
++      return;
++    }
++    const token = {};
++    const tokensByHash = this.finalizerTokens.get(ref) ?? new Map();
++    const tokens = tokensByHash.get(hash) ?? [];
++    tokens.push(token);
++    tokensByHash.set(hash, tokens);
++    this.finalizerTokens.set(ref, tokensByHash);
++    this.finalizationRegistry.register(ref, {
++      hash,
++      generation: this.cleanupGeneration
++    }, token);
+   };
+   remove = (ref, hash) => {
+-    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
+-    stylesCounter.delete(ref);
+-    if (stylesCounter.size === 0) {
+-      // Move this to the end of the event loop so the element is removed from the DOM
+-      return Promise.resolve().then(() => {
+-        // Check if element is still in the DOM
+-        if (document.querySelector(`.${hash}`)) {
+-          return false;
+-        }
+-        this.css.remove(hash);
+-        this.stylesCache.delete(hash);
+-        return true;
+-      });
++    const token = this.finalizerTokens.get(ref)?.get(hash)?.pop();
++    if (token) {
++      this.finalizationRegistry?.unregister(token);
++    }
++    return this.decrementAndMaybeCleanup(hash);
++  };
++  decrementAndMaybeCleanup = hash => {
++    const next = (this.stylesCounter.get(hash) ?? 0) - 1;
++    if (next > 0) {
++      this.stylesCounter.set(hash, next);
++      return Promise.resolve(false);
+     }
+-    return Promise.resolve(false);
++    this.stylesCounter.delete(hash);
++    // Move this to the end of the event loop so the element is removed from the DOM
++    return Promise.resolve().then(() => {
++      // Check if element is still in the DOM
++      if ((this.stylesCounter.get(hash) ?? 0) > 0) {
++        return false;
++      }
++      if (document.querySelector(`.${hash}`)) {
++        return false;
++      }
++      this.css.remove(hash);
++      this.stylesCache.delete(hash);
++      return true;
++    });
+   };
+   add = (value, forChild) => {
+     const generatedHash = (0, _utils.generateHash)(value);
+@@ -91,7 +124,10 @@ class UnistylesRegistry {
+     this.css.add(hash, value);
+   };
+   reset = () => {
++    this.cleanupGeneration += 1;
++    this.disposeListenersMap.forEach(dispose => dispose());
+     this.css.reset();
++    this.stylesheets.clear();
+     this.stylesCache.clear();
+     this.dependenciesMap.clear();
+     this.disposeListenersMap.clear();
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+index 305fa49..c6f5fb6 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+@@ -35,10 +35,17 @@ class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if ((0, _utils.isServer)()) {
++      return _types.ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return _types.ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return _types.ColorScheme.Dark;
+       default:
+         return _types.ColorScheme.Unspecified;
+@@ -190,7 +197,6 @@ class UnistylesRuntime {
+         return (0, _utils.convertTheme)(key, value);
+       })));
+       this.services.registry.css.addTheme(themeName, newTheme);
+-      this.services.registry.css.recreate();
+     }
+   };
+   getTheme = (themeName = this.themeName, CSSVars = false) => {
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+index 5904a73..673cff6 100644
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+@@ -13,6 +13,7 @@ import { jsx as _jsx } from "react/jsx-runtime";
+ export const withUnistyles = (Component, mappings) => {
+   return /*#__PURE__*/forwardRef((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const styleClassNames = getClassName(narrowedProps.style, true);
+     const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle);
+     const {
+@@ -26,10 +27,10 @@ export const withUnistyles = (Component, mappings) => {
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
+     const combinedProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+index b89343e..00cde6a 100644
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+@@ -27,6 +27,7 @@ export const withUnistyles = (Component, mappings) => {
+   };
+   return /*#__PURE__*/forwardRef((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const NativeComponent = Component;
+ 
+     // @ts-ignore we don't know the type of the component
+@@ -57,11 +58,11 @@ export const withUnistyles = (Component, mappings) => {
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const styleSecrets = getSecrets(narrowedProps.style);
+     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
+     const finalProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         style: styleSecrets.styles
+       } : {}),
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/core.js b/node_modules/react-native-unistyles/lib/module/web/css/core.js
+index 2bd36d5..6a321bf 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/core.js
++++ b/node_modules/react-native-unistyles/lib/module/web/css/core.js
+@@ -2,6 +2,11 @@
+ 
+ import { isPseudoClass } from '../convert/pseudo';
+ import { getMediaQuery } from '../utils';
++// hash:hover and hash::before belong to hash. Hashes have no colons, a forChild one keeps ' > *'
++export const getClassNameHash = className => {
++  const pseudoIndex = className.indexOf(':');
++  return pseudoIndex === -1 ? className : className.slice(0, pseudoIndex);
++};
+ export const convertToCSS = (hash, value, state) => {
+   Object.entries(value).forEach(([styleKey, styleValue]) => {
+     if (styleKey[0] === '_') {
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/sheet.js b/node_modules/react-native-unistyles/lib/module/web/css/sheet.js
+new file mode 100644
+index 0000000..cec10a6
+--- /dev/null
++++ b/node_modules/react-native-unistyles/lib/module/web/css/sheet.js
+@@ -0,0 +1,209 @@
++"use strict";
++
++import { hyphenate, isServer } from '../utils';
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
++// CSSState used to rewrite the text of the style tag on every added and removed class, and the browser
++// then restyled the whole document. Rules now change one at a time through the CSSOM.
++
++// Styles without a media query get a group too, so every group is an ordinary child list of one top level rule
++const BASE_MEDIA_QUERY = '@media all';
++export const getSelector = className => `.${className}`;
++export const getDeclarations = styles => {
++  let declarations = '';
++  for (const [propertyKey, value] of styles) {
++    if (value === undefined) {
++      continue;
++    }
++    declarations += `${hyphenate(propertyKey)}:${value};`;
++  }
++  return declarations;
++};
++const insertRule = (parent, rule, index = parent.cssRules.length) => {
++  try {
++    return parent.cssRules[parent.insertRule(rule, index)];
++  } catch {
++    // The browser can't parse it, like a pseudo-element it doesn't support yet: a text sheet drops it too
++    return undefined;
++  }
++};
++const indexOfRule = (parent, rule) => Array.prototype.indexOf.call(parent.cssRules, rule);
++
++// Keeps the styles of CSSState in the style tag through the CSSOM, never its text, so another runtime keeps its rules
++export class CSSSheet {
++  tag = null;
++  sheet = null;
++  groups = new Map();
++  themes = new Map();
++  hasServerStyles = false;
++  constructor(themesCSS, styles) {
++    this.themesCSS = themesCSS;
++    this.styles = styles;
++    if (isServer()) {
++      return;
++    }
++    const existingTag = document.getElementById('unistyles-web');
++    if (existingTag) {
++      this.tag = existingTag;
++      // A tag from another runtime has no text, its rules live in the CSSOM
++      this.hasServerStyles = Boolean(this.tag.textContent);
++      this.sheet = this.hasServerStyles ? null : this.tag.sheet;
++      return;
++    }
++    this.tag = document.createElement('style');
++    this.tag.id = 'unistyles-web';
++    document.head.appendChild(this.tag);
++    this.sheet = this.tag.sheet;
++  }
++  refresh = () => {
++    const sheet = this.getSheet();
++    if (sheet) {
++      this.insertGroups(sheet);
++    }
++  };
++  syncClass = (mediaQuery, className) => {
++    const sheet = this.getSheet();
++    if (!sheet) {
++      return;
++    }
++    this.insertGroups(sheet);
++    const group = this.groups.get(mediaQuery);
++    if (group) {
++      this.syncGroupClass(group, className, this.styles.get(mediaQuery)?.get(className));
++    }
++  };
++
++  // False only when the browser rejects the theme, so CSSState keeps the CSS that is applied
++  syncTheme = (key, css = this.themesCSS.get(key)) => {
++    const sheet = this.getThemeSheet();
++    const current = this.themes.get(key);
++    if (!sheet || css === undefined) {
++      return true;
++    }
++
++    // The theme goes last on every update, so it wins over the same theme of a runtime added to the tag later
++    const rule = insertRule(sheet, css);
++
++    // Inserted before the old rule goes, so a theme the browser rejects keeps the previous variables
++    if (!rule) {
++      return false;
++    }
++    const currentIndex = current ? indexOfRule(sheet, current) : -1;
++    if (currentIndex >= 0) {
++      sheet.deleteRule(currentIndex);
++    }
++    this.themes.set(key, rule);
++    return true;
++  };
++  reset = () => {
++    const sheet = this.tag?.sheet;
++    if (sheet && sheet === this.sheet) {
++      this.deleteOwnRules(sheet, new Set(Array.from(this.groups.values(), group => group?.rule)));
++    }
++    this.groups.clear();
++  };
++  getSheet = () => {
++    if (!this.tag) {
++      return null;
++    }
++    if (!this.tag.isConnected) {
++      document.head.appendChild(this.tag);
++    }
++
++    // Another runtime on the tag may have cleared the server text and filled the tag through the CSSOM already
++    if (this.hasServerStyles) {
++      this.hasServerStyles = false;
++      if (this.tag.textContent) {
++        this.tag.textContent = '';
++      }
++    }
++    const sheet = this.tag.sheet;
++
++    // A new sheet lost every rule: the server one was replaced, or the tag was rewritten or attached again
++    if (sheet && sheet !== this.sheet) {
++      this.sheet = sheet;
++      this.insertAll(sheet);
++    }
++    return sheet;
++  };
++  getThemeSheet = () => {
++    if (this.hasServerStyles) {
++      return this.tag?.sheet ?? null;
++    }
++    return this.getSheet();
++  };
++  insertAll = sheet => {
++    this.groups.clear();
++    // A theme added on top of server styles another runtime already replaced is still in this sheet
++    this.deleteOwnRules(sheet, new Set(this.themes.values()));
++    this.themes.clear();
++    this.themesCSS.forEach((_, key) => this.syncTheme(key));
++    this.insertGroups(sheet);
++    this.groups.forEach((group, mediaQuery) => {
++      if (!group) {
++        return;
++      }
++      this.styles.get(mediaQuery)?.forEach((styles, className) => this.syncGroupClass(group, className, styles));
++    });
++  };
++
++  // Every group of the styles map gets created, empty ones too, so a group appended later is always the last one
++  insertGroups = sheet => {
++    if (this.groups.size === this.styles.size) {
++      return;
++    }
++    this.styles.forEach((_, mediaQuery) => {
++      if (this.groups.has(mediaQuery)) {
++        return;
++      }
++      const rule = insertRule(sheet, `${mediaQuery || BASE_MEDIA_QUERY}{}`);
++      this.groups.set(mediaQuery, rule ? {
++        rule,
++        rules: [],
++        classes: new Map(),
++        rejected: new Map()
++      } : null);
++    });
++  };
++  syncGroupClass = (group, className, styles) => {
++    const current = group.classes.get(className);
++    if (!styles) {
++      group.rejected.delete(className);
++      if (current) {
++        const index = group.rules.indexOf(current.rule);
++        group.rule.deleteRule(index);
++        group.rules.splice(index, 1);
++        group.classes.delete(className);
++      }
++      return;
++    }
++    const declarations = getDeclarations(styles);
++    if (current) {
++      if (current.declarations !== declarations) {
++        current.rule.style.cssText = declarations;
++        current.declarations = declarations;
++      }
++      return;
++    }
++    if (group.rejected.get(className) === declarations) {
++      return;
++    }
++    const rule = insertRule(group.rule, `${getSelector(className)}{${declarations}}`);
++    if (rule) {
++      group.rules.push(rule);
++      group.classes.set(className, {
++        rule,
++        declarations
++      });
++      group.rejected.delete(className);
++      return;
++    }
++    group.rejected.set(className, declarations);
++  };
++  deleteOwnRules = (sheet, rules) => {
++    for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
++      if (rules.has(sheet.cssRules[index])) {
++        sheet.deleteRule(index);
++      }
++    }
++  };
++}
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/state.js b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+index 88e02b3..583aaaa 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+@@ -1,55 +1,77 @@
+ "use strict";
+ 
+ import { convertUnistyles } from '../convert';
+-import { hyphenate, isServer } from '../utils';
+-import { convertToCSS } from './core';
+-const safeGetMap = (map, key) => {
+-  const nextLevelMap = map.get(key);
+-  if (!nextLevelMap) {
+-    const newMap = new Map();
+-    map.set(key, newMap);
+-    return newMap;
+-  }
+-  return nextLevelMap;
++import { hyphenate } from '../utils';
++import { convertToCSS, getClassNameHash } from './core';
++import { CSSSheet, getDeclarations, getSelector } from './sheet';
++import { safeGetMap } from './utils';
++const forEachClassName = (classNames, callback) => {
++  classNames?.forEach((names, mediaQuery) => names.forEach(className => callback(mediaQuery, className)));
+ };
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
+ export class CSSState {
+-  mainMap = new Map();
+-  mqMap = new Map();
+-  styleTag = null;
++  mainMap = new Map([['', new Map()]]);
+   themesCSS = new Map();
++  owners = new Map();
++  sheet = new CSSSheet(this.themesCSS, this.mainMap);
+   constructor(services) {
+     this.services = services;
+-    if (isServer()) {
+-      return;
+-    }
+-    const ssrTag = document.getElementById('unistyles-web');
+-    if (ssrTag) {
+-      this.styleTag = ssrTag;
+-      return;
+-    }
+-    this.styleTag = document.createElement('style');
+-    this.styleTag.id = 'unistyles-web';
+-    document.head.appendChild(this.styleTag);
+   }
+   set = ({
+     className,
+     propertyKey,
+     value,
+-    mediaQuery = '',
+-    isMq
++    mediaQuery = ''
+   }) => {
+-    const firstLevelMap = isMq ? this.mqMap : this.mainMap;
+-    const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery);
++    const secondLevelMap = safeGetMap(this.mainMap, mediaQuery);
+     const thirdLevelMap = safeGetMap(secondLevelMap, className);
+     thirdLevelMap.set(propertyKey, value);
++
++    // The owner comes from the class name, so hydrated styles have one too
++    const owner = safeGetMap(this.owners, getClassNameHash(className));
++    const classNames = owner.get(mediaQuery) ?? new Set();
++    classNames.add(className);
++    owner.set(mediaQuery, classNames);
+   };
+   add = (hash, values) => {
+-    convertToCSS(hash, convertUnistyles(values, this.services.runtime), this);
+-    this.recreate();
+-  };
+-  recreate = () => {
+-    if (this.styleTag) {
+-      this.styleTag.innerText = this.getStyles();
++    const styles = new Map();
++    convertToCSS(hash, convertUnistyles(values, this.services.runtime), {
++      set: ({
++        className,
++        propertyKey,
++        value,
++        mediaQuery = ''
++      }) => {
++        safeGetMap(safeGetMap(styles, mediaQuery), className).set(propertyKey, value);
++      }
++    });
++    const previousClassNames = this.owners.get(hash);
++    forEachClassName(previousClassNames, (mediaQuery, className) => {
++      this.mainMap.get(mediaQuery)?.get(className)?.clear();
++    });
++    this.owners.delete(hash);
++    styles.forEach((classes, mediaQuery) => {
++      classes.forEach((properties, className) => {
++        properties.forEach((value, propertyKey) => this.set({
++          mediaQuery,
++          className,
++          propertyKey,
++          value
++        }));
++      });
++    });
++    const classNames = this.owners.get(hash);
++    forEachClassName(previousClassNames, (mediaQuery, className) => {
++      if (!classNames?.get(mediaQuery)?.has(className)) {
++        this.mainMap.get(mediaQuery)?.delete(className);
++        this.sheet.syncClass(mediaQuery, className);
++      }
++    });
++    forEachClassName(classNames, this.sheet.syncClass);
++
++    // syncClass already brings back the rules the tag lost, refresh does it when nothing was synced
++    if (!previousClassNames && !classNames) {
++      this.sheet.refresh();
+     }
+   };
+   addTheme = (theme, values) => {
+@@ -63,62 +85,55 @@ export class CSSState {
+       }
+     };
+     Object.entries(values).forEach(([key, value]) => convertToCSS(key, value));
++
+     if (theme === 'light' || theme === 'dark') {
+-      this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++      this.setThemeCSS(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++    }
++    this.setThemeCSS(theme, `:root.${theme}{${themeVars}}`);
++  };
++  setThemeCSS = (key, css) => {
++    if (this.sheet.syncTheme(key, css)) {
++      this.themesCSS.set(key, css);
+     }
+-    this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`);
+   };
+   remove = hash => {
+-    this.mainMap.forEach(styles => {
+-      styles.delete(hash);
++    const classNames = this.owners.get(hash);
++    this.owners.delete(hash);
++    forEachClassName(classNames, (mediaQuery, className) => {
++      this.mainMap.get(mediaQuery)?.delete(className);
++      this.sheet.syncClass(mediaQuery, className);
+     });
+-    this.mqMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
+-    this.recreate();
++    if (!classNames) {
++      this.sheet.refresh();
++    }
+   };
+   getStyles = () => {
+     let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {
+       return acc + themeCss;
+     }, '');
+-    const generate = (mediaQuery, secondLevelMap) => {
++    for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+       if (mediaQuery) {
+         styles += `${mediaQuery}{`;
+       }
+       for (const [className, thirdLevelMap] of secondLevelMap) {
+-        styles += `.${className}{`;
+-        for (const [propertyKey, value] of thirdLevelMap) {
+-          if (value === undefined) {
+-            continue;
+-          }
+-          styles += `${hyphenate(propertyKey)}:${value};`;
+-        }
+-        styles += '}';
++        styles += `${getSelector(className)}{${getDeclarations(thirdLevelMap)}}`;
+       }
+       if (mediaQuery) {
+         styles += '}';
+       }
+-    };
+-    for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+-      generate(mediaQuery, secondLevelMap);
+-    }
+-    for (const [mediaQuery, secondLevelMap] of this.mqMap) {
+-      generate(mediaQuery, secondLevelMap);
+     }
+     return styles;
+   };
+   getState = () => {
+-    const getState = map => {
+-      return Array.from(map).map(([mediaQuery, classNames]) => {
+-        return [mediaQuery, Array.from(classNames.entries()).map(([className, style]) => {
+-          return [className, Array.from(style.entries()).map(([property, value]) => {
+-            return [property, value];
+-          })];
++    const mainState = Array.from(this.mainMap).map(([mediaQuery, classNames]) => {
++      return [mediaQuery, Array.from(classNames.entries()).map(([className, style]) => {
++        return [className, Array.from(style.entries()).map(([property, value]) => {
++          return [property, value];
+         })];
+-      });
+-    };
+-    const mainState = getState(this.mainMap);
+-    const mqState = getState(this.mqMap);
++      })];
++    });
++    // Always empty, media query styles live in mainState. Kept for the shape hydrate reads
++    const mqState = [];
+     const config = this.services.state.getConfig();
+     return {
+       mainState,
+@@ -126,11 +141,12 @@ export class CSSState {
+       config
+     };
+   };
+-  hydrate = ({
+-    mainState,
+-    mqState
+-  }) => {
+-    const hydrateState = (map, isMq = false) => {
++  hydrate = state => {
++    if (state === this.hydratedState) {
++      return;
++    }
++    this.hydratedState = state;
++    const hydrateState = map => {
+       map.forEach(([mediaQuery, classNames]) => {
+         classNames.forEach(([className, style]) => {
+           style.forEach(([propertyKey, value]) => {
+@@ -138,19 +154,22 @@ export class CSSState {
+               className,
+               propertyKey,
+               value,
+-              mediaQuery,
+-              isMq
++              mediaQuery
+             });
+           });
++          this.sheet.syncClass(mediaQuery, className);
+         });
+       });
+     };
+-    hydrateState(mainState);
+-    hydrateState(mqState, true);
++    hydrateState(state.mainState);
++    hydrateState(state.mqState);
+   };
+   reset = () => {
+-    this.mqMap.clear();
+     this.mainMap.clear();
++    this.mainMap.set('', new Map());
++    this.owners.clear();
++    this.hydratedState = undefined;
++    this.sheet.reset();
+   };
+ }
+ //# sourceMappingURL=state.js.map
+\ No newline at end of file
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/utils.js b/node_modules/react-native-unistyles/lib/module/web/css/utils.js
+index e46697a..080cde0 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/utils.js
++++ b/node_modules/react-native-unistyles/lib/module/web/css/utils.js
+@@ -1,6 +1,5 @@
+ "use strict";
+ 
+-import { hyphenate } from '../utils';
+ export const safeGetMap = (map, key) => {
+   const nextLevelMap = map.get(key);
+   if (!nextLevelMap) {
+@@ -10,32 +9,4 @@ export const safeGetMap = (map, key) => {
+   }
+   return nextLevelMap;
+ };
+-export const getStylesFromState = state => {
+-  let styles = '';
+-  const generate = (mediaQuery, secondLevelMap) => {
+-    if (mediaQuery) {
+-      styles += `${mediaQuery}{`;
+-    }
+-    for (const [className, thirdLevelMap] of secondLevelMap) {
+-      styles += `.${className}{`;
+-      for (const [propertyKey, value] of thirdLevelMap) {
+-        if (value === undefined) {
+-          continue;
+-        }
+-        styles += `${hyphenate(propertyKey)}:${value};`;
+-      }
+-      styles += '}';
+-    }
+-    if (mediaQuery) {
+-      styles += '}';
+-    }
+-  };
+-  for (const [mediaQuery, secondLevelMap] of state.mainMap) {
+-    generate(mediaQuery, secondLevelMap);
+-  }
+-  for (const [mediaQuery, secondLevelMap] of state.mqMap) {
+-    generate(mediaQuery, secondLevelMap);
+-  }
+-  return styles;
+-};
+ //# sourceMappingURL=utils.js.map
+\ No newline at end of file
+diff --git a/node_modules/react-native-unistyles/lib/module/web/registry.js b/node_modules/react-native-unistyles/lib/module/web/registry.js
+index 6362f43..31e3190 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/registry.js
++++ b/node_modules/react-native-unistyles/lib/module/web/registry.js
+@@ -6,6 +6,17 @@ export class UnistylesRegistry {
+   stylesheets = new Map();
+   stylesCache = new Set();
+   stylesCounter = new Map();
++  cleanupGeneration = 0;
++  finalizerTokens = new WeakMap();
++  finalizationRegistry = typeof FinalizationRegistry === 'undefined' ? undefined : new FinalizationRegistry(({
++    hash,
++    generation
++  }) => {
++    if (generation !== this.cleanupGeneration) {
++      return;
++    }
++    this.decrementAndMaybeCleanup(hash);
++  });
+   disposeListenersMap = new Map();
+   dependenciesMap = new Map();
+   constructor(services) {
+@@ -46,26 +57,48 @@ export class UnistylesRegistry {
+     this.disposeListenersMap.set(stylesheet, dispose);
+   };
+   connect = (ref, hash) => {
+-    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
+-    stylesCounter.add(ref);
+-    this.stylesCounter.set(hash, stylesCounter);
++    this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1);
++    if (!this.finalizationRegistry) {
++      return;
++    }
++    const token = {};
++    const tokensByHash = this.finalizerTokens.get(ref) ?? new Map();
++    const tokens = tokensByHash.get(hash) ?? [];
++    tokens.push(token);
++    tokensByHash.set(hash, tokens);
++    this.finalizerTokens.set(ref, tokensByHash);
++    this.finalizationRegistry.register(ref, {
++      hash,
++      generation: this.cleanupGeneration
++    }, token);
+   };
+   remove = (ref, hash) => {
+-    const stylesCounter = this.stylesCounter.get(hash) ?? new Set();
+-    stylesCounter.delete(ref);
+-    if (stylesCounter.size === 0) {
+-      // Move this to the end of the event loop so the element is removed from the DOM
+-      return Promise.resolve().then(() => {
+-        // Check if element is still in the DOM
+-        if (document.querySelector(`.${hash}`)) {
+-          return false;
+-        }
+-        this.css.remove(hash);
+-        this.stylesCache.delete(hash);
+-        return true;
+-      });
++    const token = this.finalizerTokens.get(ref)?.get(hash)?.pop();
++    if (token) {
++      this.finalizationRegistry?.unregister(token);
++    }
++    return this.decrementAndMaybeCleanup(hash);
++  };
++  decrementAndMaybeCleanup = hash => {
++    const next = (this.stylesCounter.get(hash) ?? 0) - 1;
++    if (next > 0) {
++      this.stylesCounter.set(hash, next);
++      return Promise.resolve(false);
+     }
+-    return Promise.resolve(false);
++    this.stylesCounter.delete(hash);
++    // Move this to the end of the event loop so the element is removed from the DOM
++    return Promise.resolve().then(() => {
++      // Check if element is still in the DOM
++      if ((this.stylesCounter.get(hash) ?? 0) > 0) {
++        return false;
++      }
++      if (document.querySelector(`.${hash}`)) {
++        return false;
++      }
++      this.css.remove(hash);
++      this.stylesCache.delete(hash);
++      return true;
++    });
+   };
+   add = (value, forChild) => {
+     const generatedHash = generateHash(value);
+@@ -87,7 +120,10 @@ export class UnistylesRegistry {
+     this.css.add(hash, value);
+   };
+   reset = () => {
++    this.cleanupGeneration += 1;
++    this.disposeListenersMap.forEach(dispose => dispose());
+     this.css.reset();
++    this.stylesheets.clear();
+     this.stylesCache.clear();
+     this.dependenciesMap.clear();
+     this.disposeListenersMap.clear();
+diff --git a/node_modules/react-native-unistyles/lib/module/web/runtime.js b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+index 7f13a06..a4b6570 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+@@ -31,10 +31,17 @@ export class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if (isServer()) {
++      return ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return ColorScheme.Dark;
+       default:
+         return ColorScheme.Unspecified;
+@@ -186,7 +193,6 @@ export class UnistylesRuntime {
+         return convertTheme(key, value);
+       })));
+       this.services.registry.css.addTheme(themeName, newTheme);
+-      this.services.registry.css.recreate();
+     }
+   };
+   getTheme = (themeName = this.themeName, CSSVars = false) => {
+diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
+index 27723c0..8ab111a 100644
+--- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
++++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
+@@ -63,6 +63,7 @@ export const withUnistyles = <TComponent, TMappings extends GenericComponentProp
+ 
+     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
+         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
++        const { uniProps, ...componentProps } = narrowedProps
+         const NativeComponent = Component as ComponentType
+ 
+         // @ts-ignore we don't know the type of the component
+@@ -89,15 +90,15 @@ export const withUnistyles = <TComponent, TMappings extends GenericComponentProp
+         }, [narrowedProps.style, narrowedProps.contentContainerStyle])
+ 
+         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
+-        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
+-            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
++        const { key: uniPropsKey, ...unistyleProps } = uniProps
++            ? uniProps(proxifiedTheme, proxifiedRuntime)
+             : {}
+ 
+         const styleSecrets = getSecrets(narrowedProps.style)
+         const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle)
+ 
+         const finalProps = {
+-            ...deepMergeObjects(mappingsProps, unistyleProps, props),
++            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+             ...(narrowedProps.style
+                 ? {
+                       style: styleSecrets.styles,
+diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
+index e347b7a..fc155ad 100644
+--- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
++++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
+@@ -28,13 +28,14 @@ export const withUnistyles = <TComponent, TMappings extends GenericComponentProp
+ 
+     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
+         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
++        const { uniProps, ...componentProps } = narrowedProps
+         const styleClassNames = getClassName(narrowedProps.style, true)
+         const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle)
+         const { proxifiedRuntime, proxifiedTheme } = useProxifiedUnistyles()
+ 
+         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
+-        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
+-            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
++        const { key: uniPropsKey, ...unistyleProps } = uniProps
++            ? uniProps(proxifiedTheme, proxifiedRuntime)
+             : {}
+ 
+         const emptyStyles = narrowedProps.style
+@@ -46,7 +47,7 @@ export const withUnistyles = <TComponent, TMappings extends GenericComponentProp
+             : undefined
+ 
+         const combinedProps = {
+-            ...deepMergeObjects(mappingsProps, unistyleProps, props),
++            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+             ...(narrowedProps.style
+                 ? {
+                       // Override default component styles with undefined values to reset them
+diff --git a/node_modules/react-native-unistyles/src/web/css/core.ts b/node_modules/react-native-unistyles/src/web/css/core.ts
+index 2615985..0dd715d 100644
+--- a/node_modules/react-native-unistyles/src/web/css/core.ts
++++ b/node_modules/react-native-unistyles/src/web/css/core.ts
+@@ -3,7 +3,16 @@ import type { CSSState } from './state'
+ import { isPseudoClass } from '../convert/pseudo'
+ import { getMediaQuery } from '../utils'
+ 
+-export const convertToCSS = (hash: string, value: Record<string, any>, state: CSSState) => {
++type StyleTarget = Pick<CSSState, 'set'>
++
++// hash:hover and hash::before belong to hash. Hashes have no colons, a forChild one keeps ' > *'
++export const getClassNameHash = (className: string) => {
++    const pseudoIndex = className.indexOf(':')
++
++    return pseudoIndex === -1 ? className : className.slice(0, pseudoIndex)
++}
++
++export const convertToCSS = (hash: string, value: Record<string, any>, state: StyleTarget) => {
+     Object.entries(value).forEach(([styleKey, styleValue]) => {
+         if (styleKey[0] === '_') {
+             const isStylePseudoClass = isPseudoClass(styleKey)
+diff --git a/node_modules/react-native-unistyles/src/web/css/sheet.ts b/node_modules/react-native-unistyles/src/web/css/sheet.ts
+new file mode 100644
+index 0000000..cb1afb9
+--- /dev/null
++++ b/node_modules/react-native-unistyles/src/web/css/sheet.ts
+@@ -0,0 +1,264 @@
++import { hyphenate, isServer } from '../utils'
++
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
++// CSSState used to rewrite the text of the style tag on every added and removed class, and the browser
++// then restyled the whole document. Rules now change one at a time through the CSSOM.
++
++type Styles = Map<string, any>
++type StylesMap = Map<string, Map<string, Styles>>
++type RuleParent = CSSStyleSheet | CSSGroupingRule
++type Group = {
++    rule: CSSGroupingRule
++    rules: Array<CSSRule>
++    classes: Map<string, { rule: CSSStyleRule; declarations: string }>
++    rejected: Map<string, string>
++}
++
++// Styles without a media query get a group too, so every group is an ordinary child list of one top level rule
++const BASE_MEDIA_QUERY = '@media all'
++
++export const getSelector = (className: string) => `.${className}`
++
++export const getDeclarations = (styles: Styles) => {
++    let declarations = ''
++
++    for (const [propertyKey, value] of styles) {
++        if (value === undefined) {
++            continue
++        }
++
++        declarations += `${hyphenate(propertyKey)}:${value};`
++    }
++
++    return declarations
++}
++
++const insertRule = (parent: RuleParent, rule: string, index = parent.cssRules.length) => {
++    try {
++        return parent.cssRules[parent.insertRule(rule, index)]
++    } catch {
++        // The browser can't parse it, like a pseudo-element it doesn't support yet: a text sheet drops it too
++        return undefined
++    }
++}
++
++const indexOfRule = (parent: RuleParent, rule: CSSRule) => Array.prototype.indexOf.call(parent.cssRules, rule)
++
++// Keeps the styles of CSSState in the style tag through the CSSOM, never its text, so another runtime keeps its rules
++export class CSSSheet {
++    private tag: HTMLStyleElement | null = null
++    private sheet: CSSStyleSheet | null = null
++    private groups = new Map<string, Group | null>()
++    private themes = new Map<string, CSSRule>()
++    private hasServerStyles = false
++
++    constructor(
++        private themesCSS: Map<string, string>,
++        private styles: StylesMap,
++    ) {
++        if (isServer()) {
++            return
++        }
++
++        const existingTag = document.getElementById('unistyles-web')
++
++        if (existingTag) {
++            this.tag = existingTag as HTMLStyleElement
++            // A tag from another runtime has no text, its rules live in the CSSOM
++            this.hasServerStyles = Boolean(this.tag.textContent)
++            this.sheet = this.hasServerStyles ? null : this.tag.sheet
++
++            return
++        }
++
++        this.tag = document.createElement('style')
++        this.tag.id = 'unistyles-web'
++        document.head.appendChild(this.tag)
++        this.sheet = this.tag.sheet
++    }
++
++    refresh = () => {
++        const sheet = this.getSheet()
++
++        if (sheet) {
++            this.insertGroups(sheet)
++        }
++    }
++
++    syncClass = (mediaQuery: string, className: string) => {
++        const sheet = this.getSheet()
++
++        if (!sheet) {
++            return
++        }
++
++        this.insertGroups(sheet)
++
++        const group = this.groups.get(mediaQuery)
++
++        if (group) {
++            this.syncGroupClass(group, className, this.styles.get(mediaQuery)?.get(className))
++        }
++    }
++
++    // False only when the browser rejects the theme, so CSSState keeps the CSS that is applied
++    syncTheme = (key: string, css = this.themesCSS.get(key)) => {
++        const sheet = this.getThemeSheet()
++        const current = this.themes.get(key)
++
++        if (!sheet || css === undefined) {
++            return true
++        }
++
++        // The theme goes last on every update, so it wins over the same theme of a runtime added to the tag later
++        const rule = insertRule(sheet, css)
++
++        // Inserted before the old rule goes, so a theme the browser rejects keeps the previous variables
++        if (!rule) {
++            return false
++        }
++
++        const currentIndex = current ? indexOfRule(sheet, current) : -1
++
++        if (currentIndex >= 0) {
++            sheet.deleteRule(currentIndex)
++        }
++
++        this.themes.set(key, rule)
++
++        return true
++    }
++
++    reset = () => {
++        const sheet = this.tag?.sheet
++
++        if (sheet && sheet === this.sheet) {
++            this.deleteOwnRules(sheet, new Set(Array.from(this.groups.values(), (group) => group?.rule)))
++        }
++
++        this.groups.clear()
++    }
++
++    private getSheet = () => {
++        if (!this.tag) {
++            return null
++        }
++
++        if (!this.tag.isConnected) {
++            document.head.appendChild(this.tag)
++        }
++
++        // Another runtime on the tag may have cleared the server text and filled the tag through the CSSOM already
++        if (this.hasServerStyles) {
++            this.hasServerStyles = false
++
++            if (this.tag.textContent) {
++                this.tag.textContent = ''
++            }
++        }
++
++        const sheet = this.tag.sheet
++
++        // A new sheet lost every rule: the server one was replaced, or the tag was rewritten or attached again
++        if (sheet && sheet !== this.sheet) {
++            this.sheet = sheet
++            this.insertAll(sheet)
++        }
++
++        return sheet
++    }
++
++    private getThemeSheet = () => {
++        if (this.hasServerStyles) {
++            return this.tag?.sheet ?? null
++        }
++
++        return this.getSheet()
++    }
++
++    private insertAll = (sheet: CSSStyleSheet) => {
++        this.groups.clear()
++        // A theme added on top of server styles another runtime already replaced is still in this sheet
++        this.deleteOwnRules(sheet, new Set(this.themes.values()))
++        this.themes.clear()
++        this.themesCSS.forEach((_, key) => this.syncTheme(key))
++        this.insertGroups(sheet)
++        this.groups.forEach((group, mediaQuery) => {
++            if (!group) {
++                return
++            }
++
++            this.styles.get(mediaQuery)?.forEach((styles, className) => this.syncGroupClass(group, className, styles))
++        })
++    }
++
++    // Every group of the styles map gets created, empty ones too, so a group appended later is always the last one
++    private insertGroups = (sheet: CSSStyleSheet) => {
++        if (this.groups.size === this.styles.size) {
++            return
++        }
++
++        this.styles.forEach((_, mediaQuery) => {
++            if (this.groups.has(mediaQuery)) {
++                return
++            }
++
++            const rule = insertRule(sheet, `${mediaQuery || BASE_MEDIA_QUERY}{}`) as CSSGroupingRule | undefined
++
++            this.groups.set(mediaQuery, rule ? { rule, rules: [], classes: new Map(), rejected: new Map() } : null)
++        })
++    }
++
++    private syncGroupClass = (group: Group, className: string, styles?: Styles) => {
++        const current = group.classes.get(className)
++
++        if (!styles) {
++            group.rejected.delete(className)
++
++            if (current) {
++                const index = group.rules.indexOf(current.rule)
++
++                group.rule.deleteRule(index)
++                group.rules.splice(index, 1)
++                group.classes.delete(className)
++            }
++
++            return
++        }
++
++        const declarations = getDeclarations(styles)
++
++        if (current) {
++            if (current.declarations !== declarations) {
++                current.rule.style.cssText = declarations
++                current.declarations = declarations
++            }
++
++            return
++        }
++
++        if (group.rejected.get(className) === declarations) {
++            return
++        }
++
++        const rule = insertRule(group.rule, `${getSelector(className)}{${declarations}}`) as CSSStyleRule | undefined
++
++        if (rule) {
++            group.rules.push(rule)
++            group.classes.set(className, { rule, declarations })
++            group.rejected.delete(className)
++
++            return
++        }
++
++        group.rejected.set(className, declarations)
++    }
++
++    private deleteOwnRules = (sheet: CSSStyleSheet, rules: Set<CSSRule | undefined>) => {
++        for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
++            if (rules.has(sheet.cssRules[index])) {
++                sheet.deleteRule(index)
++            }
++        }
++    }
++}
+diff --git a/node_modules/react-native-unistyles/src/web/css/state.ts b/node_modules/react-native-unistyles/src/web/css/state.ts
+index a0eea57..27d71a1 100644
+--- a/node_modules/react-native-unistyles/src/web/css/state.ts
++++ b/node_modules/react-native-unistyles/src/web/css/state.ts
+@@ -2,73 +2,86 @@ import type { UnistylesValues } from '../../types'
+ import type { UnistylesServices } from '../types'
+ 
+ import { convertUnistyles } from '../convert'
+-import { hyphenate, isServer } from '../utils'
+-import { convertToCSS } from './core'
++import { hyphenate } from '../utils'
++import { convertToCSS, getClassNameHash } from './core'
++import { CSSSheet, getDeclarations, getSelector } from './sheet'
++import { safeGetMap } from './utils'
+ 
+ type MapType = Map<string, Map<string, Map<string, any>>>
++type ClassNames = Map<string, Set<string>>
+ type SetProps = {
+     mediaQuery?: string
+     className: string
+-    isMq?: boolean
+     propertyKey: string
+     value: any
+ }
+ type HydrateState = Array<[string, Array<[string, Array<[string, any]>]>]>
+ 
+-const safeGetMap = (map: Map<string, Map<string, any>>, key: string) => {
+-    const nextLevelMap = map.get(key)
+-
+-    if (!nextLevelMap) {
+-        const newMap = new Map<string, any>()
+-
+-        map.set(key, newMap)
+-
+-        return newMap
+-    }
+-
+-    return nextLevelMap
++const forEachClassName = (
++    classNames: ClassNames | undefined,
++    callback: (mediaQuery: string, className: string) => void,
++) => {
++    classNames?.forEach((names, mediaQuery) => names.forEach((className) => callback(mediaQuery, className)))
+ }
+ 
++// Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1354 (released in 3.8.0).
+ export class CSSState {
+-    mainMap: MapType = new Map()
+-    mqMap: MapType = new Map()
+-    private styleTag: HTMLStyleElement | null = null
++    mainMap: MapType = new Map([['', new Map()]])
+     private themesCSS = new Map<string, string>()
++    private owners = new Map<string, ClassNames>()
++    private hydratedState?: ReturnType<CSSState['getState']>
++    private sheet = new CSSSheet(this.themesCSS, this.mainMap)
+ 
+-    constructor(private services: UnistylesServices) {
+-        if (isServer()) {
+-            return
+-        }
++    constructor(private services: UnistylesServices) {}
+ 
+-        const ssrTag = document.getElementById('unistyles-web')
++    set = ({ className, propertyKey, value, mediaQuery = '' }: SetProps) => {
++        const secondLevelMap = safeGetMap(this.mainMap, mediaQuery)
++        const thirdLevelMap = safeGetMap(secondLevelMap, className)
+ 
+-        if (ssrTag) {
+-            this.styleTag = ssrTag as HTMLStyleElement
++        thirdLevelMap.set(propertyKey, value)
+ 
+-            return
+-        }
++        // The owner comes from the class name, so hydrated styles have one too
++        const owner: ClassNames = safeGetMap(this.owners, getClassNameHash(className))
++        const classNames = owner.get(mediaQuery) ?? new Set()
+ 
+-        this.styleTag = document.createElement('style')
+-        this.styleTag.id = 'unistyles-web'
+-        document.head.appendChild(this.styleTag)
++        classNames.add(className)
++        owner.set(mediaQuery, classNames)
+     }
+ 
+-    set = ({ className, propertyKey, value, mediaQuery = '', isMq }: SetProps) => {
+-        const firstLevelMap = isMq ? this.mqMap : this.mainMap
+-        const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery)
+-        const thirdLevelMap = safeGetMap(secondLevelMap, className)
++    add = (hash: string, values: UnistylesValues) => {
++        const styles: MapType = new Map()
+ 
+-        thirdLevelMap.set(propertyKey, value)
+-    }
++        convertToCSS(hash, convertUnistyles(values, this.services.runtime), {
++            set: ({ className, propertyKey, value, mediaQuery = '' }) => {
++                safeGetMap(safeGetMap(styles, mediaQuery), className).set(propertyKey, value)
++            },
++        })
+ 
+-    add = (hash: string, values: UnistylesValues) => {
+-        convertToCSS(hash, convertUnistyles(values, this.services.runtime), this)
+-        this.recreate()
+-    }
++        const previousClassNames = this.owners.get(hash)
++
++        forEachClassName(previousClassNames, (mediaQuery, className) => {
++            this.mainMap.get(mediaQuery)?.get(className)?.clear()
++        })
++        this.owners.delete(hash)
++        styles.forEach((classes, mediaQuery) => {
++            classes.forEach((properties, className) => {
++                properties.forEach((value, propertyKey) => this.set({ mediaQuery, className, propertyKey, value }))
++            })
++        })
++
++        const classNames = this.owners.get(hash)
++
++        forEachClassName(previousClassNames, (mediaQuery, className) => {
++            if (!classNames?.get(mediaQuery)?.has(className)) {
++                this.mainMap.get(mediaQuery)?.delete(className)
++                this.sheet.syncClass(mediaQuery, className)
++            }
++        })
++        forEachClassName(classNames, this.sheet.syncClass)
+ 
+-    recreate = () => {
+-        if (this.styleTag) {
+-            this.styleTag.innerText = this.getStyles()
++        // syncClass already brings back the rules the tag lost, refresh does it when nothing was synced
++        if (!previousClassNames && !classNames) {
++            this.sheet.refresh()
+         }
+     }
+ 
+@@ -90,20 +103,30 @@ export class CSSState {
+         Object.entries(values).forEach(([key, value]) => convertToCSS(key, value))
+ 
+         if (theme === 'light' || theme === 'dark') {
+-            this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`)
++            this.setThemeCSS(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`)
+         }
+ 
+-        this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`)
++        this.setThemeCSS(theme, `:root.${theme}{${themeVars}}`)
++    }
++
++    private setThemeCSS = (key: string, css: string) => {
++        if (this.sheet.syncTheme(key, css)) {
++            this.themesCSS.set(key, css)
++        }
+     }
+ 
+     remove = (hash: string) => {
+-        this.mainMap.forEach((styles) => {
+-            styles.delete(hash)
+-        })
+-        this.mqMap.forEach((styles) => {
+-            styles.delete(hash)
++        const classNames = this.owners.get(hash)
++
++        this.owners.delete(hash)
++        forEachClassName(classNames, (mediaQuery, className) => {
++            this.mainMap.get(mediaQuery)?.delete(className)
++            this.sheet.syncClass(mediaQuery, className)
+         })
+-        this.recreate()
++
++        if (!classNames) {
++            this.sheet.refresh()
++        }
+     }
+ 
+     getStyles = () => {
+@@ -111,23 +134,13 @@ export class CSSState {
+             return acc + themeCss
+         }, '')
+ 
+-        const generate = (mediaQuery: string, secondLevelMap: Map<string, Map<string, string>>) => {
++        for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+             if (mediaQuery) {
+                 styles += `${mediaQuery}{`
+             }
+ 
+             for (const [className, thirdLevelMap] of secondLevelMap) {
+-                styles += `.${className}{`
+-
+-                for (const [propertyKey, value] of thirdLevelMap) {
+-                    if (value === undefined) {
+-                        continue
+-                    }
+-
+-                    styles += `${hyphenate(propertyKey)}:${value};`
+-                }
+-
+-                styles += '}'
++                styles += `${getSelector(className)}{${getDeclarations(thirdLevelMap)}}`
+             }
+ 
+             if (mediaQuery) {
+@@ -135,43 +148,38 @@ export class CSSState {
+             }
+         }
+ 
+-        for (const [mediaQuery, secondLevelMap] of this.mainMap) {
+-            generate(mediaQuery, secondLevelMap)
+-        }
+-
+-        for (const [mediaQuery, secondLevelMap] of this.mqMap) {
+-            generate(mediaQuery, secondLevelMap)
+-        }
+-
+         return styles
+     }
+ 
+     getState = () => {
+-        const getState = (map: MapType) => {
+-            return Array.from(map).map(([mediaQuery, classNames]) => {
+-                return [
+-                    mediaQuery,
+-                    Array.from(classNames.entries()).map(([className, style]) => {
+-                        return [
+-                            className,
+-                            Array.from(style.entries()).map(([property, value]) => {
+-                                return [property, value]
+-                            }),
+-                        ]
+-                    }),
+-                ]
+-            }) as HydrateState
+-        }
+-
+-        const mainState = getState(this.mainMap)
+-        const mqState = getState(this.mqMap)
++        const mainState = Array.from(this.mainMap).map(([mediaQuery, classNames]) => {
++            return [
++                mediaQuery,
++                Array.from(classNames.entries()).map(([className, style]) => {
++                    return [
++                        className,
++                        Array.from(style.entries()).map(([property, value]) => {
++                            return [property, value]
++                        }),
++                    ]
++                }),
++            ]
++        }) as HydrateState
++        // Always empty, media query styles live in mainState. Kept for the shape hydrate reads
++        const mqState: HydrateState = []
+         const config = this.services.state.getConfig()
+ 
+         return { mainState, mqState, config }
+     }
+ 
+-    hydrate = ({ mainState, mqState }: ReturnType<typeof this.getState>) => {
+-        const hydrateState = (map: HydrateState, isMq = false) => {
++    hydrate = (state: ReturnType<typeof this.getState>) => {
++        if (state === this.hydratedState) {
++            return
++        }
++
++        this.hydratedState = state
++
++        const hydrateState = (map: HydrateState) => {
+             map.forEach(([mediaQuery, classNames]) => {
+                 classNames.forEach(([className, style]) => {
+                     style.forEach(([propertyKey, value]) => {
+@@ -180,19 +188,22 @@ export class CSSState {
+                             propertyKey,
+                             value,
+                             mediaQuery,
+-                            isMq,
+                         })
+                     })
++                    this.sheet.syncClass(mediaQuery, className)
+                 })
+             })
+         }
+ 
+-        hydrateState(mainState)
+-        hydrateState(mqState, true)
++        hydrateState(state.mainState)
++        hydrateState(state.mqState)
+     }
+ 
+     reset = () => {
+-        this.mqMap.clear()
+         this.mainMap.clear()
++        this.mainMap.set('', new Map())
++        this.owners.clear()
++        this.hydratedState = undefined
++        this.sheet.reset()
+     }
+ }
+diff --git a/node_modules/react-native-unistyles/src/web/css/utils.ts b/node_modules/react-native-unistyles/src/web/css/utils.ts
+index 6747104..95293aa 100644
+--- a/node_modules/react-native-unistyles/src/web/css/utils.ts
++++ b/node_modules/react-native-unistyles/src/web/css/utils.ts
+@@ -1,7 +1,3 @@
+-import type { CSSState } from './state'
+-
+-import { hyphenate } from '../utils'
+-
+ export const safeGetMap = (map: Map<string, Map<string, any>>, key: string) => {
+     const nextLevelMap = map.get(key)
+ 
+@@ -15,41 +11,3 @@ export const safeGetMap = (map: Map<string, Map<string, any>>, key: string) => {
+ 
+     return nextLevelMap
+ }
+-
+-export const getStylesFromState = (state: CSSState) => {
+-    let styles = ''
+-
+-    const generate = (mediaQuery: string, secondLevelMap: Map<string, Map<string, string>>) => {
+-        if (mediaQuery) {
+-            styles += `${mediaQuery}{`
+-        }
+-
+-        for (const [className, thirdLevelMap] of secondLevelMap) {
+-            styles += `.${className}{`
+-
+-            for (const [propertyKey, value] of thirdLevelMap) {
+-                if (value === undefined) {
+-                    continue
+-                }
+-
+-                styles += `${hyphenate(propertyKey)}:${value};`
+-            }
+-
+-            styles += '}'
+-        }
+-
+-        if (mediaQuery) {
+-            styles += '}'
+-        }
+-    }
+-
+-    for (const [mediaQuery, secondLevelMap] of state.mainMap) {
+-        generate(mediaQuery, secondLevelMap)
+-    }
+-
+-    for (const [mediaQuery, secondLevelMap] of state.mqMap) {
+-        generate(mediaQuery, secondLevelMap)
+-    }
+-
+-    return styles
+-}
+diff --git a/node_modules/react-native-unistyles/src/web/registry.ts b/node_modules/react-native-unistyles/src/web/registry.ts
+index 39e0d9d..a21ba95 100644
+--- a/node_modules/react-native-unistyles/src/web/registry.ts
++++ b/node_modules/react-native-unistyles/src/web/registry.ts
+@@ -9,7 +9,24 @@ import { error, extractUnistyleDependencies, generateHash } from './utils'
+ export class UnistylesRegistry {
+     private readonly stylesheets = new Map<StyleSheetWithSuperPowers<StyleSheet>, StyleSheet>()
+     private readonly stylesCache = new Set<string>()
+-    private readonly stylesCounter = new Map<string, Set<HTMLElement>>()
++    // Use counter instead of Set<HTMLElement> to avoid retaining detached DOM nodes
++    // FR is a fallback when remove() is missed
++    private readonly stylesCounter = new Map<string, number>()
++    // Bumped on reset() so stale FR callbacks are ignored
++    private cleanupGeneration = 0
++    // Per-registration unregister token, so remove() cancels only its own registration
++    private readonly finalizerTokens = new WeakMap<HTMLElement, Map<string, Array<object>>>()
++    // FR isn't available on every runtime - fall back to counter-only cleanup
++    private readonly finalizationRegistry =
++        typeof FinalizationRegistry === 'undefined'
++            ? undefined
++            : new FinalizationRegistry<{ hash: string; generation: number }>(({ hash, generation }) => {
++                  if (generation !== this.cleanupGeneration) {
++                      return
++                  }
++
++                  this.decrementAndMaybeCleanup(hash)
++              })
+     private readonly disposeListenersMap = new Map<object, VoidFunction>()
+     private readonly dependenciesMap = new Map<StyleSheetWithSuperPowers<StyleSheet>, Set<UnistyleDependency>>()
+     readonly css: CSSState
+@@ -78,33 +95,61 @@ export class UnistylesRegistry {
+     }
+ 
+     connect = (ref: HTMLElement, hash: string) => {
+-        const stylesCounter = this.stylesCounter.get(hash) ?? new Set()
++        this.stylesCounter.set(hash, (this.stylesCounter.get(hash) ?? 0) + 1)
+ 
+-        stylesCounter.add(ref)
+-        this.stylesCounter.set(hash, stylesCounter)
++        if (!this.finalizationRegistry) {
++            return
++        }
++
++        const token = {}
++        const tokensByHash = this.finalizerTokens.get(ref) ?? new Map<string, Array<object>>()
++        const tokens = tokensByHash.get(hash) ?? []
++
++        tokens.push(token)
++        tokensByHash.set(hash, tokens)
++        this.finalizerTokens.set(ref, tokensByHash)
++        this.finalizationRegistry.register(ref, { hash, generation: this.cleanupGeneration }, token)
+     }
+ 
+     remove = (ref: HTMLElement, hash: string) => {
+-        const stylesCounter = this.stylesCounter.get(hash) ?? new Set()
++        const token = this.finalizerTokens.get(ref)?.get(hash)?.pop()
+ 
+-        stylesCounter.delete(ref)
++        if (token) {
++            this.finalizationRegistry?.unregister(token)
++        }
+ 
+-        if (stylesCounter.size === 0) {
+-            // Move this to the end of the event loop so the element is removed from the DOM
+-            return Promise.resolve().then(() => {
+-                // Check if element is still in the DOM
+-                if (document.querySelector(`.${hash}`)) {
+-                    return false
+-                }
++        return this.decrementAndMaybeCleanup(hash)
++    }
++
++    private decrementAndMaybeCleanup = (hash: string): Promise<boolean> => {
++        const next = (this.stylesCounter.get(hash) ?? 0) - 1
+ 
+-                this.css.remove(hash)
+-                this.stylesCache.delete(hash)
++        if (next > 0) {
++            this.stylesCounter.set(hash, next)
+ 
+-                return true
+-            })
++            return Promise.resolve(false)
+         }
+ 
+-        return Promise.resolve(false)
++        // Drop the empty bucket from the Map
++        this.stylesCounter.delete(hash)
++
++        // Move this to the end of the event loop so the element is removed from the DOM
++        return Promise.resolve().then(() => {
++            // New connect raced in during the microtask
++            if ((this.stylesCounter.get(hash) ?? 0) > 0) {
++                return false
++            }
++
++            // Check if element is still in the DOM
++            if (document.querySelector(`.${hash}`)) {
++                return false
++            }
++
++            this.css.remove(hash)
++            this.stylesCache.delete(hash)
++
++            return true
++        })
+     }
+ 
+     add = (value: UnistylesValues, forChild?: boolean) => {
+@@ -126,7 +171,11 @@ export class UnistylesRegistry {
+     }
+ 
+     reset = () => {
++        // Invalidate pending FR callbacks from this generation
++        this.cleanupGeneration += 1
++        this.disposeListenersMap.forEach((dispose) => dispose())
+         this.css.reset()
++        this.stylesheets.clear()
+         this.stylesCache.clear()
+         this.dependenciesMap.clear()
+         this.disposeListenersMap.clear()
+diff --git a/node_modules/react-native-unistyles/src/web/runtime.ts b/node_modules/react-native-unistyles/src/web/runtime.ts
+index a16dac0..5236f38 100644
+--- a/node_modules/react-native-unistyles/src/web/runtime.ts
++++ b/node_modules/react-native-unistyles/src/web/runtime.ts
+@@ -39,10 +39,18 @@ export class UnistylesRuntime {
+     }
+ 
+     get colorScheme() {
++        // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++        // MediaQueryList change events while the document is hidden and drops the pending event
++        // of any list whose `matches` was read before the document became visible again, which
++        // would silence the adaptive-theme listeners registered on those two lists.
++        if (isServer()) {
++            return ColorScheme.Unspecified
++        }
++
+         switch (true) {
+-            case this.getLightMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: light)').matches:
+                 return ColorScheme.Light
+-            case this.getDarkMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: dark)').matches:
+                 return ColorScheme.Dark
+             default:
+                 return ColorScheme.Unspecified
+@@ -239,7 +247,6 @@ export class UnistylesRuntime {
+                 ) as UnistylesTheme,
+             )
+             this.services.registry.css.addTheme(themeName, newTheme)
+-            this.services.registry.css.recreate()
+         }
+     }
  

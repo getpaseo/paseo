@@ -184,7 +184,9 @@ describe("collectProviderErrorRows", () => {
       [settled(undefined, { isError: true }), settled({ entries: [] })],
       new Map([["claude", "Claude Code"]]),
     );
-    expect(rows).toEqual([{ provider: "claude", label: "Claude Code" }]);
+    expect(rows).toEqual([
+      { provider: "claude", label: "Claude Code", message: null, retrying: false },
+    ]);
   });
 
   it("returns a row for a provider the daemon reported as failed in a good response", () => {
@@ -198,7 +200,9 @@ describe("collectProviderErrorRows", () => {
       ],
       new Map([["codex", "Codex"]]),
     );
-    expect(rows).toEqual([{ provider: "codex", label: "Codex" }]);
+    expect(rows).toEqual([
+      { provider: "codex", label: "Codex", message: "timed out", retrying: false },
+    ]);
   });
 
   it("uses provider id when the label map has no entry", () => {
@@ -207,7 +211,43 @@ describe("collectProviderErrorRows", () => {
       [settled(undefined, { isError: true })],
       new Map(),
     );
-    expect(rows).toEqual([{ provider: "codex", label: "codex" }]);
+    expect(rows).toEqual([{ provider: "codex", label: "codex", message: null, retrying: false }]);
+  });
+
+  it("shows the current request failure instead of an older provider error", () => {
+    const query = {
+      ...settled(
+        { entries: [], providerErrors: [{ provider: "codex", message: "old provider failure" }] },
+        { isError: true },
+      ),
+      error: new Error("  Connection closed. Reconnect the host and retry.  "),
+    };
+    expect(collectProviderErrorRows(["codex"], [query], new Map())).toEqual([
+      {
+        provider: "codex",
+        label: "codex",
+        message: "Connection closed. Reconnect the host and retry.",
+        retrying: false,
+      },
+    ]);
+  });
+
+  it("keeps the provider failure visible while its retry is in flight", () => {
+    const query = {
+      ...settled({
+        entries: [],
+        providerErrors: [{ provider: "codex", message: "Run codex login and retry." }],
+      }),
+      isFetching: true,
+    };
+    expect(collectProviderErrorRows(["codex"], [query], new Map())).toEqual([
+      {
+        provider: "codex",
+        label: "codex",
+        message: "Run codex login and retry.",
+        retrying: true,
+      },
+    ]);
   });
 });
 

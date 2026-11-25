@@ -3,89 +3,16 @@ import {
   parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
-import { shortenPath } from "@/utils/shorten-path";
-import type { AddProjectHost, GithubRepositoryChoice } from "./model";
-
-export type AddProjectMethodId = "directory-search" | "browse" | "github" | "new-directory";
-
-export interface AddProjectMethodOption {
-  id: AddProjectMethodId;
-  label: string;
-  description: string;
-  disabled?: boolean;
-}
-
-export interface AddProjectPathOption {
-  id: string;
-  path: string;
-  displayPath: string;
-  secondaryText: string | null;
-  disabled: boolean;
-}
-
-export function filterAddProjectHosts(hosts: AddProjectHost[], query: string): AddProjectHost[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return hosts;
-  return hosts.filter(
-    (host) =>
-      host.label.toLowerCase().includes(normalized) ||
-      host.serverId.toLowerCase().includes(normalized),
-  );
-}
-
-export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOption[] {
-  if (!host.canAddProject) return [];
-  const options: AddProjectMethodOption[] = [];
-  options.push({
-    id: "directory-search",
-    label: "Search for directory",
-    description: `Find a directory on ${host.label}`,
-  });
-  if (host.canBrowse) {
-    options.push({
-      id: "browse",
-      label: "Browse",
-      description: "Choose or create a directory in Finder",
-    });
-  }
-  options.push({
-    id: "github",
-    label: "Clone from GitHub",
-    description: githubMethodDescription(host),
-    disabled: !host.canCloneGithubRepositories,
-  });
-  options.push({
-    id: "new-directory",
-    label: "New directory",
-    description: host.canCreateDirectory
-      ? `Create an empty directory on ${host.label}`
-      : "Update this host to create directories",
-    disabled: !host.canCreateDirectory,
-  });
-  return options;
-}
-
-export function addProjectMethodEmptyText(host: AddProjectHost | null): string {
-  return host?.canAddProject === false
-    ? "Update the host to use Add Project."
-    : "No matching options";
-}
-
-function githubMethodDescription(host: AddProjectHost): string {
-  if (!host.canCloneGithubRepositories) {
-    return "Update this host to clone GitHub repositories";
-  }
-  if (host.canSearchGithubRepositories) {
-    return "Search projects available to your GitHub account";
-  }
-  return "Enter a GitHub URL or owner/repo";
-}
+import type { GithubRepositoryChoice } from "./model";
 
 export function pathBaseName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
   const parts = trimmed.split(/[\\/]/);
   return parts[parts.length - 1] ?? trimmed;
 }
+
+/** Starts the id of every choice built from what the user typed. */
+export const MANUAL_CHOICE_PREFIX = "manual:";
 
 export function buildManualGithubRepositoryChoices(query: string): GithubRepositoryChoice[] {
   const repo = query.trim();
@@ -97,7 +24,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
     const remoteName = location ? pathBaseName(location.path).replace(/\.git$/u, "") : repo;
     return [
       {
-        id: `manual:${repo}`,
+        id: `${MANUAL_CHOICE_PREFIX}${repo}`,
         nameWithOwner: identity?.repo ?? remoteName,
         cloneUrl: repo,
         description: "Clone this repository URL",
@@ -110,7 +37,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
   if (!shorthand) return [];
   const nameWithOwner = `${shorthand[1]}/${shorthand[2]}`;
   return (["https", "ssh"] as const).map((cloneProtocol) => ({
-    id: `manual:${cloneProtocol}:${nameWithOwner}`,
+    id: `${MANUAL_CHOICE_PREFIX}${cloneProtocol}:${nameWithOwner}`,
     nameWithOwner,
     cloneUrl: nameWithOwner,
     cloneProtocol,
@@ -119,18 +46,21 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
   }));
 }
 
+/** The folder that holds `path`. A root keeps its separator: `C:\repo` gives `C:\`, not `C:`. */
 export function parentDirectory(path: string): string | null {
   const trimmed = path.replace(/[\\/]+$/, "");
+  // A share root (\\server\share) has no parent folder; `\\server` alone is not a directory.
+  if (/^[\\/]{2}[^\\/]+[\\/][^\\/]+$/u.test(trimmed)) return null;
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (index < 0) return null;
-  if (index === 0) return trimmed.slice(0, 1);
-  return trimmed.slice(0, index);
+  const parent = trimmed.slice(0, index);
+  const isRoot = parent === "" || /^[A-Za-z]:$/u.test(parent);
+  return isRoot ? trimmed.slice(0, index + 1) : parent;
 }
 
 export function joinDirectoryPath(parent: string, name: string): string {
-  const trimmedParent = parent.replace(/[\\/]+$/, "");
-  const separator = trimmedParent.includes("\\") && !trimmedParent.includes("/") ? "\\" : "/";
-  return `${trimmedParent}${separator}${name}`;
+  const separator = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent.replace(/[\\/]+$/, "")}${separator}${name}`;
 }
 
 export function buildSuggestedParentDirectories(projectPaths: string[]): string[] {
@@ -149,34 +79,31 @@ export function buildSuggestedParentDirectories(projectPaths: string[]): string[
   return [...new Set(values)];
 }
 
-export function buildCloneLocationOptions(input: {
-  parents: string[];
-  repositoryName: string;
-  existingPaths: string[];
-}): AddProjectPathOption[] {
-  const existing = new Set(input.existingPaths.map(pathIdentity));
-  const seen = new Set<string>();
-  return input.parents.flatMap((parent) => {
-    const path = joinDirectoryPath(parent, input.repositoryName);
-    const identity = pathIdentity(path);
-    if (seen.has(identity)) return [];
-    seen.add(identity);
-    const pathExists = existing.has(identity);
-    return [
-      {
-        id: parent,
-        path: parent,
-        displayPath: path,
-        secondaryText: pathExists ? "Already exists" : `Parent directory: ${parent}`,
-        disabled: pathExists,
-      },
-    ];
-  });
+/**
+ * Where a new folder or clone goes when the user has not picked a location on this host: the last
+ * one used, else the parent of a recent project, else home. Only folders known to exist qualify;
+ * guesses like `~/dev` stay suggestions in the Location picker.
+ */
+export function defaultProjectLocation(input: {
+  remembered: string | undefined;
+  projectPaths: string[];
+}): string {
+  const projectParent = input.projectPaths
+    .map(parentDirectory)
+    .find((parent): parent is string => parent !== null);
+  return input.remembered ?? projectParent ?? "~";
 }
 
-function pathIdentity(path: string): string {
-  const normalized = shortenPath(path.trim()).replace(/\\/g, "/").replace(/\/+$/u, "");
-  return /^[A-Za-z]:\//u.test(normalized) || normalized.startsWith("//")
-    ? normalized.toLowerCase()
-    : normalized;
+/** The folder a clone of `nameWithOwner` checks out into; the host drops a trailing `.git`. */
+export function checkoutName(nameWithOwner: string): string {
+  return pathBaseName(nameWithOwner).replace(/\.git$/u, "");
+}
+
+export function validateNewFolderName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed === "." || trimmed === "..") return "Enter a folder name";
+  if (/[\\/]/.test(trimmed)) return "Use a name without slashes";
+  // The host rejects a drive prefix on every platform.
+  if (/^[A-Za-z]:/u.test(trimmed)) return "Use a name without a drive letter";
+  return null;
 }

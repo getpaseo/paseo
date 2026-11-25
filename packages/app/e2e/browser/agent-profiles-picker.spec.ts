@@ -11,13 +11,20 @@ import {
   expectModelRowProfileActionBesideRow,
   expectModelRowSelected,
   expectProfileEditIsPencilOnly,
+  expectProfileReachableByScrolling,
+  expectProfileSearchResult,
   expectProfileVisibleForProvider,
   openModelPicker,
   openAgentProfilesFromEmptyPrompt,
+  searchModelPicker,
   seedAgentProfiles,
   selectModelRow,
 } from "../support/helpers/agent-profiles";
-import { expectWorkspaceAgentConfiguration } from "../support/helpers/command-center-agent-controls";
+import {
+  chooseCommandCenterAgentControl,
+  expectWorkspaceAgentConfiguration,
+  openCommandCenterForAgent,
+} from "../support/helpers/command-center-agent-controls";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
@@ -143,6 +150,85 @@ test.describe("Agent profiles in the model picker", () => {
       await openModelPicker(page);
       await selectModelRow(page, oneMinute);
       await expectComposerModel(page, oneMinute.modelLabel);
+    } finally {
+      await workspace.cleanup();
+      await seed.restore();
+    }
+  });
+
+  test("a profile is found by searching the model picker or the command center", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([PROFILE]);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-profiles-search-",
+      title: "Agent profiles search",
+      model: "ten-second-stream",
+      modeId: "load-test",
+    });
+
+    try {
+      await test.step("searching its name in the model picker lists only the profile", async () => {
+        await openAgentRoute(page, workspace);
+        await expectComposerVisible(page);
+        await openModelPicker(page);
+        await searchModelPicker(page, "ui work");
+        await expectProfileSearchResult(page, { name: PROFILE.name });
+      });
+
+      await test.step("searching its model lists the profile above the model", async () => {
+        await searchModelPicker(page, "one minute");
+        await expectProfileSearchResult(page, {
+          name: PROFILE.name,
+          model: { provider: "mock", modelId: "one-minute-stream" },
+        });
+        await closeModelPicker(page);
+      });
+
+      await test.step("choosing it from the command center applies it", async () => {
+        await openCommandCenterForAgent(page, workspace);
+        await chooseCommandCenterAgentControl({
+          page,
+          query: "ui work",
+          choice: `Profile › ${PROFILE.name}`,
+        });
+        await expectComposerModel(page, "One minute stream");
+        await expectComposerMode(page, "Approval test");
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "one-minute-stream",
+          modeId: "approval-test",
+        });
+      });
+    } finally {
+      await workspace.cleanup();
+      await seed.restore();
+    }
+  });
+
+  test("profile-only search results scroll inside the picker", async ({ page }) => {
+    const profiles = Array.from({ length: 12 }, (_, index) => ({
+      id: `agent_profile_e2e_release_${index + 1}`,
+      name: `Release review ${String(index + 1).padStart(2, "0")}`,
+      provider: "mock",
+      model: "one-minute-stream",
+    }));
+    const seed = await seedAgentProfiles(profiles);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-profiles-search-scroll-",
+      title: "Agent profiles search scroll",
+      model: "ten-second-stream",
+      modeId: "load-test",
+    });
+
+    try {
+      await openAgentRoute(page, workspace);
+      await expectComposerVisible(page);
+      await openModelPicker(page);
+      await searchModelPicker(page, "release review");
+      await expectProfileSearchResult(page, { name: "Release review 01" });
+      await expectProfileReachableByScrolling(page, "Release review 12");
     } finally {
       await workspace.cleanup();
       await seed.restore();

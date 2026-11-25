@@ -1,3 +1,6 @@
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { PullRequestCommandStatus, PullRequestTimelineItem } from "./forge-service.js";
@@ -5,11 +8,13 @@ import {
   type CreateGiteaServiceOptions,
   createGiteaService,
   detectGiteaFamilySoftware,
+  probeGiteaHost,
   TeaAuthenticationError,
   TeaCommandError,
   type TeaCommandResult,
   type TeaCommandRunner,
 } from "./gitea-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 type Responder = (args: string[]) => TeaCommandResult | Promise<TeaCommandResult>;
 
@@ -3303,4 +3308,96 @@ describe("detectGiteaFamilySoftware", () => {
     });
     expect(software).toBe("gitea");
   });
+});
+
+describe("Gitea CLI executable resolution", () => {
+  it("forwards the resolved tea executablePath to the command runner", async () => {
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGiteaService({
+      resolveTeaPath: async () => "/opt/tea-cli/bin/tea",
+      resolveRemoteUrl: async () => "https://gitea.com/example-user/sample-repo.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        return ok("[]");
+      },
+    });
+
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "sample", kinds: ["github-pr"] });
+    expect(seenExecutablePaths).toEqual(["/opt/tea-cli/bin/tea"]);
+  });
+
+  it("re-resolves tea and retries when the previously cached executable disappears", async () => {
+    let availablePath = "/first/bin/tea";
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGiteaService({
+      resolveTeaPath: async () => availablePath,
+      resolveRemoteUrl: async () => "https://gitea.com/example-user/sample-repo.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        if (options.executablePath !== availablePath) {
+          const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return ok("[]");
+      },
+    });
+
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-pr"] });
+    availablePath = "/second/bin/tea";
+    const secondResult = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "second",
+      kinds: ["github-pr"],
+    });
+
+    expect(secondResult.featuresEnabled).toBe(true);
+    expect(seenExecutablePaths).toEqual(["/first/bin/tea", "/first/bin/tea", "/second/bin/tea"]);
+  });
+
+  it.skipIf(isPlatform("win32"))(
+    "probeGiteaHost and detectGiteaFamilySoftware invoke the resolved tea executable",
+    async () => {
+      const originalPath = process.env.PATH;
+      const tempDir = mkdtempSync(join(tmpdir(), "gitea-probe-cli-"));
+      const earlierDir = join(tempDir, "earlier-bin");
+      const workingDir = join(tempDir, "working-bin");
+      mkdirSync(earlierDir);
+      mkdirSync(workingDir);
+
+      const shadowingTea = join(earlierDir, "tea");
+      const workingTea = join(workingDir, "tea");
+      writeFileSync(
+        workingTea,
+        `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '#!/bin/sh\\nexit 1\\n' > "${shadowingTea}"
+  chmod 755 "${shadowingTea}"
+  exit 0
+fi
+if [ "$1" = "login" ] && [ "$2" = "list" ]; then
+  printf '[{"name":"forge.acme.it","url":"https://forge.acme.it"}]'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  printf '{"version":"1.0+gitea"}'
+  printf 'HTTP/1.1 200 OK\\n' >&2
+  exit 0
+fi
+exit 1
+`,
+      );
+      chmodSync(workingTea, 0o755);
+
+      process.env.PATH = [earlierDir, workingDir, originalPath].filter(Boolean).join(delimiter);
+      try {
+        await expect(probeGiteaHost("forge.acme.it")).resolves.toBe(true);
+        rmSync(shadowingTea, { force: true });
+        await expect(detectGiteaFamilySoftware("forge.acme.it")).resolves.toBe("forgejo");
+      } finally {
+        process.env.PATH = originalPath;
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

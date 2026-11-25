@@ -6,7 +6,7 @@ import {
   type PropsWithChildren,
   type ReactElement,
 } from "react";
-import { Text, View } from "react-native";
+import { Text, View, type PointerEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
@@ -14,6 +14,7 @@ import { useMenuContext, useMenuDepth } from "./menu-context";
 import { isSubPageOpen } from "./menu-navigation";
 import { useMenuSurface } from "./menu-surface";
 import { MenuItem } from "./menu-item";
+import { isHoverPointer } from "./menu-pointer";
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -25,7 +26,8 @@ const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMute
  *
  * Hover lives on a plain `View` wrapping the item's `Pressable`, per docs/hover.md — a
  * `Pressable` tracking its own hover would fight the one inside it. Hover only fires on web,
- * which is exactly where flyouts exist; every other platform opens the page by pressing.
+ * which is exactly where flyouts exist; every other platform opens the page by pressing. So does
+ * a finger on the web, whose taps arrive as pointer events but are not hover.
  */
 export function MenuSubTrigger({
   id,
@@ -68,14 +70,22 @@ export function MenuSubTrigger({
     menu.openSub({ id, depth });
   }, [menu, id, depth]);
 
-  const handlePointerEnter = useCallback(() => {
-    cancelHoverClose();
-    hoverOpen({ id, depth });
-  }, [cancelHoverClose, hoverOpen, id, depth]);
+  const handlePointerEnter = useCallback(
+    (event: PointerEvent) => {
+      if (!isHoverPointer(event)) return;
+      cancelHoverClose();
+      hoverOpen({ id, depth });
+    },
+    [cancelHoverClose, hoverOpen, id, depth],
+  );
 
-  const handlePointerLeave = useCallback(() => {
-    hoverClose(depth);
-  }, [hoverClose, depth]);
+  const handlePointerLeave = useCallback(
+    (event: PointerEvent) => {
+      if (!isHoverPointer(event)) return;
+      hoverClose(depth);
+    },
+    [hoverClose, depth],
+  );
 
   const trailing = useMemo(
     () => <MenuSubTrailing value={value} indicator={indicator} />,

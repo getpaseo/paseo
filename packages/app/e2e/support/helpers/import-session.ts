@@ -137,12 +137,21 @@ export class ImportSessionFlow {
     await this.expectProviderError(label);
     await expect(this.page.getByRole("progressbar")).toHaveCount(0);
   }
-  async importSession(id: string) {
+  async startImport(id: string) {
     await this.revealSession(id);
     await this.page.getByTestId(rowTestId(id)).click();
+  }
+  async importSession(id: string) {
+    await this.startImport(id);
+    await this.expectClosed();
+  }
+  async expectClosed() {
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0, {
       timeout: 30_000,
     });
+  }
+  async expectSessionUnavailable(id: string) {
+    await expect(this.page.getByTestId(rowTestId(id))).toHaveCount(0);
   }
   async expectTranscript(userText: string, assistantText: string) {
     await expect(this.page.getByTestId("user-message").filter({ visible: true })).toContainText(
@@ -168,6 +177,13 @@ export class ImportSessionFlow {
   async close() {
     await this.page.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0);
+  }
+  async chooseHostForImport(hostLabel: string) {
+    const panel = await openCommandCenter(this.page);
+    await panel.getByTestId("command-center-input").fill("import");
+    await panel.getByText("Import session", { exact: true }).click();
+    await this.page.getByRole("dialog").getByRole("button", { name: hostLabel }).click();
+    await this.expectScope(`Sessions on ${hostLabel}`);
   }
   async expectCommandCenterMatch() {
     const panel = await openCommandCenter(this.page);

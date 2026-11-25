@@ -37,7 +37,12 @@ export type PluginWorktreeCreateRequest = {
   slug: string;
   path: string;
 } & (
-  | { kind: "branch-off"; baseRef: string }
+  | {
+      kind: "branch-off";
+      baseRef: string;
+      /** Where the new branch starts when that is not `baseRef`, such as a fork's head. */
+      readonly startPoint?: string;
+    }
   | { kind: "checkout-branch" }
   | {
       kind: "checkout-change-request";

@@ -42,9 +42,18 @@ Plugins can choose a location anywhere on disk with [`worktree.create.before`](/
 3. Review the diff against the base branch
 4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
 
-Scheduled runs archive their workspaces when they finish by default. Turn off **Archive on finish** in the schedule's app form to [keep run workspaces](/docs/schedules#keep-run-workspaces) and their worktrees until you archive them.
+Scheduled runs archive their workspaces when they finish by default. Turn off **Archive on finish** to [keep run workspaces](/docs/schedules#keep-run-workspaces) and their worktrees until you archive them.
 
 ## Create a worktree-backed workspace
+
+In the app, set **Isolation** to **New worktree**, then pick a branch or a pull request. Next to the list, choose what the new worktree does with your pick:
+
+- **Branch off** starts a new branch from it. Branches use this by default.
+- **Check out** works on the branch itself. Pull requests use this by default.
+
+When you branch off a pull request, the new branch starts at the pull request's latest commit and has no upstream. A push does not go to the pull request's branch. The workspace's base branch is the pull request's branch. For a pull request from a fork, it is the branch that the pull request merges into.
+
+Git keeps a branch in one worktree at a time. If you check out a branch that a worktree already has, Paseo selects that worktree under **Existing worktree** instead of making a copy.
 
 The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
 
@@ -81,6 +90,16 @@ paseo workspace create \
 ```
 
 Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
+
+## Work in an existing worktree
+
+To continue in a worktree that is already on disk, set **Isolation** to **Existing worktree** and pick it. The list shows every git worktree of the repository, including worktrees that you made with `git worktree add`. The workspace works on the branch that the worktree has checked out. Paseo does not create a branch or run setup.
+
+From the CLI, create a local workspace at the worktree's directory:
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app-feature
+```
 
 ## Copy local files with .worktreeinclude
 

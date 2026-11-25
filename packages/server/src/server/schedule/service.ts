@@ -206,6 +206,23 @@ function mergeScheduleCadenceTimezone(
   return next;
 }
 
+// A repeated create that omits Archive on finish keeps the value saved on the
+// schedule, so re-registering it does not undo a choice made in the app.
+function mergeArchiveOnFinish(current: ScheduleTarget, next: ScheduleTarget): ScheduleTarget {
+  if (
+    current.type === "new-agent" &&
+    next.type === "new-agent" &&
+    next.config.archiveOnFinish === undefined &&
+    current.config.archiveOnFinish !== undefined
+  ) {
+    return {
+      ...next,
+      config: { ...next.config, archiveOnFinish: current.config.archiveOnFinish },
+    };
+  }
+  return next;
+}
+
 function buildRunOutput(params: {
   output: string | null;
   timelineText: string;
@@ -243,8 +260,8 @@ type ScheduleAgentManager = Pick<
     | "runAgent"
     | "waitForAgentEvent"
     | "waitForAgentClose"
-    | "setHeartbeatBackgroundWork"
-    | "removeHeartbeatBackgroundWork"
+    | "setDaemonBackgroundWork"
+    | "removeDaemonBackgroundWork"
   >;
 
 interface ScheduleWorkspaceCreateInput {
@@ -406,7 +423,7 @@ export class ScheduleService {
           name,
           prompt,
           cadence,
-          target: inputTarget,
+          target: mergeArchiveOnFinish(current.target, inputTarget),
           status: "active",
           pausedAt: null,
           nextRunAt: nextRunAt.toISOString(),
@@ -529,7 +546,7 @@ export class ScheduleService {
     const { id, name, createdAt } = schedule;
     if (change === "delete" || schedule.status !== "active") {
       this.heartbeatStops.delete(id);
-      this.agentManager.removeHeartbeatBackgroundWork(agentId, id);
+      this.agentManager.removeDaemonBackgroundWork({ agentId, namespace: "heartbeat", id });
       return;
     }
     if (this.recovering) {
@@ -552,11 +569,14 @@ export class ScheduleService {
       this.heartbeatStops.set(id, stopHeartbeat);
       stop = stopHeartbeat;
     }
-    this.agentManager.setHeartbeatBackgroundWork({
+    this.agentManager.setDaemonBackgroundWork({
       agentId,
-      scheduleId: id,
-      name,
-      createdAt,
+      namespace: "heartbeat",
+      id,
+      kind: "heartbeat",
+      countsAsRunning: false,
+      description: name,
+      startedAt: createdAt,
       stop,
     });
   }

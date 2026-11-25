@@ -1,10 +1,9 @@
-import { forwardRef, useCallback, type ReactElement, type ReactNode } from "react";
+import { forwardRef, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -36,6 +35,8 @@ export interface FieldTriggerContentProps {
   label: string;
   icon: ReactNode;
   value: string;
+  /** A word before the value that a badge needs because it shows no label, such as "from". */
+  qualifier?: string;
   /** Secondary text after the value, such as a terminal profile's name. */
   detail?: string;
 }
@@ -45,12 +46,14 @@ export function FieldTriggerContent({
   label,
   icon,
   value,
+  qualifier,
   detail,
 }: FieldTriggerContentProps): ReactElement {
   const valueLine = (
     <>
       <View style={styles.iconBox}>{icon}</View>
       <Text style={variant === "field" ? styles.fieldValue : styles.value} numberOfLines={1}>
+        {qualifier && variant === "badge" ? <Text style={styles.detail}>{qualifier} </Text> : null}
         {value}
         {detail ? <Text style={styles.detail}> {detail}</Text> : null}
       </Text>
@@ -110,7 +113,17 @@ export const FieldTrigger = forwardRef<View, FieldTriggerProps>(function FieldTr
 ): ReactElement {
   const style = useFieldTriggerStyle(content.variant, disabled);
   const shortcutKeys = useShortcutKeys(shortcutAction ?? null);
-  const trigger = (
+  const tooltipContent = useMemo(
+    () =>
+      content.variant === "badge" && tooltip ? (
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>{tooltip}</Text>
+          {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+        </View>
+      ) : undefined,
+    [content.variant, tooltip, shortcutKeys],
+  );
+  return (
     <ComboboxTrigger
       ref={ref}
       chevron={null}
@@ -121,23 +134,10 @@ export const FieldTrigger = forwardRef<View, FieldTriggerProps>(function FieldTr
       style={style}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? content.label}
+      tooltip={tooltipContent}
     >
       <FieldTriggerContent {...content} />
     </ComboboxTrigger>
-  );
-  if (content.variant === "field" || !tooltip) return trigger;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        {trigger}
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <View style={styles.tooltipRow}>
-          <Text style={styles.tooltipText}>{tooltip}</Text>
-          {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
-        </View>
-      </TooltipContent>
-    </Tooltip>
   );
 });
 

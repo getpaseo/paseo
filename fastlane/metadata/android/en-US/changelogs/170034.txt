@@ -1,0 +1,6 @@
+Fixed
+- Fixed iPhone sheets such as Workspace tabs ignoring body swipes to expand, scroll, or collapse
+- Fixed Antigravity applying the default model's thinking levels to every model, which blocked Orchestrator chats from opening
+- Fixed / and @ pickers disappearing until reload after returning to a workspace through window history
+
+Full notes: https://paseo.sh/changelog
