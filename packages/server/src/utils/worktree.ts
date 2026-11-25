@@ -140,6 +140,30 @@ export function isServiceScript(config: ScriptConfig): config is ServiceScriptCo
   return "type" in config && config.type === "service";
 }
 
+/** A lifecycle command, and the environment Paseo adds to the daemon's for it. */
+export interface WorktreeLifecycleCommand {
+  command: string;
+  env: Record<string, string>;
+}
+
+/** Lets plugins wrap or refuse a lifecycle command before it runs; see `command.run.before`. */
+export type PrepareWorktreeLifecycleCommand = (
+  command: WorktreeLifecycleCommand,
+) => Promise<WorktreeLifecycleCommand>;
+
+async function prepareLifecycleCommand(
+  prepare: PrepareWorktreeLifecycleCommand | undefined,
+  command: WorktreeLifecycleCommand,
+  fail: (message: string) => Error,
+): Promise<WorktreeLifecycleCommand> {
+  if (!prepare) return command;
+  try {
+    return await prepare(command);
+  } catch (error) {
+    throw fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
 export class WorktreeSetupError extends Error {
   readonly results: WorktreeSetupCommandResult[];
 
@@ -678,6 +702,7 @@ export async function runWorktreeSetupCommands(options: {
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+  prepareCommand?: PrepareWorktreeLifecycleCommand;
 }): Promise<WorktreeSetupCommandResult[]> {
   // Read paseo.json from the worktree (it will have the same content as the source repo)
   const setupCommands = await getWorktreeSetupCommands(options.worktreePath);
@@ -692,10 +717,22 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
 
   const results: WorktreeSetupCommandResult[] = [];
-  for (const [index, cmd] of setupCommands.entries()) {
+  for (const [index, configured] of setupCommands.entries()) {
+    const prepared = await prepareLifecycleCommand(
+      options.prepareCommand,
+      { command: configured, env: { ...runtimeEnv } },
+      (message) =>
+        new WorktreeSetupError(
+          `Worktree setup command refused: ${configured}\n${message}`,
+          results,
+        ),
+    );
+    const cmd = prepared.command;
+    const setupEnv = createStringCommandShellEnv(
+      createExternalProcessEnv(process.env, prepared.env),
+    );
     const result = options.onEvent
       ? await execSetupCommandStreamed({
           command: cmd,
@@ -779,6 +816,7 @@ export async function runWorktreeTeardownCommands(options: {
   teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
+  prepareCommand?: PrepareWorktreeLifecycleCommand;
 }): Promise<WorktreeTeardownCommandResult[]> {
   const teardownCwd = options.teardownCwd ?? options.worktreePath;
   if ((await getOwnershipRelativePath(options.worktreePath, teardownCwd)) === null) {
@@ -795,29 +833,37 @@ export async function runWorktreeTeardownCommands(options: {
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
   const worktreePort = await readPaseoWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = createStringCommandShellEnv(
-    createExternalProcessEnv(process.env, {
-      // Source checkout path is the original git repo root (shared across worktrees), not the
-      // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
-      // from the source checkout.
-      PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
-      // Backward-compatible alias.
-      PASEO_ROOT_PATH: repoRootPath,
-      PASEO_WORKTREE_PATH: options.worktreePath,
-      PASEO_BRANCH_NAME: branchName,
-      ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
-    }),
-  );
+  const runtimeEnv: Record<string, string> = {
+    // Source checkout path is the original git repo root (shared across worktrees), not the
+    // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
+    // from the source checkout.
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    // Backward-compatible alias.
+    PASEO_ROOT_PATH: repoRootPath,
+    PASEO_WORKTREE_PATH: options.worktreePath,
+    PASEO_BRANCH_NAME: branchName,
+    ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
+  };
 
   // One deadline covers every command. Reaching it counts as failure and keeps the worktree.
   const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const [index, cmd] of teardownCommands.entries()) {
+  for (const [index, configured] of teardownCommands.entries()) {
+    const prepared = await prepareLifecycleCommand(
+      options.prepareCommand,
+      { command: configured, env: { ...runtimeEnv } },
+      (message) =>
+        new WorktreeTeardownError(
+          `Worktree teardown command refused: ${configured}\n${message}`,
+          results,
+        ),
+    );
+    const cmd = prepared.command;
     const result = await execSetupCommandStreamed({
       command: cmd,
       cwd: teardownCwd,
-      env: teardownEnv,
+      env: createStringCommandShellEnv(createExternalProcessEnv(process.env, prepared.env)),
       index: index + 1,
       total: teardownCommands.length,
       signal: deadline,

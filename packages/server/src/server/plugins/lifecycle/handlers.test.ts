@@ -479,3 +479,66 @@ test("a history open keeps the wrap while tools and MCP servers are stripped", a
   expect(history).toMatchObject({ wrap: ["/usr/local/bin/sandbox"], tools: [], mcpServers: {} });
   expect(history).not.toHaveProperty("appendSystemPrompt");
 });
+
+test("terminal and command hooks can change only what Paseo runs", async () => {
+  const terminal = {
+    workspaceId: "wks_a",
+    cwd: "/work/a",
+    source: "client" as const,
+    name: "Shell",
+    input: null,
+    args: [],
+    env: {},
+  };
+  await expect(
+    validateBeforeResult("terminal.create.before", terminal, {
+      ...terminal,
+      command: "/usr/bin/wrapper",
+      args: ["--workspace", "wks_a"],
+      env: { WRAPPED: "1" },
+    }),
+  ).resolves.toEqual({
+    ...terminal,
+    command: "/usr/bin/wrapper",
+    args: ["--workspace", "wks_a"],
+    env: { WRAPPED: "1" },
+  });
+  await expect(
+    validateBeforeResult("terminal.create.before", terminal, { ...terminal, cwd: "/elsewhere" }),
+  ).rejects.toThrow("terminal.create.before hooks can only change command, args, and env");
+
+  const command = {
+    workspaceId: null,
+    cwd: "/work/a",
+    purpose: "teardown" as const,
+    command: "make clean",
+    env: {},
+  };
+  await expect(
+    validateBeforeResult("command.run.before", command, { ...command, command: "wrap make clean" }),
+  ).resolves.toMatchObject({ command: "wrap make clean" });
+  await expect(
+    validateBeforeResult("command.run.before", command, { ...command, purpose: "setup" }),
+  ).rejects.toThrow("command.run.before hooks can only change command and env");
+});
+
+test("agent creation hooks keep the workspace, including from plugins that omit it", async () => {
+  const request = {
+    config: { provider: "claude", cwd: "/work/a" },
+    metadata: { "issues.id": "ENG-1" },
+    workspaceId: "wks_a",
+  };
+  // A result built before either field existed keeps both.
+  await expect(
+    validateBeforeResult("agent.create.before", request, { config: request.config }),
+  ).resolves.toEqual(request);
+  await expect(
+    validateBeforeResult("agent.create.before", request, {
+      config: request.config,
+      metadata: { "issues.id": "ENG-2" },
+    }),
+  ).resolves.toEqual({ ...request, metadata: { "issues.id": "ENG-2" } });
+  await expect(
+    validateBeforeResult("agent.create.before", request, { ...request, workspaceId: "wks_b" }),
+  ).rejects.toThrow("agent.create.before hooks cannot change the workspace");
+});
