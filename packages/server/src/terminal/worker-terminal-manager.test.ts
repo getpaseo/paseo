@@ -2339,6 +2339,9 @@ it.each(["replacement", "socket-overflow"] as const)(
   async (loss) => {
     const paseoHome = createTemporaryHome();
     const drained = join(paseoHome, "burst-drained");
+    // The worker closes its controller socket above 4 MiB of queued writes.
+    // Leave room for pipe buffering without making the PTY print 12 MiB.
+    const burstMiB = 8;
     manager = await startRealWorkerManager({ paseoHome });
     const session = trackTerminal(
       await manager.createTerminal({
@@ -2346,7 +2349,7 @@ it.each(["replacement", "socket-overflow"] as const)(
         workspaceId: "attached-reconnect",
         ...nodeTerminalCommand(
           `process.stdout.write("RETAINED\\r\\n"); process.stdin.on("data", data => {
-            if (data.toString().includes("BURST")) process.stdout.write("x".repeat(12 * 1024 * 1024) + "\\r\\nRETAINED-AFTER-LOSS\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done"));
+            if (data.toString().includes("BURST")) process.stdout.write("x".repeat(${burstMiB} * 1024 * 1024) + "\\r\\nRETAINED-AFTER-LOSS\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done"));
             else process.stdout.write("ECHO:" + data);
           }); setInterval(() => {}, 1000);`,
         ),
@@ -2376,7 +2379,7 @@ it.each(["replacement", "socket-overflow"] as const)(
         const stall = new Int32Array(new SharedArrayBuffer(4));
         const deadline = Date.now() + 10000;
         while (!existsSync(drained) && Date.now() < deadline) Atomics.wait(stall, 0, 0, 25);
-        expect(existsSync(drained)).toBe(true);
+        expect(existsSync(drained), "terminal finished writing the overflow burst").toBe(true);
       }
       await waitForCondition(() => viewers.replayed(desktop), 10000);
       const replay = viewers.frames
