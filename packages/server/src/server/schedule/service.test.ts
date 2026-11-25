@@ -3847,6 +3847,41 @@ describe("ScheduleService", () => {
     expect(await service.list()).toHaveLength(1);
   });
 
+  test("createOrReplace refreshes archive on finish without duplicating the schedule", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const createNightly = (archiveOnFinish?: boolean) =>
+      service.createOrReplace({
+        name: "nightly",
+        prompt: "audit",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: tempDir,
+            ...(archiveOnFinish === undefined ? {} : { archiveOnFinish }),
+          },
+        },
+      });
+
+    const omitted = await createNightly();
+    const archived = await createNightly(true);
+    const kept = await createNightly(false);
+
+    expect([archived.id, kept.id]).toEqual([omitted.id, omitted.id]);
+    const schedules = await service.list();
+    expect(schedules).toHaveLength(1);
+    expect(schedules[0]?.target).toMatchObject({ config: { archiveOnFinish: false } });
+  });
+
   test("completeForAgent skips schedules that are already completed", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

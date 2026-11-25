@@ -59,9 +59,12 @@ function targetIdentity(target: ScheduleTarget): unknown {
     };
   }
 
+  // Archive on finish decides what happens after a run, not what runs, so a
+  // repeated create that only changes it refreshes the existing schedule.
+  const { archiveOnFinish: _archiveOnFinish, ...config } = target.config;
   return {
     type: target.type,
-    config: target.config,
+    config,
   };
 }
 
