@@ -719,6 +719,66 @@ describe("ClaudeAgentSession persisted history load", () => {
     }
   });
 
+  test("replays a WebSearch result with the hits from its persisted Output", async () => {
+    const query = "react native onLayout nativeEvent";
+    const entries = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "search" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        message: {
+          content: [{ type: "tool_use", id: "srvtoolu_web", name: "WebSearch", input: { query } }],
+        },
+      },
+      {
+        type: "user",
+        uuid: "u2",
+        parentUuid: "a1",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "srvtoolu_web",
+              content: `Web search results for query: "${query}"\n\nLinks: [{"title":"From the text","url":"https://example.com/text"}]`,
+            },
+          ],
+        },
+        toolUseResult: {
+          query,
+          results: [
+            {
+              tool_use_id: "srvtoolu_01",
+              content: [{ title: "From the Output", url: "https://example.com/output" }],
+            },
+          ],
+          durationSeconds: 3.1,
+        },
+      },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+
+    const session = await resume();
+    try {
+      const details = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "tool_call") {
+          details.push(event.item.detail);
+        }
+      }
+      expect(details.at(-1)).toEqual({
+        type: "search",
+        query,
+        toolName: "web_search",
+        webResults: [{ title: "From the Output", url: "https://example.com/output" }],
+        durationSeconds: 3.1,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("loads readable history when the temporary directory is unavailable", async () => {
     const file = transcriptPath();
     const entry = { type: "assistant", message: { content: [{ type: "text", text: "saved" }] } };

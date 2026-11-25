@@ -464,6 +464,55 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  // Claude Code renders a WebSearch Output into the tool_result text the model reads. Without the
+  // structured Output, the hits come from its `Links:` JSON line.
+  it.each([
+    { form: "result text", output: (text: string) => ({ output: text }) },
+    { form: "raw tool_result content", output: (text: string) => text },
+  ])("maps WebSearch hits from Claude's $form", ({ output }) => {
+    const text = [
+      'Web search results for query: "react native onLayout nativeEvent"',
+      "",
+      'Links: [{"title":"Improved width measurement with onLayout","url":"https://example.com/onlayout"},{"title":"github.com","url":"https://github.com/facebook/react-native/issues/28775"}]',
+      "",
+      "Here's what the search found.",
+    ].join("\n");
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-web-search-text",
+        name: "WebSearch",
+        input: { query: "react native onLayout nativeEvent" },
+        output: output(text),
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "react native onLayout nativeEvent",
+      toolName: "web_search",
+      webResults: [
+        { title: "Improved width measurement with onLayout", url: "https://example.com/onlayout" },
+        {
+          title: "github.com",
+          url: "https://github.com/facebook/react-native/issues/28775",
+        },
+      ],
+    });
+  });
+
+  it("keeps a WebSearch detail without hits when its text has no Links line", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-web-search-empty",
+        name: "WebSearch",
+        input: { query: "nothing" },
+        output: { output: 'Web search results for query: "nothing"\n\nNo links found.' },
+      }),
+    );
+
+    expect(item.detail).toEqual({ type: "search", query: "nothing", toolName: "web_search" });
+  });
+
   it("maps WebFetch calls with fetched content", () => {
     const item = expectMapped(
       mapClaudeCompletedToolCall({
