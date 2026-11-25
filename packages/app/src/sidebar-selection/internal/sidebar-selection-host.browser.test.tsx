@@ -90,6 +90,8 @@ function SidebarToastProbe() {
 
 const noop = () => {};
 let navigatedKeys: string[] = [];
+// Shared by every probe row, standing in for the row's long-press drag interaction.
+const staleLongPressRef = { current: false };
 
 function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
   const isSelectionMode = useIsSidebarSelectionMode();
@@ -99,6 +101,7 @@ function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
   }, [entry.workspaceKey]);
   const { onPress, onPressIn } = useWorkspaceSelectionPress({
     workspaceKey: entry.workspaceKey,
+    didLongPressRef: staleLongPressRef,
     onNavigate: handleNavigate,
   });
   return (
@@ -160,6 +163,7 @@ afterEach(() => {
   capturedSidebarToast = null;
   fallbackArchiveCount = 0;
   navigatedKeys = [];
+  staleLongPressRef.current = false;
   act(() => {
     useSidebarSelectionStore.getState().exit();
   });
@@ -210,6 +214,20 @@ describe("sidebar workspace row presses", () => {
     await userEvent.click(row("a"));
     expect(selectedIds()).toEqual(["a", "b", "d"]);
     expect(navigatedKeys).toEqual(["srv:a"]);
+  });
+
+  it("selects on the first modifier or select-mode click after an earlier gesture ended as a long press", async () => {
+    mountHost(["a", "b"].map(makeEntry));
+
+    // A scroll, drag, or long-press menu leaves the flag set and never fires onPress to clear it.
+    // Shift, because react-native-web grants no press-in to a Ctrl mousedown.
+    staleLongPressRef.current = true;
+    await userEvent.click(row("a"), { modifiers: ["Shift"] });
+    expect(selectedIds()).toEqual(["a"]);
+
+    staleLongPressRef.current = true;
+    await userEvent.click(row("b"));
+    expect(selectedIds()).toEqual(["a", "b"]);
   });
 
   it("enters select mode on the Shift+clicked row alone, then extends and shrinks the range", async () => {

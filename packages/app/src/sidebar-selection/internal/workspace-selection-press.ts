@@ -46,16 +46,22 @@ export function useWorkspaceSelectionPress({
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       const modifiers = readPressModifiers(event);
-      if (modifiers.shift || modifiers.mod) {
-        // Keep the browser from extending a text selection or starting a drag on modifier clicks.
-        event.preventDefault?.();
+      const isModifierPress = modifiers.shift || modifiers.mod;
+      if (!isModifierPress && !useSidebarSelectionStore.getState().active) {
+        onPressIn?.(event);
         return;
       }
-      if (!useSidebarSelectionStore.getState().active) {
-        onPressIn?.(event);
+      // This press never arms the long-press gesture, so a flag left by an earlier scroll, drag, or
+      // long press is stale and must not swallow it.
+      if (didLongPressRef) {
+        didLongPressRef.current = false;
+      }
+      if (isModifierPress) {
+        // Keep the browser from extending a text selection or starting a drag on modifier clicks.
+        event.preventDefault?.();
       }
     },
-    [onPressIn],
+    [didLongPressRef, onPressIn],
   );
 
   return { onPress: handlePress, onPressIn: handlePressIn };
