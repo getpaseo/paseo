@@ -21,6 +21,10 @@ export interface ExecCommandOptions {
   killSignal?: NodeJS.Signals;
   timeout?: number;
   maxBuffer?: number;
+  /**
+   * `true` runs the command through cmd.exe on Windows, quoted for it. A shell named here other
+   * than cmd.exe gets the command and arguments as given, on every platform; quote for it.
+   */
   shell?: boolean | string;
   signal?: AbortSignal;
 }
@@ -52,11 +56,17 @@ export interface SpawnInvocation {
   shell: boolean | string;
 }
 
+function parsesWithCmd(shell: boolean | string): boolean {
+  return (
+    shell === true || (typeof shell === "string" && /^(?:.*[\\/])?cmd(?:\.exe)?$/iu.test(shell))
+  );
+}
+
 /**
  * How `spawnProcess` and `execCommand` start `command` on `platform`. On Windows a command script
  * or a bare name runs through cmd.exe, so the command and every argument are quoted for it.
  * cmd.exe ends a command at a line break whatever the quoting, so an argument with one is refused
- * before cmd.exe starts.
+ * before cmd.exe starts. Another shell the caller names gets them as given.
  */
 export function resolveSpawnInvocation(
   command: string,
@@ -65,7 +75,7 @@ export function resolveSpawnInvocation(
   platform: NodeJS.Platform = process.platform,
 ): SpawnInvocation {
   const shell = shouldUseWindowsShell(command, requestedShell, platform);
-  if (platform !== "win32" || shell === false) return { command, args: [...args], shell };
+  if (platform !== "win32" || !parsesWithCmd(shell)) return { command, args: [...args], shell };
   if (args.some((argument) => /[\r\n]/u.test(argument))) {
     throw new Error(`cmd.exe cannot pass an argument with a line break to ${command}`);
   }

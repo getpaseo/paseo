@@ -100,6 +100,37 @@ test("a Windows cmd.exe launch refuses an argument with a line break before it s
   ]);
 });
 
+// Only cmd.exe reads cmd.exe quoting. A shell the caller names parses the line by its own rules.
+test("a Windows launch quotes for cmd.exe only when cmd.exe parses the command line", () => {
+  for (const shell of [true, "cmd.exe", "C:\\Windows\\System32\\CMD.EXE"]) {
+    expect(resolveSpawnInvocation("echo", ["a & b"], shell, "win32").args).toEqual(['^"a ^& b^"']);
+  }
+  for (const shell of ["bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe", "pwsh"]) {
+    expect(resolveSpawnInvocation("echo", ["'a & b'", "line\nbreak"], shell, "win32")).toEqual({
+      command: "echo",
+      args: ["'a & b'", "line\nbreak"],
+      shell,
+    });
+  }
+});
+
+// Real Git Bash on Windows: the arguments reach Bash as given, without cmd.exe escapes.
+test.runIf(process.platform === "win32")(
+  "execCommand passes arguments as given to a Windows shell other than cmd.exe",
+  async () => {
+    const bash = path.join(
+      process.env.ProgramFiles ?? "C:\\Program Files",
+      "Git",
+      "bin",
+      "bash.exe",
+    );
+    const { stdout } = await execCommand("printf", ["'%s|'", "hello", "'a & b'"], {
+      shell: bash,
+    });
+    expect(stdout).toBe("hello|a & b|");
+  },
+);
+
 // A launch wrap starts its executable with the command and its arguments after the wrap's own.
 // The caller's shell choice belongs to the unwrapped command, so a wrap ignores it.
 test("spawnProcess starts a wrap's executable with the command after the wrap arguments", async () => {
