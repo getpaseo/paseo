@@ -36,6 +36,11 @@ export type {
 } from "./backend.js";
 export type { TimelineRetirement } from "../../timeline-projection.js";
 
+export interface TimelinePrompts {
+  head: TimelineHead;
+  rows: ProjectedTimelineRow[];
+}
+
 export interface TimelineCommit {
   row: AgentTimelineRow;
   epoch: string;
@@ -394,9 +399,12 @@ export class AgentTimeline {
     return this.run(scope, () => this.backendFor(scope).readRows(scope));
   }
 
-  /** The active user prompt rows, without reading replies or tool output. */
-  readPromptRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
-    return this.run(scope, () => this.backendFor(scope).promptRows(scope));
+  /** The active user prompt rows and the head they belong to, without replies or tool output. */
+  readPrompts(scope: TimelineScope): Promise<TimelinePrompts> {
+    return this.run(scope, async () => ({
+      head: await this.requireHead(scope),
+      rows: await this.backendFor(scope).promptRows(scope),
+    }));
   }
 
   lastItem(scope: TimelineScope): Promise<AgentTimelineItem | null> {

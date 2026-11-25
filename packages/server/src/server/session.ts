@@ -8915,13 +8915,9 @@ export class Session {
   ): Promise<void> {
     try {
       await this.loadAgentHistoryPayload(msg.agentId);
-      const rows = await this.agentManager.getTimelinePromptRows(msg.agentId);
-      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
-        direction: "tail",
-        limit: 1,
-      });
+      const { head, rows } = await this.agentManager.getTimelinePrompts(msg.agentId);
       const index = buildTimelinePromptIndex(
-        this.wireEpoch(timeline.epoch, timeline.retirementCount, source),
+        this.wireEpoch(head.epoch, head.retirementCount, source),
         rows,
       );
       this.emitForSource(

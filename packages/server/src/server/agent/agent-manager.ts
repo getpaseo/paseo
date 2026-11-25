@@ -97,6 +97,7 @@ import {
   type TimelineAppendResult,
   type TimelineCommit,
   type TimelineHead,
+  type TimelinePrompts,
   type TimelineEntry,
   type TimelineIngestResult,
   type TimelineRetirementCommit,
@@ -1580,10 +1581,10 @@ export class AgentManager {
     return await this.timeline.readRows({ agentId: id });
   }
 
-  /** The agent's active prompt rows, without reading its replies or tool output. */
-  async getTimelinePromptRows(id: string): Promise<AgentTimelineRow[]> {
+  /** The agent's active prompt rows and timeline head, without its replies or tool output. */
+  async getTimelinePrompts(id: string): Promise<TimelinePrompts> {
     await this.requireHistory(id);
-    return await this.timeline.readPromptRows({ agentId: id });
+    return await this.timeline.readPrompts({ agentId: id });
   }
 
   /** The timeline head of a loaded agent, or null when this agent is not loaded. Never loads. */

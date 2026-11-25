@@ -472,4 +472,27 @@ describe("SQLite timeline reads", () => {
       { type: "assistant_message", text: chunks.join("") },
     ]);
   });
+
+  it("reads the chat outline's prompts and cursor without a tool's interleaved rows", async () => {
+    const database = new CountingDatabase(openTestTimelineDatabase());
+    const timeline = new AgentTimeline(new SqliteTimelineBackend(database));
+    await timeline.create(scope, { epoch: "e" });
+    // The tool row spans everything between its start and its update, so a one-row tail page
+    // covers all 200 tool rows in between.
+    const entries: TimelineEntry[] = [
+      entry({ type: "user_message", text: "run it", messageId: "p1" }),
+      entry(tool("long", "running")),
+    ];
+    for (let index = 0; index < 200; index++) entries.push(entry(tool(`t${index}`, "completed")));
+    entries.push(entry(tool("long", "completed")));
+    await timeline.append(scope, entries);
+
+    database.rowsRead = 0;
+    const outline = await timeline.readPrompts(scope);
+    expect(outline.head).toMatchObject({ epoch: "e", retirementCount: 0 });
+    expect(outline.rows.map((row) => row.item)).toEqual([entries[0]!.item]);
+    expect(database.rowsRead).toBeLessThan(5);
+    await timeline.close();
+    database.close();
+  });
 });

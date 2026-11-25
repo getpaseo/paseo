@@ -14,6 +14,7 @@ export {
   type TimelineEntry,
   type TimelineHead,
   type TimelineImportResult,
+  type TimelinePrompts,
   type TimelineIngestResult,
   type TimelineReconcileResult,
   type TimelineRetirement,
