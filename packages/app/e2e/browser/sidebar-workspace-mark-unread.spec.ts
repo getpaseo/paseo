@@ -239,26 +239,31 @@ test("manual unread survives leaving the current workspace on compact layout", a
   await completeTurnAndLeaveOnCompact(page, workspaces);
 });
 
-test("the compact workspace header toggles read state with the sidebar closed", async ({
-  page,
-  workspaces: { subject },
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await openAgentRoute(page, subject);
-  const workspaceActions = page.getByRole("button", { name: "Workspace actions", exact: true });
-  const readHostStatus = async () => {
-    const { entries } = await subject.client.fetchWorkspaces();
-    return entries.find((entry) => entry.id === subject.workspaceId)?.status;
-  };
+for (const [layout, width] of [
+  ["compact", 390],
+  ["wide", 1280],
+] as const) {
+  test(`the ${layout} workspace header toggles read state`, async ({
+    page,
+    workspaces: { subject },
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openAgentRoute(page, subject);
+    const workspaceActions = page.getByRole("button", { name: "Workspace actions", exact: true });
+    const readHostStatus = async () => {
+      const { entries } = await subject.client.fetchWorkspaces();
+      return entries.find((entry) => entry.id === subject.workspaceId)?.status;
+    };
 
-  await workspaceActions.click();
-  await page.getByRole("menuitem", { name: "Mark as unread", exact: true }).click();
-  await expect.poll(readHostStatus).toBe("attention");
+    await workspaceActions.click();
+    await page.getByRole("menuitem", { name: "Mark as unread", exact: true }).click();
+    await expect.poll(readHostStatus).toBe("attention");
 
-  await workspaceActions.click();
-  await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click();
-  await expect.poll(readHostStatus).toBe("done");
-});
+    await workspaceActions.click();
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click();
+    await expect.poll(readHostStatus).toBe("done");
+  });
+}
 
 async function reopenWorkspaceAfterBackgroundTurn(page: Page, workspace: MockAgentWorkspace) {
   const route = page.url();

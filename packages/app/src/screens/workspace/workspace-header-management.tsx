@@ -1,16 +1,16 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Circle, CircleCheck, Tag } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { withUnistyles } from "react-native-unistyles";
 import { DropdownMenuItem, DropdownMenuSubTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
+import { useActiveWorkspaceArchive } from "@/hooks/use-active-workspace-archive";
 import { useWorkspaceReadState } from "@/hooks/use-workspace-read-state";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
-import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceLabelMenuPages, WORKSPACE_LABEL_PAGE_ID } from "@/workspace-labels/picker";
-import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedCircle = withUnistyles(Circle);
@@ -55,48 +55,37 @@ function WorkspaceReadStateMenuItem({
   );
 }
 
+function WorkspaceArchiveMenuItem() {
+  const { t } = useTranslation();
+  const { canArchive, archive } = useActiveWorkspaceArchive();
+  return (
+    <DropdownMenuItem
+      testID="workspace-header-archive-workspace"
+      leading={GIT_ACTION_ICONS.archive}
+      disabled={!canArchive}
+      onSelect={archive}
+    >
+      {t("sidebar.workspace.actions.archiveWorkspace")}
+    </DropdownMenuItem>
+  );
+}
+
 export function useWorkspaceHeaderManagement({
   serverId,
   workspace,
-  isRouteFocused,
 }: {
   serverId: string;
   workspace: WorkspaceDescriptor | null;
-  isRouteFocused: boolean;
 }) {
   const { t } = useTranslation();
   const workspaceId = workspace?.id ?? "";
+  const workspaceDirectory = workspace?.workspaceDirectory ?? "";
   const assignedLabels = workspace?.labels;
   const labelTarget = useMemo(
     () => (workspaceId ? { serverId, workspaceId, labels: assignedLabels ?? [] } : null),
     [assignedLabels, serverId, workspaceId],
   );
   const pages = useWorkspaceLabelMenuPages(labelTarget);
-
-  const [isHiding, setIsHiding] = useState(false);
-  const isArchiving = workspace?.archivingAt != null || isHiding;
-  // Worktree confirmation can finish after the workspace screen has lost focus or unmounted.
-  const focusedRef = useRef(false);
-  useLayoutEffect(() => {
-    focusedRef.current = isRouteFocused;
-    return () => {
-      focusedRef.current = false;
-    };
-  }, [isRouteFocused]);
-  const { archive } = useWorkspaceArchive({
-    serverId,
-    workspaceId,
-    workspaceKind: workspace?.workspaceKind ?? "directory",
-    workspaceDirectory: workspace?.workspaceDirectory ?? "",
-    name: workspace?.title ?? workspace?.name ?? "",
-    diffStat: workspace?.diffStat,
-    onArchiveStarted: (target) => {
-      if (focusedRef.current) {
-        redirectIfArchivingActiveWorkspace({ ...target, activeWorkspaceSelection: target });
-      }
-    },
-    onSetHiding: setIsHiding,
-  });
 
   return useMemo(
     () => ({
@@ -107,18 +96,14 @@ export function useWorkspaceHeaderManagement({
             {t("workspaceLabels.title")}
           </DropdownMenuSubTrigger>
           <WorkspaceReadStateMenuItem serverId={serverId} workspaceId={workspaceId} />
-          <DropdownMenuItem
-            leading={GIT_ACTION_ICONS.archive}
-            disabled={isArchiving}
-            status={isArchiving ? "pending" : "idle"}
-            pendingLabel={t("workspace.git.actions.archive.pending")}
-            onSelect={archive}
-          >
-            {t("workspace.git.actions.archive.label")}
-          </DropdownMenuItem>
+          <OpenInFileManagerMenuItem
+            path={workspaceDirectory}
+            testID="workspace-header-open-folder"
+          />
+          <WorkspaceArchiveMenuItem />
         </>
       ) : null,
     }),
-    [archive, isArchiving, pages, serverId, t, workspaceId],
+    [pages, serverId, t, workspaceDirectory, workspaceId],
   );
 }

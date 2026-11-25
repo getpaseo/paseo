@@ -19,24 +19,31 @@ async function expectWorkspaceArchivedOnDaemon(seeded: SeededWorkspace): Promise
   await expect.poll(() => isWorkspaceListed(seeded), { timeout: 30_000 }).toBe(false);
 }
 
-test("archives a plain directory workspace from the compact workspace header", async ({ page }) => {
-  const seeded = await seedWorkspace({ repoPrefix: "header-archive-dir-", git: false });
-  try {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
-    await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Archive workspace", exact: true }).click();
+for (const [layout, width] of [
+  ["compact", 390],
+  ["wide", 1280],
+] as const) {
+  test(`archives a plain directory workspace from the ${layout} workspace header`, async ({
+    page,
+  }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "header-archive-dir-", git: false });
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+      await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Archive workspace", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/new(?:\?|$)/);
-    await expectWorkspaceArchivedOnDaemon(seeded);
-    expect(existsSync(seeded.repoPath)).toBe(true);
+      await expect(page).toHaveURL(/\/new(?:\?|$)/);
+      await expectWorkspaceArchivedOnDaemon(seeded);
+      expect(existsSync(seeded.repoPath)).toBe(true);
 
-    await undoButton(page).click();
-    await expect.poll(() => isWorkspaceListed(seeded)).toBe(true);
-  } finally {
-    await seeded.cleanup();
-  }
-});
+      await undoButton(page).click();
+      await expect.poll(() => isWorkspaceListed(seeded)).toBe(true);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+}
 
 test.describe("Command center archive for a non-Git workspace", () => {
   test("archives a plain directory workspace from the command center", async ({ page }) => {
