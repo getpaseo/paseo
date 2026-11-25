@@ -343,14 +343,14 @@ Paseo places each control inline when the composer has room, and in the overflow
 
 ## Add daemon-side behavior
 
-Define one Zod contract in `shared/`, handle it in `index.server.ts`, and call it from client code with `useRpc()`:
+Define one Zod contract in `shared/`, handle it in `index.server.ts`, and call it from client code with `useRpc()`. `paseo plugin init` generates this RPC with the same file and export names:
 
 ```ts
 // shared/greeting.ts
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const greeting = defineRpc({
+export const greetingRpc = defineRpc({
   name: "greeting.create",
   input: z.object({ name: z.string() }),
   output: z.object({ message: z.string() }),
@@ -360,9 +360,9 @@ export const greeting = defineRpc({
 ```ts
 // server/greeting.ts
 import type { RpcInput } from "@getpaseo/plugin";
-import type { greeting } from "../shared/greeting";
+import type { greetingRpc } from "../shared/greeting";
 
-export async function createGreeting({ name }: RpcInput<typeof greeting>) {
+export async function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
   return { message: `Hello, ${name}!` };
 }
 ```
@@ -371,29 +371,46 @@ export async function createGreeting({ name }: RpcInput<typeof greeting>) {
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
-import { greeting } from "./shared/greeting";
+import { greetingRpc } from "./shared/greeting";
 
 export default function contribute(server: PluginServerContext) {
-  server.handle(greeting, createGreeting);
+  server.handle(greetingRpc, createGreeting);
   return () => {};
 }
 ```
 
 ```tsx
 // client/greeting.tsx
-import { useRpc } from "@getpaseo/plugin/client";
+import { type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
 import { useMutation } from "@tanstack/react-query";
-import { Pressable, Text } from "react-native";
-import { greeting } from "../shared/greeting";
+import { Pressable, Text, View } from "react-native";
+import { greetingRpc } from "../shared/greeting";
 
-export function Greeting({ color }: { color: string }) {
-  const createGreeting = useRpc(greeting);
-  const mutation = useMutation({ mutationFn: () => createGreeting({ name: "Ada" }) });
+export function GreetingScreen({ theme, layout }: PluginScreenProps) {
+  const createGreeting = useRpc(greetingRpc);
+  const greeting = useMutation({ mutationFn: createGreeting });
   return (
-    <Pressable accessibilityRole="button" onPress={() => mutation.mutate()}>
-      <Text style={{ color }}>{mutation.data?.message ?? "Say hello"}</Text>
-    </Pressable>
+    <View
+      style={{ flex: 1, padding: layout.compact ? 16 : 24, backgroundColor: theme.colors.surface0 }}
+    >
+      <Pressable accessibilityRole="button" onPress={() => greeting.mutate({ name: "Ada" })}>
+        <Text style={{ color: theme.colors.foreground }}>
+          {greeting.data?.message ?? "Ask the daemon for a greeting"}
+        </Text>
+      </Pressable>
+    </View>
   );
+}
+```
+
+```tsx
+// index.client.tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { GreetingScreen } from "./client/greeting";
+
+export default function contribute(client: PluginClientContext) {
+  client.addScreen({ id: "greeting", title: "Greeting", Component: GreetingScreen });
+  return () => {};
 }
 ```
 
