@@ -981,6 +981,55 @@ test("a later plugin rerun by an earlier plugin's edit keeps its own tool, and t
   }
 }, 60_000);
 
+// The tool waits for the gate file while it answers the first hint.
+const slowHintReaderSource = (entered: string, gate: string) => `
+import { existsSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { HINT: hint, ...env } = request.env;
+    const tool = defineAgentTool({
+      name: "read_tool_hint", description: "The hint from the plugin before",
+      input: z.object({}),
+      async execute() {
+        if (hint === "red") {
+          writeFileSync(${JSON.stringify(entered)}, "");
+          while (!existsSync(${JSON.stringify(gate)})) await new Promise((r) => setTimeout(r, 20));
+        }
+        return { text: String(hint) };
+      },
+    });
+    return { ...request, env, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a refresh that reruns a plugin lets that plugin's running tool call finish", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-running-call-"));
+  const entered = path.join(scratch, "entered");
+  const gate = path.join(scratch, "gate");
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-hint", hintSource("red"));
+    await h.install("b-hint-reader", slowHintReaderSource(entered, gate));
+    const a = await h.create();
+    const running = (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} });
+    await expect.poll(() => existsSync(entered)).toBe(true);
+    await writePluginSource(h, "a-hint", hintSource("green"));
+    await h.client.reloadPlugin("a-hint");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "green" }] });
+    await writeFile(gate, "");
+    expect(await running).toMatchObject({ content: [{ type: "text", text: "red" }] });
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
 // Once armed, the module waits for the gate file before it loads, which holds a restart between stop and start.
 const gatedStartSource = (arm: string, entered: string, gate: string) =>
   openCounterSource.replace(

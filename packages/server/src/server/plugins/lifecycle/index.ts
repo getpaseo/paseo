@@ -391,7 +391,8 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     context: PluginHookContext,
   ): Promise<SessionOpenWireRequest> {
     let request = validateBeforeRequest("agent.open.before", input);
-    this.agentTools?.detach(request.agentId);
+    // Attaching replaces the session's definitions for later calls; calls already running finish. The daemon detaches
+    // the session before an open that replaces the provider session.
     let tools: AgentToolDefinition[] = [];
     for (const handler of this.handlers.get("agent.open.before") ?? []) {
       context.signal.throwIfAborted();
