@@ -79,14 +79,11 @@ export class SessionAttachments {
       }
       const base: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
       const contributions: Contribution[] = [];
-      const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
-      const mcpServerOwners: Record<string, string> = {};
       let current = base;
       for (const plugin of this.plugins.sessionOpenPlugins()) {
         const input: SessionOpenWireRequest = { ...current, tools: [], mcpServers: {} };
         try {
           const output = await plugin.open(input);
-          collectMcpServers(mcpServers, mcpServerOwners, plugin.id, output.mcpServers);
           const tools = stampTools(plugin, output.tools);
           assertNoToolCollision(contributions, plugin.id, tools);
           contributions.push({
@@ -106,6 +103,13 @@ export class SessionAttachments {
           });
         }
       }
+      let launch: PluginSessionOpenResult;
+      try {
+        launch = composeLaunch(base, contributions);
+      } catch (error) {
+        this.plugins.detachEverywhere(request.agentId);
+        throw error;
+      }
       if (request.purpose === "interactive") {
         this.pending.set(request.agentId, {
           base,
@@ -114,12 +118,7 @@ export class SessionAttachments {
           stale: false,
         });
       }
-      return {
-        ...current,
-        tools: contributions.flatMap((contribution) => contribution.tools),
-        mcpServers,
-        mcpServerOwners,
-      };
+      return launch;
     });
   }
 
@@ -238,10 +237,7 @@ export class SessionAttachments {
     attachment.contributions = contributions;
     attachment.stale =
       contributions.some((contribution) => contribution.failed) ||
-      !isDeepStrictEqual(
-        composedLaunch(attachment.base, attachment.launched),
-        composedLaunch(attachment.base, contributions),
-      );
+      !launchesMatch(attachment.base, attachment.launched, contributions);
     return { stale: attachment.stale };
   }
 
@@ -367,22 +363,62 @@ function chainedFields(request: SessionOpenWireRequest) {
   return { env: request.env, appendSystemPrompt: request.appendSystemPrompt ?? [] };
 }
 
-/** What the provider launches with when the session opens with these contributions, in open order. */
-function composedLaunch(base: SessionOpenWireRequest, contributions: readonly Contribution[]) {
+/**
+ * What the provider launches with when the session opens with these contributions, in open order. Throws when two
+ * plugins return the same MCP server name.
+ */
+function composeLaunch(
+  base: SessionOpenWireRequest,
+  contributions: readonly Contribution[],
+): PluginSessionOpenResult {
+  const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
+  const mcpServerOwners: Record<string, string> = {};
+  for (const contribution of contributions) {
+    collectMcpServers(
+      mcpServers,
+      mcpServerOwners,
+      contribution.pluginId,
+      contribution.output.mcpServers,
+    );
+  }
   return {
-    ...chainedFields(contributions.at(-1)?.output ?? base),
-    mcpServers: Object.assign(
-      {},
-      ...contributions.map((contribution) => contribution.output.mcpServers),
-    ) as SessionOpenWireRequest["mcpServers"],
-    tools: contributions.flatMap((contribution) =>
-      contribution.tools.map(({ name, title, description, inputSchema }) => ({
-        name,
-        title,
-        description,
-        inputSchema,
-      })),
-    ),
+    ...(contributions.at(-1)?.output ?? base),
+    tools: contributions.flatMap((contribution) => contribution.tools),
+    mcpServers,
+    mcpServerOwners,
+  };
+}
+
+/**
+ * Whether the proposed contributions launch the session as it runs now. A tool's plugin counts, since native-tool
+ * catalogs dispatch to it; its instance does not. A launch the open would reject never matches, so the reopen
+ * reports it.
+ */
+function launchesMatch(
+  base: SessionOpenWireRequest,
+  launched: readonly Contribution[],
+  proposed: readonly Contribution[],
+): boolean {
+  let next: PluginSessionOpenResult;
+  try {
+    next = composeLaunch(base, proposed);
+  } catch {
+    return false;
+  }
+  return isDeepStrictEqual(launchContract(composeLaunch(base, launched)), launchContract(next));
+}
+
+function launchContract(launch: PluginSessionOpenResult) {
+  return {
+    ...chainedFields(launch),
+    mcpServers: launch.mcpServers,
+    tools: launch.tools.map(({ pluginId, name, title, description, inputSchema }) => ({
+      pluginId,
+      name,
+      title,
+      description,
+      inputSchema,
+    })),
   };
 }
 
@@ -423,7 +459,7 @@ function collectMcpServers(
   for (const [name, server] of Object.entries(contributions)) {
     if (Object.hasOwn(servers, name)) {
       throw new Error(
-        `MCP server ${name} from plugin ${pluginId} collides with plugin ${owners[name]}`,
+        `Plugin ${pluginId} agent.open.before failed: MCP server ${name} from plugin ${pluginId} collides with plugin ${owners[name]}`,
       );
     }
     servers[name] = server;

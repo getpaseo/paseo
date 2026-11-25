@@ -1579,6 +1579,44 @@ test("a create that fails the MCP check leaves no plugin tools behind for its ag
   }
 }, 60_000);
 
+test("switching a native tool to an equivalent plugin under another id reopens the session, so its catalog reaches the replacement", async () => {
+  const h = await setup(true, openCounterSource);
+  try {
+    const a = await h.create();
+    await h.client.disablePlugin("tools-test");
+    await h.install("replacement", openCounterSource);
+    await sendAndFinish(h, a.id, "after replacement");
+    expect(h.launches).toHaveLength(2);
+    // The replacement answers: it saw the refresh and the reopen.
+    expect(
+      await h.launches.at(-1)!.context!.paseoTools!.executeTool("other_opens", {}),
+    ).toMatchObject({ content: [{ type: "text", text: "2" }] });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const mcpOnlySource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} } }));
+  return () => {};
+}
+`;
+
+test("a plugin that adds an MCP server name another plugin already uses makes the reopen report the collision", async () => {
+  const h = await setup(false, mcpOnlySource);
+  try {
+    const a = await h.create();
+    await h.install("duplicate-mcp", mcpOnlySource);
+    await expect(h.daemon.daemon.agentManager.reloadStalePluginSession(a.id)).rejects.toThrow(
+      /MCP server company from plugin tools-test collides with plugin duplicate-mcp/,
+    );
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 test("a reopen that fails the MCP check is retried, and the running session keeps its plugin tools", async () => {
   const h = await setup(false, mcpSource, undefined, { supportsMcpServers: false });
   try {

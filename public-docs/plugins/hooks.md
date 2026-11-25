@@ -515,8 +515,8 @@ the session continues as if the plugin stopped.
 
 - The tools the callback returns replace its old tools at once, also during a running turn. The new
   plugin instance answers the calls.
-- If the env, instructions, MCP servers, or tool definitions it returns differ from what the
-  session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
+- If the env, instructions, MCP servers, tool definitions, or the plugin that provides a tool
+  differ from what the session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
   A callback whose result depends on `reason` always differs from a `create` open. Reverting the
   change before that prompt cancels the reopen.
 - If nothing differs, the session keeps running with its background work and subagents. A plugin
@@ -524,7 +524,8 @@ the session continues as if the plugin stopped.
 - If the callback throws or times out, its tools stay off, and the session reopens before its next
   idle prompt. Paseo does not rerun it for the same plugin instance.
 - If a returned tool collides with a Paseo tool or another plugin's tool, that plugin's tools stay
-  off, and the session reopens before its next idle prompt.
+  off, and the session reopens before its next idle prompt. The same happens when two plugins return
+  the same MCP server name. That prompt fails with the collision error.
 
 Agents that receive Paseo tools natively (OpenCode with the bridge, OMP) keep the tool list they
 launched with until the reopen. Their calls to a listed tool reach the new instance of the plugin
