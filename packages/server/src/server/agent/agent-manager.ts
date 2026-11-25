@@ -5335,7 +5335,6 @@ export class AgentManager {
         });
       }
     }
-    this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
 
@@ -5484,9 +5483,11 @@ export class AgentManager {
       return false;
     }
 
-    // Only update timestamp for live events, not history replay
+    // Thread announcements also replay on resume and are not conversation activity.
     if (!options?.fromHistory) {
-      this.touchUpdatedAt(agent);
+      if (event.type !== "thread_started") {
+        this.touchUpdatedAt(agent);
+      }
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         return false;

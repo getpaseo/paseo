@@ -16268,3 +16268,94 @@ test("importProviderSession keeps the stats the provider reported with its histo
     ["assistant_message", null],
   ]);
 });
+
+test("reopening an old Codex agent preserves updatedAt and lastActivityAt across live thread_started replay", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-updated-at-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const initialSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const resumedSession = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return initialSession;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return resumedSession;
+    }
+  })();
+
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    await manager.closeAgent(created.id);
+    await storage.flush();
+
+    const historicalUpdatedAt = new Date("2026-10-31T02:59:32.574Z");
+    const existingRecord = await storage.get(created.id);
+    expect(existingRecord).not.toBeNull();
+    await storage.upsert({
+      ...existingRecord!,
+      updatedAt: historicalUpdatedAt.toISOString(),
+      lastActivityAt: historicalUpdatedAt.toISOString(),
+    });
+    await storage.flush();
+
+    const restored = await manager.resumeAgentFromPersistence(
+      created.persistence!,
+      { cwd: created.cwd },
+      created.id,
+      { updatedAt: historicalUpdatedAt },
+    );
+    expect(restored.updatedAt.toISOString()).toBe(historicalUpdatedAt.toISOString());
+
+    // Live thread_started replay emitted by Codex runtime on resume is not user/turn activity.
+    resumedSession.pushEvent({
+      type: "thread_started",
+      provider: "codex",
+      sessionId: created.persistence!.sessionId,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await storage.flush();
+
+    expect(manager.getAgent(created.id)?.updatedAt.toISOString()).toBe(
+      historicalUpdatedAt.toISOString(),
+    );
+    const storedAfterResume = await storage.get(created.id);
+    expect(storedAfterResume?.updatedAt).toBe(historicalUpdatedAt.toISOString());
+    expect(storedAfterResume?.lastActivityAt).toBe(historicalUpdatedAt.toISOString());
+
+    // Force-hydrating legacy provider history must also preserve historical updatedAt.
+    await manager.hydrateTimelineFromProvider(created.id, { force: true });
+    await storage.flush();
+    expect(manager.getAgent(created.id)?.updatedAt.toISOString()).toBe(
+      historicalUpdatedAt.toISOString(),
+    );
+    expect((await storage.get(created.id))?.updatedAt).toBe(historicalUpdatedAt.toISOString());
+
+    // Genuine live activity still advances updatedAt.
+    resumedSession.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "turn-after-resume",
+    });
+    await vi.waitFor(() =>
+      expect(manager.getAgent(created.id)?.updatedAt.getTime()).toBeGreaterThan(
+        historicalUpdatedAt.getTime(),
+      ),
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
