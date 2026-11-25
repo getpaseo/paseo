@@ -180,11 +180,41 @@ const CodexToolDetailPass2Schema = z.union([
   toolDetailBranchByNameWithCwd("search", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail({ input, toolName: "search" }),
   ),
-  toolDetailBranchByNameWithCwd("web_search", ToolSearchInputSchema, z.unknown(), (input) =>
-    toSearchToolDetail({ input, toolName: "web_search" }),
+  toolDetailBranchByNameWithCwd("web_search", ToolSearchInputSchema, z.unknown(), (input, output) =>
+    withCodexWebResults(toSearchToolDetail({ input, toolName: "web_search" }), output),
   ),
   CodexSpeakToolDetailSchema,
 ]);
+
+// Codex passes web search hits through as opaque JSON so new result types can
+// ship without a Codex release; keep the ones that link somewhere.
+const CodexWebSearchHitSchema = z
+  .object({ url: z.string().min(1), title: z.string().nullable().optional() })
+  .passthrough();
+
+function withCodexWebResults(
+  detail: ToolCallDetail | undefined,
+  output: unknown,
+): ToolCallDetail | undefined {
+  if (detail?.type !== "search" || typeof output !== "object" || output === null) {
+    return detail;
+  }
+  const results = (output as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    return detail;
+  }
+  const webResults: Array<{ title: string; url: string }> = [];
+  const seen = new Set<string>();
+  for (const entry of results) {
+    const hit = CodexWebSearchHitSchema.safeParse(entry);
+    if (!hit.success || seen.has(hit.data.url)) {
+      continue;
+    }
+    seen.add(hit.data.url);
+    webResults.push({ title: hit.data.title?.trim() || hit.data.url, url: hit.data.url });
+  }
+  return webResults.length > 0 ? { ...detail, webResults } : detail;
+}
 
 export function deriveCodexToolDetail(params: {
   name: string;

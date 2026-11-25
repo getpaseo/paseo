@@ -178,6 +178,7 @@ const CodexWebSearchItemSchema = z
     error: z.unknown().optional(),
     query: z.string().optional(),
     action: z.unknown().optional(),
+    results: z.array(z.unknown()).nullable().optional(),
   })
   .passthrough();
 
@@ -1045,10 +1046,12 @@ function mapWebSearchItem(
   item: z.infer<typeof CodexWebSearchItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
   const input = item.query !== undefined ? { query: item.query } : null;
-  const output = item.action ?? null;
+  const action = item.action ?? null;
+  // Standalone web search reports its hits out of band, beside the action.
+  const output = item.results ? { action, results: item.results } : action;
   const name = "web_search";
   const error = item.error ?? null;
-  const status = normalizeToolCallStatus(item.status ?? "completed", error, output);
+  const status = normalizeToolCallStatus(item.status ?? "completed", error, action);
 
   return {
     callId: item.id,

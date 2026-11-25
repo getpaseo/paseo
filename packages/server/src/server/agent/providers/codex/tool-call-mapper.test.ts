@@ -801,6 +801,74 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("maps Codex web search results to webResults", () => {
+    const opened = mapCodexToolCallFromThreadItem({
+      type: "webSearch",
+      id: "codex-open-page",
+      status: "completed",
+      query: "https://chatgpt.com/s/t_example",
+      action: { type: "openPage", url: "https://chatgpt.com/s/t_example" },
+      results: [
+        {
+          type: "text_result",
+          domain: "chatgpt.com",
+          ref_id: "turn0view0",
+          snippet: "Total lines: 40",
+          title: "ChatGPT - Example plan",
+          url: "https://chatgpt.com/s/t_example",
+        },
+      ],
+    });
+    expect(expectMapped(opened).detail).toEqual({
+      type: "search",
+      query: "https://chatgpt.com/s/t_example",
+      toolName: "web_search",
+      webResults: [{ title: "ChatGPT - Example plan", url: "https://chatgpt.com/s/t_example" }],
+    });
+
+    const searched = mapCodexToolCallFromThreadItem({
+      type: "webSearch",
+      id: "codex-search-results",
+      status: "completed",
+      query: "react native onLayout",
+      action: { type: "search", query: "react native onLayout", queries: null },
+      results: [
+        { type: "text_result", title: "View", url: "https://reactnative.dev/docs/view" },
+        { type: "text_result", title: "View (again)", url: "https://reactnative.dev/docs/view" },
+        { type: "text_result", title: null, url: "https://github.com/facebook/react-native" },
+        { type: "image_result", thumbnail_url: "https://example.com/a.png" },
+        "plain text summary",
+      ],
+    });
+    expect(expectMapped(searched).detail).toEqual({
+      type: "search",
+      query: "react native onLayout",
+      toolName: "web_search",
+      webResults: [
+        { title: "View", url: "https://reactnative.dev/docs/view" },
+        {
+          title: "https://github.com/facebook/react-native",
+          url: "https://github.com/facebook/react-native",
+        },
+      ],
+    });
+    expect(expectMapped(searched).status).toBe("completed");
+
+    const noResults = mapCodexToolCallFromThreadItem({
+      type: "webSearch",
+      id: "codex-search-empty",
+      status: "completed",
+      query: "nothing here",
+      action: { type: "search", query: "nothing here" },
+      results: [],
+    });
+    expect(expectMapped(noResults).detail).toEqual({
+      type: "search",
+      query: "nothing here",
+      toolName: "web_search",
+    });
+  });
+
   it("maps failed tool calls with required error", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem({
