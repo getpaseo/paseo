@@ -1253,6 +1253,7 @@ export const fr: TranslationResources = {
     },
     display: {
       showBackground: "Afficher les espaces en arrière-plan",
+      nestSubagentWorkspaces: "Imbriquer les espaces de travail des sous-agents",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
       sort: {
@@ -1401,6 +1402,10 @@ export const fr: TranslationResources = {
         unpin: "Désépingler",
         archive: "Archiver",
         archiveWorkspace: "Archiver l’espace de travail",
+        showTabs: "Afficher les onglets",
+        hideTabs: "Masquer les onglets",
+        showSubagents: "Afficher les sous-agents",
+        hideSubagents: "Masquer les sous-agents",
         hideFromSidebar: "Masquer de la barre latérale",
         archiving: "Archivage…",
         hiding: "Masquage…",
