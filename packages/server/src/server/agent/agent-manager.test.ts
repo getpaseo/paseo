@@ -1,4 +1,4 @@
-import type { PluginSessionsRuntime } from "../plugins/agent-tools.js";
+import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -16317,49 +16317,71 @@ class LaunchWrapRecordingClient extends TestAgentClient {
   }
 }
 
+type TestLaunchWrap = [string, ...string[]];
+
+/**
+ * A session-open plugin that selects `wrap()` and attaches one tool while it does. Like the real runtime, an open's
+ * tools take over only once its launch does, and a failed launch leaves the running session's tools.
+ */
+function launchWrapPluginSessions(wrap: () => TestLaunchWrap | undefined) {
+  const pending = new Map<string, AttachedAgentTool[]>();
+  const running = new Map<string, AttachedAgentTool[]>();
+  const failedLaunches: string[] = [];
+  const sessions: PluginSessionsRuntime = {
+    openSession: async (request) => {
+      const selected = wrap();
+      const tools: AttachedAgentTool[] = selected
+        ? [
+            {
+              name: "sandbox_status",
+              description: "Report the sandbox",
+              inputSchema: {},
+              pluginId: "sandbox",
+              pluginInstanceId: "sandbox-1",
+            },
+          ]
+        : [];
+      if (request.purpose === "interactive") pending.set(request.agentId, tools);
+      return { ...request, ...(selected ? { wrap: selected } : {}), tools, mcpServerOwners: {} };
+    },
+    sessionLaunched: (agentId) => {
+      const tools = pending.get(agentId);
+      pending.delete(agentId);
+      if (tools) running.set(agentId, tools);
+    },
+    sessionLaunchFailed: (agentId) => {
+      pending.delete(agentId);
+      failedLaunches.push(agentId);
+    },
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: (agentId) => running.get(agentId) ?? [],
+    closeSession: (agentId) => {
+      pending.delete(agentId);
+      running.delete(agentId);
+    },
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+  return { sessions, failedLaunches };
+}
+
 function createLaunchWrapManager(client: LaunchWrapRecordingClient) {
   const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-"));
   onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const detached: string[] = [];
-  const hook: { wrap: [string, ...string[]] | undefined } = { wrap: undefined };
+  const hook: { wrap: TestLaunchWrap | undefined } = { wrap: undefined };
+  const { sessions, failedLaunches } = launchWrapPluginSessions(() => hook.wrap);
   const manager = new AgentManager({
     clients: { codex: client },
     registry: storage,
     logger,
-    pluginAgentTools: {
-      isToolPluginAvailable: () => true,
-      detachTools: (agentId) => detached.push(agentId),
-      callTool: async () => {
-        throw new Error("unused");
-      },
-    },
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before" && hook.wrap
-          ? {
-              ...request,
-              wrap: hook.wrap,
-              tools: [
-                {
-                  name: "sandbox_status",
-                  description: "Report the sandbox",
-                  inputSchema: {},
-                  pluginId: "sandbox",
-                  pluginInstanceId: "sandbox-1",
-                },
-              ],
-            }
-          : request,
-    },
+    pluginSessions: sessions,
   });
-  return { manager, storage, workdir, detached, hook };
+  return { manager, storage, workdir, failedLaunches, hook };
 }
 
 test("a wrapped open rejects on every path for a provider that does not apply wraps", async () => {
   const client = new LaunchWrapRecordingClient(false);
-  const { manager, storage, workdir, detached, hook } = createLaunchWrapManager(client);
+  const { manager, storage, workdir, failedLaunches, hook } = createLaunchWrapManager(client);
   const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
@@ -16387,9 +16409,10 @@ test("a wrapped open rejects on every path for a provider that does not apply wr
   expect(client.calls).toEqual(calls);
   expect(existing.closed).toBe(false);
   expect(manager.getAgent(created.id)?.session).toBe(existing);
-  // The hook attached a tool for this open; the rejection takes it away again.
+  // Each refused open is discarded, so the running session keeps the tools it launched with.
+  expect(failedLaunches).toHaveLength(4);
+  expect(failedLaunches.at(-1)).toBe(created.id);
   expect(manager.getPluginTools(created.id)).toEqual([]);
-  expect(detached.filter((id) => id === created.id).length).toBeGreaterThanOrEqual(2);
   await manager.flush();
   expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
   await manager.closeAgent(created.id);
@@ -16460,13 +16483,7 @@ test("a wrapped refresh passes a Windows script provider command to the wrapper 
   const manager = new AgentManager({
     clients: { codex: client },
     logger,
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before"
-          ? { ...request, wrap: [process.execPath, launcher, launches] }
-          : request,
-    },
+    pluginSessions: launchWrapPluginSessions(() => [process.execPath, launcher, launches]).sessions,
   });
   const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,

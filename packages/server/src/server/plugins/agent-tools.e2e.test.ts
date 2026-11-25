@@ -46,6 +46,7 @@ function recordingProvider(native: boolean, callbacks: TestAgentClientOptions = 
   const provider: AgentClient = {
     provider: inner.provider,
     capabilities: { ...inner.capabilities, supportsNativePaseoTools: native },
+    supportsLaunchWrap: true,
     createSession: async (config, context, options) => {
       launches.push({ config, context });
       return inner.createSession(config, context, options);
@@ -582,6 +583,44 @@ test("an idle agent reopens once before its next prompt after a session-hook plu
     expect(h.launches).toHaveLength(2);
     expect(h.turns.map((turn) => turn.launchCount)).toEqual([2, 2]);
     expect(h.events.interrupts).toBe(0);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+function wrapPluginSource(profile: string) {
+  return `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: [${JSON.stringify(process.execPath)}, "--sandbox-profile", ${JSON.stringify(profile)}],
+  }));
+  return () => {};
+}
+`;
+}
+
+test("a plugin reload that changes the launch wrap reopens the idle session with the new wrap", async () => {
+  const h = await setup(false, wrapPluginSource("first"));
+  try {
+    const a = await h.create();
+    expect(h.launches.at(-1)!.context?.wrap).toEqual([
+      process.execPath,
+      "--sandbox-profile",
+      "first",
+    ]);
+    await writeFile(
+      path.join(h.directory, "tools-test", "index.server.ts"),
+      wrapPluginSource("second"),
+    );
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, a.id, "after reload");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context?.wrap).toEqual([
+      process.execPath,
+      "--sandbox-profile",
+      "second",
+    ]);
   } finally {
     await h.close();
   }
