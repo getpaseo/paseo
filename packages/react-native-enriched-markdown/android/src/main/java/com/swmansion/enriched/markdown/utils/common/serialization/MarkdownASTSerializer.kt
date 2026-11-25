@@ -21,6 +21,12 @@ object MarkdownASTSerializer {
   }
 
   /**
+   * Serializes the blocks inside a Blockquote back to markdown, without the
+   * quote's own `> ` prefix. A quote nested inside keeps its prefix.
+   */
+  fun serializeBlockquoteBody(node: MarkdownASTNode): String = serializeBlockChildren(node).trimEnd('\n')
+
+  /**
    * Serializes a Blockquote or Admonition node back to markdown, including
    * the `> ` prefix on every line and `> [!TYPE]` header for admonitions.
    */
@@ -31,8 +37,7 @@ object MarkdownASTSerializer {
       val type = node.getAttribute("admonitionType")?.takeIf { it.isNotEmpty() } ?: "note"
       sb.append("> [!${type.uppercase(java.util.Locale.ROOT)}]\n")
     }
-    val body = serializeBlockChildren(node)
-    for (line in body.trimEnd('\n').split("\n")) {
+    for (line in serializeBlockquoteBody(node).split("\n")) {
       sb.append("> ")
       sb.append(line)
       sb.append("\n")
@@ -220,6 +225,9 @@ object MarkdownASTSerializer {
       lines.forEachIndexed { lineIdx, line ->
         if (lineIdx == 0) {
           buffer.append(prefix)
+          if (item.getAttribute("isTask") == "true") {
+            buffer.append(if (item.getAttribute("taskChecked") == "true") "[x] " else "[ ] ")
+          }
         } else {
           buffer.append(" ".repeat(prefix.length))
         }

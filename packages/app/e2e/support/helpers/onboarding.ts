@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
+import { addProjectFlow, addProjectFlowInput, expectAddProjectTab } from "./add-project-flow";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
@@ -122,7 +122,7 @@ export async function skipSetup(page: Page): Promise<void> {
 export async function addProjectFromSetup(page: Page, projectPath: string): Promise<void> {
   await setupModal(page).getByRole("button", { name: "Add project", exact: true }).click();
   await expect(addProjectFlow(page)).toBeVisible({ timeout: 30_000 });
-  await chooseAddProjectMethod(page, "directory-search");
+  await expectAddProjectTab(page, "existing");
   await addProjectFlowInput(page).fill(projectPath);
   await page.keyboard.press("Enter");
   await expect(addProjectFlow(page)).toHaveCount(0, { timeout: 30_000 });

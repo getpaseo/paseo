@@ -162,6 +162,11 @@ function validateBridgeAddress(
     );
 }
 
+interface BindOutput {
+  error?: unknown;
+  features?: { mcpTools?: boolean };
+}
+
 export function bridgeBindings(
   client: ReturnType<typeof OpenCode.make>,
   bridge: OpenCodeBridge | undefined,
@@ -187,8 +192,13 @@ export function bridgeBindings(
           { cause: error },
         );
       }
-      if (result.output && typeof result.output === "object" && "error" in result.output)
-        throw new Error(String(result.output.error));
+      const output = result.output as BindOutput | undefined;
+      if (output?.error !== undefined) throw new Error(String(output.error));
+      // An OpenCode older than 2.0.29, or a plugin from an older Paseo, ignores MCP tools.
+      if (bridge.hasMcpTools(sessionId) && output?.features?.mcpTools !== true)
+        throw new Error(
+          `This OpenCode server cannot run the agent's MCP servers. Update OpenCode to 2.0.29 or newer${pluginDirectory ? `, install the Paseo plugin from ${pluginDirectory}, and restart the server` : ""}.`,
+        );
     },
     unbindSession: async (sessionId, cwd) => {
       if (bridge)

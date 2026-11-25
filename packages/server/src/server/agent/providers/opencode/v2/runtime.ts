@@ -17,7 +17,11 @@ import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
-import { selectOpenCodeService, type OpenCodeServiceSelection } from "./service-selection.js";
+import {
+  processEnvironmentOverrides,
+  selectOpenCodeService,
+  type OpenCodeServiceSelection,
+} from "./service-selection.js";
 import { bridgeBindings, connectSharedService } from "./shared-service.js";
 import {
   hasManagedBridge,
@@ -57,8 +61,6 @@ export interface V2RuntimeOptions {
 
 export interface V2RuntimeAcquireOptions {
   fresh?: boolean;
-  dedicated?: boolean;
-  env?: Record<string, string>;
   signal?: AbortSignal;
 }
 
@@ -89,17 +91,9 @@ export class V2Runtime {
     input.signal?.throwIfAborted();
     this.assertBridgePort();
     const selection = await raceProviderRefreshAbort(input.signal, this.selection);
-    let pending: Promise<Generation>;
-    if (selection.kind !== "owned") {
-      this.assertSharedConfiguration(input, selection);
-      this.current ??= this.startTracked();
-      pending = this.current;
-    } else if (input.env || input.dedicated) {
-      pending = this.startTracked(input.env);
-    } else {
-      if (!this.current) this.current = this.startTracked();
-      pending = this.current;
-    }
+    if (selection.kind === "explicit") this.assertExplicitConfiguration();
+    this.current ??= this.startTracked();
+    const pending = this.current;
     let generation: Generation;
     try {
       generation = await raceProviderRefreshAbort(input.signal, pending);
@@ -143,29 +137,13 @@ export class V2Runtime {
       throw new Error("PASEO_OPENCODE_BRIDGE_PORT changed; restart Paseo to apply the bridge port");
   }
 
-  private assertSharedConfiguration(
-    input: V2RuntimeAcquireOptions,
-    selection: OpenCodeServiceSelection,
-  ): void {
-    const connectionEnv = new Set([
-      "PASEO_OPENCODE_SERVER_URL",
-      "PASEO_OPENCODE_SERVER_PASSWORD",
-      "PASEO_OPENCODE_BRIDGE_URL",
-      "PASEO_OPENCODE_BRIDGE_PORT",
-    ]);
-    if (selection.kind === "discovered") {
-      connectionEnv.add("XDG_CONFIG_HOME");
-      connectionEnv.add("XDG_STATE_HOME");
-      connectionEnv.add("OPENCODE_CONFIG_DIR");
-    }
-    const processOverrides = Object.keys(this.options.settings?.env ?? {}).filter(
-      (key) => !connectionEnv.has(key),
-    );
-    if (input.env || input.dedicated || processOverrides.length) {
+  // Discovery skips a service that cannot honor the provider environment; an explicit one cannot be skipped.
+  private assertExplicitConfiguration(): void {
+    const overrides = processEnvironmentOverrides(this.options.settings?.env);
+    if (overrides.length)
       throw new Error(
-        `Custom OpenCode MCP servers or process environment require an isolated server and cannot be used with a shared OpenCode service${processOverrides.length ? `: ${processOverrides.join(", ")}` : ""}.`,
+        `OpenCode provider environment configures the server process and cannot be used with an existing OpenCode server: ${overrides.join(", ")}.`,
       );
-    }
   }
 
   private lease(generation: Generation, pending: Promise<Generation>): V2Connection {
@@ -201,8 +179,8 @@ export class V2Runtime {
     this.current = null;
   }
 
-  private startTracked(env?: Record<string, string>): Promise<Generation> {
-    const pending = this.start(env);
+  private startTracked(): Promise<Generation> {
+    const pending = this.start();
     this.starts.add(pending);
     void pending.then(
       (generation) =>
@@ -219,7 +197,7 @@ export class V2Runtime {
     return pending;
   }
 
-  private async start(env: Record<string, string> = {}): Promise<Generation> {
+  private async start(): Promise<Generation> {
     const selection = await this.selection;
     if (selection.kind !== "owned") {
       const generation: Generation = {
@@ -242,7 +220,6 @@ export class V2Runtime {
     const configured = {
       ...(inheritedConfig ? { OPENCODE_CONFIG_CONTENT: inheritedConfig } : {}),
       ...settings?.env,
-      ...env,
     };
     const bridge = this.options.bridge;
     const plugin = bridge

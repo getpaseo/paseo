@@ -150,6 +150,10 @@ function describeVersion(inspection: ProviderInstallationInspection): string {
   return inspection.version?.trim() || "unknown";
 }
 
+function toProviderLaunch(launch: ProviderInstallationLaunch): ProviderLaunch {
+  return { command: launch.command, args: launch.args, env: launch.env };
+}
+
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
   connectedLaunch: ProviderLaunch | undefined;
@@ -212,13 +216,13 @@ class ProviderRuntime {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch) return undefined;
     if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async resolveUsageLaunch(): Promise<ProviderLaunch | undefined> {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch?.resolved) return undefined;
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async inspectInstallation(signal: AbortSignal): Promise<ProviderInspection> {
@@ -281,7 +285,11 @@ class ProviderRuntime {
   async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
     const callback = this.registration.getCatalogCacheKey;
     if (!callback) return undefined;
-    return callback({ ...options, launch: await this.resolveLaunch() });
+    const launch = await this.resolveEffectiveLaunch();
+    // A missing executable gets its own catalogue, so refresh reports it unavailable instead of
+    // failing the key or reusing a catalogue cached while it was installed.
+    if (launch && !launch.resolved) return JSON.stringify(["unresolved", launch.command]);
+    return callback({ ...options, launch: launch && toProviderLaunch(launch) });
   }
 
   get negotiatedCapabilities(): readonly string[] {
