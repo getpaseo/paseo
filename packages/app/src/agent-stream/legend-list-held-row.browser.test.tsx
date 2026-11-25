@@ -2,7 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import React, { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { disclosureAnchor } from "./native-disclosure-hold";
 
 // The native chat timeline runs on the patched LegendList (patches/@legendapp+list+3.7.1.patch).
@@ -314,4 +314,44 @@ it("expands the draw distance of a placed end-anchored list without moving its b
   expect(expanded?.sizes.size).toBeGreaterThan(20);
   expect(expanded?.scroll).toBe(initial?.scroll);
   expect(expanded?.positionByKey(lastRow.id)).toBe(lastRowTop);
+});
+
+it.each([2, 4])("reveals an end-anchored list with a footer %sx the viewport", async (scale) => {
+  const rows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+    id: `row-${index}`,
+    height: 40,
+  }));
+  const footerHeight = VIEWPORT_HEIGHT * scale;
+  const listRef = React.createRef<LegendListRef>();
+  const footer = React.createElement(View, { style: rowStyle(footerHeight) });
+  const onReady = vi.fn();
+
+  act(() => {
+    root.render(
+      <LegendList
+        ref={listRef}
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={keyExtractor}
+        estimatedListSize={ESTIMATED_LIST_SIZE}
+        getEstimatedItemSize={estimateRowSize}
+        drawDistance={50}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        ListFooterComponent={footer}
+        onReady={onReady}
+        style={LIST_STYLE}
+      />,
+    );
+  });
+  await expect
+    .poll(async () => {
+      await wait(16);
+      return onReady.mock.calls.length;
+    })
+    .toBe(1);
+  expect(listRef.current?.getState().scroll).toBe(
+    rows.length * 40 + footerHeight - VIEWPORT_HEIGHT,
+  );
 });
