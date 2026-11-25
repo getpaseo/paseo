@@ -542,6 +542,23 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("loading entries already report launch-wrap support, before any discovery", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { "my-codex": { extends: "codex", label: "My Codex" } },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const byProvider = (provider: string) =>
+        snapshot.find((entry) => entry.provider === provider);
+      expect(byProvider("codex")).toMatchObject({ status: "loading", launchWrap: true });
+      expect(byProvider("my-codex")).toMatchObject({ status: "loading", launchWrap: true });
+      expect(byProvider("claude")).toMatchObject({ status: "loading", launchWrap: true });
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("providerOverrides with enabled:false marks the provider as unavailable without probing", async () => {
     const isAvailable = vi.fn(async () => true);
     const fetchCatalog = vi.fn(async () => ({

@@ -3,7 +3,7 @@ import type {
   PluginSessionsRuntime,
   SessionOpenAgentFacts,
 } from "../plugins/agent-tools.js";
-import { ProviderOptionsValidationError } from "./provider-options.js";
+import { LaunchWrapUnsupportedError, ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
@@ -1721,6 +1721,7 @@ export class AgentManager {
         config: sent,
         env: options.env,
         metadata: options.metadata ?? {},
+        workspaceId: options.workspaceId ?? null,
       });
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
       // against the previous SDK edits `config.featureValues`.
@@ -6644,6 +6645,7 @@ export class AgentManager {
     let appendSystemPrompt: string[] | undefined;
     let mcpServers: AgentSessionConfig["mcpServers"];
     let mcpServerOwners: Record<string, string> | undefined;
+    let wrap: AgentLaunchContext["wrap"];
     if (this.pluginSessions) {
       const request = {
         agentId,
@@ -6661,14 +6663,18 @@ export class AgentManager {
       };
       const transformed = await this.pluginSessions.openSession(request);
       env = transformed.env;
+      wrap = transformed.wrap;
       if (request.purpose === "interactive") {
         appendSystemPrompt = transformed.appendSystemPrompt;
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }
+      // launchAgent discards this open when the wrap is refused, so a running session keeps its tools.
+      if (wrap) await requireLaunchWrap(client);
     }
     const context: AgentLaunchContext = {
       agentId,
+      wrap,
       ...pluginPromptContext(appendSystemPrompt),
       mcpServers,
       mcpServerOwners,
@@ -6854,4 +6860,9 @@ function pluginPromptContext(
   appendSystemPrompt: string[] | undefined,
 ): Pick<AgentLaunchContext, "appendSystemPrompt"> {
   return appendSystemPrompt?.length ? { appendSystemPrompt } : {};
+}
+
+async function requireLaunchWrap(client: AgentClient): Promise<void> {
+  if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
+  await client.requireLaunchWrap?.();
 }

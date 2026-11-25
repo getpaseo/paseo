@@ -358,9 +358,16 @@ function isReusable(
   );
 }
 
-/** The fields one plugin's callback passes on to the next. Tools and MCP servers are collected per plugin instead. */
+/**
+ * The fields one plugin's callback passes on to the next, including the launch wrap an earlier plugin selected. Tools
+ * and MCP servers are collected per plugin instead.
+ */
 function chainedFields(request: SessionOpenWireRequest) {
-  return { env: request.env, appendSystemPrompt: request.appendSystemPrompt ?? [] };
+  return {
+    env: request.env,
+    appendSystemPrompt: request.appendSystemPrompt ?? [],
+    wrap: request.wrap ?? null,
+  };
 }
 
 /**

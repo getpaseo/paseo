@@ -1,3 +1,4 @@
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import { readTerminalState } from "./test-utils/terminal-state.js";
@@ -9,7 +10,6 @@ import {
   assertTerminalCommandCanStart,
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
-  resolveDefaultTerminalShell,
   resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,
@@ -308,16 +308,18 @@ describe("createTerminal", () => {
       resolveExecutable: async () => "C:\\npm\\claude.cmd",
     });
 
-    // The `.cmd` branch now hands node-pty a single pre-escaped command line
-    // (string) instead of an argv array, so that node-pty's own
-    // MSVCRT-style array quoting never runs a second time over an already
-    // cmd.exe-escaped argument. See escapeCmdExeArgument in terminal.ts.
+    // The `.cmd` branch hands node-pty one cmd.exe command line (a string) instead of an argv
+    // array, so node-pty's own array quoting never runs over it. An argument without a cmd.exe
+    // metacharacter stays as given.
     expect(resolved).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: '/d /s /c "C:\\npm\\claude.cmd ^^^"--foo^^^""',
+      args: '/d /s /c "C:\\npm\\claude.cmd --foo"',
     });
   });
 
+  // The escaping itself is the SDK's shared cmd.exe dialect, tested in
+  // packages/plugin/src/server/process-internal/windows-command.test.ts. These cases pin what a
+  // terminal adds: a prompt line break becomes a space, and a `.cmd` shim counts as a batch script.
   describe(".cmd shim argument escaping on Windows", () => {
     async function resolveCmdShimArgs(promptArg: string): Promise<string> {
       const resolved = await resolveTerminalSpawnCommand("claude", [promptArg], {
@@ -325,10 +327,6 @@ describe("createTerminal", () => {
         env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
         resolveExecutable: async () => "C:\\npm\\claude.cmd",
       });
-      // A real narrow rather than a cast: the `.cmd` branch is the one case
-      // that returns a pre-escaped command line instead of argv, so if that
-      // contract ever changes these tests should fail loudly here rather than
-      // assert against a stringified array.
       const { args } = resolved;
       if (typeof args !== "string") {
         throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(args)}`);
@@ -336,21 +334,20 @@ describe("createTerminal", () => {
       return args;
     }
 
-    // Each expected string is the exact cmd.exe command line the escaping
-    // must produce so a real `cmd.exe /c` invocation reconstructs the
-    // original prompt as a single argv element for the target process
-    // (modulo the documented newline-to-space normalization below).
-    it("neutralizes cmd.exe's own metacharacters instead of letting them execute", async () => {
+    it("escapes cmd.exe metacharacters so they reach the shim as text", async () => {
       expect(await resolveCmdShimArgs("a & b | c")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^ ^^^&^^^ b^^^ ^^^|^^^ c^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"a^ ^&^ b^ ^|^ c^""',
       );
+      // A caret before each `%` keeps cmd.exe from expanding %PATH%.
       expect(await resolveCmdShimArgs("100% done %PATH%")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"100^^^%^^^ done^^^ ^^^%PATH^^^%^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"100^%^ done^ ^%PATH^%^""',
       );
-      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^^b^^^""');
+      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^"a^^b^""');
     });
 
-    it("escapes embedded double quotes and backslash runs preceding them", async () => {
+    // The shim reads its arguments again when it forwards `%*`, so an argument with a quote is
+    // escaped twice; its quotes would otherwise leave the rest of the line outside a quoted region.
+    it("escapes an argument with a double quote twice for the shim", async () => {
       expect(await resolveCmdShimArgs('say "hello" now')).toBe(
         '/d /s /c "C:\\npm\\claude.cmd ^^^"say^^^ \\^^^"hello\\^^^"^^^ now^^^""',
       );
@@ -359,18 +356,14 @@ describe("createTerminal", () => {
       );
     });
 
-    // cmd.exe has no way to escape a literal CR/LF inside one command line
-    // -- its parser treats newlines as command separators regardless of
-    // quoting -- so a raw newline is normalized to a space before escaping.
-    // This is a deliberate choice, not an oversight: it avoids the prompt
-    // ever splitting into a second, attacker-controlled cmd.exe command, at
-    // the cost of losing the original line breaks.
-    it("normalizes embedded newlines to spaces instead of letting them split the command", async () => {
+    // cmd.exe ends a command at a line break whatever the quoting. A terminal prompt often has
+    // several lines, so the terminal starts with each line break as a space instead of refusing.
+    it("joins the lines of a prompt with spaces", async () => {
       expect(await resolveCmdShimArgs("line one\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
       );
       expect(await resolveCmdShimArgs("line one\r\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
       );
     });
 

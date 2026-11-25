@@ -793,6 +793,7 @@ export class PluginService {
           description: provider.description,
           docsUrl: provider.docsUrl,
           command: provider.command,
+          launchWrap: provider.launchWrap,
           requiresConfiguration: provider.requiresConfiguration,
           status: provider.hasStatus
             ? (request) => {

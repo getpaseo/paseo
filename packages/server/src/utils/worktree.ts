@@ -1,4 +1,3 @@
-import { execFile } from "child_process";
 import { promisify } from "util";
 import { constants as fsConstants, type Dirent, realpath } from "fs";
 import { copyFile, mkdir, readdir, rm, stat } from "fs/promises";
@@ -7,9 +6,11 @@ import net from "node:net";
 import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import pLimit from "p-limit";
+import { execCommand } from "@getpaseo/plugin/server";
 import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
+  type StringCommandShellInvocation,
 } from "./string-command-shell.js";
 import { readPaseoConfig } from "./paseo-config-file.js";
 export {
@@ -38,6 +39,7 @@ import { runWithRepositoryRoot } from "./git-repository-discovery.js";
 import { runGitCommand } from "./run-git-command.js";
 import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
+import { applyLaunchWrap } from "./launch-wrap.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
@@ -55,7 +57,6 @@ import type { PluginWorktreeManagerRuntime } from "../server/plugins/runtime.js"
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
-const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -138,6 +139,64 @@ export type ScriptConfig = PlainScriptConfig | ServiceScriptConfig;
 
 export function isServiceScript(config: ScriptConfig): config is ServiceScriptConfig {
   return "type" in config && config.type === "service";
+}
+
+/** A lifecycle command, and the environment Paseo adds to the daemon's for it. */
+export interface WorktreeLifecycleCommand {
+  command: string;
+  env: Record<string, string>;
+}
+
+/** How a lifecycle command runs after plugins saw it: its environment and an optional wrap. */
+export interface PreparedWorktreeLifecycleCommand {
+  env: Record<string, string>;
+  wrap?: readonly [string, ...string[]];
+}
+
+/** Lets plugins wrap or refuse a lifecycle command before it runs; see `command.run.before`. */
+export type PrepareWorktreeLifecycleCommand = (
+  command: WorktreeLifecycleCommand,
+) => Promise<PreparedWorktreeLifecycleCommand>;
+
+/**
+ * Asks the hooks how to run `command`. Resolves to `null` when `signal` aborts first, such as at the
+ * teardown deadline or when archive cancels setup; the command must then not start.
+ */
+async function prepareLifecycleCommand(options: {
+  prepare: PrepareWorktreeLifecycleCommand | undefined;
+  command: WorktreeLifecycleCommand;
+  signal: AbortSignal | undefined;
+  fail: (message: string) => Error;
+}): Promise<PreparedWorktreeLifecycleCommand | null> {
+  const { prepare, command, signal } = options;
+  if (signal?.aborted) return null;
+  if (!prepare) return { env: command.env };
+  let stopWaiting = () => {};
+  const aborted = new Promise<null>((settle) => {
+    const onAbort = () => settle(null);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    stopWaiting = () => signal?.removeEventListener("abort", onAbort);
+  });
+  const prepared = prepare(command).catch((error: unknown) => {
+    throw options.fail(error instanceof Error ? error.message : String(error));
+  });
+  // A hook that settles after the abort no longer matters; keep its rejection handled.
+  prepared.catch(() => {});
+  try {
+    return await Promise.race([prepared, aborted]);
+  } finally {
+    stopWaiting();
+  }
+}
+
+/** The shell invocation for a `paseo.json` command, started behind a plugin's wrap when set. */
+function lifecycleCommandInvocation(
+  command: string,
+  wrap: PreparedWorktreeLifecycleCommand["wrap"],
+): StringCommandShellInvocation {
+  const invocation = buildStringCommandShellInvocation({ command });
+  const launch = applyLaunchWrap({ command: invocation.shell, args: invocation.args }, wrap);
+  return { shell: launch.command, args: launch.args };
 }
 
 export class WorktreeSetupError extends Error {
@@ -445,14 +504,16 @@ export function processCarriageReturns(text: string): string {
 
 async function execSetupCommand(
   command: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: { cwd: string; env: NodeJS.ProcessEnv; wrap: PreparedWorktreeLifecycleCommand["wrap"] },
 ): Promise<WorktreeSetupCommandResult> {
   const startedAt = Date.now();
-  const shellInvocation = buildStringCommandShellInvocation({ command });
+  const shellInvocation = lifecycleCommandInvocation(command, options.wrap);
   try {
-    const { stdout, stderr } = await execFileAsync(shellInvocation.shell, shellInvocation.args, {
+    // execCommand starts a Windows `.cmd` or `.bat` wrap through cmd.exe; anything else has no shell.
+    const { stdout, stderr } = await execCommand(shellInvocation.shell, shellInvocation.args, {
       cwd: options.cwd,
       env: options.env,
+      shell: false,
     });
     return {
       command,
@@ -477,6 +538,7 @@ async function execSetupCommand(
 
 async function execSetupCommandStreamed(options: {
   command: string;
+  wrap: PreparedWorktreeLifecycleCommand["wrap"];
   cwd: string;
   env: NodeJS.ProcessEnv;
   index: number;
@@ -556,21 +618,29 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const shellInvocation = buildStringCommandShellInvocation({ command: options.command });
-    const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const shellInvocation = lifecycleCommandInvocation(options.command, options.wrap);
+    let child: ReturnType<typeof spawnProcess>;
+    try {
+      child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
+        cwd: options.cwd,
+        env: options.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      // A command that cannot start fails like one whose process reports a spawn error.
+      emitOutput("stderr", error instanceof Error ? error.message : String(error));
+      void finish(null);
+      return;
+    }
 
-    const abort = () => {
+    function abort(): void {
       termination ??= terminateWithTreeKill(child, {
         gracefulTimeoutMs: 1000,
         forceTimeoutMs: 1000,
       });
       void finish(null);
-    };
+    }
     if (options.signal?.aborted) {
       abort();
     } else {
@@ -678,6 +748,7 @@ export async function runWorktreeSetupCommands(options: {
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+  prepareCommand?: PrepareWorktreeLifecycleCommand;
 }): Promise<WorktreeSetupCommandResult[]> {
   // Read paseo.json from the worktree (it will have the same content as the source repo)
   const setupCommands = await getWorktreeSetupCommands(options.worktreePath);
@@ -692,13 +763,26 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
+    const prepared = await prepareLifecycleCommand({
+      prepare: options.prepareCommand,
+      command: { command: cmd, env: { ...runtimeEnv } },
+      signal: options.signal,
+      fail: (message) =>
+        new WorktreeSetupError(`Worktree setup command refused: ${cmd}\n${message}`, results),
+    });
+    if (!prepared) {
+      throw new WorktreeSetupError(`Worktree setup canceled before: ${cmd}`, results);
+    }
+    const setupEnv = createStringCommandShellEnv(
+      createExternalProcessEnv(process.env, prepared.env),
+    );
     const result = options.onEvent
       ? await execSetupCommandStreamed({
           command: cmd,
+          wrap: prepared.wrap,
           cwd: options.worktreePath,
           env: setupEnv,
           index: index + 1,
@@ -709,6 +793,7 @@ export async function runWorktreeSetupCommands(options: {
       : await execSetupCommand(cmd, {
           cwd: options.worktreePath,
           env: setupEnv,
+          wrap: prepared.wrap,
         });
     results.push(result);
 
@@ -779,6 +864,7 @@ export async function runWorktreeTeardownCommands(options: {
   teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
+  prepareCommand?: PrepareWorktreeLifecycleCommand;
 }): Promise<WorktreeTeardownCommandResult[]> {
   const teardownCwd = options.teardownCwd ?? options.worktreePath;
   if ((await getOwnershipRelativePath(options.worktreePath, teardownCwd)) === null) {
@@ -795,29 +881,41 @@ export async function runWorktreeTeardownCommands(options: {
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
   const worktreePort = await readPaseoWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = createStringCommandShellEnv(
-    createExternalProcessEnv(process.env, {
-      // Source checkout path is the original git repo root (shared across worktrees), not the
-      // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
-      // from the source checkout.
-      PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
-      // Backward-compatible alias.
-      PASEO_ROOT_PATH: repoRootPath,
-      PASEO_WORKTREE_PATH: options.worktreePath,
-      PASEO_BRANCH_NAME: branchName,
-      ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
-    }),
-  );
+  const runtimeEnv: Record<string, string> = {
+    // Source checkout path is the original git repo root (shared across worktrees), not the
+    // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
+    // from the source checkout.
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    // Backward-compatible alias.
+    PASEO_ROOT_PATH: repoRootPath,
+    PASEO_WORKTREE_PATH: options.worktreePath,
+    PASEO_BRANCH_NAME: branchName,
+    ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
+  };
 
   // One deadline covers every command. Reaching it counts as failure and keeps the worktree.
   const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
   for (const [index, cmd] of teardownCommands.entries()) {
+    const prepared = await prepareLifecycleCommand({
+      prepare: options.prepareCommand,
+      command: { command: cmd, env: { ...runtimeEnv } },
+      signal: deadline,
+      fail: (message) =>
+        new WorktreeTeardownError(`Worktree teardown command refused: ${cmd}\n${message}`, results),
+    });
+    if (!prepared) {
+      throw new WorktreeTeardownError(
+        `Worktree teardown command failed: ${cmd}\nTimed out after ${timeoutMs / 1000}s`,
+        results,
+      );
+    }
     const result = await execSetupCommandStreamed({
       command: cmd,
+      wrap: prepared.wrap,
       cwd: teardownCwd,
-      env: teardownEnv,
+      env: createStringCommandShellEnv(createExternalProcessEnv(process.env, prepared.env)),
       index: index + 1,
       total: teardownCommands.length,
       signal: deadline,

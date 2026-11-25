@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
+import type { V2RuntimeAcquireOptions } from "./runtime.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
@@ -1268,6 +1269,72 @@ describe("OpenCode v2 session lifecycle", () => {
     } finally {
       await session.close();
     }
+  });
+
+  test("asks the runtime for a server behind the wrap and the launch environment when creating and resuming", async () => {
+    const servers = [new V2Harness(), new V2Harness()];
+    const requests: unknown[] = [];
+    const runtime = {
+      acquire: async (input?: V2RuntimeAcquireOptions) => {
+        requests.push(input?.dedicated);
+        const server = servers[requests.length - 1];
+        if (!server) throw new Error("No OpenCode test server left");
+        return server.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "a b"] as const;
+    const env = { SANDBOX_PROFILE: "agent" };
+    const created = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project" },
+      { agentId: "agent", wrap, env },
+    );
+    try {
+      // The created session's connection is live, and a wrapped resume still asks for its own.
+      const resumed = await client.resumeSession(
+        {
+          provider: "opencode",
+          sessionId: "session",
+          nativeHandle: "session",
+          metadata: { cwd: "/tmp/project" },
+        },
+        undefined,
+        { agentId: "agent", wrap, env },
+        { purpose: "history" },
+      );
+      await resumed.close();
+      expect(requests).toEqual([
+        { wrap, env },
+        { wrap, env },
+      ]);
+    } finally {
+      await created.close();
+    }
+  });
+
+  test("imports a wrapped session through one wrapped server, from the first session lookup", async () => {
+    const server = new V2Harness();
+    // Import restores the session's agent.
+    server.api.session.switchAgent = async () => undefined;
+    const requests: unknown[] = [];
+    const runtime = {
+      acquire: async (input?: V2RuntimeAcquireOptions) => {
+        requests.push(input?.dedicated);
+        return server.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "import"] as const;
+    const env = { SANDBOX_PROFILE: "import" };
+    const config = { provider: "opencode", cwd: "/tmp/project" } as const;
+    const imported = await client.importSession(
+      { providerHandleId: "session", cwd: "/tmp/project" },
+      { config, storedConfig: config, launchContext: { agentId: "agent", wrap, env } },
+    );
+    await imported.session.close();
+    expect(requests).toEqual([{ wrap, env }]);
   });
 
   test("rejects MCP servers without the Paseo bridge before creating an OpenCode session", async () => {
