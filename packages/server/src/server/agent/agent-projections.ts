@@ -169,6 +169,7 @@ export function toAgentPayload(
     archivedAt: options?.archivedAt ?? null,
     ...visibilityFlags(agent),
     ...projectSessionMetrics(agent.sessionMetrics),
+    ...(agent.promptSuggestion !== undefined ? { promptSuggestion: agent.promptSuggestion } : {}),
   };
 
   const usageScopeKey = projectUsageScopeKey(agent);

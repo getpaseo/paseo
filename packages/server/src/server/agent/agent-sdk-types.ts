@@ -436,6 +436,8 @@ export type AgentStreamEvent =
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   /** Full replacement of the metrics shown for the session. An empty list clears them. */
   | { type: "session_metrics_updated"; provider: AgentProvider; metrics: AgentMetric[] }
+  /** Predicted follow-up prompt emitted by the provider after a turn finishes. */
+  | { type: "prompt_suggestion"; provider: AgentProvider; suggestion: string | null }
   | {
       type: "mode_changed";
       provider: AgentProvider;

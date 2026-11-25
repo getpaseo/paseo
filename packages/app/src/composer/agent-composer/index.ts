@@ -15,6 +15,12 @@ import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady, type DraftRecord } from "@/stores/draft-store/state";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { UserComposerAttachment } from "@/attachments/types";
+import {
+  composerSuggestionKey,
+  resolveComposerSuggestion,
+  useComposerSuggestionStore,
+  type ComposerSuggestionRecord,
+} from "@/composer/suggestions/store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 /** The mounted composer's input. While attached, prompt commands go through it. */
@@ -77,6 +83,7 @@ export function createAgentComposer(
   deps: AgentComposerDeps,
 ): ManagedAgentComposer {
   const draftKey = buildDraftStoreKey({ serverId, agentId });
+  const suggestionKey = composerSuggestionKey(serverId, agentId);
   const listeners = new Set<() => void>();
   // While something watches, the catalog has an observer: it fetches the catalog, and it is what
   // makes the catalog an active query that reconnect repair refetches, a failed one included.
@@ -90,6 +97,7 @@ export function createAgentComposer(
   let last: {
     agent: Agent | null;
     draft: DraftRecord | undefined;
+    suggestionRecord: ComposerSuggestionRecord | undefined;
     catalog: Catalog;
     state: ComposerState;
   } | null = null;
@@ -146,6 +154,9 @@ export function createAgentComposer(
       useDraftStore.subscribe((state, previous) => {
         if (state.drafts[draftKey] !== previous.drafts[draftKey]) notify();
       }),
+      useComposerSuggestionStore.subscribe((state, previous) => {
+        if (state.records[suggestionKey] !== previous.records[suggestionKey]) notify();
+      }),
     ];
     return () => {
       for (const stop of stops) stop();
@@ -193,12 +204,14 @@ export function createAgentComposer(
     agent: Agent | null,
     catalog: Catalog,
     record: DraftRecord | undefined,
+    suggestionRecord: ComposerSuggestionRecord | undefined,
   ): ComposerState {
     const draft = toDraftInputIfReady(record);
     const selection = agent ? selectModel(agent, catalog) : null;
     return {
       context: "agent",
       prompt: draft?.text ?? "",
+      suggestion: resolveComposerSuggestion(suggestionRecord, agent?.promptSuggestion),
       attachments: draft?.attachments ?? NO_ATTACHMENTS,
       provider: agent?.provider ?? null,
       model: selection?.activeModelId ?? null,
@@ -217,16 +230,24 @@ export function createAgentComposer(
   function getState(): ComposerState {
     const agent = readAgent();
     const draft = readDraft();
+    const suggestionRecord = useComposerSuggestionStore.getState().records[suggestionKey];
     const catalog = agent ? readCatalog(agent) : ({ status: "loading" } as const);
     if (
       last &&
       last.agent === agent &&
       last.draft === draft &&
+      last.suggestionRecord === suggestionRecord &&
       sameCatalog(last.catalog, catalog)
     ) {
       return last.state;
     }
-    last = { agent, draft, catalog, state: buildState(agent, catalog, draft) };
+    last = {
+      agent,
+      draft,
+      suggestionRecord,
+      catalog,
+      state: buildState(agent, catalog, draft, suggestionRecord),
+    };
     return last.state;
   }
 
@@ -293,6 +314,14 @@ export function createAgentComposer(
         const current = useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
         useDraftStore.getState().replaceDraftText({ draftKey, text: current + text });
       }
+    },
+    setSuggestion({ serverId: pluginServerId, pluginId, text }) {
+      useComposerSuggestionStore.getState().setPluginSuggestion({
+        composerKey: suggestionKey,
+        serverId: pluginServerId,
+        pluginId,
+        text,
+      });
     },
     focus(options) {
       const agent = readAgent();

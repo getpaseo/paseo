@@ -158,6 +158,11 @@ import type {
 import type { SelectedFile } from "@/attachments/selected-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { ComposerInputProvider, type ComposerInput } from "@/composer/session";
+import {
+  composerSuggestionKey,
+  resolveComposerSuggestion,
+  useComposerSuggestionStore,
+} from "@/composer/suggestions/store";
 import type { ComposerFocusOptions } from "@/composer/model";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { insertAtSelection } from "@/composer/insert-text";
@@ -301,13 +306,26 @@ const EMPTY_METRICS: AgentMetric[] = [];
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    if (!agent) {
+      return {
+        status: null,
+        contextWindowMaxTokens: null,
+        contextWindowUsedTokens: null,
+        totalCostUsd: null,
+        sessionMetrics: EMPTY_METRICS,
+        promptSuggestion: null,
+        model: null,
+      };
+    }
+    const usage = agent.lastUsage;
     return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      sessionMetrics: agent?.sessionMetrics ?? EMPTY_METRICS,
-      model: agent?.model ?? null,
+      status: agent.status,
+      contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: usage?.totalCostUsd ?? null,
+      sessionMetrics: agent.sessionMetrics ?? EMPTY_METRICS,
+      promptSuggestion: agent.promptSuggestion ?? null,
+      model: agent.model ?? null,
     };
   };
 }
@@ -1351,6 +1369,17 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const suggestionKey = composerSuggestionKey(serverId, agentId);
+  const suggestionRecord = useComposerSuggestionStore((state) => state.records[suggestionKey]);
+  const resolvedPromptSuggestion = useMemo(
+    () => resolveComposerSuggestion(suggestionRecord, agentState.promptSuggestion),
+    [agentState.promptSuggestion, suggestionRecord],
+  );
+  useEffect(() => {
+    useComposerSuggestionStore
+      .getState()
+      .reconcileNativeSuggestion(suggestionKey, agentState.promptSuggestion);
+  }, [agentState.promptSuggestion, suggestionKey]);
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -1527,6 +1556,43 @@ function ComposerContentImpl({
     },
     [dismissOverlays],
   );
+  const suggestionSource = useMemo(
+    () => ({
+      getSnapshot: () => {
+        const record = useComposerSuggestionStore.getState().records[suggestionKey];
+        const agent = useSessionStore.getState().sessions[serverId]?.agents?.get(agentId) ?? null;
+        return resolveComposerSuggestion(record, agent?.promptSuggestion);
+      },
+      subscribe: (listener: () => void) => {
+        const stopSuggestions = useComposerSuggestionStore.subscribe((state, previous) => {
+          if (state.records[suggestionKey] !== previous.records[suggestionKey]) listener();
+        });
+        const stopSession = useSessionStore.subscribe((state, previous) => {
+          const currentNative =
+            state.sessions[serverId]?.agents?.get(agentId)?.promptSuggestion ?? null;
+          const previousNative =
+            previous.sessions[serverId]?.agents?.get(agentId)?.promptSuggestion ?? null;
+          if (currentNative !== previousNative) listener();
+        });
+        return () => {
+          stopSuggestions();
+          stopSession();
+        };
+      },
+    }),
+    [agentId, serverId, suggestionKey],
+  );
+  const setPluginSuggestion = useCallback(
+    (input: { serverId: string; pluginId: string; text: string | null }) => {
+      useComposerSuggestionStore.getState().setPluginSuggestion({
+        composerKey: suggestionKey,
+        serverId: input.serverId,
+        pluginId: input.pluginId,
+        text: input.text,
+      });
+    },
+    [suggestionKey],
+  );
   const isComposerLockedRef = useRef(isComposerLocked);
   isComposerLockedRef.current = isComposerLocked;
   const composerInput = useMemo<ComposerInput>(
@@ -1541,6 +1607,8 @@ function ComposerContentImpl({
       textSource,
       setText: replaceUserInput,
       insertText: insertUserInput,
+      suggestionSource,
+      setSuggestion: setPluginSuggestion,
       attachments,
       changeAttachments: setSelectedAttachments,
     }),
@@ -1552,7 +1620,9 @@ function ComposerContentImpl({
       isInputLive,
       isInputRevealed,
       replaceUserInput,
+      setPluginSuggestion,
       setSelectedAttachments,
+      suggestionSource,
       takeInputFocus,
       textSource,
     ],
@@ -1871,9 +1941,13 @@ function ComposerContentImpl({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
+      useComposerSuggestionStore
+        .getState()
+        .clearComposerSuggestions(suggestionKey, agentState.promptSuggestion);
       void sendMessageWithContent(payload.text, outgoingAttachments, payload.forceSend);
     },
     [
+      agentState.promptSuggestion,
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
@@ -1881,6 +1955,7 @@ function ComposerContentImpl({
       pluginClientSlashCommands,
       runPluginClientSlashCommand,
       sendMessageWithContent,
+      suggestionKey,
     ],
   );
 
@@ -2120,22 +2195,52 @@ function ComposerContentImpl({
         commands: pluginClientSlashCommands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
+      useComposerSuggestionStore
+        .getState()
+        .clearComposerSuggestions(suggestionKey, agentState.promptSuggestion);
       queueMessage(payload.text, outgoingAttachments);
     },
     [
+      agentState.promptSuggestion,
       attachments,
       buildOutgoingAttachments,
       pluginClientSlashCommands,
       queueMessage,
       runClientSlashCommand,
       runPluginClientSlashCommand,
+      suggestionKey,
     ],
   );
 
-  // An open autocomplete owns the arrows; otherwise they may recall sent messages.
+  const visiblePromptSuggestion =
+    !readOnly && !isSubmitLoading && !isAgentRunning ? resolvedPromptSuggestion : null;
+
+  const acceptPromptSuggestion = useCallback(() => {
+    if (visiblePromptSuggestion === null) return;
+    useComposerSuggestionStore
+      .getState()
+      .acceptSuggestion(suggestionKey, agentState.promptSuggestion);
+    replaceUserInput(visiblePromptSuggestion);
+    if (!messageInputRef.current?.isFocused()) {
+      messageInputRef.current?.focus();
+    }
+  }, [agentState.promptSuggestion, replaceUserInput, suggestionKey, visiblePromptSuggestion]);
+
+  // An open autocomplete owns the arrows/Tab; otherwise Tab accepts an inline suggestion in an
+  // empty composer, and Up/Down may recall sent messages.
   const handleCommandKeyPress = useCallback(
     (event: ComposerKeyPressEvent) => {
       if (autocompleteRef.current?.onKeyPress(event)) return true;
+      if (
+        !event.hasModifier &&
+        event.key === "Tab" &&
+        event.input.text.length === 0 &&
+        visiblePromptSuggestion !== null
+      ) {
+        event.preventDefault();
+        acceptPromptSuggestion();
+        return true;
+      }
       const recalledText = recall.handleKeyPress(event, () =>
         selectAgentSentMessages(useSessionStore.getState().sessions[serverId], agentId),
       );
@@ -2144,7 +2249,7 @@ function ComposerContentImpl({
       replaceUserInput(recalledText);
       return true;
     },
-    [agentId, recall, replaceUserInput, serverId],
+    [acceptPromptSuggestion, agentId, recall, replaceUserInput, serverId, visiblePromptSuggestion],
   );
 
   const cancelButtonStyle = useCallback(
@@ -2636,6 +2741,8 @@ function ComposerContentImpl({
                   client={client}
                   isReadyForDictation={isDictationReady}
                   placeholder={messagePlaceholder}
+                  promptSuggestion={visiblePromptSuggestion}
+                  onAcceptPromptSuggestion={acceptPromptSuggestion}
                   autoFocus={messageInputAutoFocus}
                   autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
                   disabled={isSubmitLoading}

@@ -143,6 +143,8 @@ export const en = {
       fullscreen: "Fullscreen",
       exitFullscreen: "Exit fullscreen",
       focusHint: "{{shortcut}} to focus",
+      suggestionAcceptHint: "Tab to accept",
+      suggestionAcceptButton: "Use",
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",

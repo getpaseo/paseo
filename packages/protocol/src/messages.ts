@@ -949,6 +949,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   usageScopeKey: z.string().optional(),
   lastUsage: AgentUsageSchema.optional(),
   sessionMetrics: z.array(AgentMetricSchema).optional(),
+  promptSuggestion: z.string().nullable().optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),

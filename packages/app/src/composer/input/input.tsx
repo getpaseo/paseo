@@ -6,6 +6,7 @@ import {
   type ComposerEditingSession,
 } from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import {
   View,
   Platform,
@@ -178,6 +179,10 @@ export interface MessageInputProps {
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
   placeholder?: string;
+  /** Transient inline ghost-text suggestion shown when the input is empty. */
+  promptSuggestion?: string | null;
+  /** Accepts the active prompt suggestion into the editable draft without submitting. */
+  onAcceptPromptSuggestion?: () => void;
   autoFocus?: boolean;
   autoFocusKey?: string;
   disabled?: boolean;
@@ -702,6 +707,111 @@ interface ComposerTextSurfaceProps {
   focusHintVisible: boolean;
   focusInputKeys: ShortcutChord | null | undefined;
   focusHintLabel: string;
+  suggestionHintVisible: boolean;
+  suggestionHintLabel: string;
+  suggestionAcceptLabel: string;
+  onAcceptPromptSuggestion: (() => void) | undefined;
+}
+
+type ComposerTrailingHintState =
+  | { kind: "focus"; label: string }
+  | { kind: "suggestion-web"; label: string }
+  | { kind: "suggestion-native"; label: string }
+  | null;
+
+function resolveComposerTrailingHint(args: {
+  isActiveComposer: boolean;
+  focusHintVisible: boolean;
+  focusInputKeys: ComposerTextSurfaceProps["focusInputKeys"];
+  focusHintLabel: string;
+  suggestionHintVisible: boolean;
+  suggestionHintLabel: string;
+  suggestionAcceptLabel: string;
+  hasAcceptHandler: boolean;
+}): ComposerTrailingHintState {
+  if (
+    args.isActiveComposer &&
+    args.focusHintVisible &&
+    Boolean(args.focusInputKeys) &&
+    args.focusHintLabel.trim().length > 0
+  ) {
+    return { kind: "focus", label: args.focusHintLabel };
+  }
+  if (!args.suggestionHintVisible) return null;
+  if (isWeb) {
+    return args.isActiveComposer && args.suggestionHintLabel.trim().length > 0
+      ? { kind: "suggestion-web", label: args.suggestionHintLabel }
+      : null;
+  }
+  return args.hasAcceptHandler && args.suggestionAcceptLabel.trim().length > 0
+    ? { kind: "suggestion-native", label: args.suggestionAcceptLabel }
+    : null;
+}
+
+function shouldShowSuggestionHint(args: {
+  isFullscreen: boolean;
+  hasLiveText: boolean;
+  activePromptSuggestion: string | null;
+  isInputFocused: boolean;
+}): boolean {
+  return (
+    !args.isFullscreen &&
+    !args.hasLiveText &&
+    args.activePromptSuggestion !== null &&
+    (!isWeb || args.isInputFocused)
+  );
+}
+
+function resolveActivePromptSuggestion(args: {
+  readOnly: boolean;
+  disabled: boolean;
+  promptSuggestion: string | null | undefined;
+}): string | null {
+  if (args.readOnly || args.disabled || typeof args.promptSuggestion !== "string") {
+    return null;
+  }
+  const trimmed = args.promptSuggestion.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function ComposerTrailingHint(props: {
+  hint: ComposerTrailingHintState;
+  measuredWidth: number | undefined;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onAcceptPromptSuggestion?: () => void;
+}): React.ReactElement | null {
+  const { hint, measuredWidth, onLayout, onAcceptPromptSuggestion } = props;
+  if (!hint) return null;
+  if (hint.kind === "suggestion-native") {
+    return (
+      <PressHighlight
+        key={hint.label}
+        testID="composer-suggestion-hint"
+        accessibilityRole="button"
+        accessibilityLabel={hint.label}
+        hitSlop={8}
+        onPress={onAcceptPromptSuggestion}
+        onLayout={onLayout}
+        style={[
+          styles.suggestionAcceptPressable,
+          measuredWidth === undefined && styles.unmeasuredFocusHint,
+        ]}
+      >
+        <Text style={styles.suggestionAcceptText}>{hint.label}</Text>
+      </PressHighlight>
+    );
+  }
+  return (
+    <Text
+      key={hint.label}
+      testID={hint.kind === "suggestion-web" ? "composer-suggestion-hint" : undefined}
+      style={[styles.focusHintText, measuredWidth === undefined && styles.unmeasuredFocusHint]}
+      pointerEvents="none"
+      onLayout={onLayout}
+    >
+      {hint.label}
+    </Text>
+  );
 }
 
 /**
@@ -728,30 +838,36 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
     [onRenderedLinesChange],
   );
   const { isActiveComposer } = useComposerKeyboardScope();
-  const { focusHintLabel, focusHintVisible, focusInputKeys } = props;
-  const [focusHintLayout, setFocusHintLayout] = useState<{ label: string; width: number }>();
-  const handleFocusHintLayout = useCallback(
+  const trailingHint = resolveComposerTrailingHint({
+    isActiveComposer,
+    focusHintVisible: props.focusHintVisible,
+    focusInputKeys: props.focusInputKeys,
+    focusHintLabel: props.focusHintLabel,
+    suggestionHintVisible: props.suggestionHintVisible,
+    suggestionHintLabel: props.suggestionHintLabel,
+    suggestionAcceptLabel: props.suggestionAcceptLabel,
+    hasAcceptHandler: Boolean(props.onAcceptPromptSuggestion),
+  });
+  const activeHintLabel = trailingHint?.label ?? null;
+  const [trailingHintLayout, setTrailingHintLayout] = useState<{ label: string; width: number }>();
+  const handleTrailingHintLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      setFocusHintLayout({ label: focusHintLabel, width: event.nativeEvent.layout.width });
+      if (!activeHintLabel) return;
+      setTrailingHintLayout({ label: activeHintLabel, width: event.nativeEvent.layout.width });
     },
-    [focusHintLabel],
+    [activeHintLabel],
   );
-  const shouldShowFocusHint =
-    isActiveComposer &&
-    focusHintVisible &&
-    Boolean(focusInputKeys) &&
-    focusHintLabel.trim().length > 0;
-  const focusHintWidth =
-    shouldShowFocusHint && focusHintLayout?.label === focusHintLabel
-      ? focusHintLayout.width
+  const trailingHintWidth =
+    activeHintLabel !== null && trailingHintLayout?.label === activeHintLabel
+      ? trailingHintLayout.width
       : undefined;
   // Make room for the hint in the same render that reveals it.
   const textInputStyle = useMemo(
     () =>
-      focusHintWidth === undefined
+      trailingHintWidth === undefined
         ? props.textInputStyle
-        : [props.textInputStyle, { paddingRight: focusHintWidth }],
-    [focusHintWidth, props.textInputStyle],
+        : [props.textInputStyle, { paddingRight: trailingHintWidth }],
+    [trailingHintWidth, props.textInputStyle],
   );
   if (props.readOnly) {
     return (
@@ -793,16 +909,12 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      {shouldShowFocusHint ? (
-        <Text
-          key={focusHintLabel}
-          style={[styles.focusHintText, focusHintWidth === undefined && styles.unmeasuredFocusHint]}
-          pointerEvents="none"
-          onLayout={handleFocusHintLayout}
-        >
-          {focusHintLabel}
-        </Text>
-      ) : null}
+      <ComposerTrailingHint
+        hint={trailingHint}
+        measuredWidth={trailingHintWidth}
+        onLayout={handleTrailingHintLayout}
+        onAcceptPromptSuggestion={props.onAcceptPromptSuggestion}
+      />
     </View>
   );
 }
@@ -1195,6 +1307,8 @@ interface ResolvedMessageInputProps {
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
   placeholder: string | undefined;
+  promptSuggestion: string | null | undefined;
+  onAcceptPromptSuggestion: (() => void) | undefined;
   autoFocus: boolean;
   autoFocusKey: string | undefined;
   disabled: boolean;
@@ -1243,6 +1357,8 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     client: props.client,
     isReadyForDictation: props.isReadyForDictation,
     placeholder: props.placeholder,
+    promptSuggestion: props.promptSuggestion,
+    onAcceptPromptSuggestion: props.onAcceptPromptSuggestion,
     autoFocus: props.autoFocus ?? false,
     autoFocusKey: props.autoFocusKey,
     disabled: props.disabled ?? false,
@@ -1325,6 +1441,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       client,
       isReadyForDictation,
       placeholder,
+      promptSuggestion,
+      onAcceptPromptSuggestion,
       autoFocus,
       autoFocusKey,
       disabled,
@@ -2163,6 +2281,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         sendTooltipLabel,
       ],
     );
+    const activePromptSuggestion = resolveActivePromptSuggestion({
+      readOnly,
+      disabled,
+      promptSuggestion,
+    });
+    const suggestionHintVisible = shouldShowSuggestionHint({
+      isFullscreen,
+      hasLiveText,
+      activePromptSuggestion,
+      isInputFocused,
+    });
     const textSurface = useMemo(
       () => (
         <RenderProfile id="ComposerTextSurface">
@@ -2181,7 +2310,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             textInputRef={assignTextInput}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
-            placeholder={placeholder ?? t("composer.placeholders.fallback")}
+            placeholder={
+              activePromptSuggestion ?? placeholder ?? t("composer.placeholders.fallback")
+            }
             accessibilityLabel={t(mode.accessibilityLabelKey)}
             onChangeText={handleInputChange}
             onFocus={handleInputFocus}
@@ -2201,6 +2332,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             focusHintLabel={t("composer.input.focusHint", {
               shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
             })}
+            suggestionHintVisible={suggestionHintVisible}
+            suggestionHintLabel={t("composer.input.suggestionAcceptHint")}
+            suggestionAcceptLabel={t("composer.input.suggestionAcceptButton")}
+            onAcceptPromptSuggestion={onAcceptPromptSuggestion}
           />
         </RenderProfile>
       ),
@@ -2210,6 +2345,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         assignTextInput,
         textInputStyle,
         readOnlyTextStyle,
+        activePromptSuggestion,
         placeholder,
         t,
         mode.accessibilityLabelKey,
@@ -2229,8 +2365,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isCompact,
         isInputFocused,
         hasLiveText,
+        suggestionHintVisible,
         value,
         focusInputKeys,
+        onAcceptPromptSuggestion,
       ],
     );
     const leadingEdge = resolveComposerLeadingEdge({
@@ -2477,6 +2615,17 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
+  },
+  suggestionAcceptPressable: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    paddingLeft: theme.spacing[2],
+  },
+  suggestionAcceptText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
   },
   unmeasuredFocusHint: { opacity: 0 },
   textInput: {

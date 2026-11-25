@@ -6,6 +6,7 @@ import { resolveAgentModelSelection } from "@/composer/agent-controls/utils";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
+import { useComposerSuggestionStore } from "@/composer/suggestions/store";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { providersSnapshotQueryRoot } from "@/data/providers-snapshot";
 import { agentComposer, createAgentComposer } from "./index";
@@ -172,6 +173,7 @@ beforeEach(() => {
 
 afterEach(() => {
   useSessionStore.getState().clearSession(serverId);
+  useComposerSuggestionStore.setState({ records: {} });
 });
 
 describe("agent composer focus", () => {
@@ -588,5 +590,30 @@ describe("agent composer", () => {
       .getState()
       .setAgents(serverId, new Map([[agentId, agent({ archivedAt: new Date() })]]));
     expect(agentComposer(serverId, agentId)).not.toBe(idle);
+  });
+
+  it("exposes native promptSuggestion and lets plugins override and clear it", () => {
+    openSession(agent({ promptSuggestion: "Run the unit tests" }));
+    const model = composer();
+    const notifications = vi.fn();
+    const stop = model.subscribe(notifications);
+
+    expect(model.getState().suggestion).toBe("Run the unit tests");
+
+    model.setSuggestion({
+      serverId,
+      pluginId: "review-plugin",
+      text: "Summarize the diff",
+    });
+    expect(model.getState().suggestion).toBe("Summarize the diff");
+    expect(notifications).toHaveBeenCalled();
+
+    model.setSuggestion({
+      serverId,
+      pluginId: "review-plugin",
+      text: null,
+    });
+    expect(model.getState().suggestion).toBe("Run the unit tests");
+    stop();
   });
 });

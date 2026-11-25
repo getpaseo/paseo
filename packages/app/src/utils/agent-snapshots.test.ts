@@ -4,38 +4,40 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { isControlActive, readSelectOption } from "@/agent-controls/option-controls";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "./agent-snapshots";
 
+const BASE_SNAPSHOT: AgentSnapshotPayload = {
+  id: "agent-1",
+  provider: "codex",
+  cwd: "/repo",
+  model: null,
+  createdAt: "2026-04-20T00:00:00.000Z",
+  updatedAt: "2026-04-20T00:01:00.000Z",
+  lastUserMessageAt: null,
+  status: "idle",
+  capabilities: {
+    supportsStreaming: true,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: true,
+    supportsMcpServers: true,
+    supportsReasoningStream: true,
+    supportsToolInvocations: true,
+  },
+  currentModeId: null,
+  availableModes: [],
+  pendingPermissions: [],
+  persistence: null,
+  title: null,
+  labels: {},
+};
+
 function createSnapshot(
   input: Partial<Omit<AgentSnapshotPayload, "labels">> & {
     labels?: Record<string, unknown>;
   } = {},
 ): AgentSnapshotPayload {
   return {
-    id: input.id ?? "agent-1",
-    provider: input.provider ?? "codex",
-    cwd: input.cwd ?? "/repo",
-    model: input.model ?? null,
-    createdAt: input.createdAt ?? "2026-04-20T00:00:00.000Z",
-    updatedAt: input.updatedAt ?? "2026-04-20T00:01:00.000Z",
-    lastUserMessageAt: input.lastUserMessageAt ?? null,
-    status: input.status ?? "idle",
-    activeTurn: input.activeTurn,
-    capabilities: input.capabilities ?? {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    currentModeId: input.currentModeId ?? null,
-    availableModes: input.availableModes ?? [],
-    pendingPermissions: input.pendingPermissions ?? [],
-    persistence: input.persistence ?? null,
-    title: input.title ?? null,
-    labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
-    ...(input.controls ? { controls: input.controls } : {}),
-    ...(input.options ? { options: input.options } : {}),
-    ...(input.sessionMetrics ? { sessionMetrics: input.sessionMetrics } : {}),
+    ...BASE_SNAPSHOT,
+    ...input,
+    labels: (input.labels ?? BASE_SNAPSHOT.labels) as AgentSnapshotPayload["labels"],
   };
 }
 
@@ -86,6 +88,20 @@ describe("normalizeAgentSnapshot", () => {
 
     expect(agent.sessionMetrics).toEqual(sessionMetrics);
     expect(projectAgentSnapshot(agent).sessionMetrics).toEqual(sessionMetrics);
+  });
+
+  it("round-trips promptSuggestion through the canonical snapshot boundary", () => {
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({ promptSuggestion: "Run the unit tests" }),
+      "server-1",
+    );
+
+    expect(agent.promptSuggestion).toBe("Run the unit tests");
+    expect(projectAgentSnapshot(agent).promptSuggestion).toBe("Run the unit tests");
+
+    const cleared = normalizeAgentSnapshot(createSnapshot({ promptSuggestion: null }), "server-1");
+    expect(cleared.promptSuggestion).toBeNull();
+    expect(projectAgentSnapshot(cleared).promptSuggestion).toBeNull();
   });
 
   it("normalizes identified and legacy active turns at the snapshot boundary", () => {

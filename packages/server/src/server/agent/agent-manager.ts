@@ -518,6 +518,8 @@ interface ManagedAgentBase {
   lastUsage?: AgentUsage;
   /** Provider-owned session metrics, replaced whole on every provider update. */
   sessionMetrics?: AgentMetric[];
+  /** Provider-predicted next user prompt for the empty composer. */
+  promptSuggestion?: string | null;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -3635,6 +3637,7 @@ export class AgentManager {
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
+    agent.promptSuggestion = null;
   }
 
   private applyActiveTurnTerminal(
@@ -4258,6 +4261,7 @@ export class AgentManager {
         });
       }
       // Rewind stages provider events under the run lock; publish its final state directly.
+      agent.promptSuggestion = null;
       this.refreshSessionPersistence(agent);
       await this.refreshSessionState(agent, { emit: false });
       await this.persistSnapshot(agent);
@@ -5524,6 +5528,9 @@ export class AgentManager {
         flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
+      case "prompt_suggestion":
+        this.onStreamPromptSuggestion(agent, event, flags);
+        return undefined;
       case "mode_changed":
         this.applyObservedMode(agent, event.currentModeId);
         agent.availableModes = event.availableModes;
@@ -5592,6 +5599,24 @@ export class AgentManager {
         return undefined;
       default:
         return undefined;
+    }
+  }
+
+  private onStreamPromptSuggestion(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "prompt_suggestion" }>,
+    flags: StreamEventFlags,
+  ): void {
+    // Clients read promptSuggestion from the agent snapshot; the event itself is not on the wire.
+    flags.shouldDispatchEvent = false;
+    const trimmed = typeof event.suggestion === "string" ? event.suggestion.trim() : "";
+    const nextSuggestion = trimmed.length > 0 ? trimmed : null;
+    if (nextSuggestion !== null && isAgentBusy(agent.lifecycle)) {
+      return;
+    }
+    if ((agent.promptSuggestion ?? null) !== nextSuggestion) {
+      agent.promptSuggestion = nextSuggestion;
+      this.emitState(agent);
     }
   }
 
@@ -5743,6 +5768,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
+    agent.promptSuggestion = null;
     agent.lastError = event.error;
     await this.appendSystemErrorTimelineMessage(
       agent,
@@ -5782,6 +5808,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
     }
+    agent.promptSuggestion = null;
     agent.lastError = undefined;
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
   }

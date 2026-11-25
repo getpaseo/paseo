@@ -145,6 +145,8 @@ export const zhCN: TranslationResources = {
       fullscreen: "全屏",
       exitFullscreen: "退出全屏",
       focusHint: "{{shortcut}} 聚焦",
+      suggestionAcceptHint: "Tab 补全",
+      suggestionAcceptButton: "采纳",
       addAttachment: "添加附件",
       interruptAgent: "中断 Agent",
       queueMessage: "消息排队",

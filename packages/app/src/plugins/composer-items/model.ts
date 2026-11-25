@@ -34,6 +34,7 @@ export function toPluginComposer(input: {
   return {
     context: state.context,
     prompt: state.prompt,
+    suggestion: state.suggestion,
     attachments: state.attachments.flatMap((attachment) =>
       attachment.kind === "plugin_resource" && attachment.pluginId === plugin.id
         ? [{ sourceId: attachment.sourceId, item: cloneAndFreeze(attachment.item) }]
@@ -50,6 +51,8 @@ export function toPluginComposer(input: {
     },
     setPrompt: (text) => model.setPrompt(text),
     insertText: (text) => model.insertText(text),
+    setSuggestion: (text) =>
+      model.setSuggestion({ serverId: plugin.serverId, pluginId: plugin.id, text }),
     focus(options) {
       // The Command Center, which may have run this command, gives focus back when it closes.
       clearCommandCenterFocusRestoreElement();

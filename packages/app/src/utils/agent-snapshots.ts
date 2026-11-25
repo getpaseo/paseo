@@ -57,15 +57,28 @@ export function derivePendingPermissionKey(
   return `${agentId}:${fallbackId}`;
 }
 
+function projectAgentOptionalFields(agent: Agent): Partial<AgentSnapshotPayload> {
+  return {
+    ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
+    ...(agent.options ? { options: agent.options } : {}),
+    ...(agent.controls ? { controls: agent.controls } : {}),
+    ...(agent.runtimeInfo ? { runtimeInfo: agent.runtimeInfo } : {}),
+    ...(agent.usageScopeKey ? { usageScopeKey: agent.usageScopeKey } : {}),
+    ...(agent.lastUsage ? { lastUsage: agent.lastUsage } : {}),
+    ...(agent.sessionMetrics ? { sessionMetrics: agent.sessionMetrics } : {}),
+    ...(agent.promptSuggestion !== undefined ? { promptSuggestion: agent.promptSuggestion } : {}),
+    ...(agent.lastError ? { lastError: agent.lastError } : {}),
+    ...(agent.metadata ? { metadata: agent.metadata } : {}),
+    ...(agent.background ? { background: true } : {}),
+  };
+}
+
 export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
-    ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.model,
-    ...(agent.options ? { options: agent.options } : {}),
-    ...(agent.controls ? { controls: agent.controls } : {}),
     thinkingOptionId: agent.thinkingOptionId ?? null,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
@@ -78,19 +91,13 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     availableModes: agent.availableModes,
     pendingPermissions: agent.pendingPermissions,
     persistence: agent.persistence,
-    ...(agent.runtimeInfo ? { runtimeInfo: agent.runtimeInfo } : {}),
-    ...(agent.usageScopeKey ? { usageScopeKey: agent.usageScopeKey } : {}),
-    ...(agent.lastUsage ? { lastUsage: agent.lastUsage } : {}),
-    ...(agent.sessionMetrics ? { sessionMetrics: agent.sessionMetrics } : {}),
-    ...(agent.lastError ? { lastError: agent.lastError } : {}),
     title: agent.title,
     labels: agent.labels,
-    ...(agent.metadata ? { metadata: agent.metadata } : {}),
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
-    ...(agent.background ? { background: true } : {}),
+    ...projectAgentOptionalFields(agent),
   };
 }
 
@@ -131,6 +138,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     usageScopeKey: snapshot.usageScopeKey,
     lastUsage: snapshot.lastUsage,
     sessionMetrics: snapshot.sessionMetrics,
+    promptSuggestion: snapshot.promptSuggestion ?? null,
     lastError: snapshot.lastError ?? null,
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,

@@ -145,6 +145,8 @@ export const ar: TranslationResources = {
       fullscreen: "ملء الشاشة",
       exitFullscreen: "الخروج من ملء الشاشة",
       focusHint: "{{shortcut}}للتركيز",
+      suggestionAcceptHint: "Tab للقبول",
+      suggestionAcceptButton: "استخدام",
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",

@@ -31,6 +31,11 @@ export interface ComposerInput {
   setText: (text: string) => void;
   /** Inserts at the cursor, replacing the selection. */
   insertText: (text: string) => void;
+  suggestionSource?: {
+    getSnapshot(): string | null;
+    subscribe(listener: () => void): () => void;
+  };
+  setSuggestion?: (input: { serverId: string; pluginId: string; text: string | null }) => void;
   attachments: readonly UserComposerAttachment[];
   changeAttachments: (
     updater: (current: UserComposerAttachment[]) => UserComposerAttachment[],

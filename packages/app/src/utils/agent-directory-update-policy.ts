@@ -5,11 +5,12 @@ interface AgentUpdateValue {
   updatedAt: Date | string;
   lastUsage?: AgentUsage;
   sessionMetrics?: AgentMetric[];
+  promptSuggestion?: string | null;
 }
 
 // The daemon reports these without bumping `updatedAt`, so a stale upsert can still carry the
 // newest value.
-const FIELDS_UPDATED_IN_PLACE = ["lastUsage", "sessionMetrics"] as const;
+const FIELDS_UPDATED_IN_PLACE = ["lastUsage", "sessionMetrics", "promptSuggestion"] as const;
 
 function timestamp(value: Date | string): number {
   return value instanceof Date ? value.getTime() : Date.parse(value);

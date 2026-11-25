@@ -7,6 +7,7 @@ export interface ComposerState {
   /** `"agent"`: a running agent. `"draft"`: a new agent in a workspace. `"new-workspace"`: the New workspace screen. */
   context: "agent" | "draft" | "new-workspace";
   prompt: string;
+  suggestion: string | null;
   attachments: readonly UserComposerAttachment[];
   provider: string | null;
   model: string | null;
@@ -35,6 +36,8 @@ export interface ComposerModel {
   setPrompt(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
+  /** Sets or clears a plugin-scoped inline ghost-text suggestion for this composer. */
+  setSuggestion(input: { serverId: string; pluginId: string; text: string | null }): void;
   /** Puts the cursor in the input. Resolves once it is there; rejects when it cannot get there. */
   focus(options?: ComposerFocusOptions): Promise<void>;
   changeAttachments(updater: (current: UserComposerAttachment[]) => UserComposerAttachment[]): void;

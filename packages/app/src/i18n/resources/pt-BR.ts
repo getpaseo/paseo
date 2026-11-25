@@ -146,6 +146,8 @@ export const ptBR: TranslationResources = {
       fullscreen: "Tela cheia",
       exitFullscreen: "Sair da tela cheia",
       focusHint: "{{shortcut}} para focar",
+      suggestionAcceptHint: "Tab para aceitar",
+      suggestionAcceptButton: "Usar",
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
       queueMessage: "Enfileirar mensagem",

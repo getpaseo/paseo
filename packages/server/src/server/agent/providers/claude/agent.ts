@@ -4049,6 +4049,7 @@ class ClaudeAgentSession implements AgentSession {
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
+      promptSuggestions: this.config.internal !== true,
       permissionMode,
       // Dynamic mode switching can recreate the underlying Claude query. Keep the
       // bypass launch capability available so later setPermissionMode("bypassPermissions")
@@ -5032,28 +5033,58 @@ class ClaudeAgentSession implements AgentSession {
         await this.appendUserMessageEvents(message, events);
         this.appendSidechainResultEvents(message, events);
         break;
-      case "assistant": {
-        const timelineItems = await this.mapBlocksToTimeline(message.message.content, {
-          suppressAssistantText: options?.suppressAssistantText ?? false,
-          suppressReasoning: options?.suppressReasoning ?? false,
-        });
-        for (const item of timelineItems) {
-          events.push({ type: "timeline", item, provider: "claude" });
-        }
-        this.appendSidechainResultEvents(message, events);
+      case "assistant":
+        await this.appendAssistantMessageEvents(message, events, options);
         break;
-      }
       case "stream_event":
         await this.appendStreamEventEvents(message, events, options);
         break;
       case "result":
         this.appendResultEvents(message, events);
         break;
+      case "prompt_suggestion":
+        this.appendPromptSuggestionEvents(message, events);
+        break;
       default:
         break;
     }
 
     return events;
+  }
+
+  private async appendAssistantMessageEvents(
+    message: Extract<SDKMessage, { type: "assistant" }>,
+    events: AgentStreamEvent[],
+    options?: { suppressAssistantText?: boolean; suppressReasoning?: boolean },
+  ): Promise<void> {
+    const timelineItems = await this.mapBlocksToTimeline(message.message.content, {
+      suppressAssistantText: options?.suppressAssistantText ?? false,
+      suppressReasoning: options?.suppressReasoning ?? false,
+    });
+    for (const item of timelineItems) {
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+    this.appendSidechainResultEvents(message, events);
+  }
+
+  private appendPromptSuggestionEvents(
+    message: Extract<SDKMessage, { type: "prompt_suggestion" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const suggestion = typeof message.suggestion === "string" ? message.suggestion.trim() : "";
+    if (
+      suggestion.length === 0 ||
+      this.config.internal === true ||
+      this.activeForegroundTurnId ||
+      this.autonomousTurn
+    ) {
+      return;
+    }
+    events.push({
+      type: "prompt_suggestion",
+      provider: "claude",
+      suggestion,
+    });
   }
 
   /**

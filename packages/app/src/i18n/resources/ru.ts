@@ -146,6 +146,8 @@ export const ru: TranslationResources = {
       fullscreen: "Полный экран",
       exitFullscreen: "Выйти из полноэкранного режима",
       focusHint: "{{shortcut}}, для фокуса",
+      suggestionAcceptHint: "Tab, чтобы принять",
+      suggestionAcceptButton: "Принять",
       addAttachment: "Добавить вложение",
       interruptAgent: "Прервать агента",
       queueMessage: "Сообщение в очередь",

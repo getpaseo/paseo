@@ -26,10 +26,12 @@ export function composerModelFromHalves(input: {
   return {
     getState() {
       const prompt = composerInput.textSource.getSnapshot();
-      if (last && last.prompt === prompt) return last;
+      const suggestion = composerInput.suggestionSource?.getSnapshot() ?? null;
+      if (last && last.prompt === prompt && last.suggestion === suggestion) return last;
       last = {
         context: agent.context,
         prompt,
+        suggestion,
         attachments: composerInput.attachments,
         provider: agent.provider,
         model: agent.model,
@@ -40,7 +42,14 @@ export function composerModelFromHalves(input: {
       };
       return last;
     },
-    subscribe: composerInput.textSource.subscribe,
+    subscribe(listener) {
+      const stopText = composerInput.textSource.subscribe(listener);
+      const stopSuggestion = composerInput.suggestionSource?.subscribe(listener);
+      return () => {
+        stopText();
+        stopSuggestion?.();
+      };
+    },
     setPrompt(text) {
       assertUnlocked(composerInput.isLocked);
       composerInput.setText(text);
@@ -48,6 +57,10 @@ export function composerModelFromHalves(input: {
     insertText(text) {
       assertUnlocked(composerInput.isLocked);
       composerInput.insertText(text);
+    },
+    setSuggestion(suggestionInput) {
+      assertUnlocked(composerInput.isLocked);
+      composerInput.setSuggestion?.(suggestionInput);
     },
     // Only an item inside this composer can hold it, so the user was here when they asked. Paseo
     // has no way to name a draft from outside it and does not pull the user back to one.

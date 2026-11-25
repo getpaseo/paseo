@@ -354,4 +354,38 @@ describe("toPluginComposer", () => {
       "Unknown attachment source: nope",
     );
   });
+
+  it("exposes suggestion and forwards setSuggestion with plugin ownership", () => {
+    const { agent } = fakeAgent("agent");
+    const { input } = fakeInput();
+    let activeSuggestion: string | null = "Run tests";
+    const calls: Array<{ serverId: string; pluginId: string; text: string | null }> = [];
+    input.suggestionSource = {
+      getSnapshot: () => activeSuggestion,
+      subscribe: () => () => {},
+    };
+    input.setSuggestion = (entry) => {
+      calls.push(entry);
+      activeSuggestion = entry.text;
+    };
+
+    const composer = compose(agent, input);
+    expect(composer.suggestion).toBe("Run tests");
+
+    composer.setSuggestion("Review the open PR");
+    expect(calls).toEqual([{ serverId: "host-1", pluginId: "review", text: "Review the open PR" }]);
+    expect(compose(agent, input).suggestion).toBe("Review the open PR");
+
+    composer.setSuggestion(null);
+    expect(calls.at(-1)).toEqual({ serverId: "host-1", pluginId: "review", text: null });
+    expect(compose(agent, input).suggestion).toBeNull();
+  });
+
+  it("refuses setSuggestion while the composer is locked", () => {
+    const { agent } = fakeAgent("agent", true);
+    const { input } = fakeInput([], true);
+    input.setSuggestion = () => {};
+    const composer = compose(agent, input);
+    expect(() => composer.setSuggestion("Blocked")).toThrow();
+  });
 });

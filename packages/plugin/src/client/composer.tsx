@@ -31,6 +31,12 @@ export interface PluginComposer {
   /** `"agent"`: a running agent. `"draft"`: a new agent in a workspace. `"new-workspace"`: the New workspace screen. */
   readonly context: "agent" | "draft" | "new-workspace";
   readonly prompt: string;
+  /**
+   * Active inline ghost-text suggestion shown when the composer is empty and accepted with
+   * `Tab` (without submitting). Reflects the latest plugin-injected suggestion if any,
+   * otherwise the provider's predicted follow-up prompt.
+   */
+  readonly suggestion: string | null;
   /** This plugin's attachments only. */
   readonly attachments: readonly PluginComposerAttachment[];
   readonly agent: {
@@ -45,6 +51,12 @@ export interface PluginComposer {
   setPrompt(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
+  /**
+   * Sets or clears this plugin's inline ghost-text suggestion for this composer. Passing `null`
+   * or blank text removes this plugin's override so any other suggestion (or the provider's own)
+   * can show again. Cleared automatically when the plugin unloads or a prompt is submitted.
+   */
+  setSuggestion(text: string | null): void;
   /**
    * Puts the cursor in this composer, ready to type. Paseo opens the agent's tab or workspace when
    * it is not on screen. Resolves once the input has focus; rejects when it could not get there.

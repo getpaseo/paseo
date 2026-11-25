@@ -800,3 +800,58 @@ describe("provider metrics", () => {
     ).toBe(false);
   });
 });
+
+describe("promptSuggestion snapshot field", () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "claude",
+    cwd: "/tmp/project",
+    model: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: null,
+    createdAt: "2026-11-22T00:00:00.000Z",
+    updatedAt: "2026-11-22T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+  };
+
+  test("new apps read promptSuggestion and null clears from a new daemon", () => {
+    expect(
+      AgentSnapshotPayloadSchema.parse({
+        ...snapshot,
+        promptSuggestion: "Run the test suite",
+      }).promptSuggestion,
+    ).toBe("Run the test suite");
+    expect(
+      AgentSnapshotPayloadSchema.parse({
+        ...snapshot,
+        promptSuggestion: null,
+      }).promptSuggestion,
+    ).toBeNull();
+  });
+
+  test("new apps accept snapshots from older daemons without promptSuggestion", () => {
+    expect(AgentSnapshotPayloadSchema.parse(snapshot).promptSuggestion).toBeUndefined();
+  });
+
+  test("older apps drop promptSuggestion without failing schema parsing", () => {
+    const legacySnapshot = AgentSnapshotPayloadSchema.omit({ promptSuggestion: true });
+    expect(
+      legacySnapshot.parse({ ...snapshot, promptSuggestion: "Run the test suite" }),
+    ).not.toHaveProperty("promptSuggestion");
+  });
+});

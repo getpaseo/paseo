@@ -96,6 +96,8 @@ export interface Agent {
   lastUsage?: AgentUsage;
   /** What the provider reports about the session, as label and value rows. */
   sessionMetrics?: AgentMetric[];
+  /** Provider-predicted follow-up prompt for the empty composer. */
+  promptSuggestion?: string | null;
   lastError?: string | null;
   title: string | null;
   cwd: string;

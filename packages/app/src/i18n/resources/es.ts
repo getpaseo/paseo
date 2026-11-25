@@ -146,6 +146,8 @@ export const es: TranslationResources = {
       fullscreen: "Pantalla completa",
       exitFullscreen: "Salir de pantalla completa",
       focusHint: "{{shortcut}}para enfocar",
+      suggestionAcceptHint: "Tab para aceptar",
+      suggestionAcceptButton: "Usar",
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",

@@ -237,6 +237,44 @@ describe("agent directory reconciliation", () => {
     });
   });
 
+  it("accepts promptSuggestion updates without bumping updatedAt or regressing metadata", () => {
+    const result = reconcileAgentDirectory({
+      snapshot: [
+        {
+          ...entry("agent", "idle"),
+          agent: {
+            ...snapshot("agent", "idle"),
+            title: "newer page",
+            updatedAt: "2026-07-12T12:00:00.000Z",
+            promptSuggestion: null,
+          },
+        },
+      ],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            title: "stale live",
+            updatedAt: "2026-07-12T11:00:00.000Z",
+            promptSuggestion: "Run the test suite",
+          },
+          project: entry("agent", "idle").project,
+        },
+      ],
+    });
+
+    expect({
+      title: result[0]?.agent.title,
+      status: result[0]?.agent.status,
+      promptSuggestion: result[0]?.agent.promptSuggestion,
+    }).toEqual({
+      title: "newer page",
+      status: "idle",
+      promptSuggestion: "Run the test suite",
+    });
+  });
+
   it("preserves usage when a stale buffered upsert omits it", () => {
     const result = reconcileAgentDirectory({
       snapshot: [

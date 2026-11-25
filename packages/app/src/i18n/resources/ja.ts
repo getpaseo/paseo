@@ -146,6 +146,8 @@ export const ja: TranslationResources = {
       fullscreen: "全画面表示",
       exitFullscreen: "全画面表示を終了",
       focusHint: "{{shortcut}}でフォーカス",
+      suggestionAcceptHint: "Tab で確定",
+      suggestionAcceptButton: "使う",
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",

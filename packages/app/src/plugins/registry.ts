@@ -10,6 +10,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
 import { createPluginSubscribe } from "./subscriptions";
 import { runPluginClientBundle } from "./evaluate";
+import { useComposerSuggestionStore } from "@/composer/suggestions/store";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -220,6 +221,7 @@ export class PluginRegistry {
   private dispose(plugin: InstalledPlugin): void {
     if (this.disposed.has(plugin)) return;
     this.disposed.add(plugin);
+    useComposerSuggestionStore.getState().clearPluginSuggestions(plugin.serverId, plugin.id);
     plugin.lifetime.abort();
     plugin.i18n.dispose();
     plugin.queryClient.clear();
