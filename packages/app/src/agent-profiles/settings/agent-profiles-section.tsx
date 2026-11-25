@@ -243,24 +243,27 @@ function duplicateAgentProfileById(
   return { next, copyId: copy.id };
 }
 
+interface DiscardApprovalTicket {
+  token: number;
+  revision: number;
+}
+
 function useAgentProfileRosterActions({
   profiles,
   mutateProfiles,
   confirmDiscardIfDirty,
   editTarget,
-  getEditorToken,
   applyDelayedEditTarget,
   closeIfEditingProfile,
 }: {
   profiles: AgentProfile[] | null | undefined;
   mutateProfiles: (updater: AgentProfileListUpdater) => Promise<AgentProfile[] | null>;
-  confirmDiscardIfDirty: () => Promise<boolean>;
+  confirmDiscardIfDirty: () => Promise<DiscardApprovalTicket | null>;
   editTarget: EditTarget | null;
-  getEditorToken: () => number;
   applyDelayedEditTarget: (
     expectedToken: number,
     next: EditTarget | null,
-    options?: { requireClean?: boolean },
+    options?: { approvedRevision?: number },
   ) => void;
   closeIfEditingProfile: (profileId: string) => void;
 }) {
@@ -357,9 +360,8 @@ function useAgentProfileRosterActions({
     (id: string) => {
       const formatCopyName = (name: string) => t("settings.host.agentProfiles.copyName", { name });
       const duplicate = async () => {
-        const expectedToken = getEditorToken();
-        const canProceed = await confirmDiscardIfDirty();
-        if (!canProceed || getEditorToken() !== expectedToken) {
+        const ticket = await confirmDiscardIfDirty();
+        if (!ticket) {
           return;
         }
         let copyId: string | null = null;
@@ -372,17 +374,17 @@ function useAgentProfileRosterActions({
           return result.next;
         });
         if (saved && copyId) {
-          // Only open the copy if no newer editor session or draft appeared while saving.
+          // Only open the copy if no newer editor session or draft edit happened since confirmation.
           applyDelayedEditTarget(
-            expectedToken,
+            ticket.token,
             { mode: "edit", profileId: copyId },
-            { requireClean: true },
+            { approvedRevision: ticket.revision },
           );
         }
       };
       void duplicate();
     },
-    [applyDelayedEditTarget, confirmDiscardIfDirty, getEditorToken, persistMutation, t],
+    [applyDelayedEditTarget, confirmDiscardIfDirty, persistMutation, t],
   );
 
   const handleRemove = useCallback(
@@ -494,6 +496,7 @@ function RosterBody({
 }
 
 interface ActiveProfileFormHandle {
+  sessionToken: number;
   isDirty: () => boolean;
   draftRevision: () => number;
 }
@@ -548,6 +551,7 @@ function AgentProfileEditorHost({
 
   useEffect(() => {
     const handle: ActiveProfileFormHandle = {
+      sessionToken,
       isDirty: () => session.model.getState().isDirty,
       draftRevision: () => session.model.getState().draftRevision,
     };
@@ -557,7 +561,7 @@ function AgentProfileEditorHost({
         activeFormRef.current = null;
       }
     };
-  }, [activeFormRef, session.model]);
+  }, [activeFormRef, session.model, sessionToken]);
 
   if (canUseDrawer) {
     return (
@@ -626,44 +630,45 @@ export function AgentProfilesPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [paneWidth, setPaneWidth] = useState(0);
   const activeFormRef = useRef<ActiveProfileFormHandle | null>(null);
-  const approvedDiscardRef = useRef<{ token: number; revision: number } | null>(null);
 
-  const getEditorToken = useCallback(() => editorTokenRef.current, []);
-
-  const hasUnapprovedDraft = useCallback((): boolean => {
+  const getActiveForm = useCallback((): ActiveProfileFormHandle | null => {
     const form = activeFormRef.current;
-    if (!form?.isDirty()) {
-      return false;
+    if (!form || form.sessionToken !== editorTokenRef.current) {
+      return null;
     }
-    const approved = approvedDiscardRef.current;
-    if (
-      approved &&
-      approved.token === editorTokenRef.current &&
-      approved.revision === form.draftRevision()
-    ) {
-      return false;
-    }
-    return true;
+    return form;
   }, []);
+
+  const isDraftDirty = useCallback(
+    (): boolean => Boolean(getActiveForm()?.isDirty()),
+    [getActiveForm],
+  );
 
   const commitEditTarget = useCallback((next: EditTarget | null) => {
     const nextToken = editorTokenRef.current + 1;
     editorTokenRef.current = nextToken;
-    approvedDiscardRef.current = null;
     setEditorState({ target: next, token: nextToken });
   }, []);
 
   const applyDelayedEditTarget = useCallback(
-    (expectedToken: number, next: EditTarget | null, options?: { requireClean?: boolean }) => {
+    (
+      expectedToken: number,
+      next: EditTarget | null,
+      options?: { approvedRevision?: number },
+    ): boolean => {
       if (editorTokenRef.current !== expectedToken) {
-        return;
+        return false;
       }
-      if (options?.requireClean && hasUnapprovedDraft()) {
-        return;
+      if (options?.approvedRevision !== undefined) {
+        const form = getActiveForm();
+        if (form?.isDirty() && form.draftRevision() !== options.approvedRevision) {
+          return false;
+        }
       }
       commitEditTarget(next);
+      return true;
     },
-    [commitEditTarget, hasUnapprovedDraft],
+    [commitEditTarget, getActiveForm],
   );
 
   const closeIfEditingProfile = useCallback((profileId: string) => {
@@ -673,7 +678,6 @@ export function AgentProfilesPage({
       }
       const nextToken = editorTokenRef.current + 1;
       editorTokenRef.current = nextToken;
-      approvedDiscardRef.current = null;
       return { target: null, token: nextToken };
     });
   }, []);
@@ -702,13 +706,13 @@ export function AgentProfilesPage({
     return profiles.findIndex((entry) => entry.id === activeProfile.id);
   }, [activeProfile, profiles]);
 
-  const confirmDiscardIfDirty = useCallback(async (): Promise<boolean> => {
-    const form = activeFormRef.current;
-    if (!form || !hasUnapprovedDraft()) {
-      return true;
-    }
+  const confirmDiscardIfDirty = useCallback(async (): Promise<DiscardApprovalTicket | null> => {
     const token = editorTokenRef.current;
-    const revisionAtPrompt = form.draftRevision();
+    const form = getActiveForm();
+    const revisionAtPrompt = form?.draftRevision() ?? 0;
+    if (!form?.isDirty()) {
+      return { token, revision: revisionAtPrompt };
+    }
     const confirmed = await confirmDialog({
       title: t("settings.host.agentProfiles.discardTitle"),
       message: t("settings.host.agentProfiles.discardMessage"),
@@ -717,43 +721,49 @@ export function AgentProfilesPage({
       destructive: true,
     });
     if (!confirmed) {
+      return null;
+    }
+    if (editorTokenRef.current !== token || getActiveForm()?.draftRevision() !== revisionAtPrompt) {
+      return null;
+    }
+    return { token, revision: revisionAtPrompt };
+  }, [getActiveForm, t]);
+
+  const confirmLeaveDiscard = useCallback(async (): Promise<boolean> => {
+    const ticket = await confirmDiscardIfDirty();
+    if (!ticket) {
       return false;
     }
-    if (
-      editorTokenRef.current !== token ||
-      activeFormRef.current?.draftRevision() !== revisionAtPrompt
-    ) {
-      return false;
-    }
-    approvedDiscardRef.current = { token, revision: revisionAtPrompt };
-    return true;
-  }, [hasUnapprovedDraft, t]);
+    // Discard the active editor synchronously via the session token so follow-up
+    // navigation listeners (such as React Navigation `beforeRemove`) see a clean page.
+    return applyDelayedEditTarget(ticket.token, null, { approvedRevision: ticket.revision });
+  }, [applyDelayedEditTarget, confirmDiscardIfDirty]);
 
   useEffect(() => {
     onRegisterBeforeLeave?.({
-      isDirty: hasUnapprovedDraft,
-      confirmDiscard: confirmDiscardIfDirty,
+      isDirty: isDraftDirty,
+      confirmDiscard: confirmLeaveDiscard,
     });
     return () => {
       onRegisterBeforeLeave?.(null);
     };
-  }, [confirmDiscardIfDirty, hasUnapprovedDraft, onRegisterBeforeLeave]);
+  }, [confirmLeaveDiscard, isDraftDirty, onRegisterBeforeLeave]);
 
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {
-      const expectedToken = editorTokenRef.current;
-      if (!hasUnapprovedDraft()) {
+      if (!isDraftDirty()) {
         commitEditTarget(next);
         return;
       }
       const confirmAndTransition = async () => {
-        if (await confirmDiscardIfDirty()) {
-          applyDelayedEditTarget(expectedToken, next, { requireClean: true });
+        const ticket = await confirmDiscardIfDirty();
+        if (ticket) {
+          applyDelayedEditTarget(ticket.token, next, { approvedRevision: ticket.revision });
         }
       };
       void confirmAndTransition();
     },
-    [applyDelayedEditTarget, commitEditTarget, confirmDiscardIfDirty, hasUnapprovedDraft],
+    [applyDelayedEditTarget, commitEditTarget, confirmDiscardIfDirty, isDraftDirty],
   );
 
   const handleAddOpen = useCallback(() => transitionTarget({ mode: "create" }), [transitionTarget]);
@@ -806,7 +816,6 @@ export function AgentProfilesPage({
     mutateProfiles,
     confirmDiscardIfDirty,
     editTarget,
-    getEditorToken,
     applyDelayedEditTarget,
     closeIfEditingProfile,
   });
