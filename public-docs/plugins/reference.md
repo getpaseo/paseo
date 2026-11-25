@@ -460,6 +460,9 @@ In the ACP shim, use `command(entry, context)` to return a rewritten entry for e
 slash command. For example, a plugin with a vendor skill registry can set the kind with
 `return { ...entry, kind: skills.has(entry.name) ? "skill" : "command" }`.
 
+Use `sessionSummary(summary)` to rewrite each listed session from `session/list` before Paseo
+filters or imports it. The hook may be synchronous or async.
+
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string

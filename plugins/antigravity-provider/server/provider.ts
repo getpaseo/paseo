@@ -1,3 +1,6 @@
+import { stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execCommand } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import {
@@ -29,9 +32,81 @@ const builtInCommands = new Set([
   "boost",
 ]);
 
+const PERCENT_ENCODED_BYTE = /%[0-9A-Fa-f]{2}/;
+const WINDOWS_LEADING_SLASH_DRIVE = /^\/[A-Za-z]:\//;
+const MISSING_PATH_CODES = new Set(["ENOENT", "ENOTDIR", "ENAMETOOLONG", "EINVAL"]);
+const INACCESSIBLE_PATH_CODES = new Set(["EACCES", "EPERM"]);
+
+function hasErrnoCode(error: unknown, codes: ReadonlySet<string>): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    codes.has(error.code)
+  );
+}
+
+function decodeListedCwdCandidate(cwd: string): string | null {
+  if (cwd.startsWith("file://")) {
+    try {
+      return fileURLToPath(cwd);
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof URIError) return null;
+      throw error;
+    }
+  }
+  const hasEncodedByte = PERCENT_ENCODED_BYTE.test(cwd);
+  const hasLeadingSlashDrive =
+    process.platform === "win32" && WINDOWS_LEADING_SLASH_DRIVE.test(cwd);
+  if (!hasEncodedByte && !hasLeadingSlashDrive) return null;
+  let decoded = cwd;
+  if (hasEncodedByte) {
+    try {
+      decoded = decodeURIComponent(cwd);
+    } catch (error) {
+      if (error instanceof URIError) return null;
+      throw error;
+    }
+  }
+  if (process.platform === "win32") {
+    const withoutLeadingSlash = WINDOWS_LEADING_SLASH_DRIVE.test(decoded)
+      ? decoded.slice(1)
+      : decoded;
+    return path.normalize(withoutLeadingSlash);
+  }
+  return decoded;
+}
+
+// COMPAT(antigravityEncodedSessionCwd): added in v0.18.0, remove once Antigravity CLI decodes
+// file:// URIs in session/list. agy 1.5.17 stores workspace paths as percent-encoded file:// URIs
+// and strips only the scheme, leaving non-ASCII characters and spaces encoded.
+async function normalizeListedCwd(cwd: string): Promise<string> {
+  const candidate = decodeListedCwdCandidate(cwd);
+  if (candidate === null || candidate === cwd) return cwd;
+  try {
+    await stat(cwd);
+    return cwd;
+  } catch (error) {
+    if (hasErrnoCode(error, INACCESSIBLE_PATH_CODES)) return cwd;
+    if (!hasErrnoCode(error, MISSING_PATH_CODES)) throw error;
+  }
+  try {
+    return (await stat(candidate)).isDirectory() ? candidate : cwd;
+  } catch (error) {
+    if (hasErrnoCode(error, MISSING_PATH_CODES) || hasErrnoCode(error, INACCESSIBLE_PATH_CODES)) {
+      return cwd;
+    }
+    throw error;
+  }
+}
+
 const antigravity: AcpTransformer = {
   command(command) {
     return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
+  },
+  async sessionSummary(summary) {
+    const cwd = await normalizeListedCwd(summary.cwd);
+    return cwd === summary.cwd ? summary : { ...summary, cwd };
   },
   toolCall: mapToolCall,
   sessionOpen({ persistence, systemPrompt, agentMetadata }) {

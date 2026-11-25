@@ -377,6 +377,8 @@ Promise 返回 JSON 值，或以 Agent 的 JSON-RPC 错误拒绝。
 Paseo 在会话就绪、收到配置通知或提交配置更改时调用此同步钩子。
 使用 `configure` 向 Agent 发送更改。
 
+使用 `sessionSummary(summary)` 在 Paseo 过滤或导入之前改写 `session/list` 返回的每条会话摘要。该钩子可以是同步或异步的。
+
 `ProviderRegistration.icon` 是相对于插件目录的文件路径，例如 `icon.svg`。它必须解析到该目录内一个遵循 [SVG 图标规则](#svg-rules)的普通文件。Paseo 在插件启动时读取并校验该文件；这个字符串从不是内联 SVG 或 URL。
 
 #### Provider 安装 {#provider-installation}
