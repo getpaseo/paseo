@@ -1,3 +1,4 @@
+import { WorkspaceSplitSyncModeSchema } from "@getpaseo/protocol/workspace-tab-layout";
 import { readFile } from "node:fs/promises";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
@@ -281,6 +282,7 @@ export const PersistedConfigSchema = z
           .passthrough()
           .optional(),
         usage: z.object({ enabled: z.boolean().optional() }).optional(),
+        workspaceSplitSync: WorkspaceSplitSyncModeSchema.optional(),
         browserTools: z
           .object({
             enabled: z.boolean().optional(),

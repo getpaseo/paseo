@@ -2334,6 +2334,12 @@ export const ko: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "작업 공간 분할 동기화",
+      off: "끔",
+      desktop: "데스크톱만",
+      all: "모든 기기",
+    },
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {

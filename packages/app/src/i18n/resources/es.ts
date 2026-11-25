@@ -2373,6 +2373,12 @@ export const es: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "Sincronizar paneles del espacio de trabajo",
+      off: "Desactivada",
+      desktop: "Solo equipos de escritorio",
+      all: "Todos los dispositivos",
+    },
     title: "Ajustes",
     loading: "Cargando configuración...",
     groups: {

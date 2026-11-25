@@ -527,6 +527,12 @@ function resolveUsageEnabled(persisted: ReturnType<typeof loadPersistedConfig>):
   return persisted.daemon?.usage?.enabled !== false;
 }
 
+function resolveWorkspaceSplitSync(
+  persisted: PersistedConfig,
+): PaseoDaemonConfig["workspaceSplitSync"] {
+  return persisted.daemon?.workspaceSplitSync ?? "off";
+}
+
 function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
@@ -554,6 +560,7 @@ function resolveStaticLoadConfigSettings(
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     usageEnabled: resolveUsageEnabled(persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    workspaceSplitSync: resolveWorkspaceSplitSync(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
@@ -583,6 +590,7 @@ export type ResolvedDaemonSettings = Pick<
   | "mcpInjectIntoAgents"
   | "usageEnabled"
   | "browserToolsEnabled"
+  | "workspaceSplitSync"
   | "git"
   | "autoArchiveAfterMerge"
   | "enableTerminalAgentHooks"

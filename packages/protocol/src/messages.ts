@@ -1,3 +1,9 @@
+import {
+  WorkspaceSplitSyncModeSchema,
+  WorkspaceTabLayoutApplyRequestSchema,
+  WorkspaceTabLayoutApplyResponseSchema,
+  WorkspaceTabLayoutStateSchema,
+} from "./workspace-tab-layout.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -237,6 +243,7 @@ export const MutableDaemonConfigSchema = z
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
     // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
     usage: z.object({ enabled: z.boolean() }).optional(),
+    workspaceSplitSync: WorkspaceSplitSyncModeSchema.optional(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
@@ -265,6 +272,7 @@ export const MutableDaemonConfigPatchSchema = z
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     usage: z.object({ enabled: z.boolean() }).optional(),
+    workspaceSplitSync: WorkspaceSplitSyncModeSchema.optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
@@ -3608,6 +3616,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentMetadataUpdateRequestSchema,
   WorkspaceMetadataUpdateRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceTabLayoutApplyRequestSchema,
   WorkspaceBaseBranchSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
@@ -4142,6 +4151,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
+        // COMPAT(workspaceTabSync): added in v0.17.0, remove gate after 2027-05-21.
+        workspaceTabSync: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -4543,6 +4554,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(workspaceTabSync): added in v0.17.0, remove optional after 2027-05-21.
+    tabLayout: WorkspaceTabLayoutStateSchema.optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     metadata: EntityMetadataSchema.optional(),
@@ -7827,6 +7840,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentMetadataUpdateResponseSchema,
   WorkspaceMetadataUpdateResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceTabLayoutApplyResponseSchema,
   WorkspaceBaseBranchSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,

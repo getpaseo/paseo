@@ -2373,6 +2373,12 @@ export const fr: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "Synchroniser les volets de l’espace de travail",
+      off: "Désactivée",
+      desktop: "Ordinateurs uniquement",
+      all: "Tous les appareils",
+    },
     title: "Paramètres",
     loading: "Chargement des paramètres…",
     groups: {

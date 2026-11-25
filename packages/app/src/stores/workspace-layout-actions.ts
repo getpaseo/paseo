@@ -1157,12 +1157,12 @@ export function collectAllTabs(root: SplitNode): WorkspaceTab[] {
   return internalRoot.group.children.flatMap((child) => collectAllTabs(child));
 }
 
-export function collectAllPanes(root: SplitNode): SplitPane[] {
+export function collectAllPanes(root: SplitNode, includeHidden = false): SplitPaneInternal[] {
   const internalRoot = asInternalNode(root);
   if (internalRoot.kind === "pane") {
-    return internalRoot.pane.hidden === true ? [] : [internalRoot.pane];
+    return internalRoot.pane.hidden === true && !includeHidden ? [] : [internalRoot.pane];
   }
-  return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
+  return internalRoot.group.children.flatMap((child) => collectAllPanes(child, includeHidden));
 }
 
 function isEphemeralTab(tab: WorkspaceTab): boolean {

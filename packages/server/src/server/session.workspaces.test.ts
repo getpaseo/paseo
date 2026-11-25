@@ -10260,3 +10260,130 @@ test("path archive of an archived exact child leaves its active parent untouched
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("workspace tab operations from two clients share a revision and survive registry reopen", async () => {
+  const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-tab-layout-"));
+  const logger = createTestLogger();
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects.json"),
+    logger,
+  );
+  const file = path.join(paseoHome, "workspaces.json");
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(file, logger);
+  const writerEvents: SessionOutboundMessage[] = [];
+  const observerEvents: SessionOutboundMessage[] = [];
+  const writer = createSessionForWorkspaceTests({
+    paseoHome,
+    projectRegistry,
+    workspaceRegistry,
+    onMessage: (message) => writerEvents.push(message),
+  });
+  const observer = createSessionForWorkspaceTests({
+    paseoHome,
+    projectRegistry,
+    workspaceRegistry,
+    onMessage: (message) => observerEvents.push(message),
+  });
+  const at = "2026-03-01T12:00:00.000Z";
+  const fileTab = { tabId: "file_test.md", target: { kind: "file" as const, path: "test.md" } };
+  const agentTab = { tabId: "agent_a", target: { kind: "agent" as const, agentId: "a" } };
+  const terminalTab = {
+    tabId: "terminal_t",
+    target: { kind: "terminal" as const, terminalId: "t" },
+  };
+  const request = {
+    type: "workspace.tabs.apply.request" as const,
+    workspaceId: "ws",
+    desktop: true,
+  };
+  try {
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "p",
+        kind: "non_git",
+        rootPath: REPO_CWD,
+        displayName: "Repo",
+        createdAt: at,
+        updatedAt: at,
+      }),
+    );
+    const original = createPersistedWorkspaceRecord({
+      workspaceId: "ws",
+      projectId: "p",
+      kind: "directory",
+      cwd: REPO_CWD,
+      displayName: "Repo",
+      createdAt: at,
+      updatedAt: at,
+    });
+    await workspaceRegistry.upsert(original);
+    for (const [index, session] of [writer, observer].entries()) {
+      await session.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: `old-client-${index}`,
+        subscribe: { subscriptionId: `old-client-${index}` },
+      });
+    }
+    const legacy = findByType(observerEvents, "fetch_workspaces_response");
+    expect(legacy?.payload.entries[0]?.tabLayout).toBeUndefined();
+
+    await writer.handleMessage({
+      ...request,
+      requestId: "seed",
+      seed: { tabs: [agentTab, fileTab], hiddenAgentIds: [], pinnedAgentIds: ["a"] },
+      operations: [],
+    });
+    await observer.handleMessage({
+      ...request,
+      requestId: "seed-later",
+      seed: { tabs: [], hiddenAgentIds: [], pinnedAgentIds: [] },
+      operations: [],
+    });
+    expect(findByType(observerEvents, "workspace.tabs.apply.response")?.payload.state).toEqual({
+      revision: 1,
+      tabs: [agentTab, fileTab],
+      hiddenAgentIds: [],
+      pinnedAgentIds: ["a"],
+    });
+
+    await Promise.all([
+      writer.handleMessage({
+        ...request,
+        requestId: "close",
+        operations: [
+          { kind: "close", tabId: agentTab.tabId },
+          { kind: "hide", agentId: "a", hidden: true },
+          { kind: "pin", agentId: "a", pinned: false },
+        ],
+      }),
+      observer.handleMessage({
+        ...request,
+        requestId: "open",
+        operations: [{ kind: "open", tab: terminalTab, before: fileTab.tabId }],
+      }),
+    ]);
+    const expected = {
+      revision: 3,
+      tabs: [terminalTab, fileTab],
+      hiddenAgentIds: ["a"],
+      pinnedAgentIds: [],
+    };
+    for (const events of [writerEvents, observerEvents]) {
+      const updates = events.flatMap((event) =>
+        event.type === "workspace_update" && event.payload.kind === "upsert"
+          ? [event.payload.workspace.tabLayout]
+          : [],
+      );
+      expect(updates.at(-1)).toEqual(expected);
+    }
+
+    // An unrelated write that read the record before tab sync must preserve the current layout.
+    await workspaceRegistry.upsert({ ...original, title: "Renamed" });
+    const reopened = new FileBackedWorkspaceRegistry(file, logger);
+    expect((await reopened.get("ws"))?.tabLayout).toEqual(expected);
+  } finally {
+    writer.cleanup();
+    observer.cleanup();
+    rmSync(paseoHome, { recursive: true, force: true });
+  }
+});

@@ -77,6 +77,9 @@ export function createTestRegistries() {
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
+    applyTabLayout: async () => {
+      throw new Error("Tab layout is outside the reconciliation fixture");
+    },
     archive: async (id: string, archivedAt: string) => {
       const gate = archiveGate;
       archiveGate = null;

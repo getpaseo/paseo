@@ -78,6 +78,68 @@ describe("project icon revision compatibility", () => {
   });
 });
 
+describe("workspace tab layout messages", () => {
+  const state = {
+    revision: 2,
+    tabs: [{ tabId: "file_readme.md", target: { kind: "file", path: "readme.md" } }],
+    hiddenAgentIds: ["agent-1"],
+    pinnedAgentIds: [],
+  };
+  const request = {
+    type: "workspace.tabs.apply.request",
+    requestId: "apply-1",
+    workspaceId: "ws-1",
+    desktop: false,
+    operations: [{ kind: "move", tabId: "file_readme.md", after: "agent_a" }],
+  };
+
+  test("round-trips the request, acknowledgement, and optional workspace snapshot", () => {
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    const response = {
+      type: "workspace.tabs.apply.response",
+      payload: { requestId: "apply-1", state, error: null },
+    };
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+    for (const layout of [undefined, state]) {
+      const result = SessionOutboundMessageSchema.parse(
+        fetchWorkspacesResponse(workspaceDescriptor({ tabLayout: layout })),
+      );
+      if (result.type !== "fetch_workspaces_response")
+        throw new Error("Expected workspace snapshot");
+      expect(result.payload.entries[0]?.tabLayout).toEqual(layout);
+    }
+  });
+
+  test("rejects local tab kinds, per-tab state, and split focus on the wire", () => {
+    for (const tab of [
+      { tabId: "draft-a", target: { kind: "draft", draftId: "a" } },
+      { tabId: "browser-a", target: { kind: "browser", browserId: "a" } },
+      { ...state.tabs[0], state: { scrollY: 10 } },
+    ]) {
+      expect(
+        SessionInboundMessageSchema.safeParse({
+          ...request,
+          operations: [{ kind: "open", tab }],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      SessionInboundMessageSchema.safeParse({
+        ...request,
+        operations: [
+          {
+            kind: "split",
+            split: {
+              rootId: "pane",
+              nodes: [{ kind: "pane", id: "pane", tabIds: [], focusedTabId: "a" }],
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("workspace descriptor message compatibility", () => {
   test("old-shaped fetch_workspaces_response without project still parses", () => {
     const parsed = SessionOutboundMessageSchema.parse(

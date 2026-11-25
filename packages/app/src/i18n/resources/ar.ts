@@ -2359,6 +2359,12 @@ export const ar: TranslationResources = {
     },
   },
   settings: {
+    workspaceSplitSync: {
+      label: "مزامنة تقسيمات مساحة العمل",
+      off: "إيقاف",
+      desktop: "أجهزة سطح المكتب فقط",
+      all: "كل الأجهزة",
+    },
     title: "إعدادات",
     loading: "جارٍ تحميل الإعدادات...",
     groups: {

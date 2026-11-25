@@ -434,6 +434,7 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   usageEnabled?: boolean;
   browserToolsEnabled?: boolean;
+  workspaceSplitSync?: MutableDaemonConfig["workspaceSplitSync"];
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -606,6 +607,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
       : {}),
     usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    workspaceSplitSync: config.workspaceSplitSync,
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],

@@ -1,3 +1,4 @@
+import { syncsWorkspaceSplits } from "@getpaseo/protocol/workspace-tab-layout";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageBehavior, AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -2777,6 +2778,8 @@ export class Session {
   }
 
   private dispatchWorkspaceLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "workspace.tabs.apply.request")
+      return this.handleWorkspaceTabLayoutApplyRequest(msg);
     return (
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
@@ -4538,6 +4541,31 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceTabLayoutApplyRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.tabs.apply.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceId, seed, operations, desktop } = request;
+    try {
+      const state = await this.workspaceRegistry.applyTabLayout({
+        workspaceId,
+        seed,
+        operations,
+        syncSplits: () =>
+          syncsWorkspaceSplits(this.daemonConfigStore.get().workspaceSplitSync ?? "off", desktop),
+      });
+      this.emit({
+        type: "workspace.tabs.apply.response",
+        payload: { requestId, state, error: null },
+      });
+    } catch (cause) {
+      const error = getErrorMessageOr(cause, "Failed to update workspace tabs");
+      this.emit({
+        type: "workspace.tabs.apply.response",
+        payload: { requestId, state: null, error },
+      });
+    }
+  }
+
   private async handleWorkspaceRecoveryInspectRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.recovery.inspect.request" }>,
   ): Promise<void> {
@@ -6278,6 +6306,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      tabLayout: workspace.tabLayout,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       metadata: workspace.metadata,
       background: workspace.background,
@@ -6378,6 +6407,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      tabLayout: result.workspace.tabLayout,
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),

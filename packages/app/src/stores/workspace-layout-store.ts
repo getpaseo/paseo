@@ -4,6 +4,8 @@ import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import { mergeWorkspaceTabLayout, projectWorkspaceTabLayout } from "./workspace-tab-sync-layout";
+import type { WorkspaceTabLayout } from "@getpaseo/protocol/workspace-tab-layout";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -192,6 +194,16 @@ interface WorkspaceLayoutStore {
   setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
+  projectSharedTabLayout: (
+    workspaceKey: string,
+    syncSplits: boolean,
+    source?: WorkspaceLayoutStore,
+  ) => WorkspaceTabLayout;
+  mergeSharedTabLayout: (
+    workspaceKey: string,
+    remote: WorkspaceTabLayout,
+    syncSplits: boolean,
+  ) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
@@ -1706,6 +1718,51 @@ export function createWorkspaceLayoutStore(
           }));
 
           return result.tabId;
+        },
+        projectSharedTabLayout: (workspaceKey, syncSplits, source = get()) => {
+          const layout = getWorkspaceLayout(source.layoutByWorkspace, workspaceKey);
+          return projectWorkspaceTabLayout({
+            layout,
+            explorerId: resolveExplorerSidebarPaneId(
+              layout,
+              source.explorerSidebarPaneIdByWorkspace[workspaceKey],
+            ),
+            hidden: source.hiddenAgentIdsByWorkspace[workspaceKey],
+            pinned: source.pinnedAgentIdsByWorkspace[workspaceKey],
+            sizes: source.splitSizesByWorkspace[workspaceKey],
+            syncSplits,
+          });
+        },
+        mergeSharedTabLayout: (workspaceKey, remote, syncSplits) => {
+          set((state) => {
+            const current = getWorkspaceLayout(state.layoutByWorkspace, workspaceKey);
+            const explorerId = resolveExplorerSidebarPaneId(
+              current,
+              state.explorerSidebarPaneIdByWorkspace[workspaceKey],
+            );
+            const { layout, sizes } = mergeWorkspaceTabLayout({
+              layout: current,
+              explorerId,
+              sizes: state.splitSizesByWorkspace[workspaceKey],
+              remote,
+              syncSplits,
+            });
+            return {
+              ...reconcileRememberedSidePane(state, workspaceKey, layout),
+              layoutByWorkspace: { ...state.layoutByWorkspace, [workspaceKey]: layout },
+              splitSizesByWorkspace: sizes
+                ? { ...state.splitSizesByWorkspace, [workspaceKey]: sizes }
+                : state.splitSizesByWorkspace,
+              hiddenAgentIdsByWorkspace: {
+                ...state.hiddenAgentIdsByWorkspace,
+                [workspaceKey]: new Set(remote.hiddenAgentIds),
+              },
+              pinnedAgentIdsByWorkspace: {
+                ...state.pinnedAgentIdsByWorkspace,
+                [workspaceKey]: new Set(remote.pinnedAgentIds),
+              },
+            };
+          });
         },
         reconcileTabs: (workspaceKey, snapshot) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
