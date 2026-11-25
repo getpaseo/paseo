@@ -4,6 +4,7 @@ export interface AddProjectHost {
   canAddProject: boolean;
   canBrowse: boolean;
   canCloneGithubRepositories: boolean;
+  canNameClonedRepositories: boolean;
   canSearchGithubRepositories: boolean;
   canCreateDirectory: boolean;
 }
@@ -16,6 +17,11 @@ export interface GithubRepositoryChoice {
   description: string | null;
   updatedAt: string | null;
 }
+
+/** What the name step names: a clone's folder, or the display name of an existing folder. */
+export type ProjectNameTarget =
+  | { kind: "clone"; repository: GithubRepositoryChoice; parentPath: string }
+  | { kind: "directory"; path: string };
 
 interface PageState {
   activeIndex: number;
@@ -46,7 +52,15 @@ export type AddProjectPage =
       activeIndex: number;
       error: string | null;
       isSubmitting: boolean;
-    };
+    }
+  | ({
+      kind: "project-name";
+      hostId: string;
+      target: ProjectNameTarget;
+      name: string;
+      defaultName: string;
+      isSubmitting: boolean;
+    } & PageState);
 
 export interface AddProjectFlowState {
   hosts: AddProjectHost[];
@@ -205,13 +219,27 @@ export function openNewDirectoryNamePage(
   });
 }
 
+export function openProjectNamePage(
+  state: AddProjectFlowState,
+  input: { hostId: string; target: ProjectNameTarget; defaultName: string },
+): AddProjectFlowState {
+  return pushAddProjectPage(state, {
+    kind: "project-name",
+    ...input,
+    name: input.defaultName,
+    activeIndex: 0,
+    error: null,
+    isSubmitting: false,
+  });
+}
+
 export function setAddProjectPageInput(
   state: AddProjectFlowState,
   value: string,
 ): AddProjectFlowState {
   const page = currentAddProjectPage(state);
   const updated = updateCurrentAddProjectPage(state, (current) => {
-    if (current.kind === "new-directory-name") {
+    if (current.kind === "new-directory-name" || current.kind === "project-name") {
       return { ...current, name: value, activeIndex: 0, error: null };
     }
     if (current.kind === "method") return current;

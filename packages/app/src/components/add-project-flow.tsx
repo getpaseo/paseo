@@ -44,6 +44,7 @@ import {
   openGithubSearchPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
+  openProjectNamePage,
   setAddProjectActiveIndex,
   setAddProjectPageInput,
   setNewDirectoryName,
@@ -53,6 +54,11 @@ import {
   type AddProjectPage,
   type GithubRepositoryChoice,
 } from "@/add-project-flow/model";
+import {
+  applyProjectDisplayName,
+  chooseProjectName,
+  projectNamePreview,
+} from "@/add-project-flow/project-name";
 import {
   buildAddProjectMethods,
   addProjectMethodEmptyText,
@@ -108,6 +114,14 @@ interface FlowRowOption {
 }
 
 type GithubLocationPage = Extract<AddProjectPage, { kind: "github-location" }>;
+
+interface CloneRepositoryInput {
+  hostId: string;
+  repository: GithubRepositoryChoice;
+  parentPath: string;
+  directoryName: string | null;
+  statusPage: "github-location" | "project-name";
+}
 
 interface FlowIconProps {
   icon: ComponentType<{ size?: number; color?: string }>;
@@ -171,6 +185,7 @@ function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string)
 
 function progressText(page: AddProjectPage): string {
   if (page.kind === "github-location") return "Cloning project...";
+  if (page.kind === "project-name" && page.target.kind === "clone") return "Cloning project...";
   if (page.kind === "new-directory-name") return "Creating directory...";
   return "Adding project...";
 }
@@ -218,6 +233,8 @@ function pageTitle(page: AddProjectPage): string {
       return "Choose parent directory";
     case "new-directory-name":
       return "Name directory";
+    case "project-name":
+      return "Name project";
   }
 }
 
@@ -236,11 +253,13 @@ function pagePlaceholder(page: AddProjectInputPage): string {
       return "Search parent directories or enter a path...";
     case "new-directory-name":
       return "Directory name";
+    case "project-name":
+      return "Project name";
   }
 }
 
 function pageInput(page: AddProjectInputPage): string {
-  return page.kind === "new-directory-name" ? page.name : page.query;
+  return "name" in page ? page.name : page.query;
 }
 
 function pathTestId(path: string): string {
@@ -332,6 +351,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const stableProjectIdentityByHost = useHostFeatureMap(hostIds, "stableProjectIdentity");
   // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
   const githubCloneByHost = useHostFeatureMap(hostIds, "projectGithubClone");
+  // COMPAT(projectGithubCloneDirectoryName): added in v0.15.1, remove gate after 2027-05-04.
+  const cloneDirectoryNameByHost = useHostFeatureMap(hostIds, "projectGithubCloneDirectoryName");
   // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
   const githubSearchByHost = useHostFeatureMap(hostIds, "workspaceGithubRepositorySearch");
   // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
@@ -351,12 +372,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             canAddProject,
             canBrowse: canAddProject && getIsElectronRuntime() && localServerId === host.serverId,
             canCloneGithubRepositories: githubCloneByHost.get(host.serverId) === true,
+            canNameClonedRepositories: cloneDirectoryNameByHost.get(host.serverId) === true,
             canSearchGithubRepositories: githubSearchByHost.get(host.serverId) === true,
             canCreateDirectory: createDirectoryByHost.get(host.serverId) === true,
           },
         ];
       }),
     [
+      cloneDirectoryNameByHost,
       connectionStatuses,
       createDirectoryByHost,
       githubCloneByHost,
@@ -395,7 +418,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const resultsRef = useRef<ScrollView>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
-  const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
+  const query = "query" in page ? page.query : "";
   const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
@@ -479,27 +502,32 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const openAddedProject = useCallback(
-    async (path: string, sourceKind: "directory-search" | "method") => {
-      if (!hostId || submissionInFlightRef.current) return;
+    async (path: string, projectName: string | null) => {
+      if (!hostId || !client || submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
-        setPageStatus(current, sourceKind, { isSubmitting: true, error: null }),
+        setPageStatus(current, "project-name", { isSubmitting: true, error: null }),
       );
       try {
         const result = await openProject(path);
         if (result.ok) {
-          openNewWorkspaceForProject(hostId, result.project);
+          const project = await applyProjectDisplayName({
+            client,
+            project: result.project,
+            name: projectName,
+          });
+          openNewWorkspaceForProject(hostId, project);
           return;
         }
         const reason = getOpenProjectFailureReason(result);
         const message =
           reason === "directory_not_found" ? "Directory not found" : "Unable to add project";
         setState((current) =>
-          setPageStatus(current, sourceKind, { isSubmitting: false, error: message }),
+          setPageStatus(current, "project-name", { isSubmitting: false, error: message }),
         );
       } catch {
         setState((current) =>
-          setPageStatus(current, sourceKind, {
+          setPageStatus(current, "project-name", {
             isSubmitting: false,
             error: "Unable to add project",
           }),
@@ -508,7 +536,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submissionInFlightRef.current = false;
       }
     },
-    [hostId, openNewWorkspaceForProject, openProject],
+    [client, hostId, openNewWorkspaceForProject, openProject],
   );
 
   const browse = useCallback(async () => {
@@ -516,7 +544,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     browseInFlightRef.current = true;
     try {
       const path = await pickDirectory();
-      if (path) await openAddedProject(path, "method");
+      if (path) {
+        setState((current) =>
+          openProjectNamePage(current, {
+            hostId,
+            target: { kind: "directory", path },
+            defaultName: pathBaseName(path),
+          }),
+        );
+      }
     } catch {
       setState((current) =>
         setPageStatus(current, "method", { error: "Unable to browse for a directory" }),
@@ -524,7 +560,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     } finally {
       browseInFlightRef.current = false;
     }
-  }, [hostId, isLocalDaemon, openAddedProject]);
+  }, [hostId, isLocalDaemon]);
 
   const selectMethod = useCallback(
     (method: AddProjectMethodId) => {
@@ -556,32 +592,34 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [directoryPaths, query, recommendedPaths],
   );
   const cloneRepository = useCallback(
-    async (locationPage: GithubLocationPage, parentPath: string) => {
+    async (input: CloneRepositoryInput) => {
       if (submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
-        setPageStatus(current, "github-location", { isSubmitting: true, error: null }),
+        setPageStatus(current, input.statusPage, { isSubmitting: true, error: null }),
       );
       try {
-        const result = await cloneGithubProject(
-          locationPage.repository.cloneUrl,
-          parentPath,
-          locationPage.repository.cloneProtocol,
-        );
+        const { cloneProtocol } = input.repository;
+        const result = await cloneGithubProject({
+          repo: input.repository.cloneUrl,
+          targetDirectory: input.parentPath,
+          ...(cloneProtocol ? { cloneProtocol } : {}),
+          ...(input.directoryName ? { directoryName: input.directoryName } : {}),
+        });
         if (result.ok) {
-          lastCloneParentByHost.set(locationPage.hostId, parentPath);
-          openNewWorkspaceForProject(locationPage.hostId, result.project);
+          lastCloneParentByHost.set(input.hostId, input.parentPath);
+          openNewWorkspaceForProject(input.hostId, result.project);
           return;
         }
         setState((current) =>
-          setPageStatus(current, "github-location", {
+          setPageStatus(current, input.statusPage, {
             isSubmitting: false,
             error: result.error ?? "Unable to clone repository",
           }),
         );
       } catch (error) {
         setState((current) =>
-          setPageStatus(current, "github-location", {
+          setPageStatus(current, input.statusPage, {
             isSubmitting: false,
             error: error instanceof Error ? error.message : "Unable to clone repository",
           }),
@@ -592,6 +630,49 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     },
     [cloneGithubProject, openNewWorkspaceForProject],
   );
+  const selectCloneParent = useCallback(
+    (locationPage: GithubLocationPage, parentPath: string) => {
+      const { hostId: targetHostId, repository } = locationPage;
+      if (host?.canNameClonedRepositories === true) {
+        setState((current) =>
+          openProjectNamePage(current, {
+            hostId: targetHostId,
+            target: { kind: "clone", repository, parentPath },
+            defaultName: pathBaseName(repository.nameWithOwner),
+          }),
+        );
+        return;
+      }
+      void cloneRepository({
+        hostId: targetHostId,
+        repository,
+        parentPath,
+        directoryName: null,
+        statusPage: "github-location",
+      });
+    },
+    [cloneRepository, host?.canNameClonedRepositories],
+  );
+  const submitProjectName = useCallback(async () => {
+    if (page.kind !== "project-name") return;
+    const choice = chooseProjectName(page);
+    if (choice.kind === "invalid") {
+      setState((current) => setPageStatus(current, "project-name", { error: choice.error }));
+      return;
+    }
+    const name = choice.kind === "custom" ? choice.name : null;
+    if (page.target.kind === "directory") {
+      await openAddedProject(page.target.path, name);
+      return;
+    }
+    await cloneRepository({
+      hostId: page.hostId,
+      repository: page.target.repository,
+      parentPath: page.target.parentPath,
+      directoryName: name,
+      statusPage: "project-name",
+    });
+  }, [cloneRepository, openAddedProject, page]);
   const rows = useMemo<FlowRowOption[]>(() => {
     if (page.kind === "host") {
       const choices = filterAddProjectHosts(state.hosts, page.query).map<FlowRowOption>(
@@ -641,7 +722,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: directoryOptionSubtitle(option, shortPath),
           icon: Folder,
           testID: pathTestId(option.path),
-          select: () => void openAddedProject(option.path, "directory-search"),
+          select: () =>
+            setState((current) =>
+              openProjectNamePage(current, {
+                hostId: page.hostId,
+                target: { kind: "directory", path: option.path },
+                defaultName: pathBaseName(option.path),
+              }),
+            ),
         };
       });
     }
@@ -691,9 +779,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         title: shortenPath(option.displayPath),
         subtitle: option.secondaryText,
         icon: HardDrive,
-        disabled: option.disabled,
+        // An existing folder only blocks the clone when it cannot be renamed.
+        disabled: option.disabled && host?.canNameClonedRepositories !== true,
         testID: pathTestId(option.displayPath),
-        select: () => void cloneRepository(page, option.path),
+        select: () => selectCloneParent(page, option.path),
       }));
     }
     if (page.kind === "new-directory-parent") {
@@ -709,16 +798,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     return [];
   }, [
-    cloneRepository,
     directoryPaths,
     githubQuery.data,
     host,
     addHost,
     onClose,
-    openAddedProject,
     page,
     pathOptions,
     recommendedPaths,
+    selectCloneParent,
     selectMethod,
     state.hosts,
   ]);
@@ -783,9 +871,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       void createDirectory();
       return;
     }
+    if (page.kind === "project-name") {
+      void submitProjectName();
+      return;
+    }
     const option = rows[activeIndex];
     if (option && !option.disabled) option.select();
-  }, [activeIndex, createDirectory, page.kind, rows]);
+  }, [activeIndex, createDirectory, page.kind, rows, submitProjectName]);
 
   const handleKey = useCallback(
     (key: string): boolean => {
@@ -849,10 +941,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     githubAvailable: currentGithubSearch?.available ?? null,
     githubError: currentGithubSearch?.error ?? null,
   });
-  const preview =
+  const newDirectoryPreview =
     page.kind === "new-directory-name" && page.name.trim()
       ? joinDirectoryPath(page.parentPath, page.name.trim())
       : null;
+  const preview = page.kind === "project-name" ? projectNamePreview(page) : newDirectoryPreview;
 
   const modal = (
     <Modal visible transparent animationType="fade" onRequestClose={isWeb ? undefined : handleBack}>
@@ -947,7 +1040,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               !loading &&
               !queryError &&
               rows.length === 0 &&
-              page.kind !== "new-directory-name" ? (
+              page.kind !== "new-directory-name" &&
+              page.kind !== "project-name" ? (
                 <Text style={styles.stateText} testID="add-project-flow-empty">
                   {emptyText(page, host ?? null)}
                 </Text>

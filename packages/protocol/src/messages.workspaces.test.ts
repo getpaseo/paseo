@@ -482,6 +482,40 @@ describe("workspace message schemas", () => {
     expect(response.payload.project?.projectId).toBe("project-b");
   });
 
+  test("parses an optional GitHub clone directory name", () => {
+    const named = SessionInboundMessageSchema.parse({
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      cloneProtocol: "https",
+      targetDirectory: "~/dev",
+      directoryName: "vite-devtools",
+      requestId: "req-clone",
+    });
+    const unnamed = SessionInboundMessageSchema.parse({
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      cloneProtocol: "https",
+      targetDirectory: "~/dev",
+      requestId: "req-clone",
+    });
+
+    expect(named).toEqual({
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      cloneProtocol: "https",
+      targetDirectory: "~/dev",
+      directoryName: "vite-devtools",
+      requestId: "req-clone",
+    });
+    expect(unnamed).toEqual({
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      cloneProtocol: "https",
+      targetDirectory: "~/dev",
+      requestId: "req-clone",
+    });
+  });
+
   test("rejects invalid project GitHub clone protocols", () => {
     const request = SessionInboundMessageSchema.safeParse({
       type: "project.github.clone.request",

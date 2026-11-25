@@ -49,6 +49,7 @@ import { openCompactSettings } from "../support/helpers/settings";
 import {
   addProjectFlowInput,
   chooseAddProjectMethod,
+  confirmAddProjectName,
   openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
 import { createTempGitRepo } from "../support/helpers/workspace";
@@ -172,6 +173,7 @@ async function addProjectFromSidebar(page: Page, projectPath: string): Promise<s
   const input = addProjectFlowInput(page);
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
+  await confirmAddProjectName(page);
 
   const projectRow = page
     .locator('[data-testid^="sidebar-project-row-"]')
