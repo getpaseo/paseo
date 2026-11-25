@@ -56,12 +56,6 @@ interface TerminalInputProps {
   style?: StyleProp<TextStyle>;
 }
 
-// Scripts produced by CJK IMEs when they commit or update a candidate. The
-// native input does not expose marked-text ranges, so the committed script is
-// the only reliable distinction between composition and ordinary autocorrect.
-const CJK_COMPOSITION_PATTERN =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
-
 // Only ASCII travels the keypress path. An IME script reports the jamo it is
 // composing, which the text-change diff below immediately contradicts, so
 // forwarding both would put two conflicting characters on the wire.
@@ -81,14 +75,16 @@ function getCommonPrefixLength(left: string[], right: string[]): number {
 /**
  * What the terminal receives for an edit that is not a plain append.
  *
- * CJK IMEs rewrite their composing suffix in place. Korean updates one
- * syllable at a time (`ㅎ` -> `하` -> `한`), while Chinese and Japanese replace
- * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
+ * IMEs rewrite their composing suffix in place. Korean updates one syllable at a
+ * time (`ㅎ` -> `하` -> `한`), Chinese and Japanese replace a multi-character
+ * reading (`nihao` -> `你好`), and Gboard voice typing revises recent words as
+ * its recognizer settles (`recognize speech` -> `wreck a nice beach`). None of
  * those are appends, so rub out the rewritten suffix and send the replacement.
  *
- * The inserted suffix must contain a CJK script. Ordinary autocorrect and
- * suggestion replacements stay swallowed: the hidden input can edit text the
- * terminal has already committed, and the terminal cannot take it back.
+ * The buffer mirrors everything the terminal has been sent, and autocorrect and
+ * spellcheck are off on this input, so a rewrite is always the keyboard revising
+ * text it just produced. The marked-text range is not exposed, so a rewrite
+ * cannot be told apart from a composition edit and none is held back.
  */
 function resolveCompositionEdit(previousText: string, text: string): string {
   const previousCharacters = Array.from(previousText);
@@ -96,10 +92,7 @@ function resolveCompositionEdit(previousText: string, text: string): string {
   const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
   const removed = previousCharacters.slice(commonPrefixLength);
   const inserted = nextCharacters.slice(commonPrefixLength).join("");
-  if (removed.length === 0 || inserted.length === 0) {
-    return "";
-  }
-  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
+  if (removed.length === 0 && inserted.length === 0) {
     return "";
   }
   return `${"\x7f".repeat(removed.length)}${inserted}`;
@@ -118,11 +111,6 @@ export function resolveTerminalInputFocusRequest(input: {
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
   let submittedText: string | null = null;
-  // A swallowed replacement leaves the terminal holding text the buffer no
-  // longer describes. A composition rubout deletes from the terminal, so it
-  // would delete whatever is actually sitting there rather than the character
-  // the buffer thinks it is replacing. Stay off until the input state resets.
-  let replacementDesynced = false;
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
@@ -132,9 +120,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       }
       if (key === "Backspace") {
         previousText = Array.from(previousText).slice(0, -1).join("");
-        if (replacementDesynced) {
-          return { data: "", shouldClear: false };
-        }
         return { data: "\x7f", shouldClear: false };
       }
       if (key === "Enter" || key === "Return" || key === "return") {
@@ -153,7 +138,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         submittedText = null;
         if (text === lateSubmitText) {
           previousText = "";
-          replacementDesynced = false;
           return { data: "", shouldClear: false };
         }
       }
@@ -165,18 +149,11 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
-        replacementDesynced = false;
         return { data: "", shouldClear: true };
       }
 
       if (!text.startsWith(previousText)) {
-        let compositionEdit = "";
-        if (!replacementDesynced) {
-          compositionEdit = resolveCompositionEdit(previousText, text);
-        }
-        if (compositionEdit === "") {
-          replacementDesynced = true;
-        }
+        const compositionEdit = resolveCompositionEdit(previousText, text);
         previousText = text;
         return { data: compositionEdit, shouldClear: false };
       }
@@ -190,7 +167,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     },
     reset(): void {
       previousText = "";
-      replacementDesynced = false;
     },
   };
 }

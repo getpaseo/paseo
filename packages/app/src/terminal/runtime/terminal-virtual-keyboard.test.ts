@@ -5,6 +5,7 @@ import {
   resolveTerminalVirtualKeyboardRows,
   shouldShowTerminalVirtualKeyBar,
   shouldShowTerminalFloatingCopyAction,
+  shouldShowTerminalDictationAction,
   shouldShowTerminalPasteAction,
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
   TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS,
@@ -85,6 +86,7 @@ describe("terminal virtual keyboard policy", () => {
       "terminal-key-up",
       "terminal-key-shift",
       "terminal-keyboard-toggle",
+      "terminal-dictation",
       "terminal-key-alt",
       "terminal-paste",
       "terminal-key-left",
@@ -108,6 +110,18 @@ describe("terminal virtual keyboard policy", () => {
       down: { row: 1, col: 3 },
       right: { row: 1, col: 4 },
     });
+  });
+
+  it("offers dictation only on native with speech-to-text ready", () => {
+    expect(shouldShowTerminalDictationAction({ isNative: true, isDictationReady: true })).toBe(
+      true,
+    );
+    expect(shouldShowTerminalDictationAction({ isNative: true, isDictationReady: false })).toBe(
+      false,
+    );
+    expect(shouldShowTerminalDictationAction({ isNative: false, isDictationReady: true })).toBe(
+      false,
+    );
   });
 
   it("keeps Paste in the keyboard and Copy out of the permanent row", () => {

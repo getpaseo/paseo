@@ -14,7 +14,12 @@ import {
 } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Keyboard as KeyboardIcon, KeyboardOff as KeyboardOffIcon } from "lucide-react-native";
+import {
+  Keyboard as KeyboardIcon,
+  KeyboardOff as KeyboardOffIcon,
+  Mic as MicIcon,
+  Square as StopIcon,
+} from "lucide-react-native";
 import type { TerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
 import {
   DEFAULT_TERMINAL_INPUT_MODE_STATE,
@@ -25,6 +30,8 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useKeyboardShiftStyle } from "@/keyboard/shift";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useDictation } from "@/hooks/use-dictation";
+import { getVoiceReadinessState } from "@/utils/server-info-capabilities";
 import {
   hasPendingTerminalModifiers,
   resolvePendingModifierDataInput,
@@ -40,6 +47,7 @@ import {
   resolveTerminalVirtualKeyboardRows,
   shouldShowTerminalVirtualKeyBar,
   shouldShowTerminalFloatingCopyAction,
+  shouldShowTerminalDictationAction,
   shouldShowTerminalPasteAction,
   type TerminalVirtualKeyboardControl,
 } from "@/terminal/runtime/terminal-virtual-keyboard";
@@ -249,6 +257,43 @@ function KeyboardToggleButton({
       accessibilityLabel={label}
       accessibilityRole="button"
       testID="terminal-keyboard-toggle"
+      onPress={onToggle}
+      style={pressableStyle}
+    >
+      <Icon color={iconColor} size={16} />
+    </Pressable>
+  );
+}
+
+interface DictationButtonProps {
+  isRecording: boolean;
+  isProcessing: boolean;
+  iconColor: string;
+  onToggle: () => void;
+}
+
+function DictationButton({ isRecording, isProcessing, iconColor, onToggle }: DictationButtonProps) {
+  const label = isRecording ? "Stop dictation" : "Start dictation";
+  const Icon = isRecording ? StopIcon : MicIcon;
+  const accessibilityState = useMemo(
+    () => ({ busy: isProcessing, selected: isRecording }),
+    [isProcessing, isRecording],
+  );
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.keyButton,
+      (Boolean(hovered) || pressed || isRecording) && styles.keyButtonHovered,
+    ],
+    [isRecording],
+  );
+
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      disabled={isProcessing}
+      testID="terminal-dictation"
       onPress={onToggle}
       style={pressableStyle}
     >
@@ -869,6 +914,36 @@ export function TerminalPane({
     }
   });
 
+  const isDictationCapable = useSessionStore(
+    (state) =>
+      getVoiceReadinessState({
+        serverInfo: state.sessions[serverId]?.serverInfo,
+        mode: "dictation",
+      })?.enabled === true,
+  );
+  const canUseDictation = isConnected && isDictationCapable;
+  const handleDictationTranscript = useStableEvent((text: string) => {
+    const transcript = text.trim();
+    if (transcript.length === 0) return;
+    pasteTerminalText(transcript);
+    requestTerminalFocus();
+  });
+  const handleDictationError = useStableEvent((error: Error) => {
+    toast.error(error.message);
+  });
+  const getCanUseDictation = useStableEvent(() => canUseDictation);
+  const dictation = useDictation({
+    client,
+    onTranscript: handleDictationTranscript,
+    onError: handleDictationError,
+    canStart: getCanUseDictation,
+    canConfirm: getCanUseDictation,
+  });
+  const { startDictation, confirmDictation, isRecording: isDictating } = dictation;
+  const handleDictationToggle = useCallback(() => {
+    void (isDictating ? confirmDictation() : startDictation());
+  }, [confirmDictation, isDictating, startDictation]);
+
   const handleFilePaste = useStableEvent((file: Promise<TerminalFile | null>) => {
     filePastes.add(file, {
       upload: async (upload) => {
@@ -1111,6 +1186,10 @@ export function TerminalPane({
     hasSelection,
     isNative,
   });
+  const showDictationAction = shouldShowTerminalDictationAction({
+    isNative,
+    isDictationReady: canUseDictation,
+  });
   const keyboardToggleIconColor = theme.colors.foregroundMuted;
 
   const renderVirtualKeyboardControl = (control: TerminalVirtualKeyboardControl) => {
@@ -1141,6 +1220,16 @@ export function TerminalPane({
             key={controlId}
             hasClipboardContent={hasClipboardText || hasClipboardImage}
             onPaste={handleTerminalPaste}
+          />
+        ) : null;
+      case "dictation":
+        return showDictationAction ? (
+          <DictationButton
+            key={controlId}
+            isRecording={isDictating}
+            isProcessing={dictation.isProcessing}
+            iconColor={keyboardToggleIconColor}
+            onToggle={handleDictationToggle}
           />
         ) : null;
       case "keyboardToggle":

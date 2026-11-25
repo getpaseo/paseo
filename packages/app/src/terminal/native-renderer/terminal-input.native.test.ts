@@ -84,11 +84,11 @@ describe("native terminal typed input", () => {
     });
   });
 
-  it("does not translate replacement edits into terminal text", () => {
+  it("rubs out and retypes the suffix of an in-place replacement edit", () => {
     const input = createTerminalTextInputState();
 
     expect(inputData(input.receiveTextChange("abc"))).toEqual("abc");
-    expect(input.receiveTextChange("aXc")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("aXc")).toEqual({ data: "\x7f\x7fXc", shouldClear: false });
   });
 
   it("clears accumulated hidden input text after terminal submit", () => {
@@ -295,18 +295,46 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("하")).toEqual({ data: "\x7f하", shouldClear: false });
   });
 
-  it("still swallows non-CJK replacement edits", () => {
+  it("follows Gboard voice typing as it revises recent words", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("recognize speech")).toEqual({
+      data: "recognize speech",
+      shouldClear: false,
+    });
+    // The recognizer settles on a different reading of the last words.
+    expect(input.receiveTextChange("recognize the speech")).toEqual({
+      data: `${"\x7f".repeat("speech".length)}the speech`,
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("recognize the speech now")).toEqual({
+      data: " now",
+      shouldClear: false,
+    });
+  });
+
+  it("rubs out text the keyboard deletes without a Backspace keypress", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("git status ")).toEqual({
+      data: "git status ",
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("git ")).toEqual({
+      data: "\x7f".repeat("status ".length),
+      shouldClear: false,
+    });
+  });
+
+  it("keeps rewriting after a Latin replacement", () => {
     const input = createTerminalTextInputState();
 
     expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
-    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
-  });
-
-  it("does not treat a non-Hangul trailing edit as composition", () => {
-    const input = createTerminalTextInputState();
-
-    expect(input.receiveTextChange("ls -a")).toEqual({ data: "ls -a", shouldClear: false });
-    expect(input.receiveTextChange("ls -l")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("the")).toEqual({ data: "\x7f\x7fhe", shouldClear: false });
+    expect(input.receiveTextChange("他们")).toEqual({
+      data: "\x7f\x7f\x7f他们",
+      shouldClear: false,
+    });
   });
 
   it("keeps anticipated text aligned when Backspace decomposes a syllable", () => {
@@ -323,57 +351,6 @@ describe("native terminal typed input", () => {
 
     expect(input.receiveTextChange("😀")).toEqual({ data: "😀", shouldClear: false });
     expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
-
-    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
-    expect(input.receiveTextChange("你好")).toEqual({
-      data: "\x7f\x7f\x7f\x7f\x7f你好",
-      shouldClear: false,
-    });
-  });
-
-  it("stops rubbing out once a swallowed replacement leaves the terminal ahead", () => {
-    const input = createTerminalTextInputState();
-
-    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
-    // Swallowed: the terminal still holds teh while the buffer moved to the.
-    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
-    // A composition rewrite here would delete text from an already-desynced terminal.
-    expect(input.receiveTextChange("他们")).toEqual({ data: "", shouldClear: false });
-  });
-
-  it("does not backspace terminal content after a swallowed replacement", () => {
-    const input = createTerminalTextInputState();
-
-    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
-    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
-    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "", shouldClear: false });
-    expect(input.receiveTextChange("th")).toEqual({ data: "", shouldClear: false });
-  });
-
-  it("keeps replacement desync protection after Backspace empties the hidden input", () => {
-    const input = createTerminalTextInputState();
-
-    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
-    // Autocorrect changes the buffer but cannot rewrite the terminal.
-    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
-
-    for (const text of ["th", "t", ""]) {
-      expect(input.receiveKeyPress("Backspace")).toEqual({ data: "", shouldClear: false });
-      expect(input.receiveTextChange(text)).toEqual({ data: "", shouldClear: false });
-    }
-
-    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
-    // The terminal still contains `teh`, so this must not rub it out.
-    expect(input.receiveTextChange("你好")).toEqual({ data: "", shouldClear: false });
-  });
-
-  it("resumes composition once the line is cleared", () => {
-    const input = createTerminalTextInputState();
-
-    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
-    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
-
-    input.reset();
 
     expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
     expect(input.receiveTextChange("你好")).toEqual({

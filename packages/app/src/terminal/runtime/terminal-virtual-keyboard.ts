@@ -19,6 +19,9 @@ export type TerminalVirtualKeyboardControl =
       type: "paste";
     }
   | {
+      type: "dictation";
+    }
+  | {
       type: "keyboardToggle";
     };
 
@@ -30,6 +33,7 @@ export const TERMINAL_VIRTUAL_KEYBOARD_ROWS = [
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.up },
     { type: "modifier", modifier: "shift" },
     { type: "keyboardToggle" },
+    { type: "dictation" },
   ],
   [
     { type: "modifier", modifier: "alt" },
@@ -53,6 +57,7 @@ export const TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS = [
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.up },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.right },
     { type: "paste" },
+    { type: "dictation" },
     { type: "keyboardToggle" },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.enter },
   ],
@@ -68,6 +73,7 @@ export const TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS = [
     { type: "modifier", modifier: "alt" },
     { type: "modifier", modifier: "shift" },
     { type: "keyboardToggle" },
+    { type: "dictation" },
   ],
   [
     { type: "paste" },
@@ -113,9 +119,19 @@ export function getTerminalVirtualKeyboardControlId(
       return `terminal-key-${control.modifier}`;
     case "paste":
       return "terminal-paste";
+    case "dictation":
+      return "terminal-dictation";
     case "keyboardToggle":
       return "terminal-keyboard-toggle";
   }
+}
+
+/** The mic needs a connected daemon whose speech-to-text is ready. */
+export function shouldShowTerminalDictationAction(input: {
+  isNative: boolean;
+  isDictationReady: boolean;
+}): boolean {
+  return input.isNative && input.isDictationReady;
 }
 
 export function shouldShowTerminalPasteAction(input: { isNative: boolean }): boolean {
