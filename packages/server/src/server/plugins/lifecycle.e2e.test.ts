@@ -630,8 +630,11 @@ test("plugins wrap or refuse terminals and worktree setup and teardown commands"
   const repository = path.join(root, "repository");
   const pluginDirectory = path.join(root, "plugin");
   const hookLog = path.join(root, "hooks.jsonl");
-  const launchLog = path.join(root, "launches.jsonl");
-  const launcher = path.join(root, "launcher.cjs");
+  // Spaces and cmd.exe syntax in the sandbox's install path, as in `C:\Program Files (x86)`.
+  const sandboxDirectory = path.join(root, "sandbox launcher (x86)");
+  await mkdir(sandboxDirectory);
+  const launchLog = path.join(sandboxDirectory, "launches.jsonl");
+  const launcher = path.join(sandboxDirectory, "launcher.cjs");
   // The sandbox stand-in: records the argv after its own two, marks the environment, runs the rest.
   await writeFile(
     launcher,
@@ -644,6 +647,10 @@ for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(signal, () => c
 child.on("exit", (code) => process.exit(code ?? 1));
 `,
   );
+  // Windows sandboxes ship a `.cmd` entry point, which runs through cmd.exe and forwards `%*`.
+  const commandScript = path.join(sandboxDirectory, "sandbox run.cmd");
+  await writeFile(commandScript, `@"${process.execPath}" "${launcher}" %*\r\n`);
+  const wrapPrefix = process.platform === "win32" ? [commandScript] : [process.execPath, launcher];
   // Node one-liners read the environment the same way under bash, PowerShell, and cmd.exe.
   const setupCommand = `node -e "require('fs').writeFileSync('setup.txt', 'setup:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
   const teardownCommand = `node -e "require('fs').writeFileSync(require('path').join(process.env.PASEO_SOURCE_CHECKOUT_PATH, '..', 'teardown.txt'), 'teardown:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
@@ -679,7 +686,7 @@ child.on("exit", (code) => process.exit(code ?? 1));
     `
 import { appendFile } from "node:fs/promises";
 const log = (entry) => appendFile(${JSON.stringify(hookLog)}, JSON.stringify(entry) + "\\n");
-const wrap = (tag) => [${JSON.stringify(process.execPath)}, ${JSON.stringify(launcher)}, ${JSON.stringify(launchLog)}, tag];
+const wrap = (tag) => [...${JSON.stringify(wrapPrefix)}, ${JSON.stringify(launchLog)}, tag];
 export default function contribute(server) {
   server.addHook("terminal.create.before", async ({ request }) => {
     await log({ hook: "terminal", request });

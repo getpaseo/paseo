@@ -104,3 +104,82 @@ test("spawnProcess starts a wrap's executable with the command after the wrap ar
     ...argumentsToPreserve,
   ]);
 });
+
+// Arguments that cmd.exe reads as syntax unless they are escaped for it. A `.cmd` launcher reads
+// its arguments a second time when it forwards them with `%*`.
+const commandScriptArguments = [
+  ...argumentsToPreserve,
+  'say "hi"',
+  '"quoted"',
+  "",
+  "a & b",
+  "(parenthesized) arg",
+  "100% done",
+  "%PATH%",
+  "!bang!",
+  "C:\\path with space\\",
+  'mixed "a & b" quote',
+];
+
+async function writeCommandScriptLauncher(): Promise<string> {
+  const reader = await writeArgumentReader();
+  const directory = await mkdtemp(path.join(os.tmpdir(), "plugin wrap (x86) & launcher "));
+  roots.push(directory);
+  const launcher = path.join(directory, "sandbox run.cmd");
+  await writeFile(launcher, `@"${process.execPath}" "${reader}" %*\r\n`);
+  return launcher;
+}
+
+async function readStdout(child: ReturnType<typeof spawnProcess>): Promise<string> {
+  let stdout = "";
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Child exited with ${code}`));
+    });
+  });
+  return stdout;
+}
+
+// Real cmd.exe: a `.cmd` launch wrap in a directory with spaces and cmd.exe syntax forwards the
+// harness command and every argument to the program it starts, unchanged.
+test.runIf(process.platform === "win32")(
+  "a .cmd launch wrap forwards the command and its arguments unchanged on Windows",
+  async () => {
+    const launcher = await writeCommandScriptLauncher();
+    const child = spawnProcess("harness", commandScriptArguments, {
+      wrap: [launcher, "--sandbox profile", 'say "hi"', ""],
+      stdio: "pipe",
+    });
+    expect(JSON.parse(await readStdout(child))).toEqual([
+      "--sandbox profile",
+      'say "hi"',
+      "",
+      "harness",
+      ...commandScriptArguments,
+    ]);
+  },
+);
+
+test.runIf(process.platform === "win32")(
+  "execCommand runs a .cmd script with its arguments unchanged on Windows",
+  async () => {
+    const launcher = await writeCommandScriptLauncher();
+    const { stdout } = await execCommand(launcher, commandScriptArguments);
+    expect(JSON.parse(stdout)).toEqual(commandScriptArguments);
+  },
+);
+
+test.runIf(process.platform === "win32")(
+  "a bare command name gets its arguments unchanged through cmd.exe on Windows",
+  async () => {
+    const reader = await writeArgumentReader();
+    const { stdout } = await execCommand("node", [reader, ...commandScriptArguments]);
+    expect(JSON.parse(stdout)).toEqual(commandScriptArguments);
+  },
+);

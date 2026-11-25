@@ -19,6 +19,7 @@ const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
 const gatedCiJobs = new Map([
   ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
+  ["sdk-tests-windows", { name: "sdk-tests (windows-latest)", contract: "sdk" }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
@@ -437,7 +438,7 @@ test("stable iOS releases upload once and distribute to external testers before 
 test("eight Playwright shards share two-worker coverage", () => {
   const source = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(source);
-  assert.equal(jobs.size, 21);
+  assert.equal(jobs.size, 22);
   for (let shard = 1; shard <= 8; shard++) {
     const job = jobs.get(`playwright-${shard}`).join("\n");
     assert.match(job, new RegExp(`PLAYWRIGHT_SHARD: "${shard}/8"`));
@@ -515,6 +516,13 @@ test("quality preserves commands and routes each domain independently after fail
     assert.equal(accepts(expression, {}, { installed: false }), false);
   }
   assert.equal(accepts(jobCondition, {}, { cancelled: true }), false);
+});
+
+test("plugin SDK tests run on real Windows", () => {
+  const sdk = jobBlocks(readFileSync(ciWorkflowPath, "utf8")).get("sdk-tests-windows").join("\n");
+  assert.match(sdk, /^    runs-on: windows-latest$/m);
+  assert.match(sdk, /run: npm run test --workspace=@getpaseo\/plugin$/m);
+  assert.doesNotMatch(sdk, /continue-on-error/);
 });
 
 test("Windows units and integration run independently with complete routed coverage", () => {
