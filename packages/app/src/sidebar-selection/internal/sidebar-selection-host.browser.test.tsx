@@ -1,9 +1,12 @@
-import React, { act } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import React, { act, useCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
+import { Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { afterEach, describe, expect, it } from "vitest";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
+import { SidebarWorkspaceContextMenu } from "@/components/sidebar/sidebar-workspace-menu";
 import { ToastProvider, useToast } from "@/contexts/toast-context";
 import type { ToastApi } from "@/components/toast-host";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -15,8 +18,11 @@ import {
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import {
+  isShiftPressEvent,
   registerSidebarVisibleWorkspaceKeysReader,
   SidebarSelectionHost,
+  useIsSidebarSelectionMode,
+  useIsWorkspaceBulkSelected,
   useSidebarSelectionStore,
 } from "@/sidebar-selection";
 
@@ -80,29 +86,67 @@ function SidebarToastProbe() {
   return null;
 }
 
+const noop = () => {};
+
+function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
+  const isSelectionMode = useIsSidebarSelectionMode();
+  const isBulkSelected = useIsWorkspaceBulkSelected(entry.workspaceKey);
+  const handlePress = useCallback(
+    (event: unknown) => {
+      const shiftKey = isShiftPressEvent(event);
+      if (isSelectionMode || shiftKey) {
+        useSidebarSelectionStore.getState().pressWorkspace(entry.workspaceKey, { shiftKey });
+      }
+    },
+    [entry.workspaceKey, isSelectionMode],
+  );
+  return (
+    <SidebarWorkspaceContextMenu
+      contextMenuOpen={false}
+      onContextMenuOpenChange={noop}
+      workspace={entry}
+      workspaceKey={entry.workspaceKey}
+      enabled={!isSelectionMode}
+      accessibilityRole={isSelectionMode ? "checkbox" : "button"}
+      aria-checked={isSelectionMode ? isBulkSelected : undefined}
+      highlightStyle={undefined}
+      onPress={handlePress}
+      testID={`sidebar-workspace-row-${entry.workspaceKey}`}
+    >
+      <Text>{entry.name}</Text>
+    </SidebarWorkspaceContextMenu>
+  );
+}
+
 function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
   const entriesByKey = new Map(entries.map((entry) => [entry.workspaceKey, entry]));
   releaseVisibleKeys = registerSidebarVisibleWorkspaceKeysReader(() =>
     entries.map((entry) => entry.workspaceKey),
   );
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
     root?.render(
-      <I18nextProvider i18n={i18n}>
-        <SafeAreaProvider>
-          <KeyboardActionDispatcherProvider>
-            <FallbackArchiveProbe />
-            <ToastProvider>
-              <SidebarToastRegion active>
-                <SidebarToastProbe />
-                <SidebarSelectionHost active workspaceEntriesByKey={entriesByKey} />
-              </SidebarToastRegion>
-            </ToastProvider>
-          </KeyboardActionDispatcherProvider>
-        </SafeAreaProvider>
-      </I18nextProvider>,
+      <QueryClientProvider client={queryClient}>
+        <I18nextProvider i18n={i18n}>
+          <SafeAreaProvider>
+            <KeyboardActionDispatcherProvider>
+              <FallbackArchiveProbe />
+              <ToastProvider>
+                <SidebarToastRegion active>
+                  <SidebarToastProbe />
+                  {entries.map((entry) => (
+                    <SelectableRowProbe key={entry.workspaceKey} entry={entry} />
+                  ))}
+                  <SidebarSelectionHost active workspaceEntriesByKey={entriesByKey} />
+                </SidebarToastRegion>
+              </ToastProvider>
+            </KeyboardActionDispatcherProvider>
+          </SafeAreaProvider>
+        </I18nextProvider>
+      </QueryClientProvider>,
     );
   });
 }
@@ -257,5 +301,38 @@ describe("SidebarSelectionHost", () => {
     act(() => {
       dismissUndo?.();
     });
+  });
+
+  it("toggles focused workspace checkboxes when pressing Space in select mode", () => {
+    mountHost([makeEntry("a"), makeEntry("b")]);
+
+    act(() => {
+      useSidebarSelectionStore.getState().enter("srv:a");
+    });
+
+    const rowB = document.querySelector<HTMLElement>('[data-testid="sidebar-workspace-row-srv:b"]');
+    expect(rowB?.getAttribute("role")).toBe("checkbox");
+    expect(rowB?.getAttribute("aria-checked")).toBe("false");
+
+    act(() => {
+      rowB?.focus();
+      rowB?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(rowB?.getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
+      "2 selected",
+    );
+
+    act(() => {
+      rowB?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(rowB?.getAttribute("aria-checked")).toBe("false");
+    expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
+      "1 selected",
+    );
   });
 });

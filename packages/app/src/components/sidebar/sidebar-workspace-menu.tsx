@@ -1,6 +1,6 @@
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { PressableStateCallbackType } from "react-native";
+import type { GestureResponderEvent, PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
@@ -444,11 +444,34 @@ export function SidebarWorkspaceContextMenu({
     [workspace],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const checkboxSpaceKeyProps = useMemo(() => {
+    if (!isWeb || triggerProps.accessibilityRole !== "checkbox" || !triggerProps.onPress) {
+      return {};
+    }
+    const onPress = triggerProps.onPress;
+    return {
+      // React Native Web's Pressable activates Space only for role="button", not checkbox.
+      onKeyDown: (event: {
+        key?: string;
+        target?: unknown;
+        currentTarget?: unknown;
+        preventDefault?: () => void;
+      }) => {
+        if (triggerProps.disabled) return;
+        if (event.target !== event.currentTarget) return;
+        if (event.key === " " || event.key === "Spacebar") {
+          event.preventDefault?.();
+          onPress(event as unknown as GestureResponderEvent);
+        }
+      },
+    };
+  }, [triggerProps.accessibilityRole, triggerProps.disabled, triggerProps.onPress]);
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
       <ContextMenuTrigger
         {...triggerProps}
+        {...checkboxSpaceKeyProps}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
         highlightStyle={highlightStyle}
