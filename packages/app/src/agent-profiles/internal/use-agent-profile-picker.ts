@@ -28,6 +28,7 @@ export type AgentProfileApplyTarget =
       agentId: string;
       availableModeIds: readonly string[] | null;
       currentProvider?: string | null;
+      isSwitchInFlight?: () => boolean;
       onApplySameProvider?: () => void;
       onStageProviderSwitch?: (profile: MaterializedAgentProfile) => void;
     }
@@ -148,8 +149,8 @@ export function useAgentProfilePicker(
 
       if (
         target.onStageProviderSwitch &&
-        target.currentProvider &&
-        resolved.provider !== target.currentProvider
+        (target.isSwitchInFlight?.() ||
+          (target.currentProvider && resolved.provider !== target.currentProvider))
       ) {
         target.onStageProviderSwitch(resolved);
         return;
@@ -165,7 +166,11 @@ export function useAgentProfilePicker(
         return;
       }
       void client
-        .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
+        .applyAgentConfig(
+          target.agentId,
+          toAgentConfigApply(reconciled),
+          target.currentProvider ? { expectedProvider: target.currentProvider } : undefined,
+        )
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[useAgentProfilePicker] applyAgentConfig failed", error);

@@ -1201,12 +1201,19 @@ export class Session {
             logger: this.sessionLogger,
           });
         },
-        setMode: async (agentId, modeId) =>
-          (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
-        setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
-        setOptions: (agentId, patch) => agentManager.setAgentOptions(agentId, patch),
-        setThinking: (agentId, thinkingOptionId) =>
-          agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+        setMode: async (agentId, modeId, mutationOptions) =>
+          (
+            await setAgentModeCommand(
+              { agentManager },
+              { agentId, modeId, expectedProvider: mutationOptions?.expectedProvider },
+            )
+          ).notice,
+        setModel: (agentId, modelId, mutationOptions) =>
+          agentManager.setAgentModel(agentId, modelId, mutationOptions),
+        setOptions: (agentId, patch, mutationOptions) =>
+          agentManager.setAgentOptions(agentId, patch, mutationOptions),
+        setThinking: (agentId, thinkingOptionId, mutationOptions) =>
+          agentManager.setAgentThinkingOption(agentId, thinkingOptionId, mutationOptions),
       },
       logger: this.sessionLogger,
     });

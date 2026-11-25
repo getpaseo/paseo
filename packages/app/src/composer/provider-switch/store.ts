@@ -14,10 +14,26 @@ function stagedKey(serverId: string, agentId: string): string {
 }
 
 export interface LiveAgentSettingsWriter {
-  setAgentModel?: (agentId: string, modelId: string | null) => Promise<unknown>;
-  setAgentMode?: (agentId: string, modeId: string) => Promise<unknown>;
-  setAgentThinkingOption?: (agentId: string, thinkingOptionId: string) => Promise<unknown>;
-  setAgentOptions?: (agentId: string, options: ProviderOptions) => Promise<unknown>;
+  setAgentModel?: (
+    agentId: string,
+    modelId: string | null,
+    options?: { expectedProvider?: AgentProvider },
+  ) => Promise<unknown>;
+  setAgentMode?: (
+    agentId: string,
+    modeId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ) => Promise<unknown>;
+  setAgentThinkingOption?: (
+    agentId: string,
+    thinkingOptionId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ) => Promise<unknown>;
+  setAgentOptions?: (
+    agentId: string,
+    options: ProviderOptions,
+    mutationOptions?: { expectedProvider?: AgentProvider },
+  ) => Promise<unknown>;
 }
 
 interface StagedProviderSwitchState {
@@ -173,10 +189,12 @@ async function applyEditedDraftSettingsToLiveAgent(
   agentId: string,
   sentDraft: StagedProviderSwitch,
   editedDraft: StagedProviderSwitch,
+  expectedProvider: AgentProvider,
   client: LiveAgentSettingsWriter,
 ): Promise<void> {
+  const providerGuard = { expectedProvider };
   if (editedDraft.model !== sentDraft.model && client.setAgentModel) {
-    await client.setAgentModel(agentId, editedDraft.model).catch((error) => {
+    await client.setAgentModel(agentId, editedDraft.model, providerGuard).catch((error) => {
       console.warn("[ProviderSwitch] failed to forward edited model after switch", error);
     });
   }
@@ -185,7 +203,7 @@ async function applyEditedDraftSettingsToLiveAgent(
     editedDraft.modeId !== null &&
     client.setAgentMode
   ) {
-    await client.setAgentMode(agentId, editedDraft.modeId).catch((error) => {
+    await client.setAgentMode(agentId, editedDraft.modeId, providerGuard).catch((error) => {
       console.warn("[ProviderSwitch] failed to forward edited mode after switch", error);
     });
   }
@@ -194,13 +212,18 @@ async function applyEditedDraftSettingsToLiveAgent(
     editedDraft.thinkingOptionId !== null &&
     client.setAgentThinkingOption
   ) {
-    await client.setAgentThinkingOption(agentId, editedDraft.thinkingOptionId).catch((error) => {
-      console.warn("[ProviderSwitch] failed to forward edited thinking option after switch", error);
-    });
+    await client
+      .setAgentThinkingOption(agentId, editedDraft.thinkingOptionId, providerGuard)
+      .catch((error) => {
+        console.warn(
+          "[ProviderSwitch] failed to forward edited thinking option after switch",
+          error,
+        );
+      });
   }
   const optionsPatch = diffProviderOptions(sentDraft.providerOptions, editedDraft.providerOptions);
   if (optionsPatch && client.setAgentOptions) {
-    await client.setAgentOptions(agentId, optionsPatch).catch((error) => {
+    await client.setAgentOptions(agentId, optionsPatch, providerGuard).catch((error) => {
       console.warn(
         "[ProviderSwitch] failed to forward edited provider options after switch",
         error,
@@ -233,7 +256,7 @@ export function settleCommittedProviderSwitch(input: {
   }
   store.settle(serverId, agentId, remaining);
   if (client) {
-    void applyEditedDraftSettingsToLiveAgent(agentId, sentDraft, remaining, client);
+    void applyEditedDraftSettingsToLiveAgent(agentId, sentDraft, remaining, liveProvider, client);
   }
 }
 

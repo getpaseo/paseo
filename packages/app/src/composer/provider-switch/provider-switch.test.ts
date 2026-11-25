@@ -871,10 +871,20 @@ describe("app provider switching integration", () => {
     resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "running" } });
     await vi.waitFor(() => {
       expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
-      expect(setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
-      expect(setAgentMode).toHaveBeenCalledWith("agent-1", "full-auto");
-      expect(setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
-      expect(setAgentOptions).toHaveBeenCalledWith("agent-1", { fast_mode: true });
+      expect(setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4", {
+        expectedProvider: "codex",
+      });
+      expect(setAgentMode).toHaveBeenCalledWith("agent-1", "full-auto", {
+        expectedProvider: "codex",
+      });
+      expect(setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high", {
+        expectedProvider: "codex",
+      });
+      expect(setAgentOptions).toHaveBeenCalledWith(
+        "agent-1",
+        { fast_mode: true },
+        { expectedProvider: "codex" },
+      );
     });
 
     sessionStore.clearSession(serverId);

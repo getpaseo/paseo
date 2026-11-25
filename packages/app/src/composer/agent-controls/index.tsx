@@ -26,6 +26,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
 import {
   clearStagedProviderSwitch,
+  isStagedProviderSwitchInFlight,
   type StagedProviderSwitch,
   useStagedProviderSwitch,
   useStagedProviderSwitchStore,
@@ -1318,7 +1319,7 @@ export const AgentControls = memo(function AgentControls({
         return;
       }
       try {
-        await client.setAgentModel(agentId, modelId);
+        await client.setAgentModel(agentId, modelId, { expectedProvider: agentProvider });
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
@@ -1369,7 +1370,7 @@ export const AgentControls = memo(function AgentControls({
   const handleSelectProviderAndModel = useCallback(
     (nextProvider: string, modelId: string) => {
       if (!agentProvider) return;
-      if (nextProvider === agentProvider) {
+      if (nextProvider === agentProvider && !isStagedProviderSwitchInFlight(serverId, agentId)) {
         clearStagedProviderSwitch(serverId, agentId);
         const liveModelId = agent?.runtimeModelId ?? agent?.model ?? null;
         if (modelId && modelId !== liveModelId) {
@@ -1461,6 +1462,7 @@ export const AgentControls = memo(function AgentControls({
       agentId,
       availableModeIds: profileModeIds,
       currentProvider: agentProvider,
+      isSwitchInFlight: () => isStagedProviderSwitchInFlight(serverId, agentId),
       onApplySameProvider: handleClearStagedSwitchOnProfile,
       onStageProviderSwitch: supportsProviderSwitching ? handleStageAgentProfileSwitch : undefined,
     }),
@@ -1470,6 +1472,7 @@ export const AgentControls = memo(function AgentControls({
       handleClearStagedSwitchOnProfile,
       handleStageAgentProfileSwitch,
       profileModeIds,
+      serverId,
       supportsProviderSwitching,
     ],
   );
@@ -1511,7 +1514,7 @@ export const AgentControls = memo(function AgentControls({
         });
       }
       void client
-        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .setAgentThinkingOption(agentId, thinkingOptionId, { expectedProvider: agentProvider })
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[AgentControls] setAgentThinkingOption failed", error);
@@ -1556,10 +1559,12 @@ export const AgentControls = memo(function AgentControls({
       ).catch((error) => {
         console.warn("[AgentControls] persist option preference failed", error);
       });
-      void client.setAgentOptions(agentId, { [key]: value }).catch((error) => {
-        console.warn("[AgentControls] setAgentOptions failed", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentOptions(agentId, { [key]: value }, { expectedProvider: agentProvider })
+        .catch((error) => {
+          console.warn("[AgentControls] setAgentOptions failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [
       activeStagedSwitch,

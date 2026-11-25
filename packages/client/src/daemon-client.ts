@@ -4501,12 +4501,29 @@ export class DaemonClient {
     }
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+  private expectedProviderWireField(options?: {
+    expectedProvider?: AgentProvider;
+  }): { expectedProvider: AgentProvider } | Record<string, never> {
+    if (
+      options?.expectedProvider &&
+      this.lastServerInfoMessage?.features?.providerSwitching === true
+    ) {
+      return { expectedProvider: options.expectedProvider };
+    }
+    return {};
+  }
+
+  async setAgentMode(
+    agentId: string,
+    modeId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_mode_request",
       agentId,
       modeId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4529,12 +4546,17 @@ export class DaemonClient {
     return payload.notice ?? null;
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(
+    agentId: string,
+    modelId: string | null,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_model_request",
       agentId,
       modelId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4556,13 +4578,19 @@ export class DaemonClient {
     }
   }
 
-  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+  async setAgentFeature(
+    agentId: string,
+    featureId: string,
+    value: unknown,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_feature_request",
       agentId,
       featureId,
       value,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4591,6 +4619,7 @@ export class DaemonClient {
   async setAgentOptions(
     agentId: string,
     patch: Record<string, unknown>,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     const legacy = this.legacyProviderOptions();
     if (legacy) {
@@ -4598,11 +4627,11 @@ export class DaemonClient {
       const pending = this.legacyResetControls(agentId, patch);
       const controls = pending ? await pending : [];
       for (const [featureId, value] of legacy.featureWrites(patch, controls)) {
-        await this.setAgentFeature(agentId, featureId, value);
+        await this.setAgentFeature(agentId, featureId, value, options);
       }
       return null;
     }
-    return this.applyAgentConfig(agentId, { options: patch });
+    return this.applyAgentConfig(agentId, { options: patch }, options);
   }
 
   /**
@@ -4622,12 +4651,14 @@ export class DaemonClient {
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_thinking_request",
       agentId,
       thinkingOptionId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4660,6 +4691,7 @@ export class DaemonClient {
   async applyAgentConfig(
     agentId: string,
     config: AgentConfigApply,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     let wireConfig = config;
     const legacy = this.legacyProviderOptions();
@@ -4673,6 +4705,7 @@ export class DaemonClient {
       type: "agent.config.apply.request",
       agentId,
       config: wireConfig,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({

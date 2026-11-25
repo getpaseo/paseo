@@ -3494,83 +3494,104 @@ export class AgentManager {
   // `setThinkingOption` and `applyOptions` in flight at once, and none of them overlaps an open,
   // reload or close; providers do no sequencing of their own.
 
-  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+  async setAgentMode(
+    agentId: string,
+    modeId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<AgentProviderNotice | null> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const notice = (await agent.session.setMode(modeId)) ?? null;
-        await this.drainSessionEvents(agentId);
-        const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
-        agent.config.modeId = currentMode ?? undefined;
-        agent.currentModeId = currentMode;
-        // Update runtimeInfo to reflect the new mode
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
-        }
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-        return notice;
-      }),
+      this.withLiveInteractiveSessionUnlocked(
+        agentId,
+        async (agent) => {
+          const notice = (await agent.session.setMode(modeId)) ?? null;
+          await this.drainSessionEvents(agentId);
+          const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
+          agent.config.modeId = currentMode ?? undefined;
+          agent.currentModeId = currentMode;
+          // Update runtimeInfo to reflect the new mode
+          if (agent.runtimeInfo) {
+            agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
+          }
+          this.touchUpdatedAt(agent);
+          this.emitState(agent);
+          return notice;
+        },
+        options,
+      ),
     );
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(
+    agentId: string,
+    modelId: string | null,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const normalizedModelId =
-          typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+      this.withLiveInteractiveSessionUnlocked(
+        agentId,
+        async (agent) => {
+          const normalizedModelId =
+            typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
-        const selection = await agent.session.setModel?.(normalizedModelId);
-        await this.drainSessionEvents(agentId);
+          const selection = await agent.session.setModel?.(normalizedModelId);
+          await this.drainSessionEvents(agentId);
 
-        // A reset clears the preference even when the provider retains its active model.
-        let effectiveModelId = normalizedModelId;
-        if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
+          // A reset clears the preference even when the provider retains its active model.
+          let effectiveModelId = normalizedModelId;
+          if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
 
-        agent.config.model = effectiveModelId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
-        }
-        this.refreshSessionPersistence(agent);
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }),
+          agent.config.model = effectiveModelId ?? undefined;
+          if (agent.runtimeInfo) {
+            agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
+          }
+          this.refreshSessionPersistence(agent);
+          this.touchUpdatedAt(agent);
+          this.emitState(agent);
+        },
+        options,
+      ),
     );
   }
 
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const normalizedThinkingOptionId =
-          typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
-            ? thinkingOptionId
-            : null;
+      this.withLiveInteractiveSessionUnlocked(
+        agentId,
+        async (agent) => {
+          const normalizedThinkingOptionId =
+            typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+              ? thinkingOptionId
+              : null;
 
-        let notice: AgentProviderNotice | null = null;
-        if (agent.session.setThinkingOption) {
-          notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
-        }
-        await this.drainSessionEvents(agentId);
+          let notice: AgentProviderNotice | null = null;
+          if (agent.session.setThinkingOption) {
+            notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
+          }
+          await this.drainSessionEvents(agentId);
 
-        let effectiveThinkingOptionId = normalizedThinkingOptionId;
-        const runtimeInfo = await agent.session.getRuntimeInfo();
-        if (runtimeInfo.thinkingOptionId !== undefined) {
-          effectiveThinkingOptionId = runtimeInfo.thinkingOptionId;
-        }
+          let effectiveThinkingOptionId = normalizedThinkingOptionId;
+          const runtimeInfo = await agent.session.getRuntimeInfo();
+          if (runtimeInfo.thinkingOptionId !== undefined) {
+            effectiveThinkingOptionId = runtimeInfo.thinkingOptionId;
+          }
 
-        agent.config.thinkingOptionId = effectiveThinkingOptionId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = {
-            ...agent.runtimeInfo,
-            thinkingOptionId: effectiveThinkingOptionId,
-          };
-        }
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-        return notice;
-      }),
+          agent.config.thinkingOptionId = effectiveThinkingOptionId ?? undefined;
+          if (agent.runtimeInfo) {
+            agent.runtimeInfo = {
+              ...agent.runtimeInfo,
+              thinkingOptionId: effectiveThinkingOptionId,
+            };
+          }
+          this.touchUpdatedAt(agent);
+          this.emitState(agent);
+          return notice;
+        },
+        options,
+      ),
     );
   }
 
@@ -3580,45 +3601,56 @@ export class AgentManager {
    * where nothing is set. The patch and whatever the provider says it ended up with are stored in
    * one step once the provider accepts. Patches to one agent run one at a time, in arrival order.
    */
-  async setAgentOptions(agentId: string, requested: ProviderOptionsPatch): Promise<void> {
+  async setAgentOptions(
+    agentId: string,
+    requested: ProviderOptionsPatch,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const patch = this.convertLegacyOptions(agent.provider, requested);
-        let ended: ProviderOptionsPatch = {};
-        let sent: ProviderOptionsPatch = {};
-        if (Object.keys(patch).length > 0) {
-          // A provider that cannot apply options to a running agent must not store them either.
-          if (!agent.session.applyOptions) {
-            throw new ProviderOptionsValidationError(
-              agent.provider,
-              Object.keys(patch).map((key) => ({
-                path: [key],
-                message: "cannot change on a running session; it applies when the agent is opened",
-              })),
+      this.withLiveInteractiveSessionUnlocked(
+        agentId,
+        async (agent) => {
+          const patch = this.convertLegacyOptions(agent.provider, requested);
+          let ended: ProviderOptionsPatch = {};
+          let sent: ProviderOptionsPatch = {};
+          if (Object.keys(patch).length > 0) {
+            // A provider that cannot apply options to a running agent must not store them either.
+            if (!agent.session.applyOptions) {
+              throw new ProviderOptionsValidationError(
+                agent.provider,
+                Object.keys(patch).map((key) => ({
+                  path: [key],
+                  message:
+                    "cannot change on a running session; it applies when the agent is opened",
+                })),
+              );
+            }
+            const set = Object.fromEntries(
+              Object.entries(patch).filter(([, value]) => value != null),
             );
+            const resolved = this.effectiveOptionsFor(agent.provider, set);
+            sent = Object.fromEntries(
+              Object.keys(patch).map((key) => [key, resolved[key] ?? null]),
+            );
+            const modelBefore = agent.runtimeInfo?.model;
+            ended = (await agent.session.applyOptions(sent)) ?? {};
+            // Changes the provider made on its own while applying are older than its final answer.
+            await this.drainSessionEvents(agentId);
+            await this.refreshRuntimeInfo(agent, { emit: false });
+            // An option can choose the model too, as an fx connection does. Reopening the agent on
+            // the earlier preference would send that model to the new connection.
+            const modelAfter = agent.runtimeInfo?.model;
+            if (agent.config.model && modelAfter && modelAfter !== modelBefore) {
+              agent.config.model = modelAfter;
+            }
           }
-          const set = Object.fromEntries(
-            Object.entries(patch).filter(([, value]) => value != null),
-          );
-          const resolved = this.effectiveOptionsFor(agent.provider, set);
-          sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
-          const modelBefore = agent.runtimeInfo?.model;
-          ended = (await agent.session.applyOptions(sent)) ?? {};
-          // Changes the provider made on its own while applying are older than its final answer.
-          await this.drainSessionEvents(agentId);
-          await this.refreshRuntimeInfo(agent, { emit: false });
-          // An option can choose the model too, as an fx connection does. Reopening the agent on
-          // the earlier preference would send that model to the new connection.
-          const modelAfter = agent.runtimeInfo?.model;
-          if (agent.config.model && modelAfter && modelAfter !== modelBefore) {
-            agent.config.model = modelAfter;
-          }
-        }
-        this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
-        this.updateEffectiveOptions({ agent, sent, reported: ended });
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }),
+          this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
+          this.updateEffectiveOptions({ agent, sent, reported: ended });
+          this.touchUpdatedAt(agent);
+          this.emitState(agent);
+        },
+        options,
+      ),
     );
   }
 
@@ -4420,6 +4452,7 @@ export class AgentManager {
   private async withLiveInteractiveSessionUnlocked<T>(
     agentId: string,
     operation: (agent: ActiveManagedAgent) => Promise<T>,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<T> {
     const pendingCancellation = this.pendingCancellations.get(agentId);
     if (pendingCancellation) {
@@ -4432,6 +4465,11 @@ export class AgentManager {
       });
     }
     const agent = await this.ensureInteractiveSessionUnlocked(agentId);
+    if (options?.expectedProvider && agent.provider !== options.expectedProvider) {
+      throw new Error(
+        `Cannot update settings for provider '${options.expectedProvider}' because agent ${agentId} is now using '${agent.provider}'`,
+      );
+    }
     try {
       return await operation(agent);
     } catch (error) {

@@ -40,6 +40,7 @@ const CAPS = {
 class E2EFakeSession implements AgentSession {
   readonly capabilities = CAPS;
   readonly receivedPrompts: AgentPromptInput[] = [];
+  readonly setModelCalls: Array<string | null> = [];
   closed = false;
   private listeners = new Set<(event: AgentStreamEvent) => void>();
   private turnCount = 0;
@@ -119,6 +120,10 @@ class E2EFakeSession implements AgentSession {
     return null;
   }
   async setMode() {}
+  async setModel(modelId: string | null) {
+    this.setModelCalls.push(modelId);
+    return modelId ? { model: modelId } : undefined;
+  }
   async getRuntimeInfo() {
     return { provider: this.provider, sessionId: this.persistence?.sessionId ?? null };
   }
@@ -652,5 +657,68 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     const firstCodexPrompt = renderProviderPromptText(codex.sessions[0].receivedPrompts[0]);
     expect(firstCodexPrompt).toContain("Keep this requirement");
     expect(firstCodexPrompt).not.toContain("Discard this requirement");
+  });
+
+  it("rejects stale expectedProvider model edits that arrive during a provider switch instead of applying them to the new provider", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-expected-provider-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const client1 = await connectClient(url);
+    const client2 = await connectClient(url);
+
+    const agent = await client1.client.createAgent({ provider: "claude", cwd });
+    await client1.client.sendMessage(agent.id, "Start on Claude", undefined, {
+      messageId: "msg-ep-1",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    let resolveCodexCreate!: () => void;
+    codex.createSessionGate = new Promise<void>((resolve) => {
+      resolveCodexCreate = resolve;
+    });
+    let resolveCodexCreateStarted!: () => void;
+    const codexCreateStarted = new Promise<void>((resolve) => {
+      resolveCodexCreateStarted = resolve;
+    });
+    codex.onCreateSessionStarted = resolveCodexCreateStarted;
+
+    const switchPromise = client1.client.switchAgentProvider(agent.id, {
+      provider: "codex",
+      text: "Switch to Codex",
+      messageId: "msg-ep-sw",
+    });
+    await codexCreateStarted;
+
+    // A client still viewing Claude sends setAgentModel targeting Claude while Codex is opening.
+    const staleModelEdit = client2.client
+      .setAgentModel(agent.id, "claude-opus", { expectedProvider: "claude" })
+      .then(
+        () => ({ status: "fulfilled" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    resolveCodexCreate();
+    const [switched, staleEditOutcome] = await Promise.all([switchPromise, staleModelEdit]);
+    expect(switched.agent?.provider).toBe("codex");
+
+    // The stale Claude model edit MUST reject instead of applying "claude-opus" to Codex!
+    expect(staleEditOutcome.status).toBe("rejected");
+    if (staleEditOutcome.status === "rejected") {
+      expect(String(staleEditOutcome.error)).toMatch(/provider 'claude'.*now using 'codex'/i);
+    }
+    expect(codex.sessions).toHaveLength(1);
+    expect(codex.sessions[0].setModelCalls).toEqual([]);
+
+    // An edit targeting the now-live provider ("codex") succeeds cleanly.
+    await client1.client.setAgentModel(agent.id, "gpt-5.4", { expectedProvider: "codex" });
+    expect(codex.sessions[0].setModelCalls).toEqual(["gpt-5.4"]);
   });
 });
