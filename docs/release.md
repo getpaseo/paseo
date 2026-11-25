@@ -17,6 +17,7 @@ A release has exactly two steps. The agent does the first, the user authorizes t
   run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag
 - push the `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` branch and confirm its `CI` and
   `Desktop Packages` runs pass (never wait on `main` CI)
+- run the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 
 **Go-ahead** (user says "go ahead"):
 
@@ -859,6 +860,17 @@ Bullets within each section (Added, Changed, Fixed) follow this order:
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.
 3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
 
+## Pre-release dependency checks
+
+Run these checks from the repository root on the release commit before shipping a beta or stable release.
+
+1. Review changes to dependency versions, download URLs, and integrity hashes in `git diff <previous-release-tag> HEAD -- package-lock.json`.
+2. Install the exact dependencies from the release lockfile with `npm ci`.
+3. Run `npm audit signatures`. Investigate failures before shipping. See [Dependency signature audit](development.md#dependency-signature-audit) for help.
+
+Checking signatures and reviewing the lockfile diff reduce the risk of shipping compromised dependencies.
+These checks help prevent supply-chain attacks from reaching users through Paseo.
+
 ## Pre-release sanity check
 
 Before cutting a **stable** release, the release agent reviews the diff as a last line of defence against shipping bugs. Skip this for betas — the beta itself is the smoke test, and gating each beta on a code review defeats the point of using betas as fast release candidates.
@@ -886,6 +898,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before running `release:prep:*`
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
 - [ ] `npm run release:prep:beta:patch`, `release:prep:beta:minor`, or `release:prep:beta:next` created the version commit on `release/vX.Y.Z-beta.N` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship:beta` published npm and pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
@@ -909,6 +922,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] Ensure local format, lint, and typecheck pass and the working tree is clean before running `release:prep:*`
 - [ ] `npm run release:prep:patch`, `release:prep:minor`, or `release:prep:promote` created the version commit on `release/vX.Y.Z` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship` published npm, updated dist-tags, and pushed the `vX.Y.Z` tag without triggering a second CI run
 - [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
