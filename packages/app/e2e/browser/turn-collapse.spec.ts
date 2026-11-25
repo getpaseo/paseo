@@ -1,6 +1,7 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
+  expectTimelinePromptVisible,
   holdOlderHistoryPages,
   scrollTimelineRowIntoView,
   userScrollsTimelineToHistoryStart,
@@ -602,6 +603,7 @@ test("loads complete long turns and preserves expansion while revealing older hi
     await userScrollsTimelineToHistoryStart(page);
     await history.expectRequestedPages(3);
     history.releasePage(3);
+    await expectTimelinePromptVisible(page, "Short 4: emit 1 coalesced agent stream updates");
     await expectExpandedCommandsReadable(page, 120);
     history.expectNoRepeatedEntries();
     await returnToExpandedSummary(page, latest);
