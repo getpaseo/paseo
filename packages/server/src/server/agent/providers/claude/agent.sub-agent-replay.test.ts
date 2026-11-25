@@ -778,7 +778,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
           ]),
           completion,
         ],
-        meta: JSON.stringify({ toolUseId: TOOL_USE_ID, finished: true }),
+        meta: hasLaunchResult ? null : JSON.stringify({ toolUseId: TOOL_USE_ID, finished: true }),
         sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
       });
 
