@@ -1261,6 +1261,7 @@ export const es: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espacios en segundo plano",
+      nestSubagentWorkspaces: "Anidar espacios de trabajo de subagentes",
       trigger: "Preferencias de visualización",
       heading: "Visualización",
       sort: {
@@ -1408,6 +1409,10 @@ export const es: TranslationResources = {
         unpin: "Desanclar",
         archive: "Archivo",
         archiveWorkspace: "Archivar espacio de trabajo",
+        showTabs: "Mostrar pestañas",
+        hideTabs: "Ocultar pestañas",
+        showSubagents: "Mostrar subagentes",
+        hideSubagents: "Ocultar subagentes",
         hideFromSidebar: "Ocultar de la barra lateral",
         archiving: "Archivando...",
         hiding: "Ocultación...",

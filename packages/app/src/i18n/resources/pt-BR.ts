@@ -1251,6 +1251,7 @@ export const ptBR: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espaços em segundo plano",
+      nestSubagentWorkspaces: "Aninhar espaços de trabalho de subagentes",
       trigger: "Preferências de exibição",
       heading: "Exibição",
       sort: {
@@ -1398,6 +1399,10 @@ export const ptBR: TranslationResources = {
         unpin: "Desafixar",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
+        showTabs: "Mostrar abas",
+        hideTabs: "Ocultar abas",
+        showSubagents: "Mostrar subagentes",
+        hideSubagents: "Ocultar subagentes",
         hideFromSidebar: "Ocultar da barra lateral",
         archiving: "Arquivando...",
         hiding: "Ocultando...",

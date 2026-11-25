@@ -17,6 +17,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
+import { openPluginSubagent, openPluginWorkspaceTab } from "../workspace-tabs/open";
+import { installWorkspaceTabsHost } from "../workspace-tabs/host";
 import { entityRefs } from "../client-state/refs";
 import { PluginEnvironmentProvider } from "../popover";
 import { resolvePluginPlatform } from "../platform";
@@ -27,6 +29,8 @@ import { sidebarViews, type SidebarViewEntry } from "./catalog";
 import { useSidebarViewSelection } from "./selection";
 
 const source = createPluginClientStateSource();
+// The app mounts the sidebar at startup, before any plugin surface renders a tab.
+installWorkspaceTabsHost();
 const themeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
 export function SidebarViewSlot({ children, dismiss }: { children: ReactNode; dismiss(): void }) {
@@ -139,6 +143,14 @@ function SidebarView({
             displayName: project.displayName,
           }),
         );
+        dismiss();
+      },
+      openTab(tab) {
+        openPluginWorkspaceTab(tab);
+        dismiss();
+      },
+      openSubagent(subagent, options) {
+        openPluginSubagent(subagent, options);
         dismiss();
       },
     }),

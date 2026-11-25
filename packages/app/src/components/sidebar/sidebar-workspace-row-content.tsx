@@ -35,6 +35,13 @@ import {
   SidebarWorkspaceArchiveButton,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { bySizing } from "@/components/ui/control-geometry";
+import {
+  SidebarWorkspaceTabsDisclosure,
+  TABS_DISCLOSURE_POINTER_FOOTPRINT,
+  TABS_DISCLOSURE_TOUCH_WIDTH,
+} from "@/components/sidebar/workspace-tabs/disclosure";
+import type { SubagentDisclosureNotice } from "@/components/sidebar/workspace-tabs/subagent-notice";
 
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -346,12 +353,27 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     alignItems: "flex-end",
     justifyContent: "flex-start",
   },
+  // Touch: the kebab's 18 plus the disclosure beside it. Pointer only reserves for trailing
+  // content, and the disclosure overlays the title on hover there instead.
+  trailingActionSlotReservedWithTabsDisclosure: {
+    position: "relative",
+    minWidth: bySizing({ touch: 18 + TABS_DISCLOSURE_TOUCH_WIDTH, pointer: 18 }),
+    minHeight: 20,
+    flexShrink: 0,
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+  },
   trailingActionOverlay: {
     position: "absolute",
     top: 0,
     right: 0,
     flexDirection: "row",
     alignItems: "flex-start",
+  },
+  // The disclosure stays up while a nested subagent needs attention. On pointer it would
+  // otherwise cover the title; touch already reserves the disclosure's width.
+  trailingActionSlotSubagentNotice: {
+    paddingRight: bySizing({ touch: 0, pointer: TABS_DISCLOSURE_POINTER_FOOTPRINT }),
   },
 }));
 
@@ -423,20 +445,37 @@ export function resolveTrailingActionVisibility({
   };
 }
 
+function trailingActionSlotStyle(
+  reserveWidth: boolean,
+  reserveTabsDisclosure: boolean,
+  reserveSubagentNotice: boolean,
+) {
+  let base = sidebarWorkspaceRowStyles.trailingActionSlot;
+  if (reserveWidth) {
+    base = reserveTabsDisclosure
+      ? sidebarWorkspaceRowStyles.trailingActionSlotReservedWithTabsDisclosure
+      : sidebarWorkspaceRowStyles.trailingActionSlotReserved;
+  }
+  if (!reserveSubagentNotice) return base;
+  return [base, sidebarWorkspaceRowStyles.trailingActionSlotSubagentNotice];
+}
+
 export function SidebarWorkspaceTrailingActionSlot({
   reserveWidth,
+  reserveTabsDisclosure = false,
+  reserveSubagentNotice = false,
   children,
 }: {
   reserveWidth: boolean;
+  /** The overlay carries the tabs disclosure, which a reserved touch slot makes room for. */
+  reserveTabsDisclosure?: boolean;
+  /** Keeps the disclosure's width while its notice is visible and the row is not hovered. */
+  reserveSubagentNotice?: boolean;
   children: ReactNode;
 }) {
   return (
     <View
-      style={
-        reserveWidth
-          ? sidebarWorkspaceRowStyles.trailingActionSlotReserved
-          : sidebarWorkspaceRowStyles.trailingActionSlot
-      }
+      style={trailingActionSlotStyle(reserveWidth, reserveTabsDisclosure, reserveSubagentNotice)}
     >
       {children}
     </View>
@@ -463,6 +502,8 @@ export function SidebarWorkspaceTrailingActionOverlay({
   scrimBackdrop,
   workspaceKey,
   onArchiveButtonPress,
+  tabsDisclosureCount = null,
+  subagentNotice = null,
   children,
 }: {
   visible: boolean;
@@ -474,26 +515,44 @@ export function SidebarWorkspaceTrailingActionOverlay({
    * the scrim widens to cover it rather than the slot reserving its width.
    */
   onArchiveButtonPress?: () => void;
+  /**
+   * The row's open tab count, to show its tabs disclosure leftmost; null leaves it out. On touch
+   * it is permanent like the kebab, so the slot reserves its width (`reserveTabsDisclosure`);
+   * on pointer it overlays the title on hover. A subagent notice keeps it visible at rest.
+   */
+  tabsDisclosureCount?: number | null;
+  /** Set when a subagent under the tabs needs input, failed unread, or is ready to review. */
+  subagentNotice?: SubagentDisclosureNotice | null;
   children: ReactNode;
 }) {
-  if (!visible || !children) return null;
+  const showDisclosure = tabsDisclosureCount !== null && (visible || subagentNotice !== null);
+  if (!showDisclosure && (!visible || !children)) return null;
+  const archiveFootprint = visible && onArchiveButtonPress ? ARCHIVE_BUTTON_FOOTPRINT : 0;
+  const disclosureFootprint = showDisclosure ? TABS_DISCLOSURE_POINTER_FOOTPRINT : 0;
   return (
     <>
-      {scrimBackdrop ? (
+      {visible && scrimBackdrop ? (
         <TrailingActionScrim
           backdrop={scrimBackdrop}
-          width={onArchiveButtonPress ? SCRIM_WIDTH + ARCHIVE_BUTTON_FOOTPRINT : SCRIM_WIDTH}
+          width={SCRIM_WIDTH + archiveFootprint + disclosureFootprint}
           testID="sidebar-workspace-trailing-scrim"
         />
       ) : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>
-        {onArchiveButtonPress ? (
+        {showDisclosure && tabsDisclosureCount !== null ? (
+          <SidebarWorkspaceTabsDisclosure
+            workspaceKey={workspaceKey}
+            tabCount={tabsDisclosureCount}
+            notice={subagentNotice}
+          />
+        ) : null}
+        {visible && onArchiveButtonPress ? (
           <SidebarWorkspaceArchiveButton
             workspaceKey={workspaceKey}
             onArchive={onArchiveButtonPress}
           />
         ) : null}
-        {children}
+        {visible ? children : null}
       </View>
     </>
   );

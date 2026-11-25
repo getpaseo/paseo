@@ -1235,6 +1235,7 @@ export const en = {
     },
     display: {
       showBackground: "Show background",
+      nestSubagentWorkspaces: "Nest subagent workspaces",
       trigger: "Display preferences",
       heading: "Display",
       sort: {
@@ -1382,6 +1383,10 @@ export const en = {
         unpin: "Unpin",
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
+        showTabs: "Show tabs",
+        hideTabs: "Hide tabs",
+        showSubagents: "Show subagents",
+        hideSubagents: "Hide subagents",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         hiding: "Hiding...",

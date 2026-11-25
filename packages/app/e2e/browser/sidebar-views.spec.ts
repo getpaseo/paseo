@@ -10,6 +10,7 @@ test("sidebar views replace the content, preserve chrome, and recover to the def
     await views.chooseWorkspaces();
     await views.exerciseExamples();
     await views.exerciseTerminals();
+    await views.exerciseTabs();
     await views.restoreDefault();
     await views.recoverFromFailure();
     await views.chooseWorkspaces();

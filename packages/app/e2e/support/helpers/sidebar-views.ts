@@ -178,6 +178,52 @@ function sidebarViews(
         await client.killTerminal(created.terminal.id);
       }
     },
+    async exerciseTabs() {
+      const workspace = (await client.fetchWorkspaces()).entries.find(
+        (item) => item.id === workspaceId,
+      )!;
+      const created = await client.createTerminal(
+        workspace.workspaceDirectory,
+        "Tabs terminal",
+        undefined,
+        { workspaceId },
+      );
+      if (!created.terminal) throw new Error(created.error ?? "Terminal creation failed");
+      const terminalId = created.terminal.id;
+      try {
+        // The terminals example opens the terminal's tab, which the tabs example then lists.
+        await choose("Example terminals");
+        const terminals = visibleTestId(page, "plugin-sidebar-view");
+        await terminals
+          .getByRole("button", { name: `Terminals on ${getServerId()}`, exact: true })
+          .click();
+        await terminals.getByTestId(`sidebar-terminal-open-${terminalId}`).click();
+        await expect(page.getByTestId("terminal-surface").first()).toBeVisible();
+        await choose("Example open tabs");
+        const slot = visibleTestId(page, "plugin-sidebar-view");
+        await slot.getByTestId(`example-tabs-toggle-${workspaceId}`).click();
+        // The shell retitles the terminal, so find its row's menu by the trigger instead.
+        const menus = slot.locator('[data-testid^="plugin-tab-menu-"][data-testid$="-trigger"]');
+        await expect(menus).toHaveCount(1);
+        const trigger = await menus.getAttribute("data-testid");
+        const menuBase = trigger!.replace(/-trigger$/, "");
+        await menus.click();
+        // Closing from the plugin's menu keeps the app's terminal confirmation. The browser's
+        // confirm() blocks the click until it is answered, so answer it from the listener.
+        const messages: string[] = [];
+        page.once("dialog", (dialog) => {
+          messages.push(dialog.message());
+          void dialog.accept();
+        });
+        await visibleTestId(page, `${menuBase}-close`).click();
+        await expect.poll(() => messages.join("\n")).toContain("Close terminal?");
+        await expect
+          .poll(async () => (await client.listTerminals()).terminals.map((item) => item.id))
+          .not.toContain(terminalId);
+      } finally {
+        await client.killTerminal(terminalId);
+      }
+    },
     async restoreDefault() {
       await choose("Default view");
       await expectDefault();

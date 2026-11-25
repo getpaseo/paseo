@@ -34,6 +34,7 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
@@ -88,6 +89,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "status",
       hostFilters: [],
       projectFilters: [],
@@ -104,6 +106,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "status",
       hostFilters: ["host-a"],
       projectFilters: [],
@@ -120,6 +123,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
       projectFilters: [],
@@ -232,6 +236,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "project",
       hostFilters: ["host-a"],
       projectFilters: ["project-a", "project-b"],
@@ -243,6 +248,7 @@ describe("sidebar view store", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      nestSubagentWorkspaces: true,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
@@ -303,4 +309,11 @@ it("defaults to Created and persists the Last prompt choice across migration", (
 
 it("retains the manual sorting preference on reload", () => {
   expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
+});
+
+it("nests subagent workspaces by default and keeps the user's choice to turn it off", () => {
+  expect(migrateSidebarViewState({}).nestSubagentWorkspaces).toBe(true);
+  expect(migrateSidebarViewState({ nestSubagentWorkspaces: false }).nestSubagentWorkspaces).toBe(
+    false,
+  );
 });
