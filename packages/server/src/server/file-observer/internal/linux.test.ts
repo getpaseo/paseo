@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { renameSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { expect, test } from "vitest";
 import { createFileObserver } from "../index.js";
 import { createLinuxBackend } from "./linux.js";
@@ -25,6 +26,7 @@ test("the linux backend fails the observation when the classification queue over
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: () => {},
       fail: (error) => {
@@ -84,6 +86,7 @@ test("an ignore update drains classifications queued below the new excluded root
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: (path) => ignoreGenerated && paths.isInside(ignored, path),
+      isIgnoredRoot: (path) => ignoreGenerated && path === ignored,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => {
         if (type === "create") delivered.push(path);
@@ -120,3 +123,229 @@ test("an ignore update drains classifications queued below the new excluded root
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("scan yields to the event loop and aborts mid-directory when the observation closes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "linux-scan-yield-"));
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(root, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const observer = createFileObserver();
+  let active = true;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createLinuxBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isIgnoredRoot: () => {
+        inspected += 1;
+        if (!scheduledYieldProbe && inspected === 260) {
+          scheduledYieldProbe = true;
+          const until = performance.now() + 15;
+          while (performance.now() < until) {
+            // busy wait
+          }
+          setImmediate(() => {
+            if (inspected < totalFiles) {
+              yieldedBeforeFinish = true;
+            }
+            active = false;
+          });
+        }
+        return false;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({ close: () => {}, on: () => {} }) as never,
+  );
+  try {
+    await backend.start();
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform !== "linux")(
+  "a file written into a newly moved directory during a scan yield is not missed",
+  async () => {
+    const parent = await mkdtemp(join(tmpdir(), "linux-scan-watch-order-"));
+    const root = join(parent, "root");
+    const staged = join(parent, "staged");
+    const moved = join(root, "moved");
+    const lateFile = join(moved, "late.txt");
+    await mkdir(root);
+    await mkdir(staged);
+    const totalFiles = 700;
+    await Promise.all(
+      Array.from({ length: totalFiles }, (_, index) =>
+        writeFile(join(staged, `file-${index}.txt`), "x"),
+      ),
+    );
+
+    const paths = createObserverPaths(process.platform);
+    const observer = createFileObserver();
+    let active = true;
+    const delivered = new Set<string>();
+    const movedPrefix = `${moved}${sep}`;
+    let inspectedMoved = 0;
+    let scheduledLateWrite = false;
+    let wroteDuringYield = false;
+    const backend = createLinuxBackend(
+      {
+        root,
+        metrics: observer.getDiagnostics(),
+        isActive: () => active,
+        isIgnored: () => false,
+        isIgnoredRoot: (path) => {
+          if (path.startsWith(movedPrefix)) {
+            inspectedMoved += 1;
+            if (!scheduledLateWrite && inspectedMoved === 260) {
+              scheduledLateWrite = true;
+              const until = performance.now() + 15;
+              while (performance.now() < until) {
+                // Ensure the next stride boundary exceeds the 8 ms slice budget.
+              }
+              setImmediate(() => {
+                if (inspectedMoved < totalFiles) {
+                  wroteDuringYield = true;
+                }
+                writeFileSync(lateFile, "after-readdir");
+              });
+            }
+          }
+          return false;
+        },
+        isPathInside: paths.isInside,
+        queueEvent: (_type, path) => {
+          delivered.add(path);
+        },
+        fail: (error) => {
+          throw error;
+        },
+      },
+      paths,
+    );
+
+    try {
+      await backend.start();
+      await rename(staged, moved);
+      await expect.poll(() => wroteDuringYield, { timeout: 5_000 }).toBe(true);
+      await expect.poll(() => delivered.has(lateFile), { timeout: 2_000 }).toBe(true);
+    } finally {
+      active = false;
+      await backend.close();
+      await observer.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "linux")(
+  "replacing a newly moved directory during its first scan rebinds coverage to the replacement",
+  async () => {
+    const parent = await mkdtemp(join(tmpdir(), "linux-scan-replace-dir-"));
+    const root = join(parent, "root");
+    const first = join(parent, "first");
+    const second = join(parent, "second");
+    const aside = join(parent, "aside");
+    const target = join(root, "target");
+    await mkdir(root);
+    await mkdir(first);
+    await mkdir(second);
+    const totalFiles = 700;
+    await Promise.all(
+      Array.from({ length: totalFiles }, (_, index) =>
+        writeFile(join(first, `file-${index}.txt`), "x"),
+      ),
+    );
+    await writeFile(join(second, "initial-replacement.txt"), "v1");
+
+    const paths = createObserverPaths(process.platform);
+    const observer = createFileObserver();
+    let active = true;
+    const delivered = new Set<string>();
+    const targetPrefix = `${target}${sep}`;
+    let inspectedTarget = 0;
+    let scheduledSwap = false;
+    let swappedDuringYield = false;
+    const backend = createLinuxBackend(
+      {
+        root,
+        metrics: observer.getDiagnostics(),
+        isActive: () => active,
+        isIgnored: () => false,
+        isIgnoredRoot: (path) => {
+          if (path.startsWith(targetPrefix)) {
+            inspectedTarget += 1;
+            if (!scheduledSwap && inspectedTarget === 260) {
+              scheduledSwap = true;
+              const until = performance.now() + 15;
+              while (performance.now() < until) {
+                // Ensure the next stride boundary exceeds the 8 ms slice budget.
+              }
+              setImmediate(() => {
+                if (inspectedTarget < totalFiles) {
+                  swappedDuringYield = true;
+                }
+                renameSync(target, aside);
+                renameSync(second, target);
+              });
+            }
+          }
+          return false;
+        },
+        isPathInside: paths.isInside,
+        queueEvent: (_type, path) => {
+          delivered.add(path);
+        },
+        fail: (error) => {
+          throw error;
+        },
+      },
+      paths,
+    );
+
+    try {
+      await backend.start();
+      await rename(first, target);
+      await expect.poll(() => swappedDuringYield, { timeout: 5_000 }).toBe(true);
+      await expect
+        .poll(() => backend.getDiagnostics().pendingReconciliationWorkCount, { timeout: 5_000 })
+        .toBe(0);
+      await expect
+        .poll(() => delivered.has(join(target, "initial-replacement.txt")), { timeout: 2_000 })
+        .toBe(true);
+
+      const movedAwayEdit = join(aside, "from-moved-away.txt");
+      const leakedMovedAwayPath = join(target, "from-moved-away.txt");
+      const replacementEdit = join(target, "from-replacement.txt");
+      await writeFile(movedAwayEdit, "old-inode");
+      await writeFile(replacementEdit, "new-inode");
+
+      await expect.poll(() => delivered.has(replacementEdit), { timeout: 2_000 }).toBe(true);
+      expect(delivered.has(leakedMovedAwayPath)).toBe(false);
+    } finally {
+      active = false;
+      await backend.close();
+      await observer.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  },
+);

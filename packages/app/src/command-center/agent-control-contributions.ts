@@ -16,6 +16,7 @@ import {
 import type { CommandCenterContribution, CommandCenterIcon } from "./contributions";
 
 const GROUP_RANK = {
+  profiles: 0.9,
   models: 1,
   thinking: 1.1,
   modes: 1.2,
@@ -24,6 +25,7 @@ const GROUP_RANK = {
 } as const;
 
 export interface AgentControlContributionLabels {
+  profile: string;
   model: string;
   thinking: string;
   mode: string;
@@ -31,6 +33,7 @@ export interface AgentControlContributionLabels {
   fast: string;
   on: string;
   off: string;
+  profileKeywords: string;
   modelKeywords: string;
   thinkingKeywords: string;
   modeKeywords: string;
@@ -42,6 +45,7 @@ export function buildAgentControlContributionLabels(
   t: (key: string) => string,
 ): AgentControlContributionLabels {
   return {
+    profile: t("shell.commandCenter.profileGroupLabel"),
     model: t("shell.commandCenter.modelGroupLabel"),
     thinking: t("shell.commandCenter.thinkingGroupLabel"),
     mode: t("shell.commandCenter.modeGroupLabel"),
@@ -49,6 +53,7 @@ export function buildAgentControlContributionLabels(
     fast: t("shell.commandCenter.fastModeGroupLabel"),
     on: t("shell.commandCenter.settingOn"),
     off: t("shell.commandCenter.settingOff"),
+    profileKeywords: t("shell.commandCenter.profileSearchKeywords"),
     modelKeywords: t("shell.commandCenter.modelSearchKeywords"),
     thinkingKeywords: t("shell.commandCenter.thinkingSearchKeywords"),
     modeKeywords: t("shell.commandCenter.modeSearchKeywords"),
@@ -58,6 +63,7 @@ export function buildAgentControlContributionLabels(
 }
 
 export interface AgentControlContributionIcons {
+  profile(profile: AgentControlProfile): CommandCenterIcon;
   provider(provider: AgentProvider): CommandCenterIcon;
   thinking: CommandCenterIcon;
   planMode: CommandCenterIcon;
@@ -83,12 +89,27 @@ interface CommandCenterChoiceGroup {
   choices: readonly CommandCenterChoice[];
 }
 
+/** A profile as the command center offers it: applied in one step, never "selected". */
+export interface AgentControlProfile {
+  id: string;
+  name: string;
+  /** "Claude Code · Opus 5 · Plan · Think hard" */
+  summary: string;
+  icon: string;
+  color: string;
+}
+
 export interface AgentControlContributionSource {
   serverId: string;
   ownerKey: string;
   provider: string | null;
   labels: AgentControlContributionLabels;
   icons: AgentControlContributionIcons;
+  /** Absent when the host has no profiles to offer this surface. */
+  profiles?: {
+    rows: readonly AgentControlProfile[];
+    apply(profileId: string): void;
+  };
   models: {
     providers: readonly ProviderSelectorProvider[];
     selectedProvider: string | null;
@@ -136,6 +157,30 @@ function buildContributions(
     }
   }
   return contributions;
+}
+
+function buildProfileGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
+  const profiles = source.profiles;
+  const choices = (profiles?.rows ?? []).map(
+    (profile): CommandCenterChoice => ({
+      id: profile.id,
+      path: [profile.name],
+      keywords: [profile.summary],
+      icon: source.icons.profile(profile),
+      // Applying a profile writes its values and leaves nothing bound to it,
+      // so no profile is ever the current choice.
+      selected: false,
+      testId: `command-center-profile-${source.serverId}:${source.ownerKey}:${profile.id}`,
+      select: () => profiles?.apply(profile.id),
+    }),
+  );
+  return {
+    id: "profiles",
+    rank: GROUP_RANK.profiles,
+    label: source.labels.profile,
+    keywords: [source.labels.profileKeywords],
+    choices,
+  };
 }
 
 function buildModelGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
@@ -306,7 +351,7 @@ function buildFastModeGroup(source: AgentControlContributionSource): CommandCent
 export function buildAgentControlContributions(
   source: AgentControlContributionSource,
 ): CommandCenterContribution[] {
-  const groups = [buildModelGroup(source)];
+  const groups = [buildProfileGroup(source), buildModelGroup(source)];
   if (source.provider) {
     groups.push(
       buildThinkingGroup(source),

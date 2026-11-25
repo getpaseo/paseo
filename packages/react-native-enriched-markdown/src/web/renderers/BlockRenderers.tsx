@@ -37,7 +37,20 @@ function HeadingRenderer({ node, styles, renderChildren }: RendererProps) {
   return <Tag style={styles[Tag]}>{renderChildren(node)}</Tag>;
 }
 
-function BlockquoteRenderer({ node, styles, renderChildren }: RendererProps) {
+function BlockquoteRenderer({
+  node,
+  styles,
+  renderChildren,
+  capabilities,
+}: RendererProps) {
+  const CustomBlockquote = capabilities.renderers?.blockquote;
+  if (CustomBlockquote) {
+    return (
+      <CustomBlockquote blockquoteProps={{ style: styles.blockquote }}>
+        {renderChildren(node)}
+      </CustomBlockquote>
+    );
+  }
   return (
     <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
   );
@@ -70,9 +83,10 @@ function AdmonitionRenderer({
     fontSize: blockquote.fontSize,
     lineHeight: 1.2,
   };
+  // The data attributes let a copy serializer write `> [!TYPE]` instead of the title.
   return (
-    <div className={ENRM_ADMONITION_CLASS} style={boxStyle}>
-      <div style={headerStyle}>
+    <div className={ENRM_ADMONITION_CLASS} style={boxStyle} data-enrm-admonition-type={type}>
+      <div style={headerStyle} data-enrm-admonition-title="">
         <svg
           width={iconSize}
           height={iconSize}

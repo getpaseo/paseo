@@ -50,6 +50,12 @@ describe("provider snapshot message schemas", () => {
     expect(parsed.source).toBe("custom");
   });
 
+  test("keeps launch-wrap support and leaves it absent when not reported", () => {
+    const entry = { provider: "codex", status: "loading", label: "Codex" };
+    expect(ProviderSnapshotEntrySchema.parse({ ...entry, launchWrap: true }).launchWrap).toBe(true);
+    expect(ProviderSnapshotEntrySchema.parse(entry)).not.toHaveProperty("launchWrap");
+  });
+
   test("defaults missing enabled state in providers snapshot response entries", () => {
     const parsed = GetProvidersSnapshotResponseMessageSchema.parse({
       type: "get_providers_snapshot_response",

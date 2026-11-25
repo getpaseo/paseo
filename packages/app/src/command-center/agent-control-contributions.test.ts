@@ -16,6 +16,7 @@ function TestIcon() {
 }
 
 const LABELS: AgentControlContributionSource["labels"] = {
+  profile: "Profile",
   model: "Model",
   thinking: "Thinking",
   mode: "Mode",
@@ -23,6 +24,7 @@ const LABELS: AgentControlContributionSource["labels"] = {
   fast: "Fast",
   on: "On",
   off: "Off",
+  profileKeywords: "profile preset",
   modelKeywords: "model switch",
   thinkingKeywords: "reasoning effort",
   modeKeywords: "access permission",
@@ -31,6 +33,7 @@ const LABELS: AgentControlContributionSource["labels"] = {
 };
 
 const ICONS: AgentControlContributionSource["icons"] = {
+  profile: () => TestIcon,
   provider: () => TestIcon,
   thinking: TestIcon,
   planMode: TestIcon,
@@ -134,6 +137,43 @@ const CLAUDE_MODES: AgentMode[] = [
 ];
 
 describe("Command Center agent-control contributions", () => {
+  it("offers each profile as a choice that applies it, searchable by its summary", () => {
+    const applied: string[] = [];
+    const contributions = buildAgentControlContributions({
+      ...makeSource({ provider: null }),
+      profiles: {
+        rows: [
+          {
+            id: "reviewer",
+            name: "Reviewer",
+            summary: "Claude Code · Opus 5 · Plan",
+            icon: "eye",
+            color: "blue",
+          },
+        ],
+        apply: (profileId) => {
+          applied.push(profileId);
+        },
+      },
+    }).filter((contribution) => contribution.group === "profiles");
+
+    expect(contributions).toHaveLength(1);
+    expect(contributions[0]).toMatchObject({
+      id: "profiles:reviewer",
+      groupRank: 0.9,
+      keywords: ["profile preset", "Claude Code · Opus 5 · Plan"],
+      presentation: {
+        kind: "choice",
+        path: ["Profile", "Reviewer"],
+        selected: false,
+        testId: "command-center-profile-host:agent:reviewer",
+      },
+    });
+    contributions[0].run();
+    contributions[0].run();
+    expect(applied).toEqual(["reviewer", "reviewer"]);
+  });
+
   it("omits mode-derived choices when no mode control is available", () => {
     const contributions = buildAgentControlContributions({
       ...makeSource({

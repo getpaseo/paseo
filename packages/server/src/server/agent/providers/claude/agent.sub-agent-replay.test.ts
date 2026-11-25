@@ -449,12 +449,12 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   describe("a background subagent", () => {
     // Shapes recorded from Claude Code 2.1.x: the launch returns at once with an async result,
     // and a child stopped by an interrupt ends on the interrupt placeholder, not an end_turn.
-    function backgroundLaunch(): string[] {
+    function backgroundLaunch({ toolUseId = TOOL_USE_ID, agentId = AGENT_ID } = {}): string[] {
       return [
         parentEntry([
           {
             type: "tool_use",
-            id: TOOL_USE_ID,
+            id: toolUseId,
             name: "Agent",
             input: {
               subagent_type: "general-purpose",
@@ -472,17 +472,17 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
             content: [
               {
                 type: "tool_result",
-                tool_use_id: TOOL_USE_ID,
+                tool_use_id: toolUseId,
                 content: [
                   {
                     type: "text",
-                    text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                    text: `Async agent launched successfully.\nagentId: ${agentId}`,
                   },
                 ],
               },
             ],
           },
-          toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+          toolUseResult: { isAsync: true, status: "async_launched", agentId },
         }),
       ];
     }
@@ -607,17 +607,35 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       expect(statuses).toContain("running");
     });
 
-    function taskNotification(status: string, form = "user"): string {
-      const text = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>${TOOL_USE_ID}</tool-use-id>\n<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+    function taskNotification({
+      status,
+      form = "user",
+      includeToolUseId = true,
+      taskIds = [AGENT_ID],
+      quoted = false,
+    }: {
+      status: string;
+      form?: string;
+      includeToolUseId?: boolean;
+      taskIds?: string[];
+      quoted?: boolean;
+    }): string {
+      const toolUseTag = includeToolUseId ? `<tool-use-id>${TOOL_USE_ID}</tool-use-id>\n` : "";
+      const taskTags = taskIds.map((id) => `<task-id>${id}</task-id>`).join("\n");
+      const notification = `<task-notification>\n${taskTags}\n${toolUseTag}<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      const text = quoted ? `Explain this log.\n${notification}` : notification;
       const records = {
-        user: { message: { role: "user", content: [{ type: "text", text }] } },
+        user: {
+          ...(quoted ? {} : { origin: { kind: "task-notification" } }),
+          message: { role: "user", content: [{ type: "text", text }] },
+        },
         system: {
           subtype: "task_notification",
           task_id: AGENT_ID,
-          tool_use_id: TOOL_USE_ID,
+          ...(includeToolUseId ? { tool_use_id: TOOL_USE_ID } : {}),
           status,
         },
-        "queue-operation": { operation: "enqueue", content: text },
+        "queue-operation": { operation: quoted ? "remove" : "enqueue", content: text },
       };
       return JSON.stringify({
         type: form,
@@ -636,7 +654,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         `restores a %s task notification from ${form} when the child stop_reason is null`,
         async (status, expected) => {
           writeSession({
-            parentLines: [...backgroundLaunch(), taskNotification(status, form)],
+            parentLines: [...backgroundLaunch(), taskNotification({ status, form })],
             meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
             sidechainLines: [sidechainEntry({ stopReason: null })],
           });
@@ -648,9 +666,160 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       );
     }
 
+    for (const form of ["user", "system", "queue-operation"]) {
+      test.each([
+        ["completed", "completed"],
+        ["failed", "failed"],
+        ["stopped", "canceled"],
+        ["unknown", "running"],
+      ])(`restores a task-id-only %s notification from ${form}`, async (status, expected) => {
+        writeSession({
+          parentLines: [
+            ...backgroundLaunch(),
+            taskNotification({ status, form, includeToolUseId: false }),
+          ],
+          meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+          sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+          id: TOOL_USE_ID,
+          status: expected,
+        });
+      });
+    }
+
+    test.each([
+      ["user", false, "canceled"],
+      ["queue-operation", false, "canceled"],
+      ["user", true, "running"],
+    ])(
+      "restores a shared %s notification with explicit tool-use ID present = %s",
+      async (form, includeToolUseId, secondStatus) => {
+        const secondAgentId = "a2222222222222222";
+        const secondToolUseId = "toolu_second";
+        const subagentDir = writeParentSession([
+          ...backgroundLaunch(),
+          ...backgroundLaunch({ agentId: secondAgentId, toolUseId: secondToolUseId }),
+          taskNotification({
+            status: "stopped",
+            form,
+            includeToolUseId,
+            taskIds: [AGENT_ID, "unrelated-task", secondAgentId],
+          }),
+        ]);
+        writeSubagent({
+          subagentDir,
+          sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        writeSubagent({
+          subagentDir,
+          agentId: secondAgentId,
+          sidechainLines: [sidechainEntry({ agentId: secondAgentId, stopReason: "tool_use" })],
+        });
+
+        const statuses = new Map();
+        for (const { id, status } of upserts(await replayDescriptors())) {
+          statuses.set(id, status);
+        }
+        expect(statuses).toEqual(
+          new Map([
+            [TOOL_USE_ID, "canceled"],
+            [secondToolUseId, secondStatus],
+          ]),
+        );
+      },
+    );
+
+    test("keeps the latest outcome across task-only and tool-linked notifications", async () => {
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          taskNotification({ status: "stopped", form: "queue-operation", includeToolUseId: false }),
+          taskNotification({ status: "stopped", form: "user", includeToolUseId: false }),
+          taskNotification({ status: "completed" }),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+    });
+
+    test("honors a later task-only stopped notification after a tool-linked completion", async () => {
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          taskNotification({ status: "completed" }),
+          taskNotification({ status: "stopped", form: "user", includeToolUseId: false }),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "canceled" });
+    });
+
+    test.each(["user", "queue-operation"])(
+      "keeps a completed child when a later %s record quotes a stopped notification",
+      async (form) => {
+        writeSession({
+          parentLines: [
+            ...backgroundLaunch(),
+            taskNotification({ status: "completed" }),
+            taskNotification({ status: "stopped", form, includeToolUseId: false, quoted: true }),
+          ],
+          meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+          sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+      },
+    );
+
+    test("does not apply an unrelated task's stopped outcome to a child", async () => {
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          taskNotification({ status: "stopped", form: "user", includeToolUseId: false }).replace(
+            AGENT_ID,
+            "unrelated-task",
+          ),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "running" });
+    });
+
+    test("restores a stopped child after a Bash result echoes its launch log", async () => {
+      const bashToolUseId = "toolu_bash";
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          parentEntry([{ type: "tool_use", id: bashToolUseId, name: "Bash", input: {} }]),
+          JSON.stringify({
+            type: "user",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: bashToolUseId,
+                  content: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                },
+              ],
+            },
+          }),
+          taskNotification({ status: "stopped", includeToolUseId: false }),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "canceled",
+      });
+    });
+
     test("prefers a stopped notification over the child's end_turn", async () => {
       writeSession({
-        parentLines: [...backgroundLaunch(), taskNotification("stopped")],
+        parentLines: [...backgroundLaunch(), taskNotification({ status: "stopped" })],
         meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
         sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
       });
@@ -659,7 +828,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
 
     test("does not invent an outcome for an unknown notification status", async () => {
       writeSession({
-        parentLines: [...backgroundLaunch(), taskNotification("unknown")],
+        parentLines: [...backgroundLaunch(), taskNotification({ status: "unknown" })],
         meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
         sidechainLines: [sidechainEntry({ stopReason: null })],
       });

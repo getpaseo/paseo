@@ -432,6 +432,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   iconSvg: z.string().optional(),
   docsUrl: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
+  launchWrap: z.boolean().optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({

@@ -34,6 +34,7 @@ test.each(["existing", "new"])(
         metrics: observer.getDiagnostics(),
         isActive: () => active,
         isIgnored: () => false,
+        isIgnoredRoot: () => false,
         isPathInside: paths.isInside,
         queueEvent: (type, path) => events.push({ type, path }),
         fail: (error) => {
@@ -96,6 +97,7 @@ test("a file announced only as changed remains visible to coalesced deletion sca
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -150,6 +152,7 @@ test("a native ignore update drains classifications queued below the new exclude
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: (path) => ignoreGenerated && paths.isInside(ignored, path),
+      isIgnoredRoot: (path) => ignoreGenerated && path === ignored,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => {
         if (type === "create") delivered.push(path);
@@ -200,6 +203,7 @@ test("a rename burst does not spawn one stat per event", async () => {
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: () => {},
       fail: () => {},
@@ -246,6 +250,7 @@ test("a classification shed onto the scoped audit still recovers the file", asyn
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -332,6 +337,7 @@ test.each([
         metrics: observer.getDiagnostics(),
         isActive: () => active,
         isIgnored: () => false,
+        isIgnoredRoot: () => false,
         isPathInside: paths.isInside,
         queueEvent: (type, path) => events.push({ type, path }),
         fail: (error) => {
@@ -417,6 +423,7 @@ test("a full native inventory audit reports a removed directory", async () => {
       metrics: observer.getDiagnostics(),
       isActive: () => true,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -458,6 +465,7 @@ test("a file classified with no parent bucket yet still gets its delete emitted"
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -500,6 +508,159 @@ test("a file classified with no parent bucket yet still gets its delete emitted"
       })
       .toBe(true);
     expect(backend.getDiagnostics().nativeTrackedFileCount).toBe(0);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scanTree yields to the event loop and aborts mid-directory when the observation closes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-scan-yield-"));
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(root, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const observer = createFileObserver();
+  let active = true;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isIgnoredRoot: () => {
+        inspected += 1;
+        if (!scheduledYieldProbe && inspected === 260) {
+          scheduledYieldProbe = true;
+          // Push past the scan slice budget so the next stride boundary must yield.
+          const until = performance.now() + 15;
+          while (performance.now() < until) {
+            // busy wait
+          }
+          setImmediate(() => {
+            if (inspected < totalFiles) {
+              yieldedBeforeFinish = true;
+            }
+            active = false;
+          });
+        }
+        return false;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({ close: () => {}, on: () => {} }),
+  );
+  try {
+    await backend.start();
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
+    expect(backend.getDiagnostics().nativeTrackedFileCount).toBe(0);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readDirectory yields mid-directory and emits no deletes if the directory becomes ignored while yielded", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-readdir-yield-"));
+  const sub = join(root, "sub");
+  const childDir = join(sub, "child-dir");
+  await mkdir(childDir, { recursive: true });
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(sub, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const notifications = new EventEmitter();
+  const observer = createFileObserver();
+  const metrics = observer.getDiagnostics();
+  const events: FileChange[] = [];
+  let active = true;
+  let subIgnored = false;
+  let armProbe = false;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics,
+      isActive: () => active,
+      isIgnored: (path) => subIgnored && paths.isInside(sub, path),
+      isIgnoredRoot: (path) => {
+        if (armProbe && path.startsWith(sub)) {
+          inspected += 1;
+          if (!scheduledYieldProbe && inspected === 260) {
+            scheduledYieldProbe = true;
+            const until = performance.now() + 15;
+            while (performance.now() < until) {
+              // busy wait
+            }
+            setImmediate(() => {
+              if (inspected < totalFiles) {
+                yieldedBeforeFinish = true;
+              }
+              subIgnored = true;
+            });
+          }
+        }
+        return subIgnored && path === sub;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: (type, path) => events.push({ type, path }),
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    (_root, listener) => {
+      notifications.on("change", listener);
+      return {
+        close: () => notifications.removeAllListeners(),
+        on: (event, onError) => notifications.on(event, onError),
+      };
+    },
+  );
+  try {
+    await backend.start();
+    events.length = 0;
+    armProbe = true;
+    // A rename on a known subdirectory queues a local shallow scan (`readDirectory`)
+    // of its parent `sub` on the 500ms mandatory audit timer.
+    notifications.emit("change", "rename", childDir);
+    await expect
+      .poll(
+        () => {
+          const diagnostics = backend.getDiagnostics();
+          return (
+            metrics.nativeShallowScanCount >= 1 &&
+            diagnostics.pendingReconciliationWorkCount === 0 &&
+            !diagnostics.reconciliationInFlight
+          );
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
+    expect(events.filter((event) => event.type === "delete")).toEqual([]);
   } finally {
     active = false;
     await backend.close();

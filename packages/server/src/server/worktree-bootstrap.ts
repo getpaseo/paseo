@@ -335,6 +335,7 @@ export async function runWorktreeAutoTerminals(options: {
     (await getWorktreeTerminalSpecs(options.workspaceCwd)).map(async (spec) => {
       try {
         const terminal = await terminalManager.createTerminal({
+          origin: { source: "worktree", input: spec.command },
           cwd: options.workspaceCwd,
           name: spec.name,
           env: options.runtimeEnv,
@@ -504,6 +505,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   repoRoot: string;
   workspaceId: string;
   scriptName: string;
+  command: string;
   env: Record<string, string> | undefined;
   workspacePortBlock?: TerminalSession["workspacePortBlock"];
 }): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
@@ -514,6 +516,7 @@ async function acquireWorkspaceScriptTerminal(params: {
     repoRoot,
     workspaceId,
     scriptName,
+    command,
     env,
     workspacePortBlock,
   } = params;
@@ -534,6 +537,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   const terminal =
     reusableTerminal ??
     (await terminalManager.createTerminal({
+      origin: { source: "script", input: command },
       cwd: repoRoot,
       workspaceId,
       name: scriptName,
@@ -797,6 +801,7 @@ export async function spawnWorkspaceScript(
       repoRoot,
       workspaceId,
       scriptName,
+      command: config.command,
       env,
       workspacePortBlock: workspaceRuntime
         ? { portBase: workspaceRuntime.portBase, portCount: workspaceRuntime.portCount }

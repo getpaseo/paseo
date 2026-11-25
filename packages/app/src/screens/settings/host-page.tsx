@@ -21,9 +21,10 @@ import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
-import { AgentProfilesSection } from "@/agent-profiles";
+import { AgentProfilesPage, type AgentProfilesBeforeLeaveGuard } from "@/agent-profiles";
 import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { PageLayout } from "@/components/page-layout";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -304,8 +305,40 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
         </View>
       )}
       <AgentSkillsSection serverId={serverId} />
-      <AgentProfilesSection serverId={serverId} />
     </View>
+  );
+}
+
+export function HostAgentProfilesPage({
+  serverId,
+  onBack,
+  onRegisterBeforeLeave,
+}: {
+  serverId: string;
+  onBack?: () => void;
+  onRegisterBeforeLeave?: (guard: AgentProfilesBeforeLeaveGuard | null) => void;
+}) {
+  const { t } = useTranslation();
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return (
+      <PageLayout
+        title={t("settings.host.agentProfiles.sectionTitle")}
+        onBack={onBack}
+        titleTestID="settings-detail-header-title"
+      >
+        <HostNotFound />
+      </PageLayout>
+    );
+  }
+
+  return (
+    <AgentProfilesPage
+      serverId={serverId}
+      onBack={onBack}
+      onRegisterBeforeLeave={onRegisterBeforeLeave}
+    />
   );
 }
 
