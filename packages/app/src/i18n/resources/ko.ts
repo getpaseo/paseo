@@ -2554,6 +2554,11 @@ export const ko: TranslationResources = {
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
+      terminalKeyboardLearning: {
+        label: "키보드가 터미널 입력을 학습하도록 허용",
+        description:
+          "Gboard 음성 입력에 필요합니다. 꺼져 있으면 Gboard가 학습을 중단하고 음성 입력을 끕니다. 켜면 비밀번호 등 터미널에 입력한 텍스트가 키보드에 저장될 수 있습니다.",
+      },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",

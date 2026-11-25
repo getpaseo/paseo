@@ -443,6 +443,29 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.terminalScrollbackLines).toBe(42_000);
   });
 
+  it("keeps keyboard learning off in the terminal unless it is turned on", async () => {
+    const unset = await loadAppSettingsFromStorage(makeDeps());
+    expect(unset.terminalKeyboardLearning).toBe(false);
+
+    const invalid = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ terminalKeyboardLearning: "yes" }),
+        }),
+      }),
+    );
+    expect(invalid.terminalKeyboardLearning).toBe(false);
+
+    const enabled = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ terminalKeyboardLearning: true }),
+        }),
+      }),
+    );
+    expect(enabled.terminalKeyboardLearning).toBe(true);
+  });
+
   it("loads configured workspace title source from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

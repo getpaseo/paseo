@@ -2578,6 +2578,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      terminalKeyboardLearning: {
+        label: "Permitir que o teclado aprenda com o terminal",
+        description:
+          "Necessário para a digitação por voz do Gboard. Desativado, o Gboard não aprende e desativa a digitação por voz. O teclado pode salvar o texto digitado no terminal, como senhas.",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:

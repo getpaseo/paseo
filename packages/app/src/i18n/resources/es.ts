@@ -2596,6 +2596,11 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      terminalKeyboardLearning: {
+        label: "Permitir que el teclado aprenda de la terminal",
+        description:
+          "Necesario para el dictado por voz de Gboard. Con esto desactivado, Gboard no aprende y desactiva el dictado por voz. El teclado podría guardar el texto escrito en la terminal, como contraseñas.",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:

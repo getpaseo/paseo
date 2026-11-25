@@ -127,6 +127,11 @@ row layout, they check that the terminal input asks the keyboard not to learn wh
 suggestions in other apps. React Native's TextInput has no prop for that flag, and it replaces
 `imeOptions` when `returnKeyType` or `disableFullscreenUI` is set, so the terminal input sets neither.
 
+Gboard treats that flag as incognito typing and turns its voice typing off. The Terminal setting
+"Let the keyboard learn terminal input" clears the flag for people who want Gboard voice typing. It is
+off by default. `useTerminalKeyboardLearning` pushes it to native from the app root, so the value is
+right before any terminal mounts, and it applies to every mounted terminal input.
+
 Run the display density regression tests the same way:
 
 ```bash

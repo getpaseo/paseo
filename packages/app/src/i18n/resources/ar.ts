@@ -2576,6 +2576,11 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      terminalKeyboardLearning: {
+        label: "السماح للوحة المفاتيح بالتعلّم من إدخال الطرفية",
+        description:
+          "مطلوب للكتابة الصوتية في Gboard. عند إيقاف هذا الخيار يوقف Gboard التعلّم ويعطّل الكتابة الصوتية. قد تحفظ لوحة المفاتيح النص المكتوب في الطرفية، مثل كلمات المرور.",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",

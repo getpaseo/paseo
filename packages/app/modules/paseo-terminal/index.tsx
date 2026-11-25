@@ -1,4 +1,4 @@
-import { requireNativeView } from "expo";
+import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { useCallback, useMemo } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 
@@ -28,6 +28,20 @@ interface NativePaseoTerminalViewProps extends Omit<
 }
 
 const NativePaseoTerminalView = requireNativeView<NativePaseoTerminalViewProps>("PaseoTerminal");
+interface PaseoTerminalNativeModule {
+  setAllowKeyboardLearning?: (allow: boolean) => void;
+}
+
+const nativeModule = requireOptionalNativeModule<PaseoTerminalNativeModule>("PaseoTerminal");
+
+/**
+ * Android only. The terminal input asks the keyboard not to learn what is typed, which Gboard
+ * treats as incognito and answers by disabling voice typing. Allowing learning lifts that.
+ */
+export function setAllowTerminalKeyboardLearning(allow: boolean): void {
+  nativeModule?.setAllowKeyboardLearning?.(allow);
+}
+
 const CUSTOM_GLYPHS = encodeTerminalCustomGlyphs();
 
 export function PaseoTerminalView({ frame, onCellMetrics, ...props }: PaseoTerminalViewProps) {

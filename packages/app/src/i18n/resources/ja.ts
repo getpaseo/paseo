@@ -2564,6 +2564,11 @@ export const ja: TranslationResources = {
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
+      terminalKeyboardLearning: {
+        label: "キーボードにターミナル入力の学習を許可",
+        description:
+          "Gboardの音声入力に必要です。オフの場合、Gboardは学習を行わず音声入力も無効になります。オンにすると、パスワードなどターミナルで入力した文字がキーボードに保存される場合があります。",
+      },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { SettingsSection } from "@/components/settings";
 import { FormTextInput } from "@/components/ui/form-field";
+import { Switch } from "@/components/ui/switch";
 import { parseTerminalScrollbackLines, useAppSettings } from "@/hooks/use-settings";
 import { settingsStyles } from "@/styles/settings";
 
@@ -24,6 +25,11 @@ export function TerminalSection() {
       void updateSettings({ terminalScrollbackLines: nextValue });
     }
   }, [scrollbackValue, settings.terminalScrollbackLines, updateSettings]);
+
+  const handleKeyboardLearningChange = useCallback(
+    (terminalKeyboardLearning: boolean) => void updateSettings({ terminalKeyboardLearning }),
+    [updateSettings],
+  );
 
   useEffect(() => {
     setScrollbackValue(String(settings.terminalScrollbackLines));
@@ -53,6 +59,24 @@ export function TerminalSection() {
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {Platform.OS === "android" ? (
+          <View style={settingsStyles.row}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.terminalKeyboardLearning.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.terminalKeyboardLearning.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.terminalKeyboardLearning}
+              onValueChange={handleKeyboardLearningChange}
+              accessibilityLabel={t("settings.general.terminalKeyboardLearning.label")}
+              testID="terminal-keyboard-learning-toggle"
+            />
+          </View>
+        ) : null}
       </View>
     </SettingsSection>
   );

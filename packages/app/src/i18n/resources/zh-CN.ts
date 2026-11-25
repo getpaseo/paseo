@@ -2513,6 +2513,11 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
+      terminalKeyboardLearning: {
+        label: "允许键盘学习终端输入",
+        description:
+          "Gboard 语音输入需要此项。关闭时 Gboard 不进行学习并停用语音输入。开启后，在终端输入的文字（如密码）可能被键盘保存。",
+      },
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",

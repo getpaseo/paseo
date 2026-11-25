@@ -2672,6 +2672,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      terminalKeyboardLearning: {
+        label: "Let the keyboard learn terminal input",
+        description:
+          "Needed for Gboard voice typing. Gboard stops learning and turns voice typing off when this is off. Text typed in the terminal, such as passwords, may then be saved by the keyboard.",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",

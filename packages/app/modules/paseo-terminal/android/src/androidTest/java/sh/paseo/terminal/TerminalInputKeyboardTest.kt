@@ -48,6 +48,23 @@ class TerminalInputKeyboardTest {
     }
   }
 
+  /** The check runs on the main thread, where `setAllowLearning` applies at once. */
+  @Test fun allowingKeyboardLearningClearsTheFlagAndDenyingRestoresIt() {
+    onInput("paseo-terminal-input") { input, _ ->
+      try {
+        TerminalInputKeyboard.setAllowLearning(true)
+        val allowed = EditorInfo()
+        input.onCreateInputConnection(allowed)
+        assertEquals(0, allowed.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING)
+      } finally {
+        TerminalInputKeyboard.setAllowLearning(false)
+      }
+      val denied = EditorInfo()
+      input.onCreateInputConnection(denied)
+      assertNotEquals(0, denied.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING)
+    }
+  }
+
   private fun onInput(nativeId: String, check: (ReactEditText, EditorInfo) -> Unit) {
     TerminalInputKeyboard.install()
     instrumentation.runOnMainSync {

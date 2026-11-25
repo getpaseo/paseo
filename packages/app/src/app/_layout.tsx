@@ -112,6 +112,7 @@ import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useTerminalKeyboardLearning } from "@/terminal/use-terminal-keyboard-learning";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider, useIsMobilePanelActive } from "@/mobile-panels/provider";
 import {
@@ -394,6 +395,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
+  useTerminalKeyboardLearning();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
   const toggleDesktopAgentList = usePanelStore((state) => state.toggleDesktopAgentList);
   const exitFocusMode = usePanelStore((state) => state.exitFocusMode);

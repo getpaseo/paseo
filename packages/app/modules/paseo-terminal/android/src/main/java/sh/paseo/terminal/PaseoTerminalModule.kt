@@ -9,6 +9,10 @@ class PaseoTerminalModule : Module() {
 
     OnCreate { TerminalInputKeyboard.install() }
 
+    Function("setAllowKeyboardLearning") { allow: Boolean ->
+      TerminalInputKeyboard.setAllowLearning(allow)
+    }
+
     View(PaseoTerminalView::class) {
       Events("onCellMetrics")
 

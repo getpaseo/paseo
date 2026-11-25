@@ -2595,6 +2595,11 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes d’historique du terminal",
       },
+      terminalKeyboardLearning: {
+        label: "Autoriser le clavier à apprendre du terminal",
+        description:
+          "Nécessaire pour la saisie vocale de Gboard. Désactivé, Gboard n'apprend pas et coupe la saisie vocale. Le clavier peut alors enregistrer le texte saisi dans le terminal, comme les mots de passe.",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
