@@ -18,6 +18,7 @@ import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { buildFillFixture, verifyReactFormFill } from "./browser-fill.electron.mjs";
+import { runAgentInputComposerFocusRegression } from "./browser-focus.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -1462,6 +1463,25 @@ async function main() {
         artifactDir,
         externalOpenLog: process.platform === "linux" ? externalOpenLog : null,
       });
+    const checkComposerFocus = (browserClient, typingAgent) =>
+      runAgentInputComposerFocusRegression({
+        page,
+        call: (name, args) => callBrowserTool(browserClient, name, args),
+        serverId: status.serverId,
+        targetUrl: target.url,
+        browserWorkspaceId: workspaceIds[0],
+        typingAgent,
+      });
+    if (process.env.PASEO_DESKTOP_BROWSER_FOCUS_ONLY === "1") {
+      client = await connectBrowserToolClient(daemonPort, await createCallerAgent(daemonPort));
+      const composerFocus = await checkComposerFocus(client, {
+        workspaceId: workspaceIds.at(-1),
+        agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
+      });
+      writeJson(path.join(artifactDir, "result.json"), { composerFocus });
+      console.log("Agent browser input kept the composer focused.");
+      return;
+    }
     if (process.env.PASEO_DESKTOP_PLUGIN_LINKS_ONLY === "1") {
       const pluginLinks = await checkPluginLinks();
       writeJson(path.join(artifactDir, "result.json"), { pluginLinks });
@@ -1494,6 +1514,7 @@ async function main() {
       agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
     };
     client = await connectBrowserToolClient(daemonPort, callerAgentId);
+    const composerFocus = await checkComposerFocus(client, typingAgent);
     const report = await runRegression({
       page,
       client,
@@ -1518,6 +1539,7 @@ async function main() {
     }
     writeJson(path.join(artifactDir, "result.json"), {
       ...report,
+      composerFocus,
       settingsMemory,
       pluginLinks,
       adaptiveTheme,
