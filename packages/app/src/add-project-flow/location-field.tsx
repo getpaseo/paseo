@@ -43,7 +43,7 @@ export function LocationField({
 
   // The same builder as the Existing tab: a typed path first, then matching suggestions and
   // folders the host found.
-  const options = useMemo<ComboboxOption[]>(() => {
+  const pickerOptions = useMemo(() => {
     const suggestions = [
       location,
       ...buildSuggestedParentDirectories(recommendedPaths).filter((path) => path !== location),
@@ -52,15 +52,22 @@ export function LocationField({
       recommendedPaths: suggestions,
       serverPaths: search.items,
       query,
-    }).map(
-      (option): ComboboxOption => ({
-        id: option.path,
-        label: shortenPath(option.path),
-        description: option.kind === "path" ? "Use this folder" : undefined,
-        kind: "directory",
-      }),
-    );
+    });
   }, [location, query, recommendedPaths, search.items]);
+  const options = useMemo<ComboboxOption[]>(
+    () =>
+      pickerOptions.map(
+        (option): ComboboxOption => ({
+          id: option.path,
+          label: shortenPath(option.path),
+          description: option.kind === "path" ? "Use this folder" : undefined,
+          kind: "directory",
+        }),
+      ),
+    [pickerOptions],
+  );
+  // Like the Existing tab: while a new search runs, only a typed path is picked for Enter.
+  const awaitingOptions = search.pending && pickerOptions[0]?.kind !== "path";
 
   const handleOpen = useCallback(() => setOpen(true), []);
   const handleOpenChange = useCallback((next: boolean) => {
@@ -87,6 +94,7 @@ export function LocationField({
         onSelect={onChange}
         searchable
         remoteSearch
+        remoteSearchPending={awaitingOptions}
         onSearchQueryChange={setQuery}
         searchPlaceholder="Search folders or enter a path"
         emptyText={search.error ?? (search.pending ? "Searching..." : "No matching folders")}

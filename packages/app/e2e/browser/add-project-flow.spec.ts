@@ -331,6 +331,31 @@ test.describe("Add project sheet", () => {
     await expect(addProjectFlow(page)).toBeHidden();
   });
 
+  test("Enter in Location while a new search runs keeps the current location", async ({ page }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-stale-location-"));
+    try {
+      await mkdir(path.join(parentDirectory, "stale-probe-a"));
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectTab(page, "new-folder");
+      const location = page.getByTestId("add-project-flow-location");
+      const locationBefore = await location.textContent();
+      await location.click();
+      const search = page.getByPlaceholder("Search folders or enter a path").last();
+      const prefix = path.basename(parentDirectory);
+      await search.fill(`${prefix}/stale-probe`);
+      await expect(page.getByText(/stale-probe-a/).last()).toBeVisible({ timeout: 30_000 });
+
+      await search.fill(`${prefix}/no-such-folder`);
+      await page.keyboard.press("Enter");
+      await expect(page.getByText("No matching folders")).toBeVisible({ timeout: 30_000 });
+      await expect(search).toBeVisible();
+      await expect(location).toHaveText(locationBefore ?? "");
+    } finally {
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("New folder validates the name, then creates a Project in the chosen location", async ({
     page,
   }) => {
@@ -348,6 +373,10 @@ test.describe("Add project sheet", () => {
       await addProjectFlowInput(page).fill("../invalid");
       const nameError = page.getByTestId("add-project-flow-name-field-error");
       await expect(nameError).toHaveText("Use a name without slashes");
+      await expect(addProjectFlowSubmit(page)).toBeDisabled();
+
+      await addProjectFlowInput(page).fill("C:repo");
+      await expect(nameError).toHaveText("Use a name without a drive letter");
       await expect(addProjectFlowSubmit(page)).toBeDisabled();
 
       await addProjectFlowInput(page).fill(directoryName);

@@ -205,6 +205,7 @@ describe("Add Project options", () => {
     expect(validateNewFolderName("")).toBe("Enter a folder name");
     expect(validateNewFolderName("..")).toBe("Enter a folder name");
     expect(validateNewFolderName("../invalid")).toBe("Use a name without slashes");
+    expect(validateNewFolderName("C:repo")).toBe("Use a name without a drive letter");
     expect(validateNewFolderName(" acme-api ")).toBeNull();
   });
 });

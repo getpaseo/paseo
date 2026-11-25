@@ -101,5 +101,7 @@ export function validateNewFolderName(name: string): string | null {
   const trimmed = name.trim();
   if (!trimmed || trimmed === "." || trimmed === "..") return "Enter a folder name";
   if (/[\\/]/.test(trimmed)) return "Use a name without slashes";
+  // The host rejects a drive prefix on every platform.
+  if (/^[A-Za-z]:/u.test(trimmed)) return "Use a name without a drive letter";
   return null;
 }
