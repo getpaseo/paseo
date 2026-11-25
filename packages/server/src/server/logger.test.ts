@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -207,6 +207,30 @@ describe("createRootLogger", () => {
     expect(logText).toContain('"proof":"file-explicit"');
     expect(logText).toContain('"msg":"explicit file logger"');
     expect(files).toEqual(["programmatic.log"]);
+    if (process.platform !== "win32") {
+      // The log carries verbatim agent stdout/stderr and must not be world-readable.
+      expect((await stat(logPath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("tightens permissions on a log file left world-readable by an older release", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-chmod-"));
+    const logPath = path.join(paseoHome, "daemon.log");
+    await writeFile(logPath, "", { mode: 0o644 });
+    await chmod(logPath, 0o644);
+
+    await runLoggerFixture(`
+      const logger = createRootLogger(
+        { log: { file: { path: ${JSON.stringify(logPath)} } } },
+        { paseoHome: ${JSON.stringify(paseoHome)} },
+      );
+      logger.info("permission fixup");
+      logger.flush();
+    `);
+
+    if (process.platform !== "win32") {
+      expect((await stat(logPath)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("can disable file output for supervised workers", async () => {
