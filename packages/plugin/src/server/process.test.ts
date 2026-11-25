@@ -60,12 +60,13 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
     "C:\\Program Files\\Sandbox\\run.cmd",
     "--profile",
     "work profile",
+    "",
     "C:\\tools\\agy.cmd",
     "acp",
   ];
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "win32")).toEqual({
     command: '"C:\\Program Files\\Sandbox\\run.cmd"',
-    args: ["--profile", '"work profile"', "C:\\tools\\agy.cmd", "acp"],
+    args: ["--profile", '"work profile"', '""', "C:\\tools\\agy.cmd", "acp"],
     shell: true,
   });
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "linux")).toEqual({

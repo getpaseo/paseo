@@ -157,16 +157,34 @@ export type PrepareWorktreeLifecycleCommand = (
   command: WorktreeLifecycleCommand,
 ) => Promise<PreparedWorktreeLifecycleCommand>;
 
-async function prepareLifecycleCommand(
-  prepare: PrepareWorktreeLifecycleCommand | undefined,
-  command: WorktreeLifecycleCommand,
-  fail: (message: string) => Error,
-): Promise<PreparedWorktreeLifecycleCommand> {
+/**
+ * Asks the hooks how to run `command`. Resolves to `null` when `signal` aborts first, such as at the
+ * teardown deadline or when archive cancels setup; the command must then not start.
+ */
+async function prepareLifecycleCommand(options: {
+  prepare: PrepareWorktreeLifecycleCommand | undefined;
+  command: WorktreeLifecycleCommand;
+  signal: AbortSignal | undefined;
+  fail: (message: string) => Error;
+}): Promise<PreparedWorktreeLifecycleCommand | null> {
+  const { prepare, command, signal } = options;
+  if (signal?.aborted) return null;
   if (!prepare) return { env: command.env };
+  let stopWaiting = () => {};
+  const aborted = new Promise<null>((settle) => {
+    const onAbort = () => settle(null);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    stopWaiting = () => signal?.removeEventListener("abort", onAbort);
+  });
+  const prepared = prepare(command).catch((error: unknown) => {
+    throw options.fail(error instanceof Error ? error.message : String(error));
+  });
+  // A hook that settles after the abort no longer matters; keep its rejection handled.
+  prepared.catch(() => {});
   try {
-    return await prepare(command);
-  } catch (error) {
-    throw fail(error instanceof Error ? error.message : String(error));
+    return await Promise.race([prepared, aborted]);
+  } finally {
+    stopWaiting();
   }
 }
 
@@ -740,12 +758,16 @@ export async function runWorktreeSetupCommands(options: {
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
-    const prepared = await prepareLifecycleCommand(
-      options.prepareCommand,
-      { command: cmd, env: { ...runtimeEnv } },
-      (message) =>
+    const prepared = await prepareLifecycleCommand({
+      prepare: options.prepareCommand,
+      command: { command: cmd, env: { ...runtimeEnv } },
+      signal: options.signal,
+      fail: (message) =>
         new WorktreeSetupError(`Worktree setup command refused: ${cmd}\n${message}`, results),
-    );
+    });
+    if (!prepared) {
+      throw new WorktreeSetupError(`Worktree setup canceled before: ${cmd}`, results);
+    }
     const setupEnv = createStringCommandShellEnv(
       createExternalProcessEnv(process.env, prepared.env),
     );
@@ -868,12 +890,19 @@ export async function runWorktreeTeardownCommands(options: {
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
   for (const [index, cmd] of teardownCommands.entries()) {
-    const prepared = await prepareLifecycleCommand(
-      options.prepareCommand,
-      { command: cmd, env: { ...runtimeEnv } },
-      (message) =>
+    const prepared = await prepareLifecycleCommand({
+      prepare: options.prepareCommand,
+      command: { command: cmd, env: { ...runtimeEnv } },
+      signal: deadline,
+      fail: (message) =>
         new WorktreeTeardownError(`Worktree teardown command refused: ${cmd}\n${message}`, results),
-    );
+    });
+    if (!prepared) {
+      throw new WorktreeTeardownError(
+        `Worktree teardown command failed: ${cmd}\nTimed out after ${timeoutMs / 1000}s`,
+        results,
+      );
+    }
     const result = await execSetupCommandStreamed({
       command: cmd,
       wrap: prepared.wrap,

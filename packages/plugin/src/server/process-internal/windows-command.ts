@@ -19,7 +19,8 @@ function escapeWindowsCmdValue(value: string, platform: NodeJS.Platform): string
   // escape for a literal `%`, so the format atoms become literals).
   const escaped = unquoted.replace(/([&|^<>()!])/g, "^$1");
 
-  if (isQuoted || /[\s"]/u.test(unquoted)) {
+  // An empty argument is quoted so cmd.exe keeps it in its position instead of dropping it.
+  if (isQuoted || unquoted === "" || /[\s"]/u.test(unquoted)) {
     const quoted = escaped
       .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
       .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
