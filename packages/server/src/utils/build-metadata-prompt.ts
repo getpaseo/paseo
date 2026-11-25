@@ -25,13 +25,24 @@ export interface BuildMetadataPromptOptions {
   after: string;
   trailing?: string;
   workspaceGitService?: RepoRootResolver;
+  daemonConfig?: {
+    metadataGeneration?: {
+      title?: { instructions?: string } | null;
+      branchName?: { instructions?: string } | null;
+      commitMessage?: { instructions?: string } | null;
+      pullRequest?: { instructions?: string } | null;
+    };
+  } | null;
 }
 
 export async function buildMetadataPrompt(options: BuildMetadataPromptOptions): Promise<string> {
-  const overrides = await readProjectMetadataOverrides(options);
-  const styleBlocks = options.styles.map((section) =>
-    renderStyleSection(section, overrides?.[section.configKey]?.instructions),
-  );
+  const projectOverrides = await readProjectMetadataOverrides(options);
+  const styleBlocks = options.styles.map((section) => {
+    const override =
+      projectOverrides?.[section.configKey]?.instructions ??
+      options.daemonConfig?.metadataGeneration?.[section.configKey]?.instructions;
+    return renderStyleSection(section, override);
+  });
   const head = [options.contract, ...styleBlocks, options.after].join("\n\n");
   return options.trailing ? `${head}\n\n${options.trailing}` : head;
 }

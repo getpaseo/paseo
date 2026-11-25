@@ -1099,6 +1099,7 @@ export class Session {
       checkoutDiffManager,
       gitMetadataGenerator: createGitMetadataGenerator({
         workspaceGitService: this.workspaceGitService,
+        readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
         generation: createAgentStructuredTextGeneration({
           agentManager: this.agentManager,
           providerSnapshotManager,

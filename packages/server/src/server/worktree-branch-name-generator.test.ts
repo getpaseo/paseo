@@ -326,6 +326,36 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(prompt).toContain("Aim for about 4 words");
   });
 
+  test("falls back to daemonConfig instructions when paseo.json is absent", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(undefined, {
+      metadataGeneration: {
+        title: { instructions: "Global title instructions in Chinese." },
+        branchName: { instructions: "global/prefix-" },
+      },
+    });
+
+    expect(prompt).toContain("Title style:\nGlobal title instructions in Chinese.");
+    expect(prompt).toContain("Branch style:\nglobal/prefix-");
+  });
+
+  test("prefers project paseo.json instructions over daemonConfig instructions", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(
+      {
+        metadataGeneration: { title: { instructions: "Project title in Spanish." } },
+      },
+      {
+        metadataGeneration: {
+          title: { instructions: "Global title instructions in Chinese." },
+          branchName: { instructions: "global/prefix-" },
+        },
+      },
+    );
+
+    expect(prompt).toContain("Title style:\nProject title in Spanish.");
+    expect(prompt).not.toContain("Global title instructions in Chinese.");
+    expect(prompt).toContain("Branch style:\nglobal/prefix-");
+  });
+
   test("the contract is never overridable by user instructions", async () => {
     const { prompt } = await generateBranchPromptWithConfig({
       metadataGeneration: {
@@ -386,7 +416,10 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 });
 
-async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt: string }> {
+async function generateBranchPromptWithConfig(
+  config: unknown,
+  daemonConfig?: StructuredGenerationDaemonConfig | null,
+): Promise<{ prompt: string }> {
   const repoRoot = createTempDir("paseo-branch-config-");
   if (typeof config === "string") {
     writeFileSync(path.join(repoRoot, "paseo.json"), config);
@@ -405,6 +438,7 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     workspaceGitService: createNoopWorkspaceGitService({
       resolveRepoRoot: async () => repoRoot,
     }),
+    daemonConfig,
     firstAgentContext: { prompt: "Fix the login flow" },
     logger: createLogger(),
     deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
