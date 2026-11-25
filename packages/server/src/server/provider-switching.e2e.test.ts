@@ -767,4 +767,80 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     await client2.client.setAgentModel(agent.id, "gpt-5.4-mini");
     expect(codex.sessions[0].setModelCalls).toEqual(["gpt-5.4", "gpt-5.4-mini"]);
   });
+
+  it("keeps waitForFinish following a provider switch started while the target session is still opening", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-wait-startup-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const client1 = await connectClient(url);
+    const client2 = await connectClient(url);
+
+    const agent = await client1.client.createAgent({ provider: "claude", cwd });
+    await client1.client.sendMessage(agent.id, "First Claude turn", undefined, {
+      messageId: "msg-ws-1",
+    });
+    const firstFinish = await client2.client.waitForFinish(agent.id, 10_000);
+    expect(firstFinish.status).toBe("idle");
+    expect(firstFinish.lastMessage).toBe("claude reply 1");
+
+    let resolveCodexCreate!: () => void;
+    codex.createSessionGate = new Promise<void>((resolve) => {
+      resolveCodexCreate = resolve;
+    });
+    let resolveCodexCreateStarted!: () => void;
+    const codexCreateStarted = new Promise<void>((resolve) => {
+      resolveCodexCreateStarted = resolve;
+    });
+    codex.onCreateSessionStarted = resolveCodexCreateStarted;
+
+    let resolveCodexTurn!: () => void;
+    codex.turnCompletionGate = new Promise<void>((resolve) => {
+      resolveCodexTurn = resolve;
+    });
+    let resolveCodexTurnStarted!: () => void;
+    const codexTurnStarted = new Promise<void>((resolve) => {
+      resolveCodexTurnStarted = resolve;
+    });
+    codex.onTurnStarted = resolveCodexTurnStarted;
+
+    // Client 1 starts switching to Codex; pause during Codex createSession.
+    const switchPromise = client1.client.switchAgentProvider(agent.id, {
+      provider: "codex",
+      text: "Switch to Codex",
+      messageId: "msg-ws-sw",
+    });
+    await codexCreateStarted;
+
+    // During target startup, the source session is NOT yet blocked from normal turns/rewinds,
+    // while Client 2's waitForFinish must wait for the switch instead of returning "claude reply 1".
+    expect(daemon.daemon.agentManager.hasInFlightRun(agent.id)).toBe(false);
+    let waitSettled = false;
+    const waitDuringStartup = client2.client.waitForFinish(agent.id, 15_000).then((res) => {
+      waitSettled = true;
+      return res;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(waitSettled).toBe(false);
+
+    // Let Codex finish opening and start turn 1; waitForFinish must still stay attached.
+    resolveCodexCreate();
+    await codexTurnStarted;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(waitSettled).toBe(false);
+
+    // Finish Codex's first turn and confirm Client 2 receives Codex's reply, not Claude's.
+    resolveCodexTurn();
+    const [switched, finish] = await Promise.all([switchPromise, waitDuringStartup]);
+    expect(switched.agent?.provider).toBe("codex");
+    expect(finish.status).toBe("idle");
+    expect(finish.final?.provider).toBe("codex");
+    expect(finish.lastMessage).toBe("codex reply 1");
+  });
 });

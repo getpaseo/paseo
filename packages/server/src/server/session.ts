@@ -9588,10 +9588,9 @@ export class Session {
       : null;
 
     try {
-      await this.agentMessages.waitForDispatch(
-        agentId,
-        AbortSignal.any([abortController.signal, sourceSignal]),
-      );
+      const waitSignal = AbortSignal.any([abortController.signal, sourceSignal]);
+      await this.agentMessages.waitForDispatch(agentId, waitSignal);
+      await this.agentManager.waitForProviderSwitchUnlessAborted(agentId, waitSignal);
 
       const live = this.agentManager.getAgent(agentId);
       if (!live) {

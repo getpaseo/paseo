@@ -1182,10 +1182,13 @@ export class AgentManager {
     { readonly openedAt: number }
   >();
   private readonly collectingRuntimes = new Set<string>();
-  private readonly switchingAgentCounts = new Map<string, number>();
+  private readonly activeProviderSwitches = new Map<
+    string,
+    Set<{ handedOff: boolean; waitPromise: Promise<void>; resolveWait: () => void }>
+  >();
   private readonly providerSwitchReservations = new Map<
     string,
-    { token: string; promise: Promise<void>; resolve: () => void }
+    { token: string; promise: Promise<void>; resolve: () => void; onRelease?: () => void }
   >();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
@@ -1501,13 +1504,16 @@ export class AgentManager {
     return Boolean(this.agents.get(agentId)?.session?.steerActiveTurn);
   }
 
-  private reserveProviderSwitch(agentId: string): { token: string; release: () => void } {
+  private reserveProviderSwitch(
+    agentId: string,
+    onRelease?: () => void,
+  ): { token: string; release: () => void } {
     let resolveReservation!: () => void;
     const promise = new Promise<void>((res) => {
       resolveReservation = res;
     });
     const token = randomUUID();
-    const reservation = { token, promise, resolve: resolveReservation };
+    const reservation = { token, promise, resolve: resolveReservation, onRelease };
     this.providerSwitchReservations.set(agentId, reservation);
     return {
       token,
@@ -1519,7 +1525,21 @@ export class AgentManager {
     const current = this.providerSwitchReservations.get(agentId);
     if (!current || current.token !== token) return;
     this.providerSwitchReservations.delete(agentId);
+    current.onRelease?.();
     current.resolve();
+  }
+
+  private hasActiveProviderSwitch(agentId: string): boolean {
+    return (this.activeProviderSwitches.get(agentId)?.size ?? 0) > 0;
+  }
+
+  private findPendingProviderSwitchWait(agentId: string): Promise<void> | null {
+    const entries = this.activeProviderSwitches.get(agentId);
+    if (!entries) return null;
+    for (const entry of entries) {
+      if (!entry.handedOff) return entry.waitPromise;
+    }
+    return null;
   }
 
   private hasOtherProviderSwitchReservation(agentId: string, ignoreToken?: string): boolean {
@@ -2401,19 +2421,30 @@ export class AgentManager {
     input: SwitchAgentProviderInput,
   ): Promise<SwitchAgentProviderResult> {
     const resolvedAgentId = validateAgentId(agentId, "switchAgentProvider");
-    this.switchingAgentCounts.set(
-      resolvedAgentId,
-      (this.switchingAgentCounts.get(resolvedAgentId) ?? 0) + 1,
-    );
+    let resolveWait!: () => void;
+    const waitPromise = new Promise<void>((res) => {
+      resolveWait = res;
+    });
+    const activeSwitch = { handedOff: false, waitPromise, resolveWait };
+    const markHandedOff = () => {
+      if (activeSwitch.handedOff) return;
+      activeSwitch.handedOff = true;
+      activeSwitch.resolveWait();
+    };
+    let entries = this.activeProviderSwitches.get(resolvedAgentId);
+    if (!entries) {
+      entries = new Set();
+      this.activeProviderSwitches.set(resolvedAgentId, entries);
+    }
+    entries.add(activeSwitch);
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, () =>
-        this.switchAgentProviderUnlocked(resolvedAgentId, input),
+        this.switchAgentProviderUnlocked(resolvedAgentId, input, markHandedOff),
       ).finally(() => {
-        const remaining = (this.switchingAgentCounts.get(resolvedAgentId) ?? 1) - 1;
-        if (remaining <= 0) {
-          this.switchingAgentCounts.delete(resolvedAgentId);
-        } else {
-          this.switchingAgentCounts.set(resolvedAgentId, remaining);
+        markHandedOff();
+        entries.delete(activeSwitch);
+        if (entries.size === 0 && this.activeProviderSwitches.get(resolvedAgentId) === entries) {
+          this.activeProviderSwitches.delete(resolvedAgentId);
         }
       }),
     );
@@ -2568,6 +2599,7 @@ export class AgentManager {
     existingLive: ActiveManagedAgent | null,
     storedRecord: StoredAgentRecord | null,
     source: { fromProvider: AgentProvider; persistedTitle: string | null; cwd: string },
+    markHandedOff: () => void,
   ): Promise<SwitchAgentProviderResult | null> {
     const activeHead = await this.timeline.describe(scope);
     if (!activeHead || activeHead.activeSegmentStartSeq <= 0) {
@@ -2607,8 +2639,10 @@ export class AgentManager {
       context: handoff.summary,
     };
     if (input.admitFirstTurn) {
-      await this.runWithSwitchAdmissionLock(agentId, (release) =>
-        input.admitFirstTurn!(result, release),
+      await this.runWithSwitchAdmissionLock(
+        agentId,
+        (token) => input.admitFirstTurn!(result, token),
+        markHandedOff,
       );
     }
     return result;
@@ -2617,8 +2651,9 @@ export class AgentManager {
   private async runWithSwitchAdmissionLock<T>(
     agentId: string,
     fn: (switchReservationToken: string) => Promise<T>,
+    onRelease?: () => void,
   ): Promise<T> {
-    const reservation = this.reserveProviderSwitch(agentId);
+    const reservation = this.reserveProviderSwitch(agentId, onRelease);
     try {
       return await fn(reservation.token);
     } finally {
@@ -2682,6 +2717,7 @@ export class AgentManager {
   private async switchAgentProviderUnlocked(
     agentId: string,
     input: SwitchAgentProviderInput,
+    markHandedOff: () => void,
   ): Promise<SwitchAgentProviderResult> {
     this.assertAcceptingAgentRegistrations();
     await this.reconcilePendingProviderSwitchUnlocked(agentId);
@@ -2698,6 +2734,7 @@ export class AgentManager {
         existingLive,
         storedRecord,
         source,
+        markHandedOff,
       );
       if (resumed) {
         return resumed;
@@ -2759,7 +2796,7 @@ export class AgentManager {
       // reserve exclusive switch admission without yielding so no turn or rewind can sneak in
       // and waitForAgentEvent follows this chat seamlessly through session replacement.
       this.assertSourceAgentIdleForSwitch(agentId, existingLive);
-      switchReservation = this.reserveProviderSwitch(agentId);
+      switchReservation = this.reserveProviderSwitch(agentId, markHandedOff);
 
       // Read handoff AFTER reserving switch admission and settling any open rewind so
       // the marker context and first prompt reflect the exact active history.
@@ -3533,7 +3570,7 @@ export class AgentManager {
     agentId: string,
     options?: { expectedProvider?: AgentProvider },
   ): void {
-    if (!options?.expectedProvider && this.switchingAgentCounts.has(agentId)) {
+    if (!options?.expectedProvider && this.hasActiveProviderSwitch(agentId)) {
       throw new Error(
         `Cannot update settings while agent ${agentId} is switching providers without specifying expectedProvider`,
       );
@@ -5607,7 +5644,41 @@ export class AgentManager {
     return lastAssistantMessageText(timeline.map((item) => ({ item })));
   }
 
-  /** Wait for an in-flight provider switch reservation and/or starting foreground run. */
+  /** Wait until any in-flight provider switch for `agentId` has handed off into turn 1 or failed. */
+  async waitForProviderSwitchUnlessAborted(
+    agentId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const wait = async () => {
+      while (true) {
+        const reservation = this.providerSwitchReservations.get(agentId);
+        if (reservation) {
+          await reservation.promise;
+          continue;
+        }
+        const pendingSwitchWait = this.findPendingProviderSwitchWait(agentId);
+        if (pendingSwitchWait) {
+          await pendingSwitchWait;
+          continue;
+        }
+        return;
+      }
+    };
+    if (!signal) return await wait();
+    if (signal.aborted) throw createAbortError(signal, "wait_for_agent aborted");
+    let onAbort: () => void = () => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(createAbortError(signal, "wait_for_agent aborted"));
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([wait(), aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /** Wait for an in-flight provider switch startup/reservation and/or starting foreground run. */
   private async waitForForegroundStart(agentId: string): Promise<void> {
     while (true) {
       const reservation = this.providerSwitchReservations.get(agentId);
@@ -5615,8 +5686,16 @@ export class AgentManager {
         await reservation.promise;
         continue;
       }
+      const pendingSwitchWait = this.findPendingProviderSwitchWait(agentId);
+      if (pendingSwitchWait) {
+        await pendingSwitchWait;
+        continue;
+      }
       await this.runs.waitForForegroundStart(agentId);
-      if (!this.providerSwitchReservations.has(agentId)) {
+      if (
+        !this.providerSwitchReservations.has(agentId) &&
+        !this.findPendingProviderSwitchWait(agentId)
+      ) {
         return;
       }
     }
@@ -5645,7 +5724,11 @@ export class AgentManager {
     agentId: string,
     options?: WaitForAgentOptions,
   ): Promise<WaitForAgentResult> {
-    if (!this.getAgent(agentId) && !this.providerSwitchReservations.has(agentId)) {
+    if (
+      !this.getAgent(agentId) &&
+      !this.providerSwitchReservations.has(agentId) &&
+      !this.hasActiveProviderSwitch(agentId)
+    ) {
       throw new Error(`Agent ${agentId} not found`);
     }
     // A provider switch or starting run publishes its running state only once the replacement
