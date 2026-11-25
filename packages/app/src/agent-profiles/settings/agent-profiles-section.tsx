@@ -569,6 +569,11 @@ function AgentProfileEditorHost({
   );
 }
 
+export interface AgentProfilesBeforeLeaveGuard {
+  isDirty: () => boolean;
+  confirmDiscard: () => Promise<boolean>;
+}
+
 /**
  * Dedicated Host → Agent profiles page: wide 3-column roster paired with a right
  * inspector drawer on desktop (overlay on medium panes, docked side-by-side on wide panes)
@@ -581,7 +586,7 @@ export function AgentProfilesPage({
 }: {
   serverId: string;
   onBack?: () => void;
-  onRegisterBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void;
+  onRegisterBeforeLeave?: (guard: AgentProfilesBeforeLeaveGuard | null) => void;
 }): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -635,7 +640,10 @@ export function AgentProfilesPage({
   }, [t]);
 
   useEffect(() => {
-    onRegisterBeforeLeave?.(confirmDiscardIfDirty);
+    onRegisterBeforeLeave?.({
+      isDirty: () => isDirtyRef.current,
+      confirmDiscard: confirmDiscardIfDirty,
+    });
     return () => {
       onRegisterBeforeLeave?.(null);
     };

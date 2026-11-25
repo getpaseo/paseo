@@ -21,7 +21,7 @@ import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
-import { AgentProfilesPage } from "@/agent-profiles";
+import { AgentProfilesPage, type AgentProfilesBeforeLeaveGuard } from "@/agent-profiles";
 import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { PageLayout } from "@/components/page-layout";
@@ -316,7 +316,7 @@ export function HostAgentProfilesPage({
 }: {
   serverId: string;
   onBack?: () => void;
-  onRegisterBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void;
+  onRegisterBeforeLeave?: (guard: AgentProfilesBeforeLeaveGuard | null) => void;
 }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);

@@ -1,5 +1,6 @@
 import { expect, test } from "../support/fixtures";
 import {
+  browserBackWithConfirm,
   createAgentProfile,
   createAgentProfileFromEmptyState,
   duplicateOpenAgentProfileWithConfirm,
@@ -256,6 +257,16 @@ test.describe("Agent profiles settings", () => {
         await page.getByTestId("agent-profiles-search-clear").click();
       });
 
+      await test.step("browser Back asks before discarding a draft and canceling keeps route and draft", async () => {
+        await fillAgentProfileName(page, "Unsaved browser back edit");
+        const profilesUrl = page.url();
+
+        await browserBackWithConfirm(page, "dismiss");
+        expect(page.url()).toBe(profilesUrl);
+        await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+        await expectAgentProfileNameDraft(page, "Unsaved browser back edit");
+      });
+
       await test.step("switching Settings sections asks before discarding an edited draft", async () => {
         await fillAgentProfileName(page, "Unsaved sidebar edit");
 
@@ -266,6 +277,18 @@ test.describe("Agent profiles settings", () => {
         await switchSettingsSectionWithConfirm(page, "Agents", "accept");
         await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
         await expect(page.getByTestId("settings-detail-header-title")).toHaveText("Agents");
+      });
+
+      await test.step("confirming browser Back leaves Agent profiles and discards the draft", async () => {
+        await page.getByRole("button", { name: "Agent profiles", exact: true }).click();
+        await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
+        await openAgentProfileEditor(page, "UI work");
+        await fillAgentProfileName(page, "Discard on browser back");
+        const profilesUrl = page.url();
+
+        await browserBackWithConfirm(page, "accept");
+        await expect(page).not.toHaveURL(profilesUrl, { timeout: 15_000 });
+        await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
       });
     } finally {
       await seed.restore();

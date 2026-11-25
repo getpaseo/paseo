@@ -465,6 +465,23 @@ export async function switchSettingsSectionWithConfirm(
   expect(await dialogMessage).toMatch(/discard|unsaved/i);
 }
 
+export async function browserBackWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.goBack();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
 /** Opens the inspector for a profile purely to read back what it stored. */
 export async function expectAgentProfileForm(
   page: Page,

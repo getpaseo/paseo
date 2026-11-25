@@ -1,11 +1,12 @@
 import { useSettingsContentPresented } from "@/navigation/settings-presentation";
+import { registerRouteLeaveGuard } from "@/navigation/route-leave-guard";
 import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
-import { useRouter } from "expo-router";
+import { useNavigation, usePathname, useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -1110,6 +1111,85 @@ function SettingsSidebar({
   );
 }
 
+interface SettingsBeforeLeaveGuard {
+  isDirty: () => boolean;
+  confirmDiscard: () => Promise<boolean>;
+}
+
+/**
+ * Lets an active Settings editor (such as Agent profiles) veto both in-app
+ * section switches and route-boundary exits (browser Back, native swipe-back,
+ * hardware Back) with a single discard confirmation.
+ */
+function useSettingsBeforeLeaveGuard() {
+  const navigation = useNavigation();
+  const pathname = usePathname();
+  const beforeLeaveRef = useRef<SettingsBeforeLeaveGuard | null>(null);
+  const historyEntryRef = useRef<{ state: unknown; path: string } | null>(null);
+
+  const registerBeforeLeave = useCallback((guard: SettingsBeforeLeaveGuard | null) => {
+    beforeLeaveRef.current = guard;
+  }, []);
+
+  useEffect(() => {
+    if (!isWeb || typeof window === "undefined") {
+      return;
+    }
+    const capture = () => {
+      if (window.location.pathname === pathname) {
+        historyEntryRef.current = {
+          state: window.history.state,
+          path: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        };
+      }
+    };
+    capture();
+    const frame = window.requestAnimationFrame(capture);
+    return () => window.cancelAnimationFrame(frame);
+  }, [pathname]);
+
+  useEffect(() => {
+    return registerRouteLeaveGuard({
+      isDirty: () => Boolean(beforeLeaveRef.current?.isDirty()),
+      confirmDiscard: async () => (await beforeLeaveRef.current?.confirmDiscard()) ?? true,
+      getCurrentEntry: () => historyEntryRef.current,
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("beforeRemove", (event) => {
+      const guard = beforeLeaveRef.current;
+      if (!guard?.isDirty()) {
+        return;
+      }
+      event.preventDefault();
+      const confirmAndLeave = async () => {
+        if (await guard.confirmDiscard()) {
+          navigation.dispatch(event.data.action);
+        }
+      };
+      void confirmAndLeave();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const guardNavigation = useCallback((navigate: () => void) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigate();
+      return;
+    }
+    const run = async () => {
+      if (await guard.confirmDiscard()) {
+        navigate();
+      }
+    };
+    void run();
+  }, []);
+
+  return { registerBeforeLeave, guardNavigation };
+}
+
 function SettingsDetailPane({
   view,
   isCompactLayout,
@@ -1126,7 +1206,7 @@ function SettingsDetailPane({
   detailActions: React.ReactNode;
   detailWidth: React.ComponentProps<typeof PageLayout>["width"];
   onBack: () => void;
-  onRegisterBeforeLeave: (guard: (() => Promise<boolean>) | null) => void;
+  onRegisterBeforeLeave: (guard: SettingsBeforeLeaveGuard | null) => void;
   content: React.ReactNode;
 }) {
   const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
@@ -1262,24 +1342,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   );
 
   const handleAddHost = useAddHost({ onAdded: handleHostAdded });
-  const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const registerBeforeLeave = useCallback((guard: (() => Promise<boolean>) | null) => {
-    beforeLeaveRef.current = guard;
-  }, []);
-
-  const guardNavigation = useCallback((navigate: () => void) => {
-    const guard = beforeLeaveRef.current;
-    if (!guard) {
-      navigate();
-      return;
-    }
-    const run = async () => {
-      if (await guard()) {
-        navigate();
-      }
-    };
-    void run();
-  }, []);
+  const { registerBeforeLeave, guardNavigation } = useSettingsBeforeLeaveGuard();
 
   const navigateRoute = useCallback(
     (target: Parameters<typeof router.push>[0]) => {
