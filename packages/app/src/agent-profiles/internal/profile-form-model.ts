@@ -133,6 +133,7 @@ export interface AgentProfileFormState {
   controlsRequestKey: string | null;
 
   disclosure: AgentProfileFormDisclosure;
+  isDirty: boolean;
   isSubmitting: boolean;
   submitError: string | null;
   canSubmit: boolean;
@@ -451,6 +452,28 @@ export function buildControlsRequestKey(
     : scope;
 }
 
+function stableOptionsKey(record: ProviderOptions): string {
+  const keys = Object.keys(record).sort();
+  if (keys.length === 0) {
+    return "";
+  }
+  return JSON.stringify(keys.map((key) => [key, record[key]]));
+}
+
+function formDraftFingerprint(state: AgentProfileFormState): string {
+  return JSON.stringify([
+    state.name.trim(),
+    state.icon,
+    state.color,
+    state.provider,
+    state.modelId,
+    state.modeId,
+    state.thinkingOptionId,
+    state.notes.trim(),
+    stableOptionsKey(ownOptionsOf(state)),
+  ]);
+}
+
 function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | null {
   const name = state.name.trim();
   const notes = state.notes.trim();
@@ -535,6 +558,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
       showThinkingField: false,
       showControlsField: false,
     },
+    isDirty: false,
     isSubmitting: false,
     submitError: null,
     canSubmit: false,
@@ -649,6 +673,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let answeredKeys: ReadonlySet<string> = new Set();
   let listeners = new Set<() => void>();
   let closed = false;
+  let hasUserEdited = false;
+  let baselineFingerprint = "";
   let autoSuggestedName: string | null =
     snapshot.mode === "create" ? (snapshot.seed?.name ?? null) : null;
 
@@ -730,16 +756,35 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       withOptions.provider.length > 0 &&
       !withOptions.isSubmitting;
     const resolved: AgentProfileFormState = { ...withOptions, disclosure, canSubmit };
-    return { ...resolved, submitValue: canSubmit ? buildSubmitValue(resolved) : null };
+    const submitValue = canSubmit ? buildSubmitValue(resolved) : null;
+    const isDirty =
+      baselineFingerprint.length > 0 && formDraftFingerprint(resolved) !== baselineFingerprint;
+    return { ...resolved, isDirty, submitValue };
   }
 
   let state: AgentProfileFormState = derive(buildInitialState(snapshot));
+  baselineFingerprint = formDraftFingerprint(state);
 
-  function publish(mutate: (current: AgentProfileFormState) => AgentProfileFormState): void {
+  function publish(
+    mutate: (current: AgentProfileFormState) => AgentProfileFormState,
+    options?: { userEdit?: boolean },
+  ): void {
     if (closed) {
       return;
     }
-    state = derive(mutate(state));
+    if (options?.userEdit) {
+      hasUserEdited = true;
+    }
+    let nextState = derive(mutate(state));
+    // Catalog hydration fills in missing provider defaults (e.g., default mode on a
+    // migrated favorite); refresh the clean baseline until the user makes an edit.
+    if (!hasUserEdited) {
+      baselineFingerprint = formDraftFingerprint(nextState);
+      if (nextState.isDirty) {
+        nextState = { ...nextState, isDirty: false };
+      }
+    }
+    state = nextState;
     for (const listener of listeners) {
       listener();
     }
@@ -787,61 +832,29 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => current);
     },
     setName: (value) =>
-      publish((current) => {
-        if (value !== autoSuggestedName) {
-          autoSuggestedName = null;
-        }
-        return { ...current, name: value };
-      }),
+      publish(
+        (current) => {
+          if (value !== autoSuggestedName) {
+            autoSuggestedName = null;
+          }
+          return { ...current, name: value };
+        },
+        { userEdit: true },
+      ),
     setAppearance: (value) =>
-      publish((current) => ({ ...current, icon: value.icon, color: value.color })),
-    setNotes: (value) => publish((current) => ({ ...current, notes: value })),
-    setProvider: (providerId, display) =>
-      publish((current) => {
-        if (current.provider === providerId) {
-          return current;
-        }
-        // Everything below the provider is provider-scoped: a model id, mode id,
-        // thinking id or feature id from the old provider means nothing here.
-        // Clearing them is enough — `derive` seeds the new provider's defaults.
-        drawnKeys = new Set();
-        answeredKeys = new Set();
-        resolvedProvider = null;
-        resolvedScopeKey = null;
-        resolvedControlsKey = null;
-        resolvedControls = [];
-        resolvedOptions = {};
-        return {
-          ...current,
-          provider: providerId,
-          providerDisplay: display,
-          modelId: "",
-          modelDisplay: null,
-          modeId: "",
-          modeDisplay: null,
-          thinkingOptionId: "",
-          thinkingDisplay: null,
-          options: {},
-          optionEdits: {},
-        };
+      publish((current) => ({ ...current, icon: value.icon, color: value.color }), {
+        userEdit: true,
       }),
-    setProviderModel: (providerId, modelId, displays) =>
-      publish((current) => {
-        const providerChanged = current.provider !== providerId;
-        const modelChanged = current.modelId !== modelId;
-        if (!providerChanged && !modelChanged) {
-          return current;
-        }
-        const suggested = displays.model?.label ?? displays.provider.label;
-        const shouldAutoName =
-          current.mode === "create" &&
-          (current.name.trim().length === 0 ||
-            (autoSuggestedName !== null && current.name === autoSuggestedName));
-        const nextName = shouldAutoName ? suggested : current.name;
-        if (shouldAutoName) {
-          autoSuggestedName = suggested;
-        }
-        if (providerChanged) {
+    setNotes: (value) => publish((current) => ({ ...current, notes: value }), { userEdit: true }),
+    setProvider: (providerId, display) =>
+      publish(
+        (current) => {
+          if (current.provider === providerId) {
+            return current;
+          }
+          // Everything below the provider is provider-scoped: a model id, mode id,
+          // thinking id or feature id from the old provider means nothing here.
+          // Clearing them is enough — `derive` seeds the new provider's defaults.
           drawnKeys = new Set();
           answeredKeys = new Set();
           resolvedProvider = null;
@@ -851,11 +864,10 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           resolvedOptions = {};
           return {
             ...current,
-            name: nextName,
             provider: providerId,
-            providerDisplay: displays.provider,
-            modelId,
-            modelDisplay: displays.model,
+            providerDisplay: display,
+            modelId: "",
+            modelDisplay: null,
             modeId: "",
             modeDisplay: null,
             thinkingOptionId: "",
@@ -863,48 +875,100 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
             options: {},
             optionEdits: {},
           };
-        }
-        const nextThinking = resolveThinkingOptions(entries, current.provider, modelId);
-        const keepsThinking =
-          current.thinkingOptionId.length > 0 &&
-          nextThinking.some((option) => option.id === current.thinkingOptionId);
-        return {
-          ...current,
-          name: nextName,
-          modelId,
-          modelDisplay: displays.model,
-          thinkingOptionId: keepsThinking ? current.thinkingOptionId : "",
-          thinkingDisplay: keepsThinking ? current.thinkingDisplay : null,
-        };
-      }),
+        },
+        { userEdit: true },
+      ),
+    setProviderModel: (providerId, modelId, displays) =>
+      publish(
+        (current) => {
+          const providerChanged = current.provider !== providerId;
+          const modelChanged = current.modelId !== modelId;
+          if (!providerChanged && !modelChanged) {
+            return current;
+          }
+          const suggested = displays.model?.label ?? displays.provider.label;
+          const shouldAutoName =
+            current.mode === "create" &&
+            (current.name.trim().length === 0 ||
+              (autoSuggestedName !== null && current.name === autoSuggestedName));
+          const nextName = shouldAutoName ? suggested : current.name;
+          if (shouldAutoName) {
+            autoSuggestedName = suggested;
+          }
+          if (providerChanged) {
+            drawnKeys = new Set();
+            answeredKeys = new Set();
+            resolvedProvider = null;
+            resolvedScopeKey = null;
+            resolvedControlsKey = null;
+            resolvedControls = [];
+            resolvedOptions = {};
+            return {
+              ...current,
+              name: nextName,
+              provider: providerId,
+              providerDisplay: displays.provider,
+              modelId,
+              modelDisplay: displays.model,
+              modeId: "",
+              modeDisplay: null,
+              thinkingOptionId: "",
+              thinkingDisplay: null,
+              options: {},
+              optionEdits: {},
+            };
+          }
+          const nextThinking = resolveThinkingOptions(entries, current.provider, modelId);
+          const keepsThinking =
+            current.thinkingOptionId.length > 0 &&
+            nextThinking.some((option) => option.id === current.thinkingOptionId);
+          return {
+            ...current,
+            name: nextName,
+            modelId,
+            modelDisplay: displays.model,
+            thinkingOptionId: keepsThinking ? current.thinkingOptionId : "",
+            thinkingDisplay: keepsThinking ? current.thinkingDisplay : null,
+          };
+        },
+        { userEdit: true },
+      ),
     setModel: (modelId, display) =>
-      publish((current) => {
-        if (current.modelId === modelId) {
-          return current;
-        }
-        // Thinking options are a property of the model, so a level the new model
-        // does not offer has to go.
-        const nextThinking = resolveThinkingOptions(entries, current.provider, modelId);
-        const keepsThinking =
-          current.thinkingOptionId.length > 0 &&
-          nextThinking.some((option) => option.id === current.thinkingOptionId);
-        return {
-          ...current,
-          modelId,
-          modelDisplay: display,
-          thinkingOptionId: keepsThinking ? current.thinkingOptionId : "",
-          thinkingDisplay: keepsThinking ? current.thinkingDisplay : null,
-        };
-      }),
+      publish(
+        (current) => {
+          if (current.modelId === modelId) {
+            return current;
+          }
+          // Thinking options are a property of the model, so a level the new model
+          // does not offer has to go.
+          const nextThinking = resolveThinkingOptions(entries, current.provider, modelId);
+          const keepsThinking =
+            current.thinkingOptionId.length > 0 &&
+            nextThinking.some((option) => option.id === current.thinkingOptionId);
+          return {
+            ...current,
+            modelId,
+            modelDisplay: display,
+            thinkingOptionId: keepsThinking ? current.thinkingOptionId : "",
+            thinkingDisplay: keepsThinking ? current.thinkingDisplay : null,
+          };
+        },
+        { userEdit: true },
+      ),
     setMode: (modeId, display) =>
-      publish((current) => ({ ...current, modeId, modeDisplay: display })),
+      publish((current) => ({ ...current, modeId, modeDisplay: display }), { userEdit: true }),
     setThinking: (thinkingOptionId, display) =>
-      publish((current) => ({ ...current, thinkingOptionId, thinkingDisplay: display })),
+      publish((current) => ({ ...current, thinkingOptionId, thinkingDisplay: display }), {
+        userEdit: true,
+      }),
     setOption: (key, value) =>
-      publish((current) => ({
-        ...current,
-        optionEdits: { ...current.optionEdits, [key]: value },
-      })),
+      publish(
+        (current) => ({
+          ...current,
+          optionEdits: { ...current.optionEdits, [key]: value },
+        }),
+        { userEdit: true },
+      ),
     setSubmitting: (value) => publish((current) => ({ ...current, isSubmitting: value })),
     setSubmitError: (value) => publish((current) => ({ ...current, submitError: value })),
   };

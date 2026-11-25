@@ -703,6 +703,31 @@ describe("openAgentProfileForm", () => {
     expect(notifications).toBe(1);
     expect(model.getState().name).toBe("a");
   });
+
+  it("does not treat catalog-prefilled defaults on a minimal profile as an unsaved edit", () => {
+    const model = openAgentProfileForm({
+      mode: "edit",
+      profile: {
+        id: "legacy_favorite:claude:claude-opus-5",
+        name: "Opus 5",
+        provider: "claude",
+        model: "claude-opus-5",
+      },
+    });
+    expect(model.getState().isDirty).toBe(false);
+
+    // Catalog fills in default modeId ("plan") and thinkingOptionId ("think").
+    model.applyProviderCatalog(ENTRIES);
+    expect(model.getState().modeId).toBe("plan");
+    expect(model.getState().thinkingOptionId).toBe("think");
+    expect(model.getState().isDirty).toBe(false);
+
+    // User edit marks dirty; reverting back to the resolved initial value clears dirty.
+    model.setName("Renamed");
+    expect(model.getState().isDirty).toBe(true);
+    model.setName("Opus 5");
+    expect(model.getState().isDirty).toBe(false);
+  });
 });
 
 describe("buildControlsRequestKey", () => {

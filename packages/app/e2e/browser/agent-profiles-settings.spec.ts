@@ -325,6 +325,18 @@ test.describe("Agent profiles settings", () => {
         await expectAgentProfileNameDraft(page, "Unsaved multi-step edit");
       });
 
+      await test.step("canceling a two-step Back jump after reload still restores the Agent profiles URL", async () => {
+        await page.reload();
+        await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
+        await openAgentProfileEditor(page, "UI work");
+        await fillAgentProfileName(page, "Post-reload draft");
+
+        await browserHistoryJumpWithConfirm(page, -2, "dismiss");
+        await expect(page).toHaveURL(profilesUrl, { timeout: 15_000 });
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible();
+        await expectAgentProfileNameDraft(page, "Post-reload draft");
+      });
+
       await test.step("confirming a two-step Back jump lands directly on the selected destination", async () => {
         await browserHistoryJumpWithConfirm(page, -2, "accept");
         await expect(page).toHaveURL(/\/open-project/, { timeout: 15_000 });
@@ -338,6 +350,39 @@ test.describe("Agent profiles settings", () => {
         await expect(page).toHaveURL(/\/settings(?:\?|$)/, { timeout: 15_000 });
       });
     } finally {
+      await seed.restore();
+    }
+  });
+
+  test("canceling an untouched provider-and-model-only profile closes without a discard prompt", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([
+      {
+        id: "legacy_favorite:mock:one-minute-stream",
+        name: "One minute stream",
+        provider: "mock",
+        model: "one-minute-stream",
+      },
+    ]);
+
+    let dialogTriggered = false;
+    const onDialog = async (dialog: { dismiss: () => Promise<void> }) => {
+      dialogTriggered = true;
+      await dialog.dismiss();
+    };
+    page.on("dialog", onDialog);
+
+    try {
+      await page.setViewportSize({ width: 1680, height: 900 });
+      await openAgentProfileSettings(page);
+      await openAgentProfileEditor(page, "One minute stream");
+      await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+      await page.getByTestId("agent-profile-cancel-button").click();
+      await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
+      expect(dialogTriggered).toBe(false);
+    } finally {
+      page.off("dialog", onDialog);
       await seed.restore();
     }
   });
