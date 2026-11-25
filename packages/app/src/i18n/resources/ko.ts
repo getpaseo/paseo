@@ -1893,6 +1893,7 @@ export const ko: TranslationResources = {
       install: "Tailscale 받기",
       waiting: "이 호스트에서 Tailscale이 시작되기를 기다리는 중",
       alwaysOn: "항상 켜짐. 이 호스트가 이미 Tailscale 연결을 받고 있습니다",
+      socket: "꺼짐. 이 호스트가 로컬 소켓에서 수신 대기 중입니다",
       launch: "이 호스트를 시작하는 명령이 제어합니다",
       update: "Tailscale을 사용하려면 이 호스트를 업데이트하세요",
       updateDocs: "업데이트 방법",

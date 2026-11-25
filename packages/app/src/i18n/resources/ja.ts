@@ -1902,6 +1902,7 @@ export const ja: TranslationResources = {
       install: "Tailscale を入手",
       waiting: "このホストで Tailscale が起動するのを待っています",
       alwaysOn: "常にオン。このホストはすでに Tailscale からの接続を受け付けています",
+      socket: "オフ。このホストはローカルソケットで待ち受けています",
       launch: "このホストを起動するコマンドで制御されています",
       update: "Tailscale を使うにはこのホストを更新してください",
       updateDocs: "更新方法",

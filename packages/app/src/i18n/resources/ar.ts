@@ -1882,6 +1882,7 @@ export const ar: TranslationResources = {
       install: "احصل على Tailscale",
       waiting: "في انتظار بدء Tailscale على هذا المضيف",
       alwaysOn: "مفعّل دائمًا، لأن هذا المضيف يقبل اتصالات Tailscale بالفعل",
+      socket: "متوقف، لأن هذا المضيف يستمع على مقبس محلي",
       launch: "يتحكم فيه الأمر الذي يشغّل هذا المضيف",
       update: "حدّث هذا المضيف لاستخدام Tailscale",
       updateDocs: "طريقة التحديث",

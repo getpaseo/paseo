@@ -1915,6 +1915,7 @@ export const ptBR: TranslationResources = {
       install: "Baixar o Tailscale",
       waiting: "Aguardando o Tailscale iniciar neste host",
       alwaysOn: "Sempre ativado, porque este host já aceita conexões do Tailscale",
+      socket: "Desativado, porque este host escuta em um socket local",
       launch: "Controlado pelo comando que inicia este host",
       update: "Atualize este host para usar o Tailscale",
       updateDocs: "Como atualizar",

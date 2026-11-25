@@ -1928,6 +1928,7 @@ export const fr: TranslationResources = {
       install: "Obtenir Tailscale",
       waiting: "En attente du démarrage de Tailscale sur cet hôte",
       alwaysOn: "Toujours activé, car cet hôte accepte déjà les connexions Tailscale",
+      socket: "Désactivé, car cet hôte écoute sur un socket local",
       launch: "Contrôlé par la commande qui démarre cet hôte",
       update: "Mettez cet hôte à jour pour utiliser Tailscale",
       updateDocs: "Comment mettre à jour",

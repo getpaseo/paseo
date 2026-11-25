@@ -1915,6 +1915,7 @@ export const ru: TranslationResources = {
       install: "Скачать Tailscale",
       waiting: "Ожидаем запуска Tailscale на этом хосте",
       alwaysOn: "Всегда включено, так как хост уже принимает подключения Tailscale",
+      socket: "Выключено, так как хост слушает локальный сокет",
       launch: "Управляется командой, которая запускает этот хост",
       update: "Обновите этот хост, чтобы использовать Tailscale",
       updateDocs: "Как обновить",

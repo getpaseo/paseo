@@ -1864,6 +1864,7 @@ export const zhCN: TranslationResources = {
       install: "获取 Tailscale",
       waiting: "正在等待此主机上的 Tailscale 启动",
       alwaysOn: "始终开启，因为此主机已接受 Tailscale 连接",
+      socket: "已关闭，因为此主机监听的是本地套接字",
       launch: "由启动此主机的命令控制",
       update: "更新此主机以使用 Tailscale",
       updateDocs: "如何更新",

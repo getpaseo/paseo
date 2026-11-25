@@ -1930,6 +1930,7 @@ export const es: TranslationResources = {
       install: "Obtener Tailscale",
       waiting: "Esperando a que Tailscale se inicie en este host",
       alwaysOn: "Siempre activado, porque este host ya acepta conexiones de Tailscale",
+      socket: "Desactivado, porque este host escucha en un socket local",
       launch: "Lo controla el comando que inicia este host",
       update: "Actualiza este host para usar Tailscale",
       updateDocs: "Cómo actualizar",

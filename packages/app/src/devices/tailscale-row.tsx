@@ -1,7 +1,5 @@
 import { useCallback, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { TailscaleStatus } from "@getpaseo/protocol/messages";
-import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { SettingsAction, SettingsRowChildren, SettingsSwitch } from "@/components/settings";
 import { useToast } from "@/contexts/toast-context";
@@ -10,6 +8,7 @@ import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-run
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
+import { describeTailscale } from "./tailscale-hint";
 
 const UPDATES_DOCS_URL = "https://paseo.sh/docs/updates";
 const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
@@ -71,7 +70,7 @@ function TailscaleControl({ serverId, client }: { serverId: string; client: Host
     <>
       <SettingsSwitch
         label={LABEL}
-        hint={status ? describe(status, t) : t("devices.tailscale.hint")}
+        hint={status ? describeTailscale(status, t) : t("devices.tailscale.hint")}
         link={status?.state === "unavailable" ? installLink : undefined}
         error={tailscale.error}
         value={tailscale.value}
@@ -102,15 +101,6 @@ function TailscaleAddress({ address }: { address: string }) {
       />
     </SettingsRowChildren>
   );
-}
-
-/** The line under the label for each Tailscale state, most specific first. */
-function describe(status: TailscaleStatus, t: TFunction): string {
-  if (status.state === "unavailable") return t("devices.tailscale.unavailable");
-  if (status.state === "waiting") return t("devices.tailscale.waiting");
-  if (status.lockedBy === "launch") return t("devices.tailscale.launch");
-  if (status.lockedBy === "main") return t("devices.tailscale.alwaysOn");
-  return t("devices.tailscale.hint");
 }
 
 interface TailscaleChange {

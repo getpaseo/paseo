@@ -1911,6 +1911,7 @@ export const en = {
       install: "Get Tailscale",
       waiting: "Waiting for Tailscale to start on this host",
       alwaysOn: "Always on, because this host already accepts Tailscale connections",
+      socket: "Off, because this host listens on a local socket",
       launch: "Controlled by the command that starts this host",
       update: "Update this host to use Tailscale",
       updateDocs: "How to update",
