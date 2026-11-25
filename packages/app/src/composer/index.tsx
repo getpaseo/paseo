@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import {
   clearStagedProviderSwitch,
   getStagedProviderSwitch,
+  settleStagedProviderSwitch,
   useStagedProviderSwitch,
 } from "@/composer/provider-switch";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -1780,7 +1781,9 @@ function ComposerContentImpl({
         submission: createMessageSubmissionWriter(serverId),
         stagedProviderSwitch,
         onProviderSwitchCommitted: (agent) => {
-          clearStagedProviderSwitch(serverId, targetAgentId);
+          if (stagedProviderSwitch) {
+            settleStagedProviderSwitch(serverId, targetAgentId, stagedProviderSwitch);
+          }
           if (agent) {
             getHostRuntimeStore().tryAcceptAgentSnapshot(
               serverId,

@@ -613,4 +613,147 @@ describe("app provider switching integration", () => {
     expect(switchedCalls).toHaveLength(1);
     sessionStore.clearSession(serverId);
   });
+
+  it("preserves a newer staged provider choice made while an earlier queued switch reply is pending", async () => {
+    const serverId = "srv-newer-choice-queue";
+    const switchedCalls: Array<{ provider: string; text: string }> = [];
+    const sentCalls: string[] = [];
+    let resolveFirstSwitch!: (value: { agent?: AgentSnapshotPayload }) => void;
+
+    const fakeClient = {
+      switchAgentProvider: vi.fn((_agentId: string, opts: { provider: string; text: string }) => {
+        switchedCalls.push({ provider: opts.provider, text: opts.text });
+        if (switchedCalls.length === 1) {
+          return new Promise<{ agent?: AgentSnapshotPayload }>((resolve) => {
+            resolveFirstSwitch = resolve;
+          });
+        }
+        return Promise.resolve({
+          agent: { ...agentSnapshot(opts.provider), status: "running" },
+        });
+      }),
+      sendAgentMessage: vi.fn(async (_agentId: string, text: string) => {
+        sentCalls.push(text);
+        return { messageId: "unexpected-plain-send" };
+      }),
+      uploadFile: vi.fn(),
+    } as unknown as DaemonClient;
+
+    const runtime = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient,
+        connectToDaemon: async () => ({ client: fakeClient, serverId, hostname: null }),
+        getClientId: async () => "cid_newer_choice_queue",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(serverId, fakeClient, 1);
+    useSessionStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [serverId]: {
+          ...state.sessions[serverId]!,
+          serverInfo: {
+            serverId,
+            hostname: "localhost",
+            version: "0.18.0",
+            features: { providerSwitching: true },
+          },
+        },
+      },
+    }));
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("claude"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m1", text: "First switch to Codex", attachments: [] },
+            { id: "m2", text: "Second switch to Copilot", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.4",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: {},
+    });
+
+    // M1 begins switching to Codex.
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(switchedCalls).toEqual([{ provider: "codex", text: "First switch to Codex" }]);
+    });
+
+    // While Codex switch reply is still pending, user selects Copilot for the next prompt.
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "copilot",
+      model: "gpt-5",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: {},
+    });
+
+    // Codex switch reply arrives -> MUST NOT clear the newer Copilot draft!
+    resolveFirstSwitch({ agent: { ...agentSnapshot("codex"), status: "running" } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(getStagedProviderSwitch(serverId, "agent-1")?.provider).toBe("copilot");
+
+    // Once Codex goes idle and queue resumes, M2 MUST switch to Copilot (not send plainly to Codex).
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("codex"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(switchedCalls).toEqual([
+        { provider: "codex", text: "First switch to Codex" },
+        { provider: "copilot", text: "Second switch to Copilot" },
+      ]);
+    });
+    expect(sentCalls).toEqual([]);
+    expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
+    sessionStore.clearSession(serverId);
+  });
 });

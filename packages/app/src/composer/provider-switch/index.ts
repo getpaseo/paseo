@@ -1,6 +1,7 @@
 export {
   clearStagedProviderSwitch,
   getStagedProviderSwitch,
+  settleStagedProviderSwitch,
   useStagedProviderSwitch,
   useStagedProviderSwitchStore,
   type StagedProviderSwitch,

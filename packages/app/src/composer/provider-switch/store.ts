@@ -21,6 +21,7 @@ interface StagedProviderSwitchState {
     agentId: string,
     updater: (current: StagedProviderSwitch) => StagedProviderSwitch,
   ) => void;
+  settle: (serverId: string, agentId: string, sentDraft: StagedProviderSwitch) => void;
   clear: (serverId: string, agentId: string) => void;
   clearForServer: (serverId: string) => void;
 }
@@ -44,6 +45,16 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (updated === current) return state;
       const next = new Map(state.stagedByKey);
       next.set(key, updated);
+      return { stagedByKey: next };
+    }),
+
+  settle: (serverId, agentId, sentDraft) =>
+    set((state) => {
+      const key = stagedKey(serverId, agentId);
+      const current = state.stagedByKey.get(key);
+      if (!current || current !== sentDraft) return state;
+      const next = new Map(state.stagedByKey);
+      next.delete(key);
       return { stagedByKey: next };
     }),
 
@@ -78,6 +89,14 @@ export function getStagedProviderSwitch(
   return (
     useStagedProviderSwitchStore.getState().stagedByKey.get(stagedKey(serverId, agentId)) ?? null
   );
+}
+
+export function settleStagedProviderSwitch(
+  serverId: string,
+  agentId: string,
+  sentDraft: StagedProviderSwitch,
+): void {
+  useStagedProviderSwitchStore.getState().settle(serverId, agentId, sentDraft);
 }
 
 export function clearStagedProviderSwitch(serverId: string, agentId: string): void {

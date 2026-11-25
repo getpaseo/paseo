@@ -83,7 +83,7 @@ import {
 } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
-import { clearStagedProviderSwitch, getStagedProviderSwitch } from "@/composer/provider-switch";
+import { getStagedProviderSwitch, settleStagedProviderSwitch } from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -2933,7 +2933,9 @@ export class HostRuntimeStore {
           submission: createMessageSubmissionWriter(serverId),
           stagedProviderSwitch,
           onProviderSwitchCommitted: (agent) => {
-            clearStagedProviderSwitch(serverId, agentId);
+            if (stagedProviderSwitch) {
+              settleStagedProviderSwitch(serverId, agentId, stagedProviderSwitch);
+            }
             if (agent) {
               this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
             }
