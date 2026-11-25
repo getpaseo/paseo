@@ -560,12 +560,14 @@ export interface SpawnedACPProcess {
   stderrChunks?: string[];
 }
 
-type UninitializedACPProcess = Omit<SpawnedACPProcess, "initialize"> & {
+type ACPProbeProcess = SpawnedACPProcess & { ownsProcessGroup?: boolean };
+type UninitializedACPProcess = Omit<ACPProbeProcess, "initialize"> & {
   initialize?: InitializeResponse;
 };
 
 interface ACPProcessTransport {
   child: ChildProcessWithoutNullStreams;
+  ownsProcessGroup?: boolean;
   connection: ClientSideConnection;
   stderrChunks: string[];
   spawnReady: Promise<void>;
@@ -1362,6 +1364,7 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV, {
       signal,
       deferCleanupOnError: true,
+      ownsProcessGroup: true,
       client: this.buildProbeClient((params) => history.accept(params)),
     });
     try {
@@ -1553,8 +1556,9 @@ export class ACPAgentClient implements AgentClient {
       client?: ACPClient;
       signal?: AbortSignal;
       deferCleanupOnError?: boolean;
+      ownsProcessGroup?: boolean;
     },
-  ): Promise<SpawnedACPProcess> {
+  ): Promise<ACPProbeProcess> {
     const configuredOptions = ACPProviderOptionsSchema.parse(options?.providerOptions ?? {});
     const signal = options?.signal;
     signal?.throwIfAborted();
@@ -1562,25 +1566,28 @@ export class ACPAgentClient implements AgentClient {
     let closePromise: Promise<void> | undefined;
     const closeTransport = (): Promise<void> => {
       if (!transport) return Promise.resolve();
-      closePromise ??= terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      closePromise ??= terminateChildProcess(transport, 2_000, this.terminateProcess);
       return closePromise;
     };
     try {
       const spawned = await raceProviderRefreshAbort(
         signal,
-        this.spawnTransport(launchEnv, options?.client).then(async (spawnedTransport) => {
-          transport = spawnedTransport;
-          // Cancellation can close the process before initialize observes its failure.
-          void spawnedTransport.processError.catch(() => undefined);
-          if (signal?.aborted) {
-            await closeTransport();
-            signal.throwIfAborted();
-          }
-          return spawnedTransport;
-        }),
+        this.spawnTransport(launchEnv, options?.client, options?.ownsProcessGroup).then(
+          async (spawnedTransport) => {
+            transport = spawnedTransport;
+            // Cancellation can close the process before initialize observes its failure.
+            void spawnedTransport.processError.catch(() => undefined);
+            if (signal?.aborted) {
+              await closeTransport();
+              signal.throwIfAborted();
+            }
+            return spawnedTransport;
+          },
+        ),
       );
       const probe: UninitializedACPProcess = {
         child: spawned.child,
+        ownsProcessGroup: spawned.ownsProcessGroup,
         connection: spawned.connection,
         stderrChunks: spawned.stderrChunks,
       };
@@ -1594,7 +1601,7 @@ export class ACPAgentClient implements AgentClient {
           configuredOptions.clientCapabilities,
         ),
       );
-      const initializedProbe: SpawnedACPProcess = {
+      const initializedProbe: ACPProbeProcess = {
         ...probe,
         initialize,
       };
@@ -1624,10 +1631,13 @@ export class ACPAgentClient implements AgentClient {
   protected async spawnTransport(
     launchEnv?: Record<string, string>,
     client: ACPClient = this.buildProbeClient(),
+    ownsProcessGroup = false,
   ): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
+    const detached = ownsProcessGroup && process.platform !== "win32";
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
+      detached,
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
         overlays: [launchEnv],
@@ -1657,6 +1667,7 @@ export class ACPAgentClient implements AgentClient {
 
     return {
       child,
+      ownsProcessGroup: detached,
       connection,
       stderrChunks,
       spawnReady: spawnReadyPromise,
@@ -1740,7 +1751,7 @@ export class ACPAgentClient implements AgentClient {
     } catch (error) {
       this.logger.debug({ err: error, sessionId }, "ACP probe closeSession failed during cleanup");
     } finally {
-      await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
+      await terminateChildProcess(probe, 2_000, this.terminateProcess);
     }
   }
 
@@ -4548,12 +4559,16 @@ function coerceSessionConfigMetadata(
 }
 
 async function terminateChildProcess(
-  child: ChildProcessWithoutNullStreams,
+  { child, ownsProcessGroup }: Pick<ACPProbeProcess, "child" | "ownsProcessGroup">,
   timeoutMs: number,
   terminate: ProcessTerminator,
 ): Promise<void> {
   try {
-    await terminate(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
+    await terminate(child, {
+      gracefulTimeoutMs: timeoutMs,
+      forceTimeoutMs: timeoutMs,
+      ownsProcessGroup,
+    });
   } finally {
     child.stdin.destroy();
     child.stdout.destroy();

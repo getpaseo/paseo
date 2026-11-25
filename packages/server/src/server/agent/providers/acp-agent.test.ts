@@ -3013,6 +3013,107 @@ describe("ACPAgentClient import listing deadlines", () => {
     }).listImportableSessions({ limit: 1 });
   }
 
+  test.runIf(process.platform !== "win32")(
+    "reclaims the stalled listing provider after its launcher exits",
+    async () => {
+      const fixtureDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-listing-"));
+      const fixturePath = path.join(fixtureDir, "launcher.cjs");
+      const readyPath = path.join(fixtureDir, "listing-ready");
+      const pidsPath = path.join(fixtureDir, "pids.json");
+      await writeFile(
+        fixturePath,
+        `
+          const { spawn } = require("node:child_process");
+          const { writeFileSync } = require("node:fs");
+          const { createInterface } = require("node:readline");
+          if (process.argv[4] === "provider") {
+            process.on("SIGTERM", () => {});
+            createInterface({ input: process.stdin }).on("line", (line) => {
+              const { id, method } = JSON.parse(line);
+              if (method === "initialize") {
+                console.log(JSON.stringify({ jsonrpc: "2.0", id, result: {
+                  protocolVersion: ${PROTOCOL_VERSION},
+                  agentCapabilities: { sessionCapabilities: { list: {} } },
+                }}));
+              }
+              if (method === "session/list") {
+                writeFileSync(process.argv[2], "ready");
+                setInterval(() => {}, 1000);
+              }
+            });
+          } else {
+            const child = spawn(process.execPath, [...process.argv.slice(1), "provider"], {
+              stdio: "inherit",
+            });
+            writeFileSync(process.argv[3], JSON.stringify({
+              launcher: process.pid, provider: child.pid,
+            }));
+          }
+        `,
+      );
+
+      const client = new ACPAgentClient({
+        provider: "test-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fixturePath, readyPath, pidsPath],
+        defaultModes: [],
+      });
+      const isRunning = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          return false;
+        }
+      };
+
+      const readPids = async (): Promise<{ launcher: number; provider: number }> =>
+        JSON.parse(await readFile(pidsPath, "utf8"));
+      vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "performance", "Date"] });
+      let responseReceived = false;
+      const listing = listSessionsThroughManager(client).then((response) => {
+        responseReceived = true;
+        return response;
+      });
+
+      try {
+        await vi.waitFor(() => readFile(readyPath, "utf8"), { timeout: 3000 });
+        const { launcher, provider } = await readPids();
+        expect(isRunning(launcher)).toBe(true);
+        expect(isRunning(provider)).toBe(true);
+
+        // waitFor advances the fake clock while starting the real processes.
+        await vi.advanceTimersByTimeAsync(89_999 - Date.now());
+        expect(responseReceived).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(listing).resolves.toEqual({
+          sessions: [],
+          providerErrors: [
+            {
+              provider: "test-acp",
+              message:
+                "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+            },
+          ],
+        });
+        await vi.waitFor(() => expect(isRunning(launcher)).toBe(false));
+        await vi.waitFor(
+          () => expect(isRunning(provider), "provider outlived launcher cleanup").toBe(false),
+          { timeout: 3500 },
+        );
+      } finally {
+        vi.useRealTimers();
+        const pids = await readPids().catch(() => ({}));
+        for (const pid of Object.values(pids)) {
+          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+        }
+        await rm(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    10_000,
+  );
+
   test("accepts a listing that finishes within the daemon's provider deadline", async () => {
     vi.useFakeTimers();
     const probe = createBlockedListing("session/list");
