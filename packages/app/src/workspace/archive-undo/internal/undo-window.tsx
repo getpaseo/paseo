@@ -17,18 +17,28 @@ export interface UndoableWorkspaceArchiveClient {
   undoWorkspaceArchive: (workspaceId: string) => Promise<void>;
 }
 
-interface UndoWindowInput {
+export interface UndoableWorkspaceArchiveEntryInput {
   client: UndoableWorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
-  toast: ToastApi;
-  hidden: WorkspaceDescriptor | null;
   onArchiveCommitted: () => void;
+}
+
+interface UndoWindowEntry extends UndoableWorkspaceArchiveEntryInput {
+  hidden: WorkspaceDescriptor | null;
+  archived: boolean;
+  failed: boolean;
+  committed: boolean;
+}
+
+interface UndoWindowInput {
+  entries: UndoWindowEntry[];
+  toast: ToastApi;
 }
 
 let latest: UndoWindow | null = null;
 
 /**
- * One archive's chance to be undone. It opens when the row hides and closes when its toast
+ * One archive batch's chance to be undone. It opens when the row(s) hide and closes when its toast
  * leaves the screen (timeout, replaced by another toast, or undo).
  *
  * - `open`: undo is offered.
@@ -37,40 +47,78 @@ let latest: UndoWindow | null = null;
  */
 class UndoWindow {
   phase: "open" | "closed" | "undone" = "open";
-  private archived = false;
-  private readonly dismissToast: DismissToast;
+  private dismissToast: DismissToast = () => {};
+  private toastToken: object | null = null;
 
   constructor(private readonly input: UndoWindowInput) {
-    this.dismissToast = input.toast.show(<WorkspaceArchivedToast onUndo={this.undo} />, {
-      durationMs: WORKSPACE_ARCHIVE_UNDO_WINDOW_MS,
-      testID: "workspace-archived-toast",
-      onDismiss: this.close,
-    });
+    this.showToast({ variant: "default" });
   }
 
-  /** The host finished the archive. It commits now if undo is no longer offered. */
-  archiveFinished(): void {
-    this.archived = true;
-    if (this.phase === "closed") this.commit();
+  private showToast(options: { message?: string; variant: "default" | "error" }): void {
+    const token = {};
+    this.toastToken = token;
+    const remainingCount = this.input.entries.filter((entry) => !entry.failed).length;
+    this.dismissToast = this.input.toast.show(
+      <WorkspaceArchivedToast
+        count={remainingCount}
+        message={options.message}
+        onUndo={this.undo}
+      />,
+      {
+        variant: options.variant,
+        layout: "action",
+        durationMs: WORKSPACE_ARCHIVE_UNDO_WINDOW_MS,
+        testID: "workspace-archived-toast",
+        onDismiss: () => {
+          // Replacing our own toast in place (for example to surface a partial failure) must not
+          // close the undo window or purge surviving workspaces.
+          if (this.toastToken !== token) return;
+          this.close();
+        },
+      },
+    );
   }
 
-  /** The archive failed on the host, so there is nothing left to undo. */
-  archiveFailed(): void {
-    this.close();
-    this.dismissToast();
+  /**
+   * Surfaces a partial-failure message on the active undo toast without dismissing Undo for the
+   * workspaces that did archive. Returns false once the window is closed, undone, or superseded.
+   */
+  showPartialFailure(message: string): boolean {
+    if (this.phase !== "open" || latest !== this) return false;
+    this.showToast({ message, variant: "error" });
+    return true;
+  }
+
+  /** The host finished archiving this entry. It commits now if undo is no longer offered. */
+  entryFinished(entry: UndoWindowEntry): void {
+    entry.archived = true;
+    if (this.phase === "closed") this.commitEntry(entry);
+  }
+
+  /** The archive failed on the host. Dismisses the toast once every entry has failed. */
+  entryFailed(entry: UndoWindowEntry): void {
+    entry.failed = true;
+    if (this.input.entries.every((item) => item.failed)) {
+      this.close();
+      this.dismissToast();
+    }
   }
 
   readonly close = (): void => {
     if (this.phase !== "open") return;
     this.phase = "closed";
     this.release();
-    if (this.archived) this.commit();
+    for (const entry of this.input.entries) {
+      if (entry.archived) this.commitEntry(entry);
+    }
   };
 
   /** Commits unless the workspace is back by now, for example restored from another client. */
-  private commit(): void {
-    if (isWorkspaceListed(this.input.workspace)) return;
-    this.input.onArchiveCommitted();
+  private commitEntry(entry: UndoWindowEntry): void {
+    if (entry.committed || entry.failed) return;
+    if (isWorkspaceListed(entry.workspace)) return;
+    entry.committed = true;
+    entry.onArchiveCommitted();
   }
 
   readonly undo = (): boolean => {
@@ -78,16 +126,94 @@ class UndoWindow {
     this.phase = "undone";
     this.release();
     this.dismissToast();
-    void undoWorkspaceArchiveOptimistically(this.input).catch((error: unknown) => {
-      console.warn("[workspace-archive-undo] undo failed", error);
-      this.input.toast.error(i18n.t("sidebar.workspace.toasts.undoArchiveFailed"));
-    });
+    const undoable = this.input.entries.filter((entry) => !entry.failed);
+    void (async () => {
+      const results = await Promise.allSettled(
+        undoable.map((entry) => undoWorkspaceArchiveOptimistically(entry)),
+      );
+      const failed = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failed.length > 0) {
+        console.warn("[workspace-archive-undo] undo failed", failed[0]?.reason);
+        this.input.toast.error(i18n.t("sidebar.workspace.toasts.undoArchiveFailed"));
+      }
+    })();
     return true;
   };
 
   private release(): void {
     if (latest === this) latest = null;
   }
+}
+
+export interface WorkspaceArchiveBatchFailure {
+  workspace: WorkspaceArchiveTarget;
+  error: unknown;
+}
+
+export interface WorkspaceArchiveBatchResult {
+  failures: WorkspaceArchiveBatchFailure[];
+  /**
+   * Updates this batch's live undo toast to show a partial-failure error while keeping Undo active
+   * for the workspaces that succeeded. Returns false if the undo window is no longer open.
+   */
+  showPartialFailure: (message: string) => boolean;
+}
+
+/**
+ * Archives one or more workspaces together and offers one undo until the toast goes away.
+ *
+ * `onArchiveCommitted` runs per workspace once that archive both finished on the host and can no
+ * longer be undone, and only if the workspace is still gone then. Returns failures for any
+ * workspace whose archive failed while not undone; those rows are already restored.
+ */
+export async function archiveWorkspacesWithUndo(input: {
+  entries: readonly UndoableWorkspaceArchiveEntryInput[];
+  toast: ToastApi;
+}): Promise<WorkspaceArchiveBatchResult> {
+  if (input.entries.length === 0) {
+    return { failures: [], showPartialFailure: () => false };
+  }
+
+  const started = input.entries.map((entry) => {
+    const archive = beginOptimisticWorkspaceArchive(entry);
+    const windowEntry: UndoWindowEntry = {
+      ...entry,
+      hidden: archive.hidden,
+      archived: false,
+      failed: false,
+      committed: false,
+    };
+    return { windowEntry, done: archive.done };
+  });
+
+  const window = new UndoWindow({
+    entries: started.map((item) => item.windowEntry),
+    toast: input.toast,
+  });
+  latest = window;
+
+  const failures: WorkspaceArchiveBatchFailure[] = [];
+  await Promise.all(
+    started.map(async ({ windowEntry, done }) => {
+      let outcome: Awaited<typeof done>;
+      try {
+        outcome = await done;
+      } catch (error) {
+        if (window.phase === "undone") return;
+        window.entryFailed(windowEntry);
+        failures.push({ workspace: windowEntry.workspace, error });
+        return;
+      }
+      if (outcome === "archived") window.entryFinished(windowEntry);
+    }),
+  );
+
+  return {
+    failures,
+    showPartialFailure: (message) => window.showPartialFailure(message),
+  };
 }
 
 /**
@@ -104,19 +230,19 @@ export async function archiveWorkspaceWithUndo(input: {
   toast: ToastApi;
   onArchiveCommitted: () => void;
 }): Promise<void> {
-  const archive = beginOptimisticWorkspaceArchive(input);
-  const window = new UndoWindow({ ...input, hidden: archive.hidden });
-  latest = window;
-
-  let outcome: Awaited<typeof archive.done>;
-  try {
-    outcome = await archive.done;
-  } catch (error) {
-    if (window.phase === "undone") return;
-    window.archiveFailed();
-    throw error;
+  const { failures } = await archiveWorkspacesWithUndo({
+    entries: [
+      {
+        client: input.client,
+        workspace: input.workspace,
+        onArchiveCommitted: input.onArchiveCommitted,
+      },
+    ],
+    toast: input.toast,
+  });
+  if (failures[0]) {
+    throw failures[0].error;
   }
-  if (outcome === "archived") window.archiveFinished();
 }
 
 /** Undoes the most recent archive while its toast is up. Returns false when there is none. */
