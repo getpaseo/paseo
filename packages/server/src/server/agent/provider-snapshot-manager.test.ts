@@ -553,7 +553,7 @@ describe("ProviderSnapshotManager public surface", () => {
         snapshot.find((entry) => entry.provider === provider);
       expect(byProvider("codex")).toMatchObject({ status: "loading", launchWrap: true });
       expect(byProvider("my-codex")).toMatchObject({ status: "loading", launchWrap: true });
-      expect(byProvider("claude")).not.toHaveProperty("launchWrap");
+      expect(byProvider("claude")).toMatchObject({ status: "loading", launchWrap: true });
     } finally {
       manager.destroy();
     }

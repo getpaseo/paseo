@@ -1617,10 +1617,18 @@ export class OpenCodeAgentClient implements AgentClient {
     config: OpenCodeAgentConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<OpenCodeServerAcquisition> {
-    if (!this.bridge || requiresDedicatedOpenCodeServer(config, launchContext)) {
-      return launchContext?.env
-        ? this.serverManager.acquireDedicated(launchContext.env)
-        : this.serverManager.acquireCurrent();
+    // A wrapped session gets its own server, so it never shares a server that runs outside its wrap.
+    if (launchContext?.wrap) {
+      return this.serverManager.acquireDedicated({
+        env: launchContext.env ?? {},
+        wrap: launchContext.wrap,
+      });
+    }
+    if (
+      launchContext?.env &&
+      (!this.bridge || requiresDedicatedOpenCodeServer(config, launchContext))
+    ) {
+      return this.serverManager.acquireDedicated({ env: launchContext.env });
     }
     return this.serverManager.acquireCurrent();
   }

@@ -89,6 +89,25 @@ const { stdout } = await execCommand(launch.command, [...launch.args, "--version
 });
 ```
 
+### 在启动包装之后运行会话 {#run-sessions-behind-a-launch-wrap}
+
+来自 `agent.open.before` 的[启动包装](./hooks.zh-CN.md#launch-wraps)会作为 `session.open` 的 `config.wrap` 传给你的 Provider。要支持它：
+
+1. 在注册信息上设置 `launchWrap: true`。Paseo 会在 Provider 快照中发布 `launchWrap: true`，这样插件可以在你的 Provider 连接之前选择它。
+2. 把 `session.launch_wrap` 加入连接支持的能力。Paseo 只把 `config.wrap` 发给协商了该能力的连接，在其他连接上带包装的打开会失败。
+3. 用 `wrap` 选项启动会话的进程。`spawnProcess` 随后启动 `[...wrap, command, ...args]`，并为包装的可执行文件处理 Windows 启动器：
+
+```ts
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  wrap: input.config.wrap,
+  env: launch.env,
+  cwd: input.config.cwd,
+  stdio: "pipe",
+});
+```
+
+在包装之后启动所有为会话工作的进程。如果一个进程服务多个会话，就为带包装的会话单独启动一个。`runAcpProvider({ command })` 会为 ACP Agent 完成以上所有工作。
+
 ## 返回模型、模式和思考选项 {#return-models-modes-and-thinking-options}
 
 Paseo 在创建会话之前会请求目录。返回 Agent 表单需要的选项：

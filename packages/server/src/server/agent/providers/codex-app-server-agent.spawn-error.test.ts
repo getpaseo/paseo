@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { describe, expect, test, vi } from "vitest";
 
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
@@ -82,13 +82,13 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     }
   });
   test("a missing launch wrap fails the open and never starts the bare codex command", async () => {
-    const spawned: Array<{ command: string; args: string[] }> = [];
+    const spawned: Array<{ command: string; args: string[]; wrap?: readonly string[] }> = [];
     const client = new CodexAppServerAgentClient(logger, undefined, {
       appServerProcess: {
         resolvePrefix: async () => ({ command: process.execPath, args: ["codex.js"] }),
-        spawn: ({ command, args }) => {
-          spawned.push({ command, args });
-          return spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+        spawn: ({ command, args, options }) => {
+          spawned.push({ command, args, wrap: options.wrap });
+          return spawnProcess(command, args, options);
         },
       },
     });
@@ -106,8 +106,9 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     ).rejects.toThrow(/ENOENT/u);
     expect(spawned).toEqual([
       {
-        command: "/nonexistent/launch-wrap-that-does-not-exist",
-        args: ["--flag", process.execPath, "codex.js", "app-server"],
+        command: process.execPath,
+        args: ["codex.js", "app-server"],
+        wrap: ["/nonexistent/launch-wrap-that-does-not-exist", "--flag"],
       },
     ]);
   });

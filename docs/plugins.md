@@ -482,9 +482,10 @@ reuses the wrap it opened with.
 - **Support is a provider property.** The provider snapshot entry carries `launchWrap: true` when the
   provider can apply a wrap. Read it in `agent.create.before` with `paseo.providers.snapshot()`; an
   absent field means unsupported, which is also what a host without this feature reports. Core
-  providers declare it in the provider contract table in `provider-registry.ts` (Codex and providers
-  that extend it). A plugin provider declares `ProviderRegistration.launchWrap`;
-  `runAcpProvider({ command })` sets it, a connector does not. The declaration travels with the
+  providers declare it in the provider contract table in `provider-registry.ts`; every core provider
+  that starts a local harness declares it, and custom ACP providers and providers that extend a core
+  one inherit it. A plugin provider declares `ProviderRegistration.launchWrap`;
+  `runAcpProvider({ command })` sets it, a connector declares it itself (Muse Code does). The declaration travels with the
   registration metadata, so it is in the snapshot before the provider first connects.
 - **One wrap per open.** A later hook, in the same plugin or a later one, may omit the wrap or return
   the same value. A different value fails the open.
@@ -495,7 +496,13 @@ reuses the wrap it opened with.
   spawn; nothing retries the bare command.
 
 Once an open selects a wrap, a supported provider runs that session's harness through it or fails
-before starting the harness. The guarantee covers the harness process only:
+before starting the harness. Every provider starts through `spawnProcess({ wrap })`, which owns the
+argv and Windows launcher handling; `applyLaunchWrap` covers the launches that do not go through it
+(pty terminals, MCP stdio transports, worktree commands). The wrap also covers what Paseo starts for
+the session: stdio MCP servers Paseo hosts for the agent (OMP, OpenCode v2), Pi's MCP probe, and ACP
+client terminals. OpenCode shares one server between sessions, so a wrapped session gets a dedicated
+server instead; an explicitly configured external OpenCode server cannot be wrapped and the open
+fails. The guarantee does not cover:
 
 1. Paseo's host terminal tools (`create_terminal`, `send_terminal_keys`) run outside the wrap.
 2. Work before the open hook runs unwrapped: draft command and control discovery, and the catalog

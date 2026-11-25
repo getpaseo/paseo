@@ -8,6 +8,7 @@ import {
 import { CallToolResultSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerConfig } from "./agent-sdk-types.js";
 import type { PaseoToolResult } from "./tools/types.js";
+import { applyLaunchWrap, type LaunchWrap } from "../../utils/launch-wrap.js";
 
 const SERVER_TIMEOUT_MS = 10_000;
 const TERMINATE_TIMEOUT_MS = 2_000;
@@ -36,6 +37,8 @@ export interface ConnectMcpServerInput {
   cwd: string;
   /** Complete environment for a stdio server; the server's own `env` overlays it. */
   env: NodeJS.ProcessEnv;
+  /** Start a stdio server as `[...wrap, command, ...args]`. */
+  wrap?: LaunchWrap;
   clientName: string;
 }
 
@@ -165,11 +168,12 @@ async function withDeadline<T>(
   }
 }
 
-function createTransport({ config, cwd, env }: ConnectMcpServerInput) {
+function createTransport({ config, cwd, env, wrap }: ConnectMcpServerInput) {
   if (config.type === "stdio") {
+    const launch = applyLaunchWrap({ command: config.command, args: config.args ?? [] }, wrap);
     return new StdioClientTransport({
-      command: config.command,
-      args: config.args,
+      command: launch.command,
+      args: launch.args,
       cwd,
       env: definedEnvironment({ ...env, ...config.env }),
       stderr: "ignore",

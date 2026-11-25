@@ -41,6 +41,8 @@ export class MspConnection {
   constructor(
     private readonly options: {
       launch: ProviderLaunch;
+      /** Start `muse serve` as `[...wrap, command, ...args]`. */
+      wrap?: readonly [string, ...string[]];
       cwd?: string;
       timeoutMs?: number;
       startupTimeoutMs?: number;
@@ -52,6 +54,7 @@ export class MspConnection {
       launch.command,
       [...launch.args, "serve", ...(options.serveArgs ?? [])],
       {
+        wrap: options.wrap,
         env: launch.env,
         cwd,
         stdio: "pipe",

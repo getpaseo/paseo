@@ -12,6 +12,7 @@ import {
   quoteWindowsArgument,
   quoteWindowsCommand,
 } from "./process-internal/windows-command.js";
+import type { PluginLaunchWrap } from "./lifecycle.js";
 const execFileAsync = promisify(execFile);
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
@@ -70,20 +71,34 @@ export function resolveSpawnInvocation(
   };
 }
 
+export interface SpawnProcessOptions extends SpawnOptions {
+  /**
+   * Start `[...wrap, command, ...args]`: the wrap's executable runs the command. `shell` is then
+   * ignored; the wrap's executable runs through cmd.exe only when it is a `.cmd` or `.bat` file.
+   */
+  wrap?: PluginLaunchWrap;
+}
+
 /** Launch a CLI with Windows command-script handling and argv quoting. The caller owns env. */
 export function spawnProcess(
   command: string,
   args: string[],
-  options: SpawnOptions & { stdio: "pipe" },
+  options: SpawnProcessOptions & { stdio: "pipe" },
 ): ChildProcessWithoutNullStreams;
-export function spawnProcess(command: string, args: string[], options?: SpawnOptions): ChildProcess;
 export function spawnProcess(
   command: string,
   args: string[],
-  options?: SpawnOptions,
+  options?: SpawnProcessOptions,
+): ChildProcess;
+export function spawnProcess(
+  command: string,
+  args: string[],
+  options?: SpawnProcessOptions,
 ): ChildProcess {
-  const spawnOptions = options ?? {};
-  const invocation = resolveSpawnInvocation(command, args, spawnOptions.shell);
+  const { wrap, ...spawnOptions } = options ?? {};
+  const invocation = wrap
+    ? resolveSpawnInvocation(wrap[0], [...wrap.slice(1), command, ...args], false)
+    : resolveSpawnInvocation(command, args, spawnOptions.shell);
 
   return spawn(invocation.command, invocation.args, {
     ...spawnOptions,

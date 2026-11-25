@@ -75,3 +75,32 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
     shell: false,
   });
 });
+
+// A launch wrap starts its executable with the command and its arguments after the wrap's own.
+// The caller's shell choice belongs to the unwrapped command, so a wrap ignores it.
+test("spawnProcess starts a wrap's executable with the command after the wrap arguments", async () => {
+  const launcher = await writeArgumentReader();
+  const child = spawnProcess("harness", ["--flag", ...argumentsToPreserve], {
+    wrap: [process.execPath, launcher, "--sandbox profile"],
+    shell: true,
+    stdio: "pipe",
+  });
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Launcher exited with ${code}`));
+    });
+  });
+  expect(JSON.parse(stdout)).toEqual([
+    "--sandbox profile",
+    "harness",
+    "--flag",
+    ...argumentsToPreserve,
+  ]);
+});

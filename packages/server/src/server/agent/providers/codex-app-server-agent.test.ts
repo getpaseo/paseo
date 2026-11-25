@@ -2495,7 +2495,7 @@ describe("Codex app-server provider", () => {
   test.each(["interactive", "history"] as const)(
     "spawns a wrapped %s resume through the launch wrap",
     async (purpose) => {
-      const spawned: Array<{ command: string; args: string[] }> = [];
+      const spawned: Array<{ command: string; args: string[]; wrap?: readonly string[] }> = [];
       let resumes = 0;
       // History reads the archived thread; an interactive resume unarchives it and resumes again.
       const appServer = createFakeCodexAppServer({
@@ -2513,8 +2513,8 @@ describe("Codex app-server provider", () => {
             command: "/opt/codex/bin/codex",
             args: ["--profile", "x"],
           }),
-          spawn: ({ command, args }) => {
-            spawned.push({ command, args });
+          spawn: ({ command, args, options }) => {
+            spawned.push({ command, args, wrap: options.wrap });
             return appServer.child;
           },
         },
@@ -2536,8 +2536,9 @@ describe("Codex app-server provider", () => {
       expect(spawned.length).toBeGreaterThan(0);
       for (const input of spawned) {
         expect(input).toEqual({
-          command: "/opt/sandbox/bin/run",
-          args: ["--profile", "a b", "/opt/codex/bin/codex", "--profile", "x", "app-server"],
+          command: "/opt/codex/bin/codex",
+          args: ["--profile", "x", "app-server"],
+          wrap: ["/opt/sandbox/bin/run", "--profile", "a b"],
         });
       }
       await session.close();

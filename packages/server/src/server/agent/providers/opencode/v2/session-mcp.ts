@@ -1,5 +1,6 @@
 import type { McpServerConfig } from "../../../agent-sdk-types.js";
 import { connectMcpServer, type McpClientConnection } from "../../../mcp-client-connection.js";
+import type { LaunchWrap } from "../../../../../utils/launch-wrap.js";
 import type { PaseoToolResult } from "../../../tools/types.js";
 import type { OpenCodeBridgeMcpTool } from "../bridge.js";
 
@@ -22,6 +23,8 @@ interface ConnectSessionMcpInput {
   cwd: string;
   /** The agent's complete launch environment, which stdio servers inherit. */
   env: NodeJS.ProcessEnv;
+  /** The agent's wrap, which stdio servers run behind. */
+  wrap?: LaunchWrap;
 }
 
 /**
@@ -44,6 +47,7 @@ export class SessionMcp {
             config,
             cwd: input.cwd,
             env: input.env,
+            wrap: input.wrap,
             clientName: "paseo-opencode",
           });
           return { name, connection };

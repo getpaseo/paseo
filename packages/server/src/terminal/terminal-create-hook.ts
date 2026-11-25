@@ -1,4 +1,5 @@
 import type { PluginLifecycle } from "../server/plugins/lifecycle/index.js";
+import { applyLaunchWrap } from "../utils/launch-wrap.js";
 import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import type { DaemonTerminalManager } from "./worker-terminal-manager.js";
 
@@ -27,14 +28,9 @@ export function withTerminalCreateHook(
         env: options.env ?? {},
       });
       if (!request.wrap) return manager.createTerminal({ ...options, env: request.env });
-      const [executable, ...wrapArgs] = request.wrap;
       const command = options.command ?? resolveDefaultTerminalShell({ env: options.baseEnv });
-      return manager.createTerminal({
-        ...options,
-        env: request.env,
-        command: executable,
-        args: [...wrapArgs, command, ...args],
-      });
+      const launch = applyLaunchWrap({ command, args }, request.wrap);
+      return manager.createTerminal({ ...options, env: request.env, ...launch });
     },
   };
 }

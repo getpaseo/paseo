@@ -116,7 +116,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const prepared = await this.prepareLaunch(config, launch, false);
     try {
-      const connection = await this.runtime.acquire();
+      const connection = await this.runtime.acquire({ wrap: launch?.wrap });
       try {
         const info = await connection.client.session.create({
           location: { directory: config.cwd },
@@ -159,9 +159,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
     const historyOnly = options?.purpose === "history";
     const prepared = await this.prepareLaunch(config, launch, historyOnly);
     try {
-      const connection =
-        this.connections.get(handle.nativeHandle ?? handle.sessionId)?.retain() ??
-        (await this.runtime.acquire());
+      // A live connection may run outside this launch's wrap, so a wrapped resume starts its own.
+      const live = launch?.wrap
+        ? undefined
+        : this.connections.get(handle.nativeHandle ?? handle.sessionId)?.retain();
+      const connection = live ?? (await this.runtime.acquire({ wrap: launch?.wrap }));
       try {
         const info = await connection.client.session.get({
           sessionID: handle.nativeHandle ?? handle.sessionId,
@@ -197,6 +199,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       servers,
       cwd: config.cwd,
       env: environment ?? createProviderEnv({ runtimeSettings: this.options.settings }),
+      wrap: launch?.wrap,
     });
     return { launch, environment, mcp };
   }
@@ -257,7 +260,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       mcp,
       unbind: releaseBindings,
       bindChild,
-      acquire: () => this.runtime.acquire(),
+      acquire: () => this.runtime.acquire({ wrap: launch?.wrap }),
       moved,
       historyOnly,
     });

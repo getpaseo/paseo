@@ -8275,35 +8275,28 @@ export class CodexAppServerAgentClient implements AgentClient {
     wrap?: AgentLaunchContext["wrap"];
   }): Promise<() => ChildProcessWithoutNullStreams> {
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
-    const resolvedPrefix = await processPort.resolvePrefix({
-      runtimeSettings: this.runtimeSettings,
-    });
-    const appServerArgs = [...resolvedPrefix.args, "app-server"];
+    const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
+    const args = [...launchPrefix.args, "app-server"];
     if (options.goalsEnabled) {
-      appServerArgs.push("--enable", "goals");
+      args.push("--enable", "goals");
     }
-    // Every spawn from this closure, including reconnects and startup retries, carries the wrap.
-    const { command, args } = options.wrap
-      ? {
-          command: options.wrap[0],
-          args: [...options.wrap.slice(1), resolvedPrefix.command, ...appServerArgs],
-        }
-      : { command: resolvedPrefix.command, args: appServerArgs };
     return () => {
       this.logger.trace(
         {
           agentId: options.agentId,
           provider: CODEX_PROVIDER,
-          command,
-          args,
+          launchPrefix,
+          wrap: options.wrap,
           goalsEnabled: options.goalsEnabled === true,
         },
         "provider.codex.spawn",
       );
+      // Every spawn from this closure, including reconnects and startup retries, carries the wrap.
       const child = processPort.spawn({
-        command,
+        command: launchPrefix.command,
         args,
         options: {
+          wrap: options.wrap,
           detached: process.platform !== "win32",
           stdio: ["pipe", "pipe", "pipe"],
           baseEnv: options.environment,

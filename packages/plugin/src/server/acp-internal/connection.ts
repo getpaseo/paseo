@@ -501,14 +501,8 @@ class AcpRuntime {
         args: options.options.command.slice(1),
         env: process.env,
       };
-      // spawnProcess starts a Windows script wrapper through cmd.exe, as for any launcher.
-      const spawned = options.wrap
-        ? {
-            command: options.wrap[0],
-            args: [...options.wrap.slice(1), launch.command, ...launch.args],
-          }
-        : launch;
-      child = spawnProcess(spawned.command, spawned.args, {
+      child = spawnProcess(launch.command, launch.args, {
+        wrap: options.wrap,
         cwd: options.cwd,
         env: { ...launch.env, ...options.env },
         stdio: "pipe",

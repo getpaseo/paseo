@@ -1270,6 +1270,44 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("asks the runtime for a wrapped server when creating and resuming a wrapped session", async () => {
+    const servers = [new V2Harness(), new V2Harness()];
+    const requests: unknown[] = [];
+    const runtime = {
+      acquire: async (input?: { wrap?: readonly [string, ...string[]] }) => {
+        requests.push(input?.wrap);
+        const server = servers[requests.length - 1];
+        if (!server) throw new Error("No OpenCode test server left");
+        return server.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "a b"] as const;
+    const created = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project" },
+      { agentId: "agent", wrap },
+    );
+    try {
+      // The created session's connection is live, and a wrapped resume still asks for its own.
+      const resumed = await client.resumeSession(
+        {
+          provider: "opencode",
+          sessionId: "session",
+          nativeHandle: "session",
+          metadata: { cwd: "/tmp/project" },
+        },
+        undefined,
+        { agentId: "agent", wrap },
+        { purpose: "history" },
+      );
+      await resumed.close();
+      expect(requests).toEqual([wrap, wrap]);
+    } finally {
+      await created.close();
+    }
+  });
+
   test("rejects MCP servers without the Paseo bridge before creating an OpenCode session", async () => {
     const harness = new V2Harness();
     const client = new OpenCodeV2AgentClient({

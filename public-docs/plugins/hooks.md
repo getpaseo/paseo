@@ -414,10 +414,12 @@ server.addHook("agent.open.before", async ({ request }) => ({
 }));
 ```
 
-- Only a provider whose provider snapshot entry has `launchWrap: true` applies a wrap: Codex and command-based ACP providers such as Antigravity. Read it with `paseo.providers.snapshot()` in `agent.create.before` and choose a provider there. A wrap for any other provider fails the open; it is never dropped.
+- A provider applies a wrap when its provider snapshot entry has `launchWrap: true`. Every built-in provider and every custom ACP provider does. A plugin provider does when it declares support, as Muse Code and the ACP plugin providers such as Antigravity do. Read the field with `paseo.providers.snapshot()` in `agent.create.before` and choose a provider there. A wrap for any other provider fails the open; it is never dropped.
 - History opens keep the wrap.
-- The harness does not always start in the agent's directory. Codex starts it in the daemon's directory and sends the session directory over its protocol. If your launcher needs the directory, put `request.cwd` in the wrap's arguments.
-- The wrap covers the session's harness process only. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
+- A wrapped OpenCode session gets its own OpenCode server, which starts behind the wrap. An OpenCode provider configured to use an existing server cannot start one, so a wrapped open fails.
+- The harness does not always start in the agent's directory. Codex starts it in the daemon's directory, and OpenCode starts its server in the `opencode-home` directory under the Paseo home. Both send the session directory over their protocol. If your launcher needs the directory, put `request.cwd` in the wrap's arguments.
+- Keep the system temp directory visible inside the wrap. Paseo writes the Pi extension there before it starts Pi, and Claude Code writes its tool output there. A launcher that hides it behind an empty private directory breaks those sessions.
+- The wrap covers the processes that Paseo starts for the session: the harness, the stdio MCP servers that Paseo hosts for the agent, and the terminals that an ACP agent asks Paseo to run. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
 
 ### Append instructions on every session opening
 

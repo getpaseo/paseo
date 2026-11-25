@@ -22,12 +22,15 @@ export class OmpMcpBridge {
   private readonly connections: McpClientConnection[] = [];
   private closed = false;
 
-  static async connect(
-    servers: Record<string, McpServerConfig> | undefined,
-    cwd: string,
-    logger: Logger,
-    env: NodeJS.ProcessEnv,
-  ): Promise<OmpMcpBridge> {
+  static async connect(input: {
+    servers: Record<string, McpServerConfig> | undefined;
+    cwd: string;
+    logger: Logger;
+    env: NodeJS.ProcessEnv;
+    /** Start each stdio server as `[...wrap, command, ...args]`. */
+    wrap?: readonly [string, ...string[]];
+  }): Promise<OmpMcpBridge> {
+    const { servers, cwd, logger, env, wrap } = input;
     const bridge = new OmpMcpBridge();
     const connections = await Promise.all(
       Object.entries(servers ?? {}).map(async ([serverName, config]) => {
@@ -36,6 +39,7 @@ export class OmpMcpBridge {
             config,
             cwd,
             env,
+            wrap,
             clientName: "paseo-omp-mcp",
           });
           return { serverName, connection };

@@ -39,6 +39,7 @@ import { runWithRepositoryRoot } from "./git-repository-discovery.js";
 import { runGitCommand } from "./run-git-command.js";
 import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
+import { applyLaunchWrap } from "./launch-wrap.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
@@ -194,9 +195,8 @@ function lifecycleCommandInvocation(
   wrap: PreparedWorktreeLifecycleCommand["wrap"],
 ): StringCommandShellInvocation {
   const invocation = buildStringCommandShellInvocation({ command });
-  if (!wrap) return invocation;
-  const [executable, ...wrapArgs] = wrap;
-  return { shell: executable, args: [...wrapArgs, invocation.shell, ...invocation.args] };
+  const launch = applyLaunchWrap({ command: invocation.shell, args: invocation.args }, wrap);
+  return { shell: launch.command, args: launch.args };
 }
 
 export class WorktreeSetupError extends Error {

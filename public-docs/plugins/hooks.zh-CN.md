@@ -410,10 +410,12 @@ server.addHook("agent.open.before", async ({ request }) => ({
 }));
 ```
 
-- 只有 Provider 快照条目中 `launchWrap: true` 的 Provider 才会应用包装：Codex，以及 Antigravity 等基于命令的 ACP Provider。在 `agent.create.before` 中用 `paseo.providers.snapshot()` 读取它，并在那里选择 Provider。为其他 Provider 返回包装会让打开失败，包装绝不会被丢弃。
+- Provider 快照条目中 `launchWrap: true` 的 Provider 会应用包装。所有内置 Provider 和所有自定义 ACP Provider 都支持。插件 Provider 声明支持后也会应用包装，例如 Muse Code 和 Antigravity 等 ACP 插件 Provider。在 `agent.create.before` 中用 `paseo.providers.snapshot()` 读取该字段，并在那里选择 Provider。为其他 Provider 返回包装会让打开失败，包装绝不会被丢弃。
 - 读取历史的打开也保留包装。
-- harness 不一定在 Agent 的目录中启动。Codex 在 daemon 的目录中启动它，并通过其协议发送会话目录。如果启动器需要该目录，把 `request.cwd` 放进包装的参数中。
-- 包装只覆盖会话的 harness 进程。Paseo 的主机终端工具、Provider 可用性和目录探测以及草稿发现都在包装之外运行。
+- 带包装的 OpenCode 会话会获得自己的 OpenCode 服务器，该服务器在包装之后启动。配置为使用现有服务器的 OpenCode Provider 无法启动服务器，因此带包装的打开会失败。
+- harness 不一定在 Agent 的目录中启动。Codex 在 daemon 的目录中启动它，OpenCode 在 Paseo 主目录下的 `opencode-home` 目录中启动其服务器。两者都通过各自的协议发送会话目录。如果启动器需要该目录，把 `request.cwd` 放进包装的参数中。
+- 在包装内保持系统临时目录可见。Paseo 在启动 Pi 之前把 Pi 扩展写入该目录，Claude Code 也把工具输出写入该目录。如果启动器用一个空的私有目录遮住它，这些会话就会失败。
+- 包装覆盖 Paseo 为会话启动的进程：harness、Paseo 为 Agent 托管的 stdio MCP 服务器，以及 ACP Agent 请求 Paseo 运行的终端。Paseo 的主机终端工具、Provider 可用性和目录探测以及草稿发现都在包装之外运行。
 
 ### 在每次打开会话时追加指令 {#append-instructions-on-every-session-opening}
 
