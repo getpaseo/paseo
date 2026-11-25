@@ -464,6 +464,10 @@ registry property, independent of position. The [hooks reference](../public-docs
 owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
 configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
 every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+`packages/server/src/server/plugins/session-attachments.ts` records what each plugin contributed to
+each live session. A plugin start, stop, or reload reruns only that plugin's callback per session,
+swaps its tools in place, and reopens a session only when its launch would differ. A reopen closes
+the provider process, so a reload must not reopen agents the plugin does not change.
 
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.

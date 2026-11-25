@@ -1,3 +1,4 @@
+import type { PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -679,6 +680,24 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+/** Plugin sessions whose only plugin appends the given instructions to every open. */
+function instructionPluginSessions(instructions: () => string[]): PluginSessionsRuntime {
+  return {
+    openSession: async (request) => ({
+      ...request,
+      appendSystemPrompt: instructions(),
+      tools: [],
+      mcpServerOwners: {},
+    }),
+    sessionLaunched: () => {},
+    sessionLaunchFailed: () => {},
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: () => [],
+    closeSession: () => {},
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+}
+
 test("OpenCode persistence excludes launch-only instructions from storage and clients", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-persistence-"));
   const harness = new V2Harness();
@@ -690,13 +709,7 @@ test("OpenCode persistence excludes launch-only instructions from storage and cl
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon instruction",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before"
-          ? { ...request, appendSystemPrompt: ["Plugin instruction"] }
-          : request,
-    },
+    pluginSessions: instructionPluginSessions(() => ["Plugin instruction"]),
   });
   const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
     workspaceId: undefined,
@@ -16144,11 +16157,7 @@ test("plugin instructions are recomputed for each launch without changing saved 
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before" ? { ...request, appendSystemPrompt: additions } : request,
-    },
+    pluginSessions: instructionPluginSessions(() => additions),
   });
   const snapshot = await manager.createAgent(
     { provider: "codex", cwd: workdir, systemPrompt: "Saved" },

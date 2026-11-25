@@ -498,12 +498,42 @@ target are unaffected.
 
 | Change                                                        | When the agent receives it                                                                                                                                                                                 |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Start, stop, or reload a plugin declaring `agent.open.before` | Open sessions become stale. Each reopens before its next idle prompt; a running turn continues without interruption. The next prompt after that reopen reuses the session.                                 |
+| Start, stop, or reload a plugin declaring `agent.open.before` | Before the session's next agent tool call or prompt, as described below.                                                                                                                                   |
 | Change which agents the callback targets                      | Run `paseo plugin reload agent-tools` after editing this example, then send the agent a prompt when it is idle.                                                                                            |
 | Apply immediately                                             | Call `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`. `requestId` is optional. This reopens the provider session, reruns hooks with `reason: "refresh"`, and interrupts a running turn. |
 | Read the current snapshot                                     | Call `await paseo.agents.ref(id).refresh()`. This reads state without reopening the session.                                                                                                               |
 
-If an automatic reopen fails, the triggering prompt fails with that error. See the
+When a plugin declaring `agent.open.before` starts, stops, or reloads, Paseo reruns that plugin's
+callback for each open session, before the session's next agent tool call or prompt. The callback
+gets the request it saw at the session's last open, with `reason: "refresh"` and the agent's current
+title, workspace, labels, and metadata. A later plugin in the chain also reruns when the env or
+instructions it receives change. Other callbacks do not run.
+
+A reload counts as one change. A tool call or prompt during the reload waits for the plugin to
+start, so the session does not lose the plugin's tools in between. If the plugin fails to start,
+the session continues as if the plugin stopped.
+
+- The tools the callback returns replace its old tools at once, also during a running turn. The new
+  plugin instance answers the calls.
+- If the env, instructions, MCP servers, tool definitions, or the plugin that provides a tool
+  differ from what the session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
+  A callback whose result depends on `reason` always differs from a `create` open. Reverting the
+  change before that prompt cancels the reopen.
+- If nothing differs, the session keeps running with its background work and subagents. A plugin
+  that does not target the agent leaves it as it is.
+- If the callback throws or times out, its tools stay off, and the session reopens before its next
+  idle prompt. Paseo does not rerun it for the same plugin instance.
+- If a returned tool collides with a Paseo tool or another plugin's tool, that plugin's tools stay
+  off, and the session reopens before its next idle prompt.
+- If two plugins return the same MCP server name, both plugins keep their agent tools, but the reopen
+  before the next idle prompt fails with the collision error.
+
+Agents that receive Paseo tools natively (OpenCode with the bridge, OMP) keep the tool list they
+launched with until the reopen. Their calls to a listed tool reach the new instance of the plugin
+that attached it, and fail if that plugin no longer attaches it.
+
+If an automatic reopen fails, the triggering prompt fails with that error. The session keeps
+running with the tools it had, and each later idle prompt tries the reopen again. See the
 [complete agent-tools example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools).
 
 ## agent.close.after
