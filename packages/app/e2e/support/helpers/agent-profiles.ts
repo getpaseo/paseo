@@ -471,6 +471,19 @@ export async function expectProfileSearchResult(
   expect(await boxTop(row)).toBeLessThan(await boxTop(matchedModel));
 }
 
+/** Wheel-scrolls the picker the way a pointer user would until the profile row is on screen. */
+export async function expectProfileReachableByScrolling(page: Page, name: string): Promise<void> {
+  const row = profilePickerRow(page, name);
+  await expect(row).toBeAttached({ timeout: 30_000 });
+  const box = await pickerViewport(page).boundingBox();
+  if (!box) throw new Error("model picker has no layout box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(async () => {
+    await page.mouse.wheel(0, 400);
+    await expect(row).toBeInViewport({ timeout: 500 });
+  }).toPass({ timeout: 15_000 });
+}
+
 export async function applyProfileFromPicker(page: Page, name: string): Promise<void> {
   await profilePickerRow(page, name).click();
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });

@@ -11,6 +11,7 @@ import {
   expectModelRowProfileActionBesideRow,
   expectModelRowSelected,
   expectProfileEditIsPencilOnly,
+  expectProfileReachableByScrolling,
   expectProfileSearchResult,
   expectProfileVisibleForProvider,
   openModelPicker,
@@ -200,6 +201,34 @@ test.describe("Agent profiles in the model picker", () => {
           modeId: "approval-test",
         });
       });
+    } finally {
+      await workspace.cleanup();
+      await seed.restore();
+    }
+  });
+
+  test("profile-only search results scroll inside the picker", async ({ page }) => {
+    const profiles = Array.from({ length: 12 }, (_, index) => ({
+      id: `agent_profile_e2e_release_${index + 1}`,
+      name: `Release review ${String(index + 1).padStart(2, "0")}`,
+      provider: "mock",
+      model: "one-minute-stream",
+    }));
+    const seed = await seedAgentProfiles(profiles);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-profiles-search-scroll-",
+      title: "Agent profiles search scroll",
+      model: "ten-second-stream",
+      modeId: "load-test",
+    });
+
+    try {
+      await openAgentRoute(page, workspace);
+      await expectComposerVisible(page);
+      await openModelPicker(page);
+      await searchModelPicker(page, "release review");
+      await expectProfileSearchResult(page, { name: "Release review 01" });
+      await expectProfileReachableByScrolling(page, "Release review 12");
     } finally {
       await workspace.cleanup();
       await seed.restore();

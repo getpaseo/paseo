@@ -1409,8 +1409,9 @@ function ProviderModelBrowserContent({
       />
     );
   }
-  if (visibleRows.length === 0) {
-    return profileHeader ?? <ModelSearchEmptyState />;
+  // Profile-only results still go through the list: it owns scrolling.
+  if (visibleRows.length === 0 && !profileHeader) {
+    return <ModelSearchEmptyState />;
   }
   return (
     <ModelRowList
