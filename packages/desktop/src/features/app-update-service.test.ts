@@ -1127,10 +1127,14 @@ describe("app update service", () => {
     });
   });
 
-  it("applies updated updateMode before authorizing a download after a slow check", async () => {
+  it("applies updated updateMode after rollout bucket lookup before authorizing download", async () => {
     let mode: DesktopUpdateMode = "automatic";
+    let resolveBucket!: (value: number) => void;
     const { runtime, service } = createService({
-      bucket: async () => 0,
+      bucket: () =>
+        new Promise<number>((resolve) => {
+          resolveBucket = resolve;
+        }),
       updateMode: async () => mode,
     });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
@@ -1139,7 +1143,11 @@ describe("app update service", () => {
       releaseChannel: "stable",
       intent: "automatic",
     });
+    await vi.waitFor(() => {
+      expect(resolveBucket).toBeDefined();
+    });
     mode = "notify";
+    resolveBucket(0);
     const result = await check;
 
     expect(runtime.lastAutoDownload).toBe(false);

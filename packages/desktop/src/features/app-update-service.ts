@@ -256,18 +256,19 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       releaseChannel,
       autoDownload: initialAutoDownload,
       shouldAdmitUpdate: async (info) => {
+        const parsed = rolloutManifestSchema.parse(info);
+        const bucket = await deps.bucket();
         const liveMode = await resolveUpdateMode();
         if (intent === "automatic" && liveMode === "off") {
           return false;
         }
-        const parsed = rolloutManifestSchema.parse(info);
         const admitted = shouldAdmitAppUpdate({
           channel: releaseChannel,
           intent,
           rolloutHours: parsed.rolloutHours,
           releaseDate: parsed.releaseDate,
           now: deps.now(),
-          bucket: await deps.bucket(),
+          bucket,
         });
         if (admitted) {
           currentAutoDownload = resolveAutoDownload(liveMode, autoDownloadOverride);
