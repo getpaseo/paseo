@@ -14,7 +14,6 @@ import {
   beginStagedProviderSwitch,
   clearStagedProviderSwitch,
   endStagedProviderSwitch,
-  getFailedStartupSettings,
   getStagedProviderSwitch,
   isStagedProviderSwitchInFlight,
   settleCommittedProviderSwitch,
@@ -1402,8 +1401,7 @@ function ComposerContentImpl({
       rawStagedSwitch &&
       agentState.provider &&
       rawStagedSwitch.provider === agentState.provider &&
-      !isStagedProviderSwitchInFlight(serverId, agentId) &&
-      !getFailedStartupSettings(serverId, agentId)
+      !isStagedProviderSwitchInFlight(serverId, agentId)
     ) {
       clearStagedProviderSwitch(serverId, agentId);
     }

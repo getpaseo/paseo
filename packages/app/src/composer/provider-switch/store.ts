@@ -81,12 +81,9 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
 
   stage: (serverId, agentId, draft) =>
     set((state) => {
-      const key = stagedKey(serverId, agentId);
       const next = new Map(state.stagedByKey);
-      next.set(key, draft);
-      const nextFailed = new Map(state.failedStartupSettingsByKey);
-      nextFailed.delete(key);
-      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
+      next.set(stagedKey(serverId, agentId), draft);
+      return { stagedByKey: next };
     }),
 
   patch: (serverId, agentId, updater) =>
@@ -143,20 +140,16 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (!current || current !== sentDraft) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      const nextFailed = new Map(state.failedStartupSettingsByKey);
-      nextFailed.delete(key);
-      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
+      return { stagedByKey: next };
     }),
 
   clear: (serverId, agentId) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
-      if (!state.stagedByKey.has(key) && !state.failedStartupSettingsByKey.has(key)) return state;
+      if (!state.stagedByKey.has(key)) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      const nextFailed = new Map(state.failedStartupSettingsByKey);
-      nextFailed.delete(key);
-      return { stagedByKey: next, failedStartupSettingsByKey: nextFailed };
+      return { stagedByKey: next };
     }),
 
   clearForServer: (serverId) =>
@@ -239,8 +232,7 @@ export function useFailedStartupSettings(
 }
 
 export function discardFailedStartupSettings(serverId: string, agentId: string): void {
-  if (!getFailedStartupSettings(serverId, agentId)) return;
-  useStagedProviderSwitchStore.getState().clear(serverId, agentId);
+  useStagedProviderSwitchStore.getState().setFailedStartupSettings(serverId, agentId, null);
 }
 
 export function settleStagedProviderSwitch(
@@ -360,6 +352,7 @@ export async function settleCommittedProviderSwitch(input: {
     return { applied: true };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    store.settle(serverId, agentId, remaining);
     store.setFailedStartupSettings(serverId, agentId, {
       provider: liveProvider,
       bundle,
@@ -384,7 +377,7 @@ export async function applyFailedStartupSettings(input: {
   const store = useStagedProviderSwitchStore.getState();
   try {
     await applyEditedDraftSettingsToLiveAgent(agentId, failed.bundle, failed.provider, client);
-    store.clear(serverId, agentId);
+    store.setFailedStartupSettings(serverId, agentId, null);
     return { applied: true };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

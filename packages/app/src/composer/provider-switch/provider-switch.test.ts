@@ -15,6 +15,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSwitchItem, StreamItem, UserMessageItem } from "@/types/stream";
 import {
+  clearStagedProviderSwitch,
   getFailedStartupSettings,
   getStagedProviderSwitch,
   useStagedProviderSwitchStore,
@@ -1065,11 +1066,14 @@ describe("app provider switching integration", () => {
         "Plan mode rejected by provider",
       );
     });
-    expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
-      plan_mode: true,
+    expect(getFailedStartupSettings(serverId, "agent-1")?.bundle).toEqual({
+      options: { plan_mode: true },
     });
-    // M4 MUST NOT have drained after settings rejection, AND later drain callbacks (turn completion /
-    // reconnect / timeline sync) MUST keep automatic sending paused and preserve the error & draft!
+
+    // Ordinary draft actions (like the model picker calling clearStagedProviderSwitch on a live
+    // Codex model change) and later drain callbacks MUST leave failedStartupSettings and the queue
+    // hold intact until the user explicitly chooses Retry or Dismiss!
+    clearStagedProviderSwitch(serverId, "agent-1");
     runtime.drainQueuedAgentMessage(serverId, "agent-1");
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
@@ -1077,9 +1081,6 @@ describe("app provider switching integration", () => {
     );
     expect(getFailedStartupSettings(serverId, "agent-1")?.bundle).toEqual({
       options: { plan_mode: true },
-    });
-    expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
-      plan_mode: true,
     });
     expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
     expect(useSessionStore.getState().sessions[serverId]?.queuedMessages.get("agent-1")).toEqual([
