@@ -819,6 +819,30 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)(
       expect(next.retirements).toEqual([]);
     });
 
+    it.each([false, true])(
+      "serves an empty older page before a cursor in a retired first turn (whole turns: %s)",
+      async (wholeTurns) => {
+        const { timeline } = await conversation();
+        await rewind(timeline, "a");
+        await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+
+        const older = await timeline.fetch(scope, {
+          direction: "before",
+          cursor: { epoch: "e", seq: 3 },
+          limit: 5,
+          wholeTurns,
+        });
+        expect(older).toMatchObject({
+          rows: [],
+          startSeq: null,
+          endSeq: null,
+          hasOlder: false,
+          hasNewer: true,
+          retirements: [],
+        });
+      },
+    );
+
     it("pages a tail whose last turn was rewound with nothing after it", async () => {
       const { timeline } = await conversation();
       await rewind(timeline, "b");

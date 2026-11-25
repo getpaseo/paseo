@@ -679,14 +679,15 @@ export class TimelineProjection {
 
   private selectBefore(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
     const endSeq = Math.min(input.bounds.maxSeq, (input.cursorSeq ?? input.bounds.maxSeq + 1) - 1);
-    if (endSeq >= input.bounds.minSeq) {
-      let low = 0;
-      let high = this.rows.length;
-      while (low < high) {
-        const middle = (low + high) >>> 1;
-        if (this.rows[middle].seqStart <= endSeq) low = middle + 1;
-        else high = middle;
-      }
+    let low = 0;
+    let high = this.rows.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.rows[middle].seqStart <= endSeq) low = middle + 1;
+      else high = middle;
+    }
+    // No active row starts by `endSeq`, as when a rewind retired everything before the cursor.
+    if (endSeq >= input.bounds.minSeq && low > 0) {
       const limit = Math.max(0, Math.floor(input.limit ?? 0));
       const requestedStart = limit === 0 ? 0 : Math.max(0, low - limit);
       const start = input.wholeTurns ? this.wholeTurnWindowStart(requestedStart) : requestedStart;
