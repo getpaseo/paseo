@@ -11,6 +11,7 @@ import { SkeletonPulse, useSkeletonPulse } from "@/components/ui/skeleton";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useSettingsRowLayout, type SettingsRowLayout } from "./row-density";
+import { SettingsRowTitle } from "./row-label";
 
 const ThemedChevron = withUnistyles(ChevronRight);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -118,9 +119,8 @@ export function SettingsRowHeader({
         </View>
       ) : null}
       <View style={[contentStyle, styles.passThrough]}>
-        <View style={labelAccessory ? styles.labelRow : undefined} {...HIDDEN_FROM_ASSISTIVE_TECH}>
-          <Text style={layout.title}>{label}</Text>
-          {labelAccessory}
+        <View {...HIDDEN_FROM_ASSISTIVE_TECH}>
+          <SettingsRowTitle label={label} accessory={labelAccessory} />
         </View>
         {hintStatus ? (
           <RowHintLine hint={hint} status={hintStatus} hintStyle={layout.hint} />
@@ -293,7 +293,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.surface2,
   },
-  labelRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   summary: {
     flexShrink: 1,
     color: theme.colors.foregroundMuted,

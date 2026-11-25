@@ -76,6 +76,8 @@ test("turns Tailscale on and off from Devices, asking first over Tailscale", asy
   baseURL,
 }, testInfo) => {
   test.skip(process.platform !== "linux", "Uses a second IPv4 loopback address");
+  // The journey opens Devices or the setup six times, two of them over a slowed connection.
+  test.setTimeout(120_000);
   if (!baseURL) throw new Error("Expected the app base URL");
   const daemon = await startTailscaleTestDaemon(baseURL);
   try {

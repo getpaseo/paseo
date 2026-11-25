@@ -7,7 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type {
   SettingsRowProps,
@@ -25,8 +25,9 @@ import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
 import { ControlSizeProvider } from "@/components/ui/control-size";
+import { ExternalLink, type ExternalLinkProps } from "@/components/ui/external-link";
 import { useSettingsRowLayout } from "./row-density";
-import { SettingsRowLabel, type SettingsRowLink } from "./row-label";
+import { SettingsRowTitle } from "./row-label";
 export { SettingsRowChildren } from "./row-children";
 export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
@@ -46,7 +47,8 @@ interface AppRowExtras {
   labelAccessory?: ReactNode;
   /** An icon before the label, such as the thing the row is about. */
   leading?: ReactNode;
-  link?: SettingsRowLink;
+  /** A page outside the app that helps with this row, drawn under the hint as "Label ↗". */
+  link?: Pick<ExternalLinkProps, "href" | "label" | "accessibilityLabel">;
 }
 
 interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
@@ -68,7 +70,16 @@ export function SettingsCard({ children, testID }: { children: ReactNode; testID
   );
 }
 
-export function SettingsRow({ leading, children, testID, ...text }: AppSettingsRowProps) {
+export function SettingsRow({
+  label,
+  leading,
+  labelAccessory,
+  hint,
+  link,
+  error,
+  children,
+  testID,
+}: AppSettingsRowProps) {
   const compact = useIsCompactFormFactor();
   const layout = useSettingsRowLayout();
   const rowStyle = useMemo(() => [layout.row, compact && styles.compactRow], [compact, layout]);
@@ -76,7 +87,18 @@ export function SettingsRow({ leading, children, testID, ...text }: AppSettingsR
     <View style={rowStyle} testID={testID}>
       {leading ? <View style={styles.leading}>{leading}</View> : null}
       <View style={styles.label}>
-        <SettingsRowLabel {...text} />
+        <SettingsRowTitle label={label} accessory={labelAccessory} />
+        {typeof hint === "string" ? <Text style={layout.hint}>{hint}</Text> : hint}
+        {link ? (
+          <View style={styles.link}>
+            <ExternalLink {...link} />
+          </View>
+        ) : null}
+        {error ? (
+          <Text accessibilityRole="alert" style={settingsStyles.rowError}>
+            {error}
+          </Text>
+        ) : null}
       </View>
       {children ? (
         <View style={styles.control}>
@@ -218,6 +240,7 @@ const styles = StyleSheet.create((theme) => ({
   // The same leading slot as `SettingsRowHeader`, so icons and labels share rails across row kinds.
   leading: { marginRight: theme.spacing[3], alignItems: "center", justifyContent: "center" },
   label: { flexGrow: 1, flexShrink: 1, flexBasis: 160, marginRight: theme.spacing[3] },
+  link: { alignItems: "flex-start", marginTop: theme.spacing[1] },
   control: { flexShrink: 1, maxWidth: "100%" },
   input: { minWidth: 180 },
 }));
