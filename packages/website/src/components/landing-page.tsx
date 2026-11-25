@@ -1,3 +1,4 @@
+import { Await } from "@tanstack/react-router";
 import { PLUGINS_LINKED } from "~/plugins/launch";
 import { categoryHref } from "~/plugins/links";
 import type { CategorySlug } from "~/plugins/categories";
@@ -114,14 +115,14 @@ import "~/styles.css";
 interface LandingPageProps {
   title: React.ReactNode;
   subtitle: React.ReactNode;
-  pluginCount?: number | null;
+  pluginCount: Promise<number | null>;
   showHubEyebrow?: boolean;
 }
 
 export function LandingPage({
   title,
   subtitle,
-  pluginCount = null,
+  pluginCount,
   showHubEyebrow = false,
 }: LandingPageProps) {
   return (
@@ -613,7 +614,7 @@ function ProductLead({
   actions,
 }: {
   icon: LucideIcon;
-  title: string;
+  title: React.ReactNode;
   description?: string;
   actions?: React.ReactNode;
 }) {
@@ -979,17 +980,23 @@ const PLUGIN_CLIENT_COMPONENTS = {
   ),
 };
 
-function ExtensibleSection({ pluginCount }: { pluginCount?: number | null }) {
+function ExtensibleSection({ pluginCount }: { pluginCount: Promise<number | null> }) {
   const { t } = useTranslation();
   const pluginActions = React.useMemo(() => <PluginActions />, []);
   const description = React.useMemo(
     () => <Trans i18nKey="landing.plugins.description" components={PLUGIN_CLIENT_COMPONENTS} />,
     [],
   );
-  const libraryTitle =
-    pluginCount && pluginCount > 0
-      ? t("landing.plugins.libraryTitleCount", { count: pluginCount })
-      : t("landing.plugins.libraryTitle");
+  const libraryTitle = React.useMemo(() => {
+    const fallback = t("landing.plugins.libraryTitle");
+    return (
+      <Await promise={pluginCount} fallback={fallback}>
+        {(count) =>
+          count && count > 0 ? t("landing.plugins.libraryTitleCount", { count }) : fallback
+        }
+      </Await>
+    );
+  }, [pluginCount, t]);
   return (
     <FeatureSection
       eyebrow={t("landing.eyebrows.plugins")}
