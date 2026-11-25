@@ -25,6 +25,7 @@ test("the linux backend fails the observation when the classification queue over
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: () => {},
       fail: (error) => {
@@ -84,6 +85,7 @@ test("an ignore update drains classifications queued below the new excluded root
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: (path) => ignoreGenerated && paths.isInside(ignored, path),
+      isIgnoredRoot: (path) => ignoreGenerated && path === ignored,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => {
         if (type === "create") delivered.push(path);
@@ -113,6 +115,64 @@ test("an ignore update drains classifications queued below the new excluded root
     await backend.updateIgnore();
     expect(backend.getDiagnostics().pendingClassificationCount).toBeLessThanOrEqual(1);
     await expect.poll(() => delivered.includes(tracked)).toBe(true);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scan yields to the event loop and aborts mid-directory when the observation closes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "linux-scan-yield-"));
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(root, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const observer = createFileObserver();
+  let active = true;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createLinuxBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isIgnoredRoot: () => {
+        inspected += 1;
+        if (!scheduledYieldProbe && inspected === 260) {
+          scheduledYieldProbe = true;
+          const until = performance.now() + 15;
+          while (performance.now() < until) {
+            // busy wait
+          }
+          setImmediate(() => {
+            if (inspected < totalFiles) {
+              yieldedBeforeFinish = true;
+            }
+            active = false;
+          });
+        }
+        return false;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({ close: () => {}, on: () => {} }) as never,
+  );
+  try {
+    await backend.start();
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
   } finally {
     active = false;
     await backend.close();

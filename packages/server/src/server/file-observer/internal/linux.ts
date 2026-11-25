@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
+import { createScanSliceBudget, type ScanSliceBudget } from "./scan-slice.js";
 
 const MAX_WATCHED_DIRECTORIES = 5_000;
 const RECONCILIATION_DELAY_MS = 50;
@@ -249,15 +250,20 @@ class LinuxBackend implements ObservationBackend {
       if (!isMissingPathError(error) || scope === this.host.root) throw error;
       return { directories: new Set(), filesDiscoveredBeforeCoverage: new Set() };
     }
-    if (!scopeStats.isDirectory()) {
+    if (!scopeStats.isDirectory() || !this.host.isActive() || this.host.isIgnored(scope)) {
       return { directories: new Set(), filesDiscoveredBeforeCoverage: new Set() };
     }
     const directories = new Set<string>([scope]);
     const filesDiscoveredBeforeCoverage = new Set<string>();
     const pending = [scope];
+    const slice = createScanSliceBudget();
     while (pending.length > 0 && this.host.isActive()) {
       const directory = pending.pop();
       if (!directory) continue;
+      if (this.host.isIgnored(directory)) {
+        directories.delete(directory);
+        continue;
+      }
       let entries: Dirent[];
       try {
         entries = await readdir(directory, { withFileTypes: true });
@@ -266,24 +272,71 @@ class LinuxBackend implements ObservationBackend {
         if (directory === this.host.root && this.host.isActive()) throw error;
         continue;
       }
-      for (const entry of entries) {
-        const child = resolve(directory, entry.name);
-        if (this.host.isIgnored(child)) continue;
-        if (!entry.isDirectory()) {
-          if (!this.watchers.has(directory)) filesDiscoveredBeforeCoverage.add(child);
-          continue;
-        }
-        directories.add(child);
-        if (directories.size > MAX_WATCHED_DIRECTORIES) {
-          this.host.metrics.directoryLimitFailureCount += 1;
-          throw new Error(
-            `Recursive file observation exceeded ${MAX_WATCHED_DIRECTORIES} directories under ${this.host.root}`,
-          );
-        }
-        pending.push(child);
+      if (!this.host.isActive()) {
+        return { directories, filesDiscoveredBeforeCoverage };
+      }
+      if (this.host.isIgnored(directory)) {
+        directories.delete(directory);
+        continue;
+      }
+      const keepScanning = await this.scanDirectoryEntries(
+        directory,
+        entries,
+        directories,
+        filesDiscoveredBeforeCoverage,
+        pending,
+        slice,
+      );
+      if (!keepScanning) {
+        return { directories, filesDiscoveredBeforeCoverage };
+      }
+      if (slice.isExpired()) {
+        await slice.yield();
       }
     }
     return { directories, filesDiscoveredBeforeCoverage };
+  }
+
+  private async scanDirectoryEntries(
+    directory: string,
+    entries: Dirent[],
+    directories: Set<string>,
+    filesDiscoveredBeforeCoverage: Set<string>,
+    pending: string[],
+    slice: ScanSliceBudget,
+  ): Promise<boolean> {
+    const childDirectories: string[] = [];
+    const childFiles: string[] = [];
+    const needsCoverageDiscovery = !this.watchers.has(directory);
+    for (const entry of entries) {
+      if (slice.shouldYield()) {
+        await slice.yield();
+        if (!this.host.isActive()) return false;
+        if (this.host.isIgnored(directory)) {
+          directories.delete(directory);
+          return true;
+        }
+      }
+      const child = resolve(directory, entry.name);
+      if (this.host.isIgnoredRoot(child)) continue;
+      if (!entry.isDirectory()) {
+        if (needsCoverageDiscovery) childFiles.push(child);
+        continue;
+      }
+      if (directories.size + childDirectories.length + 1 > MAX_WATCHED_DIRECTORIES) {
+        this.host.metrics.directoryLimitFailureCount += 1;
+        throw new Error(
+          `Recursive file observation exceeded ${MAX_WATCHED_DIRECTORIES} directories under ${this.host.root}`,
+        );
+      }
+      childDirectories.push(child);
+    }
+    for (const file of childFiles) filesDiscoveredBeforeCoverage.add(file);
+    for (const child of childDirectories) {
+      directories.add(child);
+      pending.push(child);
+    }
+    return true;
   }
 
   private classify(path: string): void {
