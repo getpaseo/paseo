@@ -39,8 +39,15 @@ export interface PluginSessionRefreshOptions {
 
 /** What the agent manager asks of plugins about a session: its open, its attached tools, and their calls. */
 export interface PluginSessionsRuntime {
-  /** Runs every `agent.open.before` callback for a session open and records what each plugin attached. */
+  /**
+   * Runs every `agent.open.before` callback for a session open and records what each plugin attached. The result
+   * replaces the running session's record once `sessionLaunched` reports that its provider launch took over.
+   */
   openSession(request: SessionOpenWireRequest): Promise<PluginSessionOpenResult>;
+  /** The provider session launched with the last open's result. */
+  sessionLaunched(agentId: string): void;
+  /** The last open's result did not launch; the session still running keeps its tools. */
+  sessionLaunchFailed(agentId: string): void;
   /**
    * Reruns the open of only the plugins that changed since the session opened, swaps in their tools, and reports
    * whether the session must reopen to apply the rest.

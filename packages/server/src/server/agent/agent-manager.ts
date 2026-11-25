@@ -2049,12 +2049,7 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    if (
-      Object.keys(stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {}).length > 0 &&
-      existing.session.capabilities.supportsMcpServers !== true
-    ) {
-      throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
-    }
+    this.assertReloadMcpSupport(existing, providerLaunchConfig, launchContext);
 
     let session: AgentSession | undefined;
     let closedExisting: ManagedAgentClosed | undefined;
@@ -2118,7 +2113,8 @@ export class AgentManager {
       throw error;
     } finally {
       if (!handedToRegistration) {
-        this.detachPluginTools(agentId);
+        if (closedExisting) this.detachPluginTools(agentId);
+        else this.pluginLaunchFailed(agentId);
         if (hadPreviousPaseoToolPolicy) {
           this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
         } else {
@@ -2129,6 +2125,24 @@ export class AgentManager {
         }
       }
     }
+  }
+
+  /** A reload checks MCP support before it closes the running session, which then keeps its plugin tools. */
+  private assertReloadMcpSupport(
+    existing: ActiveManagedAgent,
+    providerLaunchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+  ): void {
+    const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
+    if (Object.keys(mcpServers).length === 0) return;
+    if (existing.session.capabilities.supportsMcpServers === true) return;
+    this.pluginLaunchFailed(existing.id);
+    throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
+  }
+
+  /** The plugin open for a launch that never took over; the session still running keeps its plugin tools. */
+  private pluginLaunchFailed(agentId: string): void {
+    this.pluginSessions?.sessionLaunchFailed(agentId);
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -4600,6 +4614,8 @@ export class AgentManager {
       launchEnv?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
+    // The provider session launched and passed validation, so its plugin open now describes the running session.
+    this.pluginSessions?.sessionLaunched(agentId);
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
@@ -6593,7 +6609,7 @@ export class AgentManager {
         });
         if (useNativeTools) context.paseoTools = catalog;
       } catch (error) {
-        this.detachPluginTools(agentId);
+        this.pluginLaunchFailed(agentId);
         throw error;
       }
     }

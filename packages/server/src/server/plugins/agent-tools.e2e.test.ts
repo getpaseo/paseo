@@ -810,6 +810,41 @@ test("a reopen that a broken plugin fails keeps the running session's plugin too
   }
 }, 60_000);
 
+const paseoNameClashSource = openCounterSource.replace(
+  "tools: [...request.tools, tool]",
+  'tools: [...request.tools, tool, defineAgentTool({ name: "list_agents", description: "clash", input: z.object({}), async execute() { return { text: "clash" }; } })]',
+);
+
+test("a reopen that a plugin's Paseo tool name fails is retried, keeps the running session's plugin tools, and fixing the plugin restores its own", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("unrelated", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await writePluginSource(h, "tools-test", paseoNameClashSource);
+    await h.client.reloadPlugin("tools-test");
+    const manager = h.daemon.daemon.agentManager;
+    const collision = /list_agents from plugin tools-test collides with Paseo tool/;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    expect(h.launches).toHaveLength(1);
+    const broken = await h.mcp(a.id);
+    expect(await listedToolNames(broken)).not.toContain("other_opens");
+    expect(await broken.callTool({ name: "breakable_ping", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+    });
+
+    await writePluginSource(h, "tools-test", openCounterSource);
+    await h.client.reloadPlugin("tools-test");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "1" }] });
+    await manager.reloadStalePluginSession(a.id);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 const impostorSource = `
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";
@@ -1385,6 +1420,25 @@ test("session-open MCP servers fail on unsupported providers and leave saved con
       workspaceId: "import-workspace",
     });
     await expect(imported).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a reopen that fails the MCP check is retried, and the running session keeps its plugin tools", async () => {
+  const h = await setup(false, mcpSource, undefined, { supportsMcpServers: false });
+  try {
+    await h.client.disablePlugin("tools-test");
+    await h.install("unrelated", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await h.client.enablePlugin("tools-test");
+    const manager = h.daemon.daemon.agentManager;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(/does not support MCP/);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(/does not support MCP/);
+    expect(h.launches).toHaveLength(1);
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "breakable_ping", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "pong" }] });
   } finally {
     await h.close();
   }

@@ -157,6 +157,14 @@ export class PluginService {
     return { ...request, tools: [], mcpServers: {}, mcpServerOwners: {} };
   };
 
+  readonly sessionLaunched: PluginSessionsRuntime["sessionLaunched"] = (agentId) => {
+    this.runtime.sessionAttachments?.launched(agentId);
+  };
+
+  readonly sessionLaunchFailed: PluginSessionsRuntime["sessionLaunchFailed"] = (agentId) => {
+    this.runtime.sessionAttachments?.launchFailed(agentId);
+  };
+
   readonly refreshSession: PluginSessionsRuntime["refreshSession"] = async (agentId, options) => {
     return (await this.runtime.sessionAttachments?.refresh(agentId, options)) ?? { stale: false };
   };

@@ -689,6 +689,8 @@ function instructionPluginSessions(instructions: () => string[]): PluginSessions
       tools: [],
       mcpServerOwners: {},
     }),
+    sessionLaunched: () => {},
+    sessionLaunchFailed: () => {},
     refreshSession: async () => ({ stale: false }),
     sessionTools: () => [],
     closeSession: () => {},

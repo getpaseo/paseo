@@ -53,11 +53,13 @@ interface Attachment {
  *
  * A plugin restart gives it a new instance id. `refresh` reruns the open of only the plugins that changed for the
  * session, swaps in their tools at once, and marks the session stale only when the provider launch would differ from
- * the one it runs. A failed open leaves the running launch as the baseline. Opens and refreshes of one session run one
- * at a time.
+ * the one it runs. An open becomes the baseline only once its provider launch takes over the session, so a failed open
+ * or launch leaves the running launch as the baseline. Opens and refreshes of one session run one at a time.
  */
 export class SessionAttachments {
   private readonly attachments = new Map<string, Attachment>();
+  /** Interactive opens whose provider launch has not taken over the session yet. */
+  private readonly pending = new Map<string, Attachment>();
   private readonly tails = new Map<string, Promise<unknown>>();
 
   constructor(
@@ -67,8 +69,9 @@ export class SessionAttachments {
 
   async open(request: SessionOpenWireRequest): Promise<PluginSessionOpenResult> {
     return this.serialize(request.agentId, async () => {
-      // Each plugin attaches its tools again below, and a plugin that left the chain keeps none. A failed open leaves
-      // the running session's record, whose plugins then attach again on its next refresh.
+      // Each plugin attaches its tools again below, and a plugin that left the chain keeps none. Until the launch
+      // takes over, the running session's record stays, and its plugins attach again on its next refresh if the
+      // launch fails.
       this.plugins.detachEverywhere(request.agentId);
       for (const contribution of this.attachments.get(request.agentId)?.contributions ?? []) {
         contribution.synced = false;
@@ -103,7 +106,7 @@ export class SessionAttachments {
         }
       }
       if (request.purpose === "interactive") {
-        this.attachments.set(request.agentId, {
+        this.pending.set(request.agentId, {
           base,
           launched: contributions,
           contributions: [...contributions],
@@ -128,9 +131,24 @@ export class SessionAttachments {
     options: PluginSessionRefreshOptions,
   ): Promise<{ stale: boolean }> {
     const attachment = this.attachments.get(agentId);
-    if (!attachment) return { stale: false };
+    // A launch in progress attaches its own tools and takes over once it succeeds.
+    if (!attachment || this.pending.has(agentId)) return { stale: false };
     if (this.isCurrent(attachment)) return { stale: attachment.stale };
     return this.serialize(agentId, () => this.reconcile(agentId, options));
+  }
+
+  /** The provider session launched with the last open's result and now runs it. */
+  launched(agentId: string): void {
+    const opened = this.pending.get(agentId);
+    if (!opened) return;
+    this.pending.delete(agentId);
+    this.attachments.set(agentId, opened);
+  }
+
+  /** The last open's result never launched. The session that is still running keeps its record. */
+  launchFailed(agentId: string): void {
+    this.pending.delete(agentId);
+    this.plugins.detachEverywhere(agentId);
   }
 
   /** The session's tools from running plugin instances. */
@@ -138,7 +156,8 @@ export class SessionAttachments {
     const running = new Map(
       this.plugins.sessionOpenPlugins().map((plugin) => [plugin.id, plugin.instanceId]),
     );
-    return (this.attachments.get(agentId)?.contributions ?? [])
+    const attachment = this.pending.get(agentId) ?? this.attachments.get(agentId);
+    return (attachment?.contributions ?? [])
       .filter(
         (contribution) =>
           contribution.synced &&
@@ -148,6 +167,7 @@ export class SessionAttachments {
   }
 
   close(agentId: string): void {
+    this.pending.delete(agentId);
     this.attachments.delete(agentId);
     this.plugins.detachEverywhere(agentId);
   }
@@ -172,7 +192,7 @@ export class SessionAttachments {
     options: PluginSessionRefreshOptions,
   ): Promise<{ stale: boolean }> {
     const attachment = this.attachments.get(agentId);
-    if (!attachment) return { stale: false };
+    if (!attachment || this.pending.has(agentId)) return { stale: false };
     if (this.isCurrent(attachment)) return { stale: attachment.stale };
     const running = new Map(this.plugins.sessionOpenPlugins().map((plugin) => [plugin.id, plugin]));
     const recorded = new Map(
