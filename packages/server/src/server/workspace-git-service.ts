@@ -44,7 +44,11 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { isPathInsideRoot, looksLikeDefiniteWindowsPath } from "../utils/path.js";
+import {
+  createPathContainmentMatcher,
+  isPathInsideRoot,
+  looksLikeDefiniteWindowsPath,
+} from "../utils/path.js";
 import {
   createRunGitCommand,
   runGitCommand,
@@ -444,6 +448,7 @@ interface WorkspaceGitServiceDependencies {
   createWatcherLivenessCanary: typeof createWatcherLivenessCanary;
   workspaceFolderExists: (cwd: string) => Promise<boolean>;
   now: () => Date;
+  monotonicNow: () => number;
 }
 
 interface WorkspaceGitServiceOptions {
@@ -649,6 +654,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     createWatcherLivenessCanary,
     workspaceFolderExists,
     now: () => new Date(),
+    monotonicNow: () => performance.now(),
   };
 }
 
@@ -1595,6 +1601,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<FileObserverSubscription> {
     this.assertNotDisposed();
     const signal = this.disposeController.signal;
+    const startedAtMs = this.deps.monotonicNow();
     let outcome: "pending" | "accepted" | "expired" = "pending";
     let timeout: NodeJS.Timeout | null = null;
     let removeAbortListener = () => {};
@@ -1654,6 +1661,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
         await unsubscribePromise;
         throw signal.reason;
+      }
+      // A synchronous stall can outlive the deadline and resolve `subscriptionPromise` in the
+      // microtask queue before the expired timeout timer fires. Enforce the monotonic deadline
+      // directly so late subscriptions still time out, clean up, and enter backoff.
+      if (this.deps.monotonicNow() - startedAtMs >= WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS) {
+        outcome = "expired";
+        const error = new WorkspaceGitWatcherSubscriptionTimeoutError(watchPath);
+        setupController.abort(error);
+        unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
+        await unsubscribePromise;
+        throw error;
       }
       outcome = "accepted";
       return subscription;
@@ -2160,14 +2178,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (isPathInsideRoot(gitDir, directory)) {
         continue;
       }
-      let ignored = false;
-      for (const ignoredDirectory of target.ignoredDirectories) {
-        if (isPathInsideRoot(ignoredDirectory, directory)) {
-          ignored = true;
-          break;
-        }
-      }
-      if (ignored) {
+      if (!target.acceptsEvent(directory)) {
         continue;
       }
       target.knownDirectories.add(directory);
@@ -2281,23 +2292,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.ignoredDirectories.size === 0) {
       return;
     }
-    const foldCase = looksLikeDefiniteWindowsPath(target.watchPath);
-    const comparable = (path: string) =>
-      foldCase ? path.replaceAll("\\", "/").toLowerCase() : path;
-    const ignoredPrefixes: string[] = [];
-    const foldedIgnoredExact = foldCase ? new Set<string>() : null;
-    for (const ignoredDirectory of target.ignoredDirectories) {
-      const ignored = comparable(ignoredDirectory);
-      ignoredPrefixes.push(`${ignored}/`);
-      foldedIgnoredExact?.add(ignored);
-    }
+    const ignoredMatcher = createPathContainmentMatcher({
+      roots: target.ignoredDirectories,
+      compareAsWindows: looksLikeDefiniteWindowsPath(target.watchPath),
+    });
     for (const directory of target.knownDirectories) {
-      const comparableDirectory = comparable(directory);
-      const comparableDirectoryWithSep = `${comparableDirectory}/`;
-      const isIgnored =
-        (foldedIgnoredExact ?? target.ignoredDirectories).has(comparableDirectory) ||
-        ignoredPrefixes.some((prefix) => comparableDirectoryWithSep.startsWith(prefix));
-      if (isIgnored) {
+      if (ignoredMatcher.matches(directory)) {
         target.knownDirectories.delete(directory);
       }
     }

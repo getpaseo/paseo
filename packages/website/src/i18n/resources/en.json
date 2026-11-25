@@ -410,7 +410,7 @@
     },
     "plugins": {
       "title": "Ask Paseo to change Paseo",
-      "description": "Agents in Paseo can change the whole UI without a restart, even on mobile.",
+      "description": "Build or install a plugin once on your server, and it works across <desktop>desktop</desktop>, <web>web</web>, and <mobile>native mobile</mobile> with no restart.",
       "request": "Add a sidebar panel with the PRs waiting on my review.",
       "plan": "I'll build it as a local plugin and install it.",
       "done": "Review queue is in your sidebar.",
