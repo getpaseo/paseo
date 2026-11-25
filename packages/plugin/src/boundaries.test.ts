@@ -14,6 +14,7 @@ const entries = {
   "./server/usage": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
+  "./internal/windows-command": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
