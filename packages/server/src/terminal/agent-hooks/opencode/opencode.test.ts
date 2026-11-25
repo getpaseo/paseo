@@ -112,7 +112,7 @@ describe("OpenCode terminal agent hooks", () => {
     const firstExit = new Promise<number>((resolve) => {
       finishFirstHook = () => resolve(0);
     });
-    const { plugin, commands } = loadInstalledPlugin("terminal-1", firstExit);
+    const { plugin, commands, spawnOptions } = loadInstalledPlugin("terminal-1", firstExit);
     const hooks = plugin.server();
 
     const working = hooks.event({
@@ -123,6 +123,9 @@ describe("OpenCode terminal agent hooks", () => {
     });
     await Promise.resolve();
     expect(commands).toEqual([["paseo", "hooks", "opencode", "session.status.busy"]]);
+    expect(spawnOptions).toEqual([
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true },
+    ]);
 
     finishFirstHook();
     await Promise.all([working, idle]);
@@ -249,6 +252,7 @@ function loadInstalledPlugin(terminalId = "terminal-1", exited = Promise.resolve
   const { configPath } = installAgentHooks(opencodeAgentHookProvider, { configDir });
   const source = readFileSync(configPath, "utf8");
   const commands: string[][] = [];
+  const spawnOptions: unknown[] = [];
   // Supply the host runtime at the script boundary; execute the installed source.
   const plugin: InstalledPlugin = runInNewContext(
     source.replace("export default", "globalThis.plugin ="),
@@ -256,12 +260,13 @@ function loadInstalledPlugin(terminalId = "terminal-1", exited = Promise.resolve
       AbortController,
       process: { env: { PASEO_TERMINAL_ID: terminalId } },
       Bun: {
-        spawn(command: string[]) {
+        spawn(command: string[], options: unknown) {
           commands.push(command);
+          spawnOptions.push(options);
           return { exited };
         },
       },
     },
   );
-  return { plugin, commands };
+  return { plugin, commands, spawnOptions };
 }

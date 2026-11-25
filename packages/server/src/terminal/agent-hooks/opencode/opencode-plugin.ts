@@ -37,6 +37,7 @@ export const OPENCODE_PLUGIN_SOURCE = [
   "    try {",
   '      const child = Bun.spawn(["paseo", "hooks", "opencode", event], {',
   '        stdin: "ignore",',
+  "        windowsHide: true,",
   '        stdout: "ignore",',
   '        stderr: "ignore",',
   "      });",
