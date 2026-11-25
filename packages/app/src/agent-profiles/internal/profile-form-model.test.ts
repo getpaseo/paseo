@@ -722,11 +722,16 @@ describe("openAgentProfileForm", () => {
     expect(model.getState().thinkingOptionId).toBe("think");
     expect(model.getState().isDirty).toBe(false);
 
-    // User edit marks dirty; reverting back to the resolved initial value clears dirty.
+    // User edit marks dirty and advances draftRevision; a subsequent edit advances it again.
+    expect(model.getState().draftRevision).toBe(0);
     model.setName("Renamed");
     expect(model.getState().isDirty).toBe(true);
+    expect(model.getState().draftRevision).toBe(1);
+    model.setName("Renamed again");
+    expect(model.getState().draftRevision).toBe(2);
     model.setName("Opus 5");
     expect(model.getState().isDirty).toBe(false);
+    expect(model.getState().draftRevision).toBe(3);
   });
 });
 

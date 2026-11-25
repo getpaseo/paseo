@@ -134,6 +134,8 @@ export interface AgentProfileFormState {
 
   disclosure: AgentProfileFormDisclosure;
   isDirty: boolean;
+  /** Monotonic counter incremented on every user edit that changes the draft. */
+  draftRevision: number;
   isSubmitting: boolean;
   submitError: string | null;
   canSubmit: boolean;
@@ -559,6 +561,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
       showControlsField: false,
     },
     isDirty: false,
+    draftRevision: 0,
     isSubmitting: false,
     submitError: null,
     canSubmit: false,
@@ -674,6 +677,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let listeners = new Set<() => void>();
   let closed = false;
   let hasUserEdited = false;
+  let draftRevision = 0;
   let baselineFingerprint = "";
   let autoSuggestedName: string | null =
     snapshot.mode === "create" ? (snapshot.seed?.name ?? null) : null;
@@ -759,7 +763,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const submitValue = canSubmit ? buildSubmitValue(resolved) : null;
     const isDirty =
       baselineFingerprint.length > 0 && formDraftFingerprint(resolved) !== baselineFingerprint;
-    return { ...resolved, isDirty, submitValue };
+    return { ...resolved, isDirty, draftRevision, submitValue };
   }
 
   let state: AgentProfileFormState = derive(buildInitialState(snapshot));
@@ -772,10 +776,15 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     if (closed) {
       return;
     }
+    const previousFingerprint = formDraftFingerprint(state);
     if (options?.userEdit) {
       hasUserEdited = true;
     }
     let nextState = derive(mutate(state));
+    if (options?.userEdit && formDraftFingerprint(nextState) !== previousFingerprint) {
+      draftRevision += 1;
+      nextState = { ...nextState, draftRevision };
+    }
     // Catalog hydration fills in missing provider defaults (e.g., default mode on a
     // migrated favorite); refresh the clean baseline until the user makes an edit.
     if (!hasUserEdited) {

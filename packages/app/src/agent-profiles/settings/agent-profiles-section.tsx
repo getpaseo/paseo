@@ -493,6 +493,11 @@ function RosterBody({
   );
 }
 
+interface ActiveProfileFormHandle {
+  isDirty: () => boolean;
+  draftRevision: () => number;
+}
+
 /**
  * Owns the active form session above drawer/modal framing so resizing across breakpoints
  * never remounts the form or discards unsaved edits.
@@ -506,7 +511,7 @@ function AgentProfileEditorHost({
   dockDrawer,
   canStepPrev,
   canStepNext,
-  isDirtyRef,
+  activeFormRef,
   onStepPrev,
   onStepNext,
   onClose,
@@ -523,7 +528,7 @@ function AgentProfileEditorHost({
   dockDrawer: boolean;
   canStepPrev: boolean;
   canStepNext: boolean;
-  isDirtyRef: MutableRefObject<boolean>;
+  activeFormRef: MutableRefObject<ActiveProfileFormHandle | null>;
   onStepPrev: () => void;
   onStepNext: () => void;
   onClose: () => void;
@@ -542,11 +547,17 @@ function AgentProfileEditorHost({
   });
 
   useEffect(() => {
-    isDirtyRef.current = session.isDirty;
-    return () => {
-      isDirtyRef.current = false;
+    const handle: ActiveProfileFormHandle = {
+      isDirty: () => session.model.getState().isDirty,
+      draftRevision: () => session.model.getState().draftRevision,
     };
-  }, [isDirtyRef, session.isDirty]);
+    activeFormRef.current = handle;
+    return () => {
+      if (activeFormRef.current === handle) {
+        activeFormRef.current = null;
+      }
+    };
+  }, [activeFormRef, session.model]);
 
   if (canUseDrawer) {
     return (
@@ -614,14 +625,31 @@ export function AgentProfilesPage({
   const editorTokenRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [paneWidth, setPaneWidth] = useState(0);
-  const isDirtyRef = useRef(false);
+  const activeFormRef = useRef<ActiveProfileFormHandle | null>(null);
+  const approvedDiscardRef = useRef<{ token: number; revision: number } | null>(null);
 
   const getEditorToken = useCallback(() => editorTokenRef.current, []);
+
+  const hasUnapprovedDraft = useCallback((): boolean => {
+    const form = activeFormRef.current;
+    if (!form?.isDirty()) {
+      return false;
+    }
+    const approved = approvedDiscardRef.current;
+    if (
+      approved &&
+      approved.token === editorTokenRef.current &&
+      approved.revision === form.draftRevision()
+    ) {
+      return false;
+    }
+    return true;
+  }, []);
 
   const commitEditTarget = useCallback((next: EditTarget | null) => {
     const nextToken = editorTokenRef.current + 1;
     editorTokenRef.current = nextToken;
-    isDirtyRef.current = false;
+    approvedDiscardRef.current = null;
     setEditorState({ target: next, token: nextToken });
   }, []);
 
@@ -630,12 +658,12 @@ export function AgentProfilesPage({
       if (editorTokenRef.current !== expectedToken) {
         return;
       }
-      if (options?.requireClean && isDirtyRef.current) {
+      if (options?.requireClean && hasUnapprovedDraft()) {
         return;
       }
       commitEditTarget(next);
     },
-    [commitEditTarget],
+    [commitEditTarget, hasUnapprovedDraft],
   );
 
   const closeIfEditingProfile = useCallback((profileId: string) => {
@@ -645,7 +673,7 @@ export function AgentProfilesPage({
       }
       const nextToken = editorTokenRef.current + 1;
       editorTokenRef.current = nextToken;
-      isDirtyRef.current = false;
+      approvedDiscardRef.current = null;
       return { target: null, token: nextToken };
     });
   }, []);
@@ -675,9 +703,12 @@ export function AgentProfilesPage({
   }, [activeProfile, profiles]);
 
   const confirmDiscardIfDirty = useCallback(async (): Promise<boolean> => {
-    if (!isDirtyRef.current) {
+    const form = activeFormRef.current;
+    if (!form || !hasUnapprovedDraft()) {
       return true;
     }
+    const token = editorTokenRef.current;
+    const revisionAtPrompt = form.draftRevision();
     const confirmed = await confirmDialog({
       title: t("settings.host.agentProfiles.discardTitle"),
       message: t("settings.host.agentProfiles.discardMessage"),
@@ -685,37 +716,44 @@ export function AgentProfilesPage({
       cancelLabel: t("common.actions.cancel"),
       destructive: true,
     });
-    if (confirmed) {
-      isDirtyRef.current = false;
+    if (!confirmed) {
+      return false;
     }
-    return confirmed;
-  }, [t]);
+    if (
+      editorTokenRef.current !== token ||
+      activeFormRef.current?.draftRevision() !== revisionAtPrompt
+    ) {
+      return false;
+    }
+    approvedDiscardRef.current = { token, revision: revisionAtPrompt };
+    return true;
+  }, [hasUnapprovedDraft, t]);
 
   useEffect(() => {
     onRegisterBeforeLeave?.({
-      isDirty: () => isDirtyRef.current,
+      isDirty: hasUnapprovedDraft,
       confirmDiscard: confirmDiscardIfDirty,
     });
     return () => {
       onRegisterBeforeLeave?.(null);
     };
-  }, [confirmDiscardIfDirty, onRegisterBeforeLeave]);
+  }, [confirmDiscardIfDirty, hasUnapprovedDraft, onRegisterBeforeLeave]);
 
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {
       const expectedToken = editorTokenRef.current;
-      if (!isDirtyRef.current) {
+      if (!hasUnapprovedDraft()) {
         commitEditTarget(next);
         return;
       }
       const confirmAndTransition = async () => {
         if (await confirmDiscardIfDirty()) {
-          applyDelayedEditTarget(expectedToken, next);
+          applyDelayedEditTarget(expectedToken, next, { requireClean: true });
         }
       };
       void confirmAndTransition();
     },
-    [applyDelayedEditTarget, commitEditTarget, confirmDiscardIfDirty],
+    [applyDelayedEditTarget, commitEditTarget, confirmDiscardIfDirty, hasUnapprovedDraft],
   );
 
   const handleAddOpen = useCallback(() => transitionTarget({ mode: "create" }), [transitionTarget]);
@@ -913,7 +951,7 @@ export function AgentProfilesPage({
           dockDrawer={dockDrawer}
           canStepPrev={activeIndex > 0}
           canStepNext={canStepNext}
-          isDirtyRef={isDirtyRef}
+          activeFormRef={activeFormRef}
           onStepPrev={handleStepPrev}
           onStepNext={handleStepNext}
           onClose={handleEditClose}
