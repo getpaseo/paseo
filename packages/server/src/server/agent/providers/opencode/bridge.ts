@@ -48,6 +48,8 @@ export interface OpenCodeBridgeMcpTool {
 /** MCP servers Paseo hosts for one session; the v2 plugin exposes them to that session only. */
 export interface OpenCodeBridgeMcp {
   readonly tools: readonly OpenCodeBridgeMcpTool[];
+  /** Server instructions for the model, which the plugin adds to each request of the session. */
+  readonly instructions: string | undefined;
   execute(name: string, input: unknown, signal?: AbortSignal): Promise<PaseoToolResult>;
 }
 
@@ -301,12 +303,8 @@ export class OpenCodeBridge {
       throw new OpenCodeBridgeClientError(404, `Paseo tool not found: ${input.toolName}`);
     }
     const body = await readJsonBody(input.request);
-    const controller = new AbortController();
-    input.request.once("aborted", () =>
-      controller.abort(new Error("OpenCode tool request was aborted")),
-    );
     const result = await binding.tools.executeTool(input.toolName, body, {
-      signal: controller.signal,
+      signal: abortOnDisconnect(input.response),
     });
     sendJson(input.response, 200, addModelVisibleStructuredContent(result));
   }
@@ -321,11 +319,8 @@ export class OpenCodeBridge {
     if (!mcp?.tools.some((tool) => tool.name === input.toolName))
       throw new OpenCodeBridgeClientError(404, `MCP tool not found: ${input.toolName}`);
     const body = await readJsonBody(input.request);
-    const controller = new AbortController();
-    input.request.once("aborted", () =>
-      controller.abort(new Error("OpenCode tool request was aborted")),
-    );
-    sendJson(input.response, 200, await mcp.execute(input.toolName, body, controller.signal));
+    const result = await mcp.execute(input.toolName, body, abortOnDisconnect(input.response));
+    sendJson(input.response, 200, addModelVisibleStructuredContent(result));
   }
 
   private requireBinding(sessionId: string): OpenCodeSessionBinding {
@@ -470,7 +465,21 @@ function sessionContext(binding: OpenCodeSessionBinding, withTools: boolean) {
     env: binding.env,
     tools: [...(binding.tools?.tools.keys() ?? [])],
     mcpTools: binding.mcp?.tools ?? [],
+    mcpInstructions: binding.mcp?.instructions,
   };
+}
+
+/**
+ * Aborts when OpenCode stops waiting for the response, for example when the user stops the turn.
+ * The request has ended by then, so only the response reports the disconnect.
+ */
+function abortOnDisconnect(response: ServerResponse): AbortSignal {
+  const controller = new AbortController();
+  response.once("close", () => {
+    if (!response.writableFinished)
+      controller.abort(new Error("OpenCode tool request was aborted"));
+  });
+  return controller.signal;
 }
 
 function sendFailure(response: ServerResponse, error: unknown): void {

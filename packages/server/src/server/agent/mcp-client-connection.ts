@@ -7,6 +7,7 @@ import type { McpServerConfig } from "./agent-sdk-types.js";
 import type { PaseoToolResult } from "./tools/types.js";
 
 const SERVER_TIMEOUT_MS = 10_000;
+const TERMINATE_TIMEOUT_MS = 2_000;
 
 export type McpClientTool = Pick<Tool, "name" | "description" | "inputSchema">;
 
@@ -72,10 +73,23 @@ function createConnection(client: Client, tools: readonly McpClientTool[]): McpC
 }
 
 async function terminate(client: Client): Promise<void> {
-  // A stateful HTTP server keeps the session until the client ends it explicitly.
+  // A stateful HTTP server keeps the session until the client ends it explicitly. Closing the
+  // client aborts a termination request that the server does not answer in time.
   if (client.transport instanceof StreamableHTTPClientTransport)
-    await client.transport.terminateSession().catch(() => undefined);
+    await withDeadline(client.transport.terminateSession(), TERMINATE_TIMEOUT_MS);
   await client.close().catch(() => undefined);
+}
+
+async function withDeadline(operation: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  try {
+    await Promise.race([operation.catch(() => undefined), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function createTransport({ config, cwd, env }: ConnectMcpServerInput) {

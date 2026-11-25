@@ -11,11 +11,15 @@ interface HttpMcpOptions {
   /** Tool `marker` returns this text and advertises it in its description. */
   marker: string;
   instructions?: string;
+  /** Accepts each session DELETE and never answers it, like an unresponsive server. */
+  holdTermination?: boolean;
 }
 
 /** An authenticated Streamable HTTP MCP server, shaped like Hub's execution endpoint. */
 export class HttpMcpFixture {
   private readonly transports = new Map<string, StreamableHTTPServerTransport>();
+  /** Session DELETE requests left unanswered because of `holdTermination`. */
+  heldTerminations = 0;
   private constructor(
     private readonly server: Server,
     readonly url: string,
@@ -26,6 +30,10 @@ export class HttpMcpFixture {
     const server = createServer((request, response) => {
       if (request.headers.authorization !== `Bearer ${options.token}`) {
         response.writeHead(401).end();
+        return;
+      }
+      if (options.holdTermination && request.method === "DELETE") {
+        fixture.heldTerminations += 1;
         return;
       }
       const id = request.headers["mcp-session-id"];

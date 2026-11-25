@@ -402,7 +402,18 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
         description: `Return ${marker}`,
         inputSchema: { type: "object" as const },
       },
+      // Only session A has `local_env`, which the user's own OpenCode configuration also has.
+      ...(marker === "A"
+        ? [
+            {
+              name: "local_env",
+              description: "Paseo env",
+              inputSchema: { type: "object" as const },
+            },
+          ]
+        : []),
     ],
+    instructions: `Use ${marker}`,
     execute: async (name: string, input: unknown) => ({
       content: [{ type: "text" as const, text: `${name}:${marker}:${JSON.stringify(input)}` }],
     }),
@@ -422,6 +433,17 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
     const plugin = await bridge.materializeV2Plugin();
     const module = await import(pathToFileURL(path.join(fileURLToPath(plugin), "server.js")).href);
     const installed = new Map<string, McpTestTool>();
+    const natives = new Map<string, McpTestTool & { description: string; input: unknown }>([
+      [
+        "local_env",
+        {
+          name: "local_env",
+          description: "User env",
+          input: { type: "object" },
+          execute: async () => ({ output: { from: "user" } }),
+        },
+      ],
+    ]);
     const hooks: Array<(input: TestContext) => Promise<void>> = [];
     const asserted: unknown[] = [];
     let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
@@ -442,8 +464,13 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
         },
       },
       tool: {
-        transform: async (fn: (editor: { add(item: McpTestTool): void }) => void) => {
-          fn({ add: (item) => installed.set(item.name, item) });
+        transform: async (
+          fn: (editor: {
+            get(name: string): McpTestTool | undefined;
+            add(item: McpTestTool): void;
+          }) => void,
+        ) => {
+          fn({ get: (name) => natives.get(name), add: (item) => installed.set(item.name, item) });
           return { dispose: async () => {} };
         },
       },
@@ -467,24 +494,38 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
       await expect(rpc.bind({ sessionID, ...bridge.sharedV2Connection() })).resolves.toEqual({
         features: { mcpTools: true },
       });
-    const contextFor = async (sessionID: string) => {
-      const input = { sessionID, tools: { hub_marker: {}, native: {} }, system: [] };
+    const requestFor = async (sessionID: string) => {
+      const input = {
+        sessionID,
+        tools: { hub_marker: {}, local_env: { description: "User env" }, native: {} },
+        system: [],
+      };
       for (const hook of hooks) await hook(input);
-      return input.tools;
+      return input;
     };
+    const contextFor = async (sessionID: string) => (await requestFor(sessionID)).tools;
     expect(await contextFor("a")).toEqual({
       hub_marker: { description: "Return A", input: { type: "object" } },
+      local_env: { description: "Paseo env", input: { type: "object" } },
       native: {},
     });
     expect(await contextFor("b")).toEqual({
       hub_marker: { description: "Return B", input: { type: "object" } },
+      local_env: { description: "User env" },
       native: {},
     });
-    expect(await contextFor("other")).toEqual({ native: {} });
-    // A descendant uses its root's servers and is adopted once, before its first request.
-    expect(await contextFor("child")).toMatchObject({ hub_marker: { description: "Return A" } });
+    expect(await contextFor("other")).toEqual({
+      local_env: { description: "User env" },
+      native: {},
+    });
+    // A descendant uses its root's servers and instructions from its first request, and is
+    // adopted once.
+    const child = await requestFor("child");
+    expect(child.tools).toMatchObject({ hub_marker: { description: "Return A" } });
+    expect(child.system).toEqual([{ type: "text", text: "Use A" }]);
     await contextFor("child");
     expect(adopted).toEqual(["a>child"]);
+    expect((await requestFor("other")).system).toEqual([]);
 
     const call = { agent: "build", messageID: "message", id: "call" };
     const hub = installed.get("hub_marker")!;
@@ -497,9 +538,18 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
     await expect(hub.execute({}, { ...call, sessionID: "other" })).rejects.toThrow(
       "not bound to a Paseo agent",
     );
+    // A session without its own `local_env` runs the user's tool, which checks its own permission.
+    const env = installed.get("local_env")!;
+    await expect(env.execute({}, { ...call, sessionID: "b" })).resolves.toEqual({
+      content: [{ type: "text", text: '{"from":"user"}' }],
+    });
+    await expect(env.execute({}, { ...call, sessionID: "a" })).resolves.toMatchObject({
+      content: [{ type: "text", text: "local_env:A:{}" }],
+    });
     expect(asserted).toEqual([
       expect.objectContaining({ sessionID: "child", action: "hub_marker", resources: ["*"] }),
       expect.objectContaining({ sessionID: "b", action: "hub_marker", resources: ["*"] }),
+      expect.objectContaining({ sessionID: "a", action: "local_env", resources: ["*"] }),
     ]);
   } finally {
     await dispose?.();

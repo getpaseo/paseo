@@ -14,6 +14,8 @@ export async function registerSharedBridge(context) {
   const { bindings, definitions } = state.stateFor(context.location);
   const registrations = new Map();
   const adopted = new Set();
+  // Same-named tools that OpenCode registered before Paseo's MCP tools, by tool name.
+  const natives = new Map();
   // MCP tools run only after OpenCode's own permission check, which older servers lack.
   const runsMcpTools = typeof context.permission?.assert === "function";
   let updating = Promise.resolve();
@@ -81,14 +83,26 @@ export async function registerSharedBridge(context) {
     const key = mcpKey(name);
     if (registrations.has(key)) return;
     const registration = await context.tool.transform((editor) => {
+      // The user's own OpenCode configuration can register a tool with the same name. Sessions
+      // that do not have a Paseo MCP tool of that name keep that tool.
+      const native = editor.get?.(name);
+      if (native) natives.set(name, native);
+      else natives.delete(name);
       editor.add({
         name,
-        description: `MCP tool ${name} provided by Paseo`,
-        input: { type: "object", additionalProperties: true },
+        description: native?.description ?? `MCP tool ${name} provided by Paseo`,
+        input: native?.input ?? { type: "object", additionalProperties: true },
         options: { codemode: false },
         async execute(input, call) {
           const scope = await find(call.sessionID);
-          if (!scope) throw new Error("OpenCode session is not bound to a Paseo agent");
+          if (!scope || !(await ownsMcpTool(scope, name))) {
+            if (native) return withoutOutput(await native.execute(input, call));
+            throw new Error(
+              scope
+                ? `MCP tool ${name} is not available to this session`
+                : "OpenCode session is not bound to a Paseo agent",
+            );
+          }
           await context.permission.assert({
             sessionID: call.sessionID,
             agent: call.agent,
@@ -121,6 +135,13 @@ export async function registerSharedBridge(context) {
     });
     registrations.set(key, registration);
     definitions.set(key, { mcpTool: name });
+  }
+  async function ownsMcpTool(scope, name) {
+    const own = await request(
+      scope,
+      `/sessions/${encodeURIComponent(scope.sessionID)}/context?tools`,
+    );
+    return (own.mcpTools ?? []).some((tool) => tool.name === name);
   }
   // A child session starts its first request right away, so Paseo prepares it, including its
   // environment, before the request is built.
@@ -272,17 +293,30 @@ export async function registerSharedBridge(context) {
       if (definitions.has(mcpKey(name))) {
         const own = mcpTools.get(name);
         if (own) input.tools[name] = { description: own.description, input: own.inputSchema };
-        else delete input.tools[name];
+        else if (!natives.has(name)) delete input.tools[name];
         continue;
       }
       if (name.startsWith("paseo_") && name !== STRUCTURED_OUTPUT_TOOL && !allowed.has(name))
         delete input.tools[name];
     }
+    // The instructions of Paseo-hosted MCP servers go with every request of the session and its
+    // descendants. OpenCode loads instruction entries before this hook runs, so an entry written
+    // when a child is adopted would miss the child's first request.
+    if (scope?.mcpInstructions) input.system.push({ type: "text", text: scope.mcpInstructions });
   });
   return async () => {
     await filter.dispose();
     await rpc.dispose();
     await Promise.all([...registrations.values()].map((registration) => registration.dispose()));
+  };
+}
+
+// Paseo's MCP tool declares no output schema, so a same-named tool's output becomes content.
+function withoutOutput({ output, ...result }) {
+  if (result.content !== undefined || output === undefined) return result;
+  return {
+    ...result,
+    content: [{ type: "text", text: typeof output === "string" ? output : JSON.stringify(output) }],
   };
 }
 

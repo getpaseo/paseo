@@ -37,13 +37,15 @@ type Mode = "explicit" | "discovered" | "owned";
 
 interface Fixture {
   root: string;
+  /** An MCP server named `hub` in the user's own OpenCode configuration, when the test has one. */
+  userHub?: HttpMcpFixture;
   project: string;
   bridge: OpenCodeBridge;
   service: ScriptedOpenCodeService;
   client: OpenCodeV2AgentClient;
 }
 
-async function startFixture(mode: Mode): Promise<Fixture> {
+async function startFixture(mode: Mode, options: { userHub?: boolean } = {}): Promise<Fixture> {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-shared-"));
   const project = path.join(root, "project");
   await mkdir(project, { recursive: true });
@@ -53,7 +55,22 @@ async function startFixture(mode: Mode): Promise<Fixture> {
   });
   bridge.setManifestCatalog({ tools: new Map() });
   await bridge.start();
+  const userHub = options.userHub
+    ? await HttpMcpFixture.start({ token: "user-token", marker: "USER_OK" })
+    : undefined;
   const service = await ScriptedOpenCodeService.start({
+    ...(userHub
+      ? {
+          mcpServers: {
+            hub: {
+              type: "remote",
+              url: userHub.url,
+              headers: { Authorization: "Bearer user-token" },
+              oauth: false,
+            },
+          },
+        }
+      : {}),
     // A user installs the plugin on an explicit server; Paseo installs it on a discovered one.
     beforeStart:
       mode === "explicit"
@@ -79,7 +96,7 @@ async function startFixture(mode: Mode): Promise<Fixture> {
     },
   }[mode];
   const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), bridge, settings });
-  return { root, project, bridge, service, client };
+  return { root, project, bridge, service, client, ...(userHub ? { userHub } : {}) };
 }
 
 async function stopFixture(fixture: Fixture | undefined) {
@@ -87,6 +104,7 @@ async function stopFixture(fixture: Fixture | undefined) {
   await fixture.client.shutdown();
   await fixture.service.stop();
   await fixture.bridge.close();
+  await fixture.userHub?.close();
   await rm(fixture.root, { recursive: true, force: true });
 }
 
@@ -141,10 +159,10 @@ function agentMcpTools(request: ScriptedRequest): ScriptedTool[] {
   );
 }
 
-function useFixture(mode: Mode) {
+function useFixture(mode: Mode, options: { userHub?: boolean } = {}) {
   const state: { fixture?: Fixture; cleanups: Array<() => Promise<void>> } = { cleanups: [] };
   beforeEach(async () => {
-    state.fixture = await startFixture(mode);
+    state.fixture = await startFixture(mode, options);
   }, 60_000);
   afterEach(async () => {
     for (const cleanup of state.cleanups.splice(0).toReversed()) await cleanup();
@@ -212,15 +230,16 @@ describe.each<Mode>(["explicit", "discovered", "owned"])("OpenCode v2 %s server"
       request.prompt.endsWith(childPrompt),
     );
     expect(childRequest?.tools.map((tool) => tool.name)).toContain("hub_marker");
-    // The model receives the server's instructions with the first request of the session.
+    // The model receives the server's instructions with the first request of each session.
     expect(fixture.service.requestsFor(hubCall)[0]?.transcript).toContain(
       "Always finish the Hub execution.",
     );
+    expect(childRequest?.transcript).toContain("Always finish the Hub execution.");
   }, 120_000);
 });
 
 describe.each<Mode>(["explicit", "discovered"])("OpenCode v2 %s shared service", (mode) => {
-  const state = useFixture(mode);
+  const state = useFixture(mode, { userHub: true });
 
   test("isolates same-named MCP servers between sessions in one directory and closes them", async () => {
     const { cleanups } = state;
@@ -263,7 +282,8 @@ describe.each<Mode>(["explicit", "discovered"])("OpenCode v2 %s shared service",
       expect.objectContaining({ name: "hub_marker", description: "Return HUB_OK_2" }),
     ]);
 
-    // A session the user opens in OpenCode itself sees no Paseo MCP tools and cannot call them.
+    // A session the user opens in OpenCode itself sees no Paseo MCP tools. It keeps the
+    // same-named tool from the user's own OpenCode configuration.
     const unrelatedPrompt = `unrelated ${scriptedCall("hub_marker")}`;
     const opencode = OpenCode.make({
       baseUrl: service.url,
@@ -279,7 +299,9 @@ describe.each<Mode>(["explicit", "discovered"])("OpenCode v2 %s shared service",
     await expect
       .poll(() => service.requestsFor(unrelatedPrompt).length, { timeout: 30_000 })
       .toBeGreaterThan(0);
-    expect(service.requestsFor(unrelatedPrompt).flatMap(agentMcpTools)).toEqual([]);
+    expect(advertised(unrelatedPrompt)).toEqual([
+      expect.objectContaining({ name: "hub_marker", description: "Return USER_OK" }),
+    ]);
 
     expect(hubs.map((hub) => hub.openSessions)).toEqual([1, 1]);
     const pid = Number(await readFile(stdio.pidFile, "utf8"));

@@ -45,8 +45,6 @@ import { createSessionMetricsReporter } from "../../metrics.js";
 import { replayedTurnMetrics, sessionMetrics } from "./metrics.js";
 import type { SessionMcp } from "./session-mcp.js";
 
-const MCP_INSTRUCTIONS_KEY = "paseo.mcp";
-
 export interface OpenCodeV2SessionOptions {
   connection: V2Connection;
   info: SessionInfo;
@@ -219,43 +217,23 @@ export class OpenCodeV2Session implements AgentSession {
       this.config.daemonAppendSystemPrompt,
       ...(this.config.pluginAppendSystemPrompt ?? []),
     );
-    await this.putInstructions(this.id, {
-      paseo: system,
-      [MCP_INSTRUCTIONS_KEY]: this.mcp?.instructions,
-    });
-  }
-  /** Stores each instruction entry with a value and removes the existing ones without. */
-  private async putInstructions(sessionID: string, entries: Record<string, string | undefined>) {
-    let existing: Set<string> | undefined;
-    for (const [key, value] of Object.entries(entries)) {
-      if (value) {
-        await this.client.session.instructions.entry.put({ sessionID, key, value });
-        continue;
+    if (system) {
+      await this.client.session.instructions.entry.put({
+        sessionID: this.id,
+        key: "paseo",
+        value: system,
+      });
+    } else {
+      const entries = await this.client.session.instructions.entry.list({ sessionID: this.id });
+      if (entries.some((entry) => entry.key === "paseo")) {
+        await this.client.session.instructions.entry.remove({ sessionID: this.id, key: "paseo" });
       }
-      existing ??= new Set(
-        (await this.client.session.instructions.entry.list({ sessionID })).map(
-          (entry) => entry.key,
-        ),
-      );
-      if (existing.has(key))
-        await this.client.session.instructions.entry.remove({ sessionID, key });
     }
   }
-  /**
-   * Gives a descendant session what OpenCode does not inherit from its parent: the shell
-   * environment, which is per session, and the instructions of Paseo-hosted MCP servers.
-   */
+  /** Gives a descendant session the shell environment, which OpenCode does not inherit. */
   async adoptDescendant(sessionID: string) {
-    if (this.closed || this.historyOnly) return;
-    if (this.environment)
-      await this.client.session.environment({ sessionID, variables: this.environment });
-    const instructions = this.mcp?.instructions;
-    if (instructions)
-      await this.client.session.instructions.entry.put({
-        sessionID,
-        key: MCP_INSTRUCTIONS_KEY,
-        value: instructions,
-      });
+    if (this.closed || this.historyOnly || !this.environment) return;
+    await this.client.session.environment({ sessionID, variables: this.environment });
   }
   private async startStream() {
     let ready!: () => void;

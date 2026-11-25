@@ -35,6 +35,8 @@ export function scriptedCall(tool: string, input: Record<string, unknown> = {}):
 interface StartOptions {
   /** Installs Paseo's plugin before the service starts, as a user does for an explicit server. */
   beforeStart?: (paths: { configDirectory: string }) => Promise<void>;
+  /** The user's own OpenCode MCP servers, in OpenCode's `mcp.servers` configuration shape. */
+  mcpServers?: Record<string, unknown>;
 }
 
 /**
@@ -95,7 +97,13 @@ export class ScriptedOpenCodeService {
     }
     await new Promise<void>((resolve) => llm.listen(0, "127.0.0.1", resolve));
     const llmUrl = `http://127.0.0.1:${(llm.address() as AddressInfo).port}/v1`;
-    await writeFile(path.join(configDirectory, "opencode.json"), JSON.stringify(config(llmUrl)));
+    await writeFile(
+      path.join(configDirectory, "opencode.json"),
+      JSON.stringify({
+        ...config(llmUrl),
+        ...(options.mcpServers ? { mcp: { servers: options.mcpServers } } : {}),
+      }),
+    );
     await options.beforeStart?.({ configDirectory });
     const child = spawn(
       OPENCODE_V2_COMMAND,
