@@ -129,7 +129,7 @@ describe("SQLite timeline backend against the memory backend", () => {
         const identity = String(random(6));
         const text = `${scenario}-${step}`;
         if (roll === 0) {
-          const prompts = memory.prompts(scope);
+          const prompts = memory.promptRows(scope);
           if (prompts.length > 0) {
             const retireFromSeq = prompts[random(prompts.length)].seqStart;
             const results = backends.map((backend) =>
@@ -196,7 +196,7 @@ function expectSameHistory(
   expect(sqlite.head(target)).toEqual(memory.head(target));
   expect(sqlite.readRows(target)).toEqual(memory.readRows(target));
   expect(sqlite.retiredRows(target)).toEqual(memory.retiredRows(target));
-  expect(sqlite.prompts(target)).toEqual(memory.prompts(target));
+  expect(sqlite.promptRows(target)).toEqual(memory.promptRows(target));
   expect(sqlite.lastItem(target)).toEqual(memory.lastItem(target));
   expect(sqlite.lastAssistantMessage(target)).toEqual(memory.lastAssistantMessage(target));
   const maxSeq = memory.head(target)!.seq;
@@ -420,6 +420,10 @@ describe("SQLite timeline reads", () => {
       expect(backend.fetch(scope, options).rows.length).toBeGreaterThanOrEqual(20);
       expect(database.rowsRead, JSON.stringify(options)).toBeLessThan(150);
     }
+    // The chat outline lists every prompt; it reads none of the 1,000 other rows.
+    database.rowsRead = 0;
+    expect(backend.promptRows(scope)).toHaveLength(500);
+    expect(database.rowsRead).toBeLessThanOrEqual(501);
     for (const read of [
       () => backend.head(scope),
       () => backend.lastItem(scope),

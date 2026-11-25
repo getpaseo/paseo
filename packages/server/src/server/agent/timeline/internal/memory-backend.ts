@@ -15,7 +15,6 @@ import type {
   TimelineChild,
   TimelineEntry,
   TimelineHead,
-  TimelinePrompt,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -142,18 +141,11 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     return this.requireState(scope).projection.isRetired(entry);
   }
 
-  prompts(scope: TimelineScope): TimelinePrompt[] {
-    const prompts: TimelinePrompt[] = [];
-    for (const row of this.requireState(scope).projection.getRows()) {
-      if (row.item.type !== "user_message") continue;
-      prompts.push({
-        seqStart: row.seqStart,
-        messageId: row.item.messageId,
-        providerMessageId: row.providerMessageId,
-        submitted: row.item.clientMessageId !== undefined,
-      });
-    }
-    return prompts;
+  promptRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.requireState(scope)
+      .projection.getRows()
+      .filter((row) => row.item.type === "user_message")
+      .map(cloneRow);
   }
 
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): TimelineHead {

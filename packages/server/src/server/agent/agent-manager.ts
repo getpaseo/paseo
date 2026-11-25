@@ -1580,6 +1580,12 @@ export class AgentManager {
     return await this.timeline.readRows({ agentId: id });
   }
 
+  /** The agent's active prompt rows, without reading its replies or tool output. */
+  async getTimelinePromptRows(id: string): Promise<AgentTimelineRow[]> {
+    await this.requireHistory(id);
+    return await this.timeline.readPromptRows({ agentId: id });
+  }
+
   /** The timeline head of a loaded agent, or null when this agent is not loaded. Never loads. */
   async getLoadedTimelineHead(id: string): Promise<TimelineHead | null> {
     if (!this.getAgent(id)) return null;
@@ -1713,14 +1719,20 @@ export class AgentManager {
             `Agent ${resolvedAgentId} references unavailable provider '${record.provider}'`,
           );
         }
-        return this.createAgentInternal(config, resolvedAgentId, {
-          labels: record.labels,
-          metadata: record.metadata,
-          workspaceId: record.workspaceId,
-          owner: record.owner,
-          background: record.background,
-          env: record.launchEnv,
-        });
+        return this.createAgentInternal(
+          config,
+          resolvedAgentId,
+          {
+            labels: record.labels,
+            metadata: record.metadata,
+            workspaceId: record.workspaceId,
+            owner: record.owner,
+            background: record.background,
+            env: record.launchEnv,
+          },
+          // The stored agent's history is still its own; registration keeps it.
+          { history: "keep" },
+        );
       }),
     );
   }
@@ -1739,6 +1751,7 @@ export class AgentManager {
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
+    { history }: { history: "discard" | "keep" } = { history: "discard" },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     config = this.withConvertedOptions(config);
@@ -1762,7 +1775,8 @@ export class AgentManager {
       };
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
-    await this.deleteAgentState(resolvedAgentId);
+    if (history === "keep") this.discardRuntimeState(resolvedAgentId);
+    else await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -5254,9 +5268,14 @@ export class AgentManager {
 
   private async discardRetainedAgentState(agentId: string): Promise<void> {
     const removed = await this.providerSubagents.deleteParent(agentId);
+    this.discardRuntimeState(agentId);
+    for (const event of removed) this.publishProviderSubagent(event);
+  }
+
+  /** What a previous session of the agent left in this process; its saved history stays. */
+  private discardRuntimeState(agentId: string): void {
     this.paseoToolPolicies.delete(agentId);
     this.detachPluginTools(agentId);
-    for (const event of removed) this.publishProviderSubagent(event);
     this.clearProviderBackgroundWork(agentId);
   }
 

@@ -46,8 +46,11 @@ deleting the agent, or a provider removing one of its own children, deletes hist
   for example because the provider stored expanded attachment text, the chat stays unchanged and
   Paseo reports a mismatch. A provider child Paseo already holds, listed or retired, is never imported again.
 - **Archive and reload** keep the history and the provider children. An archived chat reads them
-  without its provider. Deleting the agent deletes its history and every child's, retired ones
-  included.
+  without its provider. Opening a stored agent that has no provider session to resume starts its
+  first session on the same history.
+- **Delete** removes the agent's history and every child's, retired ones included, before the
+  agent record. If the history cannot be removed, the request fails and the agent stays listed, so
+  the user can delete it again.
 
 `epoch` is the stored history's identity, minted once when the history is created.
 

@@ -3884,14 +3884,12 @@ export class Session {
     // durable snapshot, otherwise an in-flight background write can recreate it.
     await this.agentManager.flush();
 
-    try {
-      await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteAgentState(agentId);
-      // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
-      if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
-    } catch (error) {
-      this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
-    }
+    // History goes before the record: if it cannot be removed, the request fails and the record
+    // stays, so the user still sees the agent and can delete it again.
+    await this.agentManager.deleteAgentState(agentId);
+    await this.agentStorage.remove(agentId);
+    // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
+    if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
 
     this.emit({
       type: "agent_deleted",
@@ -8905,7 +8903,7 @@ export class Session {
   ): Promise<void> {
     try {
       await this.loadAgentHistoryPayload(msg.agentId);
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
+      const rows = await this.agentManager.getTimelinePromptRows(msg.agentId);
       const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,

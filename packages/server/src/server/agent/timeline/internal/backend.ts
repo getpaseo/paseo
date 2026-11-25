@@ -61,6 +61,7 @@ export interface TimelineRewindIntent {
 }
 
 /** An active user prompt: what a rewind addresses. */
+/** What the timeline knows about an active prompt row; see `toTimelinePrompt`. */
 export interface TimelinePrompt {
   seqStart: number;
   messageId: string | undefined;
@@ -119,8 +120,8 @@ export interface AgentTimelineBackend {
   ): MaybePromise<TimelineBackendAppendResult>;
   /** Whether a new entry would land on retired history (see `TimelineProjection.isRetired`). */
   isRetired(scope: TimelineScope, entry: TimelineEntry): MaybePromise<boolean>;
-  /** Active user prompts in display order. */
-  prompts(scope: TimelineScope): MaybePromise<TimelinePrompt[]>;
+  /** Active user prompt rows in display order, read without the rest of the history. */
+  promptRows(scope: TimelineScope): MaybePromise<ProjectedTimelineRow[]>;
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): MaybePromise<TimelineHead>;
   /**
    * Allocates the next sequence number for a retirement of the active rows anchored at or after

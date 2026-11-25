@@ -239,7 +239,7 @@ export class AgentTimeline {
       if (head.rewind) return { kind: "rewind_open" };
       const plan = planProviderHistory({
         rows: await this.backendFor(scope).readRows(scope),
-        prompts: await this.backendFor(scope).prompts(scope),
+        prompts: await this.prompts(scope),
         provider: entries.map(providerHistoryEntry),
       });
       if (plan.kind !== "append") return plan;
@@ -394,6 +394,11 @@ export class AgentTimeline {
     return this.run(scope, () => this.backendFor(scope).readRows(scope));
   }
 
+  /** The active user prompt rows, without reading replies or tool output. */
+  readPromptRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
+    return this.run(scope, () => this.backendFor(scope).promptRows(scope));
+  }
+
   lastItem(scope: TimelineScope): Promise<AgentTimelineItem | null> {
     return this.run(scope, () => this.backendFor(scope).lastItem(scope));
   }
@@ -415,9 +420,7 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const head = await this.requireHead(scope);
       if (head.rewind) throw new TimelineRewindPendingError(head.rewind);
-      const target = (await this.backendFor(scope).prompts(scope)).find(
-        (prompt) => prompt.messageId === messageId,
-      );
+      const target = (await this.prompts(scope)).find((prompt) => prompt.messageId === messageId);
       if (!target) throw new TimelineRewindTargetError(messageId);
       const intent: TimelineRewindIntent = {
         id: randomUUID(),
@@ -464,11 +467,7 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const intent = (await this.requireHead(scope)).rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
-      return judgeRewindEvidence(
-        intent,
-        await this.backendFor(scope).prompts(scope),
-        providerPromptIds,
-      );
+      return judgeRewindEvidence(intent, await this.prompts(scope), providerPromptIds);
     });
   }
 
@@ -486,10 +485,7 @@ export class AgentTimeline {
       const intent = head.rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
       if (!intent.cut) throw new Error("Cannot complete a rewind before its provider outcome");
-      const retireFromSeq = resolveRetireFromSeq(
-        intent,
-        await this.backendFor(scope).prompts(scope),
-      );
+      const retireFromSeq = resolveRetireFromSeq(intent, await this.prompts(scope));
       if (retireFromSeq === null) throw new TimelineRewindBoundaryError(intent);
       const result = await this.backendFor(scope).retire(scope, {
         retireFromSeq,
@@ -555,6 +551,10 @@ export class AgentTimeline {
 
   private backendFor(scope: TimelineScope): AgentTimelineBackend {
     return this.memoryAgents.has(scope.agentId) ? this.memory : this.backend;
+  }
+
+  private async prompts(scope: TimelineScope): Promise<TimelinePrompt[]> {
+    return (await this.backendFor(scope).promptRows(scope)).map(toTimelinePrompt);
   }
 
   /** An agent stays in memory until its history is deleted. */
@@ -704,4 +704,14 @@ function sizeKey(scope: TimelineScope): string {
 
 function submittedPromptId(item: AgentTimelineItem): string | null {
   return item.type === "user_message" && item.clientMessageId ? item.clientMessageId : null;
+}
+
+function toTimelinePrompt(row: ProjectedTimelineRow): TimelinePrompt {
+  const item = row.item as Extract<AgentTimelineItem, { type: "user_message" }>;
+  return {
+    seqStart: row.seqStart,
+    messageId: item.messageId,
+    providerMessageId: row.providerMessageId,
+    submitted: item.clientMessageId !== undefined,
+  };
 }

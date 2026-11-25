@@ -29,7 +29,6 @@ import type {
   TimelineChild,
   TimelineEntry,
   TimelineHead,
-  TimelinePrompt,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -240,25 +239,17 @@ export class SqliteTimelineBackend implements AgentTimelineBackend {
     });
   }
 
-  prompts(scope: TimelineScope): TimelinePrompt[] {
+  promptRows(scope: TimelineScope): ProjectedTimelineRow[] {
     return this.database.read((sql) => {
       const { id } = requireScope(sql, scope);
+      // A prompt's text is in its row; only streamed text rows keep chunks beside it.
       return sql
         .all<RowRecord>(
           `SELECT seq_start, item_type, row FROM timeline_rows WHERE ${ACTIVE} ` +
             "AND item_type = 'user_message' ORDER BY seq_start",
           id,
         )
-        .map((record) => {
-          const row = parseRow(record);
-          const item = row.item as Extract<AgentTimelineItem, { type: "user_message" }>;
-          return {
-            seqStart: row.seqStart,
-            messageId: item.messageId,
-            providerMessageId: row.providerMessageId,
-            submitted: item.clientMessageId !== undefined,
-          };
-        });
+        .map(parseRow);
     });
   }
 

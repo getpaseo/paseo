@@ -20,7 +20,6 @@ import type {
   TimelineChild,
   TimelineEntry,
   TimelineHead,
-  TimelinePrompt,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -109,8 +108,8 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
   isRetired(scope: TimelineScope, entry: TimelineEntry): Promise<boolean> {
     return this.defer(() => this.inner.isRetired(scope, entry));
   }
-  prompts(scope: TimelineScope): Promise<TimelinePrompt[]> {
-    return this.defer(() => this.inner.prompts(scope));
+  promptRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
+    return this.defer(() => this.inner.promptRows(scope));
   }
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): Promise<TimelineHead> {
     return this.defer(() => this.inner.setRewind(scope, rewind));

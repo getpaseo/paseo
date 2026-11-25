@@ -7058,6 +7058,47 @@ test("an internal agent's history stays out of the daemon database", async () =>
   expect(storedAgents).toEqual([visible.id]);
 });
 
+test("reopening an agent the provider never gave a session keeps its saved history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reopen-without-session-"));
+  const storagePath = join(workdir, "agents");
+  const database = openTestTimelineDatabase();
+  function startDaemon(): { manager: AgentManager; storage: AgentStorage } {
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      timeline: createStoredAgentTimeline(database),
+      logger,
+    });
+    return { manager, storage };
+  }
+  const first = startDaemon();
+  const agent = await first.manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const reply: AgentTimelineItem = { type: "assistant_message", text: "kept across restarts" };
+  await first.manager.appendTimelineItem(agent.id, reply);
+  await first.manager.closeAgent(agent.id);
+  await first.manager.flush();
+  const record = await first.storage.get(agent.id);
+  if (!record) throw new Error("Created agent was not persisted");
+  await first.storage.upsert({ ...record, persistence: null });
+
+  const second = startDaemon();
+  onTestFinished(async () => {
+    await second.manager.closeAgent(agent.id);
+    await second.manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  await ensureAgentLoaded(agent.id, {
+    agentManager: second.manager,
+    agentStorage: second.storage,
+    logger,
+  });
+
+  expect(await second.manager.getTimeline(agent.id)).toEqual([reply]);
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
