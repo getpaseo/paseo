@@ -108,6 +108,7 @@ import {
   SidebarWorkspaceRowContent,
   SidebarWorkspaceShortcutBadge,
   resolveTrailingActionVisibility,
+  useRowActionsAlwaysVisible,
   SidebarWorkspaceTrailingActionBase,
   SidebarWorkspaceTrailingActionOverlay,
   SidebarWorkspaceTrailingActionSlot,
@@ -410,7 +411,6 @@ function ProjectRowTrailingActions({
   settingsTarget,
   projectPath,
   isHovered,
-  isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
   onRemoveProject,
@@ -422,13 +422,12 @@ function ProjectRowTrailingActions({
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
   isHovered: boolean;
-  isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const actionsVisible = useRowActionsAlwaysVisible() || isHovered;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -605,7 +604,7 @@ function WorkspaceRowRightGroup({
   workspace,
   backdrop,
   isHovered,
-  isTouchPlatform,
+  actionsAlwaysVisible,
   isCreating,
   showShortcutBadge,
   shortcutNumber,
@@ -625,7 +624,7 @@ function WorkspaceRowRightGroup({
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
   isHovered: boolean;
-  isTouchPlatform: boolean;
+  actionsAlwaysVisible: boolean;
   isCreating: boolean;
   showShortcutBadge: boolean;
   shortcutNumber: number | null;
@@ -658,7 +657,7 @@ function WorkspaceRowRightGroup({
     trailing,
     hasArchiveAction: Boolean(onArchive),
     isHovered,
-    isTouchPlatform,
+    actionsAlwaysVisible,
     showShortcut,
   });
   const kebab = useOpenKebabMenuVisibility(showKebabInSlot);
@@ -882,7 +881,6 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isHighlighted, setIsHighlighted] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
@@ -965,7 +963,6 @@ function ProjectHeaderRow({
         settingsTarget={settingsTarget}
         projectPath={projectPath}
         isHovered={isHovered}
-        isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
         onRemoveProject={onRemoveProject}
@@ -1080,6 +1077,7 @@ function WorkspaceRowInner({
   const isCompact = useIsCompactFormFactor();
   const [isHighlighted, setIsHighlighted] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
+  const actionsAlwaysVisible = useRowActionsAlwaysVisible();
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1172,7 +1170,7 @@ function WorkspaceRowInner({
                   workspace={workspace}
                   backdrop={backdrop}
                   isHovered={isHovered}
-                  isTouchPlatform={isTouchPlatform}
+                  actionsAlwaysVisible={actionsAlwaysVisible}
                   isCreating={isCreating}
                   showShortcutBadge={showShortcutBadge}
                   shortcutNumber={shortcutNumber}
