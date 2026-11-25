@@ -653,10 +653,60 @@ it("keeps a pending History page when an unrelated agent enters the directory", 
   try {
     await observer.refetch();
     const loadingMore = observer.fetchNextPage();
-    await refreshAgentHistoryForDirectoryChanges(client, "server-a", new Set(["unrelated"]));
+    const refresh = refreshAgentHistoryForDirectoryChanges(
+      client,
+      "server-a",
+      new Set(["unrelated"]),
+    );
     reply.resolve(nextPage);
     const result = await loadingMore;
     expect(result.data?.pages).toEqual([firstPage, nextPage]);
+    await refresh;
+  } finally {
+    unsubscribe();
+    client.clear();
+  }
+});
+
+it("refreshes the first History page when an agent from a later page is restored", async () => {
+  const client = new QueryClient();
+  const archived: { serverId: string; id: string; archivedAt: Date | null } = {
+    serverId: "server-a",
+    id: "restored",
+    archivedAt: new Date(0),
+  };
+  const active = { ...archived, archivedAt: null };
+  const latest = { serverId: "server-a", id: "latest", archivedAt: null };
+  const firstPage = { agents: [latest] };
+  const restoredPage = { agents: [active] };
+  const reply = Promise.withResolvers<{ agents: (typeof archived)[] }>();
+  let restored = false;
+  const observer = new InfiniteQueryObserver(client, {
+    queryKey: [...allAgentHistoryQueryKey(["server-a"]), ""],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => {
+      if (pageParam === 1) return restored ? restoredPage : firstPage;
+      return pageParam === 2 ? reply.promise : firstPage;
+    },
+    getNextPageParam: (lastPage, pages) => {
+      if (pages.length !== 1) return undefined;
+      return lastPage.agents[0]?.id === active.id ? 3 : 2;
+    },
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  try {
+    await observer.refetch();
+    const loadingMore = observer.fetchNextPage();
+    restored = true;
+    const refresh = refreshAgentHistoryForDirectoryChanges(
+      client,
+      "server-a",
+      new Set([active.id]),
+    );
+    reply.resolve({ agents: [archived] });
+    await loadingMore;
+    await refresh;
+    expect(observer.getCurrentResult().data?.pages).toEqual([restoredPage, firstPage]);
   } finally {
     unsubscribe();
     client.clear();
