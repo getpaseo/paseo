@@ -56,6 +56,7 @@ import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
+  filterAndRankProfileRows,
   groupProfilesByProviderModel,
   resolveInitialModelBrowserView,
   resolveModelBrowserAllView,
@@ -984,6 +985,38 @@ function AgentProfilesPickerContent({
   );
 }
 
+/**
+ * Profiles that match a search, above the matching models. The models get their
+ * own heading so they don't read as part of the profiles section.
+ */
+function ProfileSearchResultsHeader({
+  rows,
+  hasModelRows,
+  onApplyProfile,
+  onEditProfiles,
+}: {
+  rows: AgentProfilePickerRowModel[];
+  hasModelRows: boolean;
+  onApplyProfile?: (profileId: string) => void;
+  onEditProfiles?: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <View>
+      <AgentProfilesPickerSection
+        rows={rows}
+        onApplyProfile={onApplyProfile}
+        onEditProfiles={onEditProfiles}
+      />
+      {hasModelRows ? (
+        <View style={styles.sectionHeading}>
+          <Text style={styles.sectionHeadingText}>{t("modelSelector.models")}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function GroupProviderButton({
   provider,
   serverId,
@@ -1320,24 +1353,39 @@ function ProviderModelBrowserContent({
     () => profiles?.rows.filter((row) => row.provider === view.providerId) ?? [],
     [profiles, view.providerId],
   );
-  const profileHeader = useMemo(
-    () =>
-      normalizedQuery.length === 0 && showProfilesSection && profiles ? (
+  const matchedProfileRows = useMemo(
+    () => filterAndRankProfileRows(providerProfileRows, normalizedQuery),
+    [normalizedQuery, providerProfileRows],
+  );
+  const profileHeader = useMemo(() => {
+    if (!showProfilesSection || !profiles) return undefined;
+    if (normalizedQuery.length === 0) {
+      return (
         <AgentProfilesPickerContent
           rows={providerProfileRows}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
-      ) : undefined,
-    [
-      normalizedQuery,
-      onApplyProfile,
-      onEditProfiles,
-      profiles,
-      providerProfileRows,
-      showProfilesSection,
-    ],
-  );
+      );
+    }
+    return matchedProfileRows.length > 0 ? (
+      <ProfileSearchResultsHeader
+        rows={matchedProfileRows}
+        hasModelRows={visibleRows.length > 0}
+        onApplyProfile={onApplyProfile}
+        onEditProfiles={onEditProfiles}
+      />
+    ) : undefined;
+  }, [
+    matchedProfileRows,
+    normalizedQuery,
+    onApplyProfile,
+    onEditProfiles,
+    profiles,
+    providerProfileRows,
+    showProfilesSection,
+    visibleRows.length,
+  ]);
 
   if (!provider) return <ModelSearchEmptyState />;
   const selection = provider.modelSelection;
@@ -1361,8 +1409,9 @@ function ProviderModelBrowserContent({
       />
     );
   }
-  if (visibleRows.length === 0) {
-    return profileHeader ?? <ModelSearchEmptyState />;
+  // Profile-only results still go through the list: it owns scrolling.
+  if (visibleRows.length === 0 && !profileHeader) {
+    return <ModelSearchEmptyState />;
   }
   return (
     <ModelRowList
@@ -1416,16 +1465,33 @@ function ModelBrowserContent({
         : null,
     [providers, view],
   );
+  const searchableProfileRows = useMemo(
+    () => (showProfilesSection ? (profiles?.rows ?? []) : []),
+    [profiles, showProfilesSection],
+  );
   const allView = useMemo(
     () =>
       resolveModelBrowserAllView({
         providers,
+        profiles: searchableProfileRows,
         normalizedQuery,
         isSearchFocused: searchAllOnFocus && isSearchFocused,
       }),
-    [isSearchFocused, normalizedQuery, providers, searchAllOnFocus],
+    [isSearchFocused, normalizedQuery, providers, searchAllOnFocus, searchableProfileRows],
   );
   const hasResults = profiles !== null || providers.length > 0 || rootBrowseContent != null;
+  const searchResultsHeader = useMemo(
+    () =>
+      allView.kind === "searchResults" && allView.profiles.length > 0 ? (
+        <ProfileSearchResultsHeader
+          rows={allView.profiles}
+          hasModelRows={allView.rows.length > 0}
+          onApplyProfile={onApplyProfile}
+          onEditProfiles={onEditProfiles}
+        />
+      ) : undefined,
+    [allView, onApplyProfile, onEditProfiles],
+  );
 
   if (view.kind === "provider") {
     return (
@@ -1471,6 +1537,7 @@ function ModelBrowserContent({
         selectedModel={selectedModel}
         onSelect={onSelect}
         showProviderLabel
+        header={searchResultsHeader}
         scrolling={scrolling}
         profiledLookup={profiledLookup}
         onCreateProfile={onCreateProfile}
