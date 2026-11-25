@@ -30,6 +30,8 @@ export function quoteWindowsCommand(
 // because cmd.exe does not expand the text a script's `%*` produces; the others are read again.
 const EXPANDED_ONCE = /[%!]/u;
 const READ_AS_SYNTAX = /[&|<>()^"]/u;
+// A script splits its arguments at `=`, `,` and `;` outside quotes, and reads the syntax again.
+const SPLIT_BY_SCRIPT = /[&|<>()^=,;]/u;
 
 function escapeOutsideQuotes(character: string, commandScript: boolean): string {
   if (EXPANDED_ONCE.test(character)) return `^${character}`;
@@ -69,9 +71,11 @@ function escapeQuotedForCmd(quoted: string, commandScript: boolean): string {
  *
  * A plain argument stays as it is, so cmd.exe builtins and scripts that read `%1` get it as
  * given. An argument with whitespace or a quote, or an empty one, is quoted for the program;
- * cmd.exe keeps the text inside the quotes and `%~1` removes them. A `.cmd` or `.bat` script reads
- * its arguments a second time when it forwards them with `%*`, so for `commandScript` an argument
- * with cmd.exe syntax is quoted too, and syntax outside quotes is escaped for both reads.
+ * cmd.exe keeps the text inside the quotes and `%~1` removes them. A `.cmd` or `.bat` script
+ * splits its arguments at `=`, `,` and `;` as well, and reads them a second time when it forwards
+ * them with `%*`. So for `commandScript` an argument with one of those or with cmd.exe syntax is
+ * quoted too, and syntax outside quotes is escaped for both reads. A script then gets each one as
+ * a single `%~1`, and `%*` forwards it unchanged.
  *
  * Inside quotes cmd.exe still expands a `%NAME%` that names a set variable.
  */
@@ -81,7 +85,7 @@ export function quoteWindowsArgument(
 ): string {
   if (platform !== "win32") return argument;
   const quote =
-    argument === "" || /[\s"]/u.test(argument) || (commandScript && /[&|<>()^]/u.test(argument));
+    argument === "" || /[\s"]/u.test(argument) || (commandScript && SPLIT_BY_SCRIPT.test(argument));
   if (!quote) {
     return [...argument].map((character) => escapeOutsideQuotes(character, false)).join("");
   }

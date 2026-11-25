@@ -66,6 +66,13 @@ describe("quoteWindowsArgument", () => {
     expect(quoteWindowsArgument("feature^bugfix", script)).toBe('"feature^bugfix"');
   });
 
+  test("quotes =, comma and semicolon for a script, which splits its arguments at them", () => {
+    for (const argument of ["--profile=restricted", "a,b", "a;b"]) {
+      expect(quoteWindowsArgument(argument, script)).toBe(`"${argument}"`);
+      expect(quoteWindowsArgument(argument, windows)).toBe(argument);
+    }
+  });
+
   test("escapes syntax that literal quotes leave outside a quoted region", () => {
     expect(quoteWindowsArgument('say "hi"', windows)).toBe('"say \\"hi\\""');
     expect(quoteWindowsArgument('mixed "a & b" quote', windows)).toBe('"mixed \\"a ^& b\\" quote"');

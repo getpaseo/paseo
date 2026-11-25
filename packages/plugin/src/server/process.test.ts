@@ -168,6 +168,8 @@ const commandScriptArguments = [
   "!bang!",
   "C:\\path with space\\",
   'mixed "a & b" quote',
+  "--profile=restricted",
+  "a,b;c",
 ];
 
 async function writeCommandScriptLauncher(): Promise<string> {
@@ -232,15 +234,21 @@ test.runIf(process.platform === "win32")(
     roots.push(directory);
     const script = path.join(directory, "read.cmd");
     // `set /p` without input exits 1, so the script exits 0 on its own.
-    await writeFile(script, '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5"\r\nexit /b 0\r\n');
+    await writeFile(
+      script,
+      '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5|%~6|%~7|%~8"\r\nexit /b 0\r\n',
+    );
     const { stdout } = await execCommand(script, [
       "plain",
       "with space",
       "feature&bugfix",
       "100%",
+      "--profile=restricted",
+      "a,b",
+      "a;b",
       "",
     ]);
-    expect(stdout).toBe("plain|with space|feature&bugfix|100%|");
+    expect(stdout).toBe("plain|with space|feature&bugfix|100%|--profile=restricted|a,b|a;b|");
   },
 );
 
