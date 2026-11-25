@@ -268,7 +268,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       <ExistingTab
         view={existing}
         query={state.existing.query}
-        canBrowse={host.canBrowse}
+        canBrowse={host.canBrowse && !offline}
         disabled={submitting}
         autoFocus={keyboardPresent}
         onQueryChange={changeQuery}
