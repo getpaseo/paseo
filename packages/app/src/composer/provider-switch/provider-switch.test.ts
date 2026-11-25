@@ -756,4 +756,127 @@ describe("app provider switching integration", () => {
     expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
     sessionStore.clearSession(serverId);
   });
+
+  it("forwards target provider setting edits made during switch startup to the live agent and surfaces failed automatic drain errors", async () => {
+    const serverId = "srv-edited-and-failed-queue";
+    let resolveSwitch!: (value: { agent?: AgentSnapshotPayload }) => void;
+    const setAgentModel = vi.fn().mockResolvedValue(undefined);
+    const setAgentMode = vi.fn().mockResolvedValue(null);
+    const setAgentThinkingOption = vi.fn().mockResolvedValue(undefined);
+    const setAgentOptions = vi.fn().mockResolvedValue(undefined);
+    let failNextSwitch = false;
+
+    const fakeClient = {
+      switchAgentProvider: vi.fn((_agentId: string, _opts: { provider: string; text: string }) => {
+        if (failNextSwitch) {
+          return Promise.reject(new Error("Codex CLI is not available"));
+        }
+        return new Promise<{ agent?: AgentSnapshotPayload }>((resolve) => {
+          resolveSwitch = resolve;
+        });
+      }),
+      sendAgentMessage: vi.fn(),
+      setAgentModel,
+      setAgentMode,
+      setAgentThinkingOption,
+      setAgentOptions,
+      uploadFile: vi.fn(),
+    } as unknown as DaemonClient;
+
+    const runtime = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient,
+        connectToDaemon: async () => ({ client: fakeClient, serverId, hostname: null }),
+        getClientId: async () => "cid_edited_and_failed_queue",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(serverId, fakeClient, 1);
+    useSessionStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [serverId]: {
+          ...state.sessions[serverId]!,
+          serverInfo: {
+            serverId,
+            hostname: "localhost",
+            version: "0.18.0",
+            features: { providerSwitching: true },
+          },
+        },
+      },
+    }));
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("claude"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([["agent-1", [{ id: "m1", text: "Switch with startup edit", attachments: [] }]]]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.3",
+      thinkingOptionId: "low",
+      modeId: "auto",
+      providerOptions: { fast_mode: false },
+    });
+
+    // 1. Pre-commit automatic drain failure restores queue item and exposes error in session store.
+    failNextSwitch = true;
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
+        "Codex CLI is not available",
+      );
+    });
+    expect(useSessionStore.getState().sessions[serverId]?.queuedMessages.get("agent-1")).toEqual([
+      { id: "m1", text: "Switch with startup edit", attachments: [] },
+    ]);
+
+    // 2. Retry succeeds: while switch reply is pending, user edits Codex model/thinking/mode/options.
+    failNextSwitch = false;
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(fakeClient.switchAgentProvider).toHaveBeenCalledTimes(2);
+    });
+    expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
+      undefined,
+    );
+    useStagedProviderSwitchStore.getState().patch(serverId, "agent-1", (current) => ({
+      ...current,
+      model: "gpt-5.4",
+      modeId: "full-auto",
+      thinkingOptionId: "high",
+      providerOptions: { fast_mode: true },
+    }));
+
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "running" } });
+    await vi.waitFor(() => {
+      expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
+      expect(setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
+      expect(setAgentMode).toHaveBeenCalledWith("agent-1", "full-auto");
+      expect(setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
+      expect(setAgentOptions).toHaveBeenCalledWith("agent-1", { fast_mode: true });
+    });
+
+    sessionStore.clearSession(serverId);
+  });
 });

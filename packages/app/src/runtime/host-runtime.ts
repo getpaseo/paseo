@@ -83,7 +83,12 @@ import {
 } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
-import { getStagedProviderSwitch, settleStagedProviderSwitch } from "@/composer/provider-switch";
+import {
+  beginStagedProviderSwitch,
+  endStagedProviderSwitch,
+  getStagedProviderSwitch,
+  settleCommittedProviderSwitch,
+} from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -2900,6 +2905,7 @@ export class HostRuntimeStore {
     }
     this.queuedAgentDrainInFlight.add(drainKey);
     this.queuedAgentDrainPending.delete(drainKey);
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
     const next = queue[0];
     let drainSent = false;
     void sendQueuedComposerMessageNow({
@@ -2921,37 +2927,54 @@ export class HostRuntimeStore {
           : null;
         const stagedProviderSwitch =
           rawStagedSwitch && rawStagedSwitch.provider !== liveProvider ? rawStagedSwitch : null;
-        await dispatchComposerAgentMessage({
-          client,
-          agentId,
-          text,
-          attachments,
-          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-            supportsForgeAttachments,
-          }),
-          encodeImages,
-          submission: createMessageSubmissionWriter(serverId),
-          stagedProviderSwitch,
-          onProviderSwitchCommitted: (agent) => {
-            if (stagedProviderSwitch) {
-              settleStagedProviderSwitch(serverId, agentId, stagedProviderSwitch);
-            }
-            if (agent) {
-              this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
-            }
-          },
-          // The queue drains when the agent goes idle, but the agent can start a turn of its own
-          // in that same moment (a wake-up after background work). Steering folds the message
-          // into that turn instead of interrupting it; with no turn running, the daemon starts
-          // a normal one.
-          activeTurnBehavior: "steer",
-        });
+        if (stagedProviderSwitch) {
+          beginStagedProviderSwitch(serverId, agentId);
+        }
+        try {
+          await dispatchComposerAgentMessage({
+            client,
+            agentId,
+            text,
+            attachments,
+            attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments,
+            }),
+            encodeImages,
+            submission: createMessageSubmissionWriter(serverId),
+            stagedProviderSwitch,
+            onProviderSwitchCommitted: (agent) => {
+              if (stagedProviderSwitch) {
+                settleCommittedProviderSwitch({
+                  serverId,
+                  agentId,
+                  sentDraft: stagedProviderSwitch,
+                  committedProvider: agent?.provider ?? null,
+                  client,
+                });
+              }
+              if (agent) {
+                this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
+              }
+            },
+            // The queue drains when the agent goes idle, but the agent can start a turn of its own
+            // in that same moment (a wake-up after background work). Steering folds the message
+            // into that turn instead of interrupting it; with no turn running, the daemon starts
+            // a normal one.
+            activeTurnBehavior: "steer",
+          });
+        } finally {
+          if (stagedProviderSwitch) {
+            endStagedProviderSwitch(serverId, agentId);
+          }
+        }
       },
     })
       .then((result) => {
         if (result.status === "submitted") {
           drainSent = true;
+          useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
         } else if (result.status === "failed") {
+          useSessionStore.getState().setQueuedSendError(serverId, agentId, result.errorMessage);
           console.error("[HostRuntime] failed to drain queued agent message", {
             serverId,
             agentId,

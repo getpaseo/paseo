@@ -2616,6 +2616,30 @@ export class AgentManager {
     return commitResult.row.seq;
   }
 
+  private async buildActiveSwitchHandoff(
+    scope: TimelineScope,
+    existingLive: ActiveManagedAgent | null,
+    source: { fromProvider: AgentProvider; persistedTitle: string | null; cwd: string },
+    toProvider: AgentProvider,
+  ) {
+    if (existingLive) {
+      await this.settleOpenRewind(existingLive, { judge: false });
+    }
+    const tail = await this.timeline.fetch(scope, {
+      direction: "tail",
+      limit: HANDOFF_TAIL_LIMIT,
+      wholeTurns: true,
+    });
+    return buildProviderSwitchHandoff({
+      rows: tail.rows,
+      hasOlder: tail.hasOlder,
+      fromProvider: source.fromProvider,
+      toProvider,
+      agentTitle: source.persistedTitle,
+      cwd: source.cwd,
+    });
+  }
+
   private async switchAgentProviderUnlocked(
     agentId: string,
     input: SwitchAgentProviderInput,
@@ -2644,19 +2668,6 @@ export class AgentManager {
 
     this.requireEnabledProvider(input.toProvider);
     const targetClient = await this.requireAvailableClient({ provider: input.toProvider });
-    const tail = await this.timeline.fetch(scope, {
-      direction: "tail",
-      limit: HANDOFF_TAIL_LIMIT,
-      wholeTurns: true,
-    });
-    const handoff = buildProviderSwitchHandoff({
-      rows: tail.rows,
-      hasOlder: tail.hasOlder,
-      fromProvider: source.fromProvider,
-      toProvider: input.toProvider,
-      agentTitle: source.persistedTitle,
-      cwd: source.cwd,
-    });
 
     const targetConfig = buildSwitchTargetSessionConfig(input, source);
     const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
@@ -2712,9 +2723,18 @@ export class AgentManager {
       );
 
       // Re-verify idle right before committing/closing the source session, then immediately
-      // reserve the foreground run slot without yielding so no turn can sneak in.
+      // reserve the foreground run slot without yielding so no turn or rewind can sneak in.
       this.assertSourceAgentIdleForSwitch(agentId, existingLive);
       switchRunLock = this.runs.createPendingRun(agentId);
+
+      // Read handoff AFTER reserving the foreground turn slot and settling any open rewind so
+      // the marker context and first prompt reflect the exact active history.
+      const handoff = await this.buildActiveSwitchHandoff(
+        scope,
+        existingLive,
+        source,
+        input.toProvider,
+      );
 
       intent = await this.timeline.beginProviderSwitch(scope, {
         messageId: input.messageId,

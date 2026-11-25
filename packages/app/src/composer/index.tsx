@@ -11,9 +11,12 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
+  beginStagedProviderSwitch,
   clearStagedProviderSwitch,
+  endStagedProviderSwitch,
   getStagedProviderSwitch,
-  settleStagedProviderSwitch,
+  isStagedProviderSwitchInFlight,
+  settleCommittedProviderSwitch,
   useStagedProviderSwitch,
 } from "@/composer/provider-switch";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -1395,7 +1398,8 @@ function ComposerContentImpl({
     if (
       rawStagedSwitch &&
       agentState.provider &&
-      rawStagedSwitch.provider === agentState.provider
+      rawStagedSwitch.provider === agentState.provider &&
+      !isStagedProviderSwitchInFlight(serverId, agentId)
     ) {
       clearStagedProviderSwitch(serverId, agentId);
     }
@@ -1404,10 +1408,14 @@ function ComposerContentImpl({
   const handleCancelStagedSwitch = useCallback(() => {
     clearStagedProviderSwitch(serverId, agentId);
     setSendError(null);
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
   }, [agentId, serverId]);
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
+  );
+  const queuedSendError = useSessionStore(
+    (state) => state.sessions[serverId]?.queuedSendErrors?.get(agentId) ?? null,
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
@@ -1769,37 +1777,53 @@ function ComposerContentImpl({
       const pendingSwitch = canSwitch ? getStagedProviderSwitch(serverId, targetAgentId) : null;
       const stagedProviderSwitch =
         pendingSwitch && pendingSwitch.provider !== liveProvider ? pendingSwitch : null;
-      await dispatchComposerAgentMessage({
-        client,
-        agentId: targetAgentId,
-        text,
-        attachments: sendAttachments,
-        attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
-        }),
-        encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
-        stagedProviderSwitch,
-        onProviderSwitchCommitted: (agent) => {
-          if (stagedProviderSwitch) {
-            settleStagedProviderSwitch(serverId, targetAgentId, stagedProviderSwitch);
-          }
-          if (agent) {
-            getHostRuntimeStore().tryAcceptAgentSnapshot(
-              serverId,
-              normalizeAgentSnapshot(agent, serverId),
-            );
-          }
-        },
-        activeTurnBehavior,
-        activeTurnId:
-          activeTurnBehavior === "steer"
-            ? (selectAgentTurnPresentation(
-                useSessionStore.getState().sessions[serverId],
-                targetAgentId,
-              ).turnId ?? undefined)
-            : undefined,
-      });
+      useSessionStore.getState().setQueuedSendError(serverId, targetAgentId, null);
+      if (stagedProviderSwitch) {
+        beginStagedProviderSwitch(serverId, targetAgentId);
+      }
+      try {
+        await dispatchComposerAgentMessage({
+          client,
+          agentId: targetAgentId,
+          text,
+          attachments: sendAttachments,
+          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+          encodeImages,
+          submission: createMessageSubmissionWriter(serverId),
+          stagedProviderSwitch,
+          onProviderSwitchCommitted: (agent) => {
+            if (stagedProviderSwitch) {
+              settleCommittedProviderSwitch({
+                serverId,
+                agentId: targetAgentId,
+                sentDraft: stagedProviderSwitch,
+                committedProvider: agent?.provider ?? null,
+                client,
+              });
+            }
+            if (agent) {
+              getHostRuntimeStore().tryAcceptAgentSnapshot(
+                serverId,
+                normalizeAgentSnapshot(agent, serverId),
+              );
+            }
+          },
+          activeTurnBehavior,
+          activeTurnId:
+            activeTurnBehavior === "steer"
+              ? (selectAgentTurnPresentation(
+                  useSessionStore.getState().sessions[serverId],
+                  targetAgentId,
+                ).turnId ?? undefined)
+              : undefined,
+        });
+      } finally {
+        if (stagedProviderSwitch) {
+          endStagedProviderSwitch(serverId, targetAgentId);
+        }
+      }
       onAttentionPromptSend?.();
     };
   }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
@@ -2152,15 +2176,17 @@ function ComposerContentImpl({
         queue: queueWriter,
       });
       if (!result) return;
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
       replaceUserInput(result.text);
       setSelectedAttachments(result.attachments);
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [agentId, queueWriter, replaceUserInput, serverId, setSelectedAttachments],
   );
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
@@ -2174,7 +2200,7 @@ function ComposerContentImpl({
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, serverId, submitMessage, t],
   );
 
   const handleQueue = useCallback(
@@ -2627,7 +2653,7 @@ function ComposerContentImpl({
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
-  const displayError = externalError || sendError;
+  const displayError = externalError || sendError || queuedSendError;
   const sendErrorNode = useMemo(
     () =>
       displayError ? (

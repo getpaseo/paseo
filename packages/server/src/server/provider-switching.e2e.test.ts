@@ -128,6 +128,9 @@ class E2EFakeSession implements AgentSession {
   async close(): Promise<void> {
     this.closed = true;
   }
+  async revertConversation(): Promise<{ kind: "at_target" }> {
+    return { kind: "at_target" };
+  }
 }
 
 class E2EFakeClient implements AgentClient {
@@ -572,5 +575,82 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
         (e) => e.item.type === "assistant_message" && e.item.text === "claude reply 2",
       ),
     ).toBe(true);
+  });
+
+  it("excludes turns rewound during target session startup from the switch handoff", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-rewind-race-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const client1 = await connectClient(url);
+    const client2 = await connectClient(url);
+
+    const agent = await client1.client.createAgent({ provider: "claude", cwd });
+    await client1.client.sendMessage(agent.id, "Keep this requirement", undefined, {
+      messageId: "msg-rw-1",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await client1.client.sendMessage(agent.id, "Discard this requirement", undefined, {
+      messageId: "msg-rw-2",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const beforeRewind = await client1.client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 50,
+    });
+    const discardRow = beforeRewind.entries.find(
+      (e) => e.item.type === "user_message" && e.item.text === "Discard this requirement",
+    );
+    expect(discardRow?.item.type).toBe("user_message");
+    const discardMessageId =
+      discardRow?.item.type === "user_message" ? discardRow.item.messageId : undefined;
+    expect(discardMessageId).toBeTruthy();
+
+    let resolveCodexCreate!: () => void;
+    codex.createSessionGate = new Promise<void>((resolve) => {
+      resolveCodexCreate = resolve;
+    });
+    let resolveCodexCreateStarted!: () => void;
+    const codexCreateStarted = new Promise<void>((resolve) => {
+      resolveCodexCreateStarted = resolve;
+    });
+    codex.onCreateSessionStarted = resolveCodexCreateStarted;
+
+    // Client 1 begins switching to Codex; target startup pauses.
+    const switchPromise = client1.client.switchAgentProvider(agent.id, {
+      provider: "codex",
+      text: "Continue on Codex",
+      messageId: "msg-rw-sw",
+    });
+    await codexCreateStarted;
+
+    try {
+      // Client 2 rewinds the second Claude turn while Codex is still opening.
+      const rewindResp = await client2.client.rewindAgent(
+        agent.id,
+        discardMessageId!,
+        "conversation",
+      );
+      expect(rewindResp.ok).toBe(true);
+    } finally {
+      // Always release Codex session startup so daemon teardown never hangs on failure.
+      resolveCodexCreate();
+    }
+    const switched = await switchPromise;
+    expect(switched.agent?.provider).toBe("codex");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Codex's first prompt handoff MUST contain the kept turn and MUST NOT contain the rewound turn.
+    expect(codex.sessions).toHaveLength(1);
+    const firstCodexPrompt = renderProviderPromptText(codex.sessions[0].receivedPrompts[0]);
+    expect(firstCodexPrompt).toContain("Keep this requirement");
+    expect(firstCodexPrompt).not.toContain("Discard this requirement");
   });
 });
