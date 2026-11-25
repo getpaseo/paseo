@@ -561,6 +561,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
         releaseChannel: parseReleaseChannel(args) ?? settings.releaseChannel,
         intent,
         autoDownload: updateMode === "automatic",
+        shouldAutoDownload: async () =>
+          (await getDesktopSettingsStore().get()).updates.mode === "automatic",
       });
     },
     install_app_update: async (args) => {

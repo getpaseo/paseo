@@ -132,6 +132,33 @@ test.describe("Desktop updates", () => {
     await expect(callout).toContainText("Downloading v1.2.3... 42%");
     await expect(callout.getByRole("progressbar")).toBeVisible();
   });
+
+  test("starting download in About updates the sidebar callout and disables its action", async ({
+    page,
+  }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateMode: "notify",
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      downloadProgressSteps: [55],
+      slowInstall: true,
+      confirmShouldAccept: true,
+    });
+    await gotoAppShell(page);
+    await expect(page.getByTestId("update-callout")).toBeVisible({ timeout: 15_000 });
+
+    await openDesktopAboutSettings(page);
+    await page.getByRole("button", { name: "Download v1.2.3" }).click();
+    await expect(
+      page.getByTestId("settings-detail-scroll-body").getByText("Downloading v1.2.3... 55%"),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Back" }).click();
+    const callout = page.getByTestId("update-callout");
+    await expect(callout).toContainText("Downloading v1.2.3... 55%");
+    await expect(callout.getByRole("button", { name: "Downloading..." })).toBeDisabled();
+  });
 });
 
 test.describe("Desktop daemon management", () => {

@@ -5,11 +5,17 @@ import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
 const { autoUpdaterMock, getAllWindowsMock } = vi.hoisted(() => {
-  const handlers = new Map<string, (value: unknown) => void>();
+  const handlers = new Map<string, Set<(value: unknown) => void>>();
   return {
     getAllWindowsMock: vi.fn<() => unknown[]>(() => []),
     autoUpdaterMock: {
-      handlers,
+      handlers: {
+        get: (event: string) => (value: unknown) => {
+          for (const listener of handlers.get(event) ?? []) {
+            listener(value);
+          }
+        },
+      },
       logger: {
         debug: vi.fn(),
         error: vi.fn((message: unknown) => console.error(message)),
@@ -19,7 +25,15 @@ const { autoUpdaterMock, getAllWindowsMock } = vi.hoisted(() => {
       checkForUpdates: vi.fn(),
       downloadUpdate: vi.fn(),
       on: vi.fn((event: string, handler: (value: unknown) => void) => {
-        handlers.set(event, handler);
+        let set = handlers.get(event);
+        if (!set) {
+          set = new Set();
+          handlers.set(event, set);
+        }
+        set.add(handler);
+      }),
+      removeListener: vi.fn((event: string, handler: (value: unknown) => void) => {
+        handlers.get(event)?.delete(handler);
       }),
       quitAndInstall: vi.fn(),
     },
@@ -44,6 +58,7 @@ import {
   bucketFromStagingUserId,
   checkForAppUpdate,
   createAppUpdateLifecycleLogger,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -198,6 +213,29 @@ describe("checkForAppUpdate", () => {
       expect.objectContaining({ version: "1.2.7", percent: 50 }),
     );
     getAllWindowsMock.mockReturnValue([]);
+  });
+
+  it("reports a failure when quitAndInstall emits an installer error and returns normally", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.8" },
+    });
+    autoUpdaterMock.downloadUpdate.mockResolvedValueOnce(undefined);
+    autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+      autoUpdaterMock.handlers.get("error")?.(new Error("EROFS: read-only file system"));
+    });
+
+    const result = await downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(result).toMatchObject({
+      installed: false,
+      errorMessage: "EROFS: read-only file system",
+    });
+    consoleError.mockRestore();
   });
 
   it("logs the update handoff with current and selected target versions", () => {

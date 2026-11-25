@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   checkDesktopAppUpdate,
   formatVersionWithPrefix,
@@ -16,11 +16,70 @@ import {
   PENDING_RECHECK_MS,
   createDesktopAppUpdater,
   formatStatusText,
+  type DesktopAppUpdater,
+  type DesktopAppUpdaterErrorReport,
   type DesktopAppUpdateStatus,
 } from "@/desktop/updates/desktop-app-updater";
 import { formatMessageTimestamp } from "@/utils/time";
 
 export type { DesktopAppUpdateStatus };
+
+let activeInstallErrorReporter: ((report: DesktopAppUpdaterErrorReport) => void) | null = null;
+let sharedDesktopAppUpdater: DesktopAppUpdater | null = null;
+let progressSubscriptionCount = 0;
+let progressUnsubscribe: (() => void) | null = null;
+
+function getSharedDesktopAppUpdater(): DesktopAppUpdater {
+  if (!sharedDesktopAppUpdater) {
+    sharedDesktopAppUpdater = createDesktopAppUpdater({
+      port: {
+        checkDesktopAppUpdate,
+        installDesktopAppUpdate,
+      },
+      now: () => Date.now(),
+      reportInstallError: (report) => {
+        activeInstallErrorReporter?.(report);
+      },
+    });
+  }
+  return sharedDesktopAppUpdater;
+}
+
+function retainDownloadProgressSubscription(updater: DesktopAppUpdater): () => void {
+  progressSubscriptionCount += 1;
+  if (progressSubscriptionCount === 1) {
+    let active = true;
+    const teardown = () => {
+      active = false;
+    };
+    progressUnsubscribe = teardown;
+    void subscribeDesktopAppUpdateDownloadProgress((progress) => {
+      if (active) {
+        updater.setDownloadProgress(progress);
+      }
+    })
+      .then((cleanup) => {
+        if (active) {
+          progressUnsubscribe = () => {
+            active = false;
+            cleanup();
+          };
+        } else {
+          cleanup();
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
+  }
+
+  return () => {
+    progressSubscriptionCount = Math.max(0, progressSubscriptionCount - 1);
+    if (progressSubscriptionCount === 0) {
+      progressUnsubscribe?.();
+      progressUnsubscribe = null;
+    }
+  };
+}
 
 export interface UseDesktopAppUpdaterReturn {
   isDesktopApp: boolean;
@@ -47,19 +106,11 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const releaseChannel = desktopSettings.releaseChannel;
   const updateMode = desktopSettings.updates.mode;
   const reportError = useDesktopIpcErrorReporter();
+  const updater = getSharedDesktopAppUpdater();
 
-  const updater = useMemo(
-    () =>
-      createDesktopAppUpdater({
-        port: {
-          checkDesktopAppUpdate,
-          installDesktopAppUpdate,
-        },
-        now: () => Date.now(),
-        reportInstallError: reportError,
-      }),
-    [reportError],
-  );
+  useEffect(() => {
+    activeInstallErrorReporter = reportError;
+  }, [reportError]);
 
   const snapshot = useSyncExternalStore(
     updater.subscribe,
@@ -92,27 +143,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     if (!isDesktopApp) {
       return undefined;
     }
-    let active = true;
-    let unlisten: (() => void) | null = null;
-    void subscribeDesktopAppUpdateDownloadProgress((progress) => {
-      if (active) {
-        updater.setDownloadProgress(progress);
-      }
-    })
-      .then((cleanup) => {
-        if (active) {
-          unlisten = cleanup;
-        } else {
-          cleanup();
-        }
-        return undefined;
-      })
-      .catch(() => undefined);
-
-    return () => {
-      active = false;
-      unlisten?.();
-    };
+    return retainDownloadProgressSubscription(updater);
   }, [isDesktopApp, updater]);
 
   useEffect(() => {

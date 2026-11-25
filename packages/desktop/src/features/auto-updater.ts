@@ -229,6 +229,10 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     });
   }
 
+  setAutoDownload(enabled: boolean): void {
+    autoUpdater.autoDownload = enabled;
+  }
+
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
     try {
       const result = await autoUpdater.checkForUpdates();
@@ -248,7 +252,10 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
+  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): {
+    started: boolean;
+    errorMessage?: string;
+  } {
     broadcastDownloadProgress(null);
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
@@ -256,7 +263,28 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       isSilent,
       isForceRunAfter,
     });
-    autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    let launchError: unknown = null;
+    const captureLaunchError = (error: unknown) => {
+      launchError ??= error;
+    };
+    autoUpdater.on("error", captureLaunchError);
+    try {
+      autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      launchError ??= error;
+    } finally {
+      if (typeof autoUpdater.removeListener === "function") {
+        autoUpdater.removeListener("error", captureLaunchError);
+      }
+    }
+    if (launchError !== null) {
+      const errorMessage =
+        launchError instanceof Error && typeof launchError.message === "string"
+          ? launchError.message
+          : String(launchError);
+      return { started: false, errorMessage };
+    }
+    return { started: true };
   }
 }
 
@@ -286,11 +314,13 @@ export async function checkForAppUpdate({
   releaseChannel,
   intent,
   autoDownload = true,
+  shouldAutoDownload,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
   autoDownload?: boolean;
+  shouldAutoDownload?: () => boolean | Promise<boolean>;
 }): Promise<AppUpdateCheckResult> {
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
@@ -298,6 +328,7 @@ export async function checkForAppUpdate({
     releaseChannel,
     intent,
     autoDownload,
+    shouldAutoDownload,
   });
   updateLifecycleLog.checkCompleted({
     currentVersion,

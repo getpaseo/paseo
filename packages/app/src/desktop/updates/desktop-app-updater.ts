@@ -297,7 +297,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       return null;
     }
     const { releaseChannel, intent = "manual", silent = false } = options;
-    if (silent && state.status === "checking") {
+    if (silent && (state.status === "checking" || state.isInstalling)) {
       return null;
     }
 
@@ -372,6 +372,10 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
   async function installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
   }): Promise<DesktopAppUpdateInstallResult | null> {
+    if (state.isInstalling) {
+      return null;
+    }
+
     commit({
       ...state,
       status: "installing",

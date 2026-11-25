@@ -30,6 +30,7 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     reject(error: Error): void;
   } | null = null;
   lastAutoDownload: boolean | null = null;
+  nextQuitAndInstallResult: { started: boolean; errorMessage?: string } | null = null;
   checkCount = 0;
   downloadCallCount = 0;
   requestedDownloadVersions: string[] = [];
@@ -41,6 +42,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.configuration = input;
     this.lastAutoDownload = input.autoDownload;
     this.gate = input.shouldAdmitUpdate;
+  }
+
+  setAutoDownload(enabled: boolean): void {
+    this.lastAutoDownload = enabled;
   }
 
   emitDownloadProgress(progress: RuntimeDownloadProgressInfo): void {
@@ -152,11 +157,17 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
+  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest) {
+    if (this.nextQuitAndInstallResult) {
+      const outcome = this.nextQuitAndInstallResult;
+      this.nextQuitAndInstallResult = null;
+      return outcome;
+    }
     if (this.downloadedUpdate) {
       this.installedVersions.push(this.downloadedUpdate.version);
       this.installModes.push({ targetVersion, isSilent, isForceRunAfter });
     }
+    return { started: true };
   }
 }
 
@@ -1108,6 +1119,75 @@ describe("app update service", () => {
       transferred: 200,
       total: 100,
       bytesPerSecond: 50,
+    });
+  });
+
+  it("applies updated autoDownload preference before authorizing a download after a slow check", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    let modeAllowsAutoDownload = true;
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+      shouldAutoDownload: async () => {
+        modeAllowsAutoDownload = false;
+        return modeAllowsAutoDownload;
+      },
+    });
+
+    expect(runtime.lastAutoDownload).toBe(false);
+    expect(result).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      latestVersion: "1.2.4",
+    });
+  });
+
+  it("reports installer launch failures instead of success on both cached and downloaded paths", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+
+    // Path 1: already downloaded, installer fails to launch
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    runtime.nextQuitAndInstallResult = {
+      started: false,
+      errorMessage: "EROFS: read-only file system",
+    };
+    const cachedFailure = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    expect(cachedFailure).toMatchObject({
+      installed: false,
+      errorMessage: "EROFS: read-only file system",
+    });
+
+    // Path 2: fresh download, installer fails to launch
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    runtime.nextQuitAndInstallResult = {
+      started: false,
+      errorMessage: "Neither dpkg nor apt command found",
+    };
+    const freshFailure = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    expect(freshFailure).toMatchObject({
+      installed: false,
+      errorMessage: "Neither dpkg nor apt command found",
     });
   });
 });

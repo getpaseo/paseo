@@ -66,11 +66,17 @@ export interface AppUpdateInstallRequest {
   isForceRunAfter: boolean;
 }
 
+export interface AppUpdateInstallLaunchResult {
+  started: boolean;
+  errorMessage?: string;
+}
+
 export interface AppUpdateRuntime {
   configure(input: AppUpdateRuntimeConfiguration): void;
+  setAutoDownload?(enabled: boolean): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
   downloadUpdate(targetVersion: string): Promise<unknown>;
-  quitAndInstall(input: AppUpdateInstallRequest): void;
+  quitAndInstall(input: AppUpdateInstallRequest): AppUpdateInstallLaunchResult | void;
 }
 
 export interface AppUpdateService {
@@ -79,6 +85,7 @@ export interface AppUpdateService {
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
+    shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult>;
   downloadAndInstallUpdate(
     input: {
@@ -147,11 +154,14 @@ async function performQuitAndInstall(
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  runtime.quitAndInstall({
+  const launch = runtime.quitAndInstall({
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
   });
+  if (launch && !launch.started) {
+    throw new Error(launch.errorMessage ?? "Failed to launch update installer.");
+  }
 }
 
 function getErrorMessage(error: unknown): string {
@@ -214,6 +224,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     releaseChannel: AppReleaseChannel,
     intent: AppUpdateCheckIntent,
     autoDownload: boolean,
+    shouldAutoDownload?: () => boolean | Promise<boolean>,
   ): void {
     if (configuredReleaseChannel !== releaseChannel) {
       clearUpdateState();
@@ -226,7 +237,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       autoDownload,
       shouldAdmitUpdate: async (info) => {
         const parsed = rolloutManifestSchema.parse(info);
-        return shouldAdmitAppUpdate({
+        const admitted = shouldAdmitAppUpdate({
           channel: releaseChannel,
           intent,
           rolloutHours: parsed.rolloutHours,
@@ -234,6 +245,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           now: deps.now(),
           bucket: await deps.bucket(),
         });
+        if (admitted && shouldAutoDownload) {
+          currentAutoDownload = await shouldAutoDownload();
+          deps.runtime.setAutoDownload?.(currentAutoDownload);
+        }
+        return admitted;
       },
       onUpdateAvailable(info) {
         const alreadyReady = downloadedUpdateVersion === info.version;
@@ -296,11 +312,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     releaseChannel,
     intent,
     autoDownload = true,
+    shouldAutoDownload,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
+    shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult> {
     if (!deps.isPackaged()) {
       return buildCheckResult({
@@ -314,7 +332,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       if (intent === "manual") {
         preparationError = null;
       }
-      configureRuntime(releaseChannel, intent, autoDownload);
+      configureRuntime(releaseChannel, intent, autoDownload, shouldAutoDownload);
 
       try {
         const result = await deps.runtime.checkForUpdates();
@@ -356,7 +374,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           if (!errorMessage) {
             preparationError = null;
           }
-          if (!readyToInstall && !errorMessage && autoDownload && preparingUpdateVersion === null) {
+          if (
+            !readyToInstall &&
+            !errorMessage &&
+            currentAutoDownload &&
+            preparingUpdateVersion === null
+          ) {
             preparingUpdateVersion = latestVersion;
           }
           return buildCheckResult({
@@ -366,7 +389,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
             downloading:
               !readyToInstall &&
               !errorMessage &&
-              (autoDownload || preparingUpdateVersion === latestVersion),
+              (currentAutoDownload || preparingUpdateVersion === latestVersion),
             info,
             errorMessage,
           });
@@ -474,6 +497,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       if (attemptedVersion === readyVersion && !isReadyToInstallVersion(readyVersion)) {
         downloadedUpdateVersion = readyVersion;
         clearPreparingVersion(readyVersion);
+      } else if (preparingUpdateVersion === attemptedVersion) {
+        clearPreparingVersion(attemptedVersion);
       }
     }
 
@@ -505,30 +530,19 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       return buildDeferredInstallResult(currentVersion);
     }
 
-    if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, {
-        targetVersion: readyVersion,
-        onBeforeQuit,
-        restart,
-      });
-      return {
-        installed: true,
-        version: readyVersion,
-        message: "Update downloaded. The app will restart shortly.",
-      };
-    }
-
     try {
-      const preparation = await ensureUpdateDownloaded(readyVersion, signal);
-      if (preparation === "aborted") {
-        return buildDeferredInstallResult(currentVersion);
-      }
-      if (preparation === "superseded") {
-        return {
-          installed: false,
-          version: currentVersion,
-          message: "A newer update was found and will be installed later.",
-        };
+      if (!isReadyToInstallVersion(readyVersion)) {
+        const preparation = await ensureUpdateDownloaded(readyVersion, signal);
+        if (preparation === "aborted") {
+          return buildDeferredInstallResult(currentVersion);
+        }
+        if (preparation === "superseded") {
+          return {
+            installed: false,
+            version: currentVersion,
+            message: "A newer update was found and will be installed later.",
+          };
+        }
       }
       await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,

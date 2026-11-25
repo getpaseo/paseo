@@ -397,6 +397,35 @@ describe("desktop app updater — install", () => {
     });
   });
 
+  it("ignores duplicate install requests and silent checks while an install is in progress", async () => {
+    const { updater, port } = createUpdater();
+    let resolveInstall!: (result: ReturnType<typeof buildFakeInstallResult>) => void;
+    port.installDesktopAppUpdate = async (input) => {
+      port.recordedInstalls.push(input);
+      return new Promise((resolve) => {
+        resolveInstall = resolve;
+      });
+    };
+
+    const firstInstall = updater.installUpdate({ releaseChannel: "stable" });
+    const secondInstall = await updater.installUpdate({ releaseChannel: "stable" });
+    const silentCheck = await updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+
+    expect(secondInstall).toBeNull();
+    expect(silentCheck).toBeNull();
+    expect(port.recordedInstalls).toHaveLength(1);
+    expect(port.recordedChecks).toHaveLength(0);
+    expect(updater.getSnapshot().status).toBe("installing");
+
+    resolveInstall(buildFakeInstallResult({ installed: true }));
+    await firstInstall;
+    expect(updater.getSnapshot().status).toBe("installed");
+  });
+
   it("reports the install error and moves to 'error' when the install throws", async () => {
     const { updater, port, reportedInstallErrors } = createUpdater();
     const error = new Error("install failed");

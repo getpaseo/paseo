@@ -141,6 +141,25 @@ describe("desktop-settings", () => {
     expect(persisted.updates.mode).toBe("off");
   });
 
+  it("serializes overlapping patches so neither update mode nor release channel is lost", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    const [offResult, betaResult] = await Promise.all([
+      store.patch({ updates: { mode: "off" } }),
+      store.patch({ releaseChannel: "beta" }),
+    ]);
+
+    expect(offResult.updates.mode).toBe("off");
+    expect(betaResult.updates.mode).toBe("off");
+    expect(betaResult.releaseChannel).toBe("beta");
+
+    const reloaded = await createDesktopSettingsStore({ userDataPath }).get();
+    expect(reloaded.updates.mode).toBe("off");
+    expect(reloaded.releaseChannel).toBe("beta");
+  });
+
   it("defaults notification sounds on for existing settings documents", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
