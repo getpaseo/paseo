@@ -5592,6 +5592,8 @@ const TailscaleStatusSchema = z.object({
   address: z.string().nullable(),
   state: z.enum(["unavailable", "off", "waiting", "on"]),
   lockedBy: z.enum(["main", "launch"]).optional(),
+  // COMPAT(tailscale): keep lockedBy "main" for older clients when the main listener is a socket.
+  mainIsSocket: z.literal(true).optional(),
   // Whether turning off Tailscale would disconnect the source of this request.
   disconnectsCurrentConnection: z.boolean().optional(),
 });

@@ -212,7 +212,13 @@ export function createDaemonListeners(options: {
     return {
       main,
       configured,
-      tailscale: { ip, address, state, ...(lockedBy ? { lockedBy } : {}) },
+      tailscale: {
+        ip,
+        address,
+        state,
+        ...(lockedBy ? { lockedBy } : {}),
+        ...(main && main.type !== "tcp" ? { mainIsSocket: true as const } : {}),
+      },
       extraListeners,
     };
   }

@@ -80,6 +80,25 @@ test.each(["100.101.102.103", "0.0.0.0"])(
   },
 );
 
+test.each([
+  { type: "socket", path: "/tmp/paseo.sock" },
+  { type: "pipe", path: String.raw`\\.\pipe\paseo` },
+] as const)("reports a $type main listener separately from TCP", (main) => {
+  const listeners = createDaemonListeners({
+    http: createServer(),
+    listen: main.path,
+    overridden: false,
+    getMain: () => main,
+    getTailscaleAddress: () => "100.101.102.103",
+  });
+  expect(listeners.status().tailscale).toMatchObject({
+    state: "off",
+    address: null,
+    lockedBy: "main",
+    mainIsSocket: true,
+  });
+});
+
 test("shows the saved Tailscale listener waiting when the host has no Tailscale interface yet", async () => {
   const address = "100.127.255.254:6767";
   const listen = `127.0.0.1:6767,${address}`;
