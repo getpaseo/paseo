@@ -212,6 +212,11 @@ export function hasRetainedProviderSwitchEditFailure(serverId: string, agentId: 
     .retainedOnEditFailureByKey.has(stagedKey(serverId, agentId));
 }
 
+export function dismissRetainedProviderSwitchEditFailure(serverId: string, agentId: string): void {
+  if (!hasRetainedProviderSwitchEditFailure(serverId, agentId)) return;
+  useStagedProviderSwitchStore.getState().clear(serverId, agentId);
+}
+
 export function settleStagedProviderSwitch(
   serverId: string,
   agentId: string,

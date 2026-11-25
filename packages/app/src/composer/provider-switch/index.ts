@@ -1,6 +1,7 @@
 export {
   beginStagedProviderSwitch,
   clearStagedProviderSwitch,
+  dismissRetainedProviderSwitchEditFailure,
   endStagedProviderSwitch,
   getStagedProviderSwitch,
   hasRetainedProviderSwitchEditFailure,

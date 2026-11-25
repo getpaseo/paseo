@@ -87,6 +87,7 @@ import {
   beginStagedProviderSwitch,
   endStagedProviderSwitch,
   getStagedProviderSwitch,
+  hasRetainedProviderSwitchEditFailure,
   settleCommittedProviderSwitch,
 } from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -2891,6 +2892,9 @@ export class HostRuntimeStore {
   }
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
+    if (hasRetainedProviderSwitchEditFailure(serverId, agentId)) {
+      return;
+    }
     const drainKey = `${serverId}:${agentId}`;
     if (this.queuedAgentDrainInFlight.has(drainKey)) {
       this.queuedAgentDrainPending.add(drainKey);

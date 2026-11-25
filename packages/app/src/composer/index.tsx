@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import {
   beginStagedProviderSwitch,
   clearStagedProviderSwitch,
+  dismissRetainedProviderSwitchEditFailure,
   endStagedProviderSwitch,
   getStagedProviderSwitch,
   hasRetainedProviderSwitchEditFailure,
@@ -1780,6 +1781,9 @@ function ComposerContentImpl({
       const stagedProviderSwitch =
         pendingSwitch && pendingSwitch.provider !== liveProvider ? pendingSwitch : null;
       useSessionStore.getState().setQueuedSendError(serverId, targetAgentId, null);
+      if (!stagedProviderSwitch) {
+        dismissRetainedProviderSwitchEditFailure(serverId, targetAgentId);
+      }
       if (stagedProviderSwitch) {
         beginStagedProviderSwitch(serverId, targetAgentId);
       }
@@ -2182,6 +2186,7 @@ function ComposerContentImpl({
       });
       if (!result) return;
       useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+      dismissRetainedProviderSwitchEditFailure(serverId, agentId);
       replaceUserInput(result.text);
       setSelectedAttachments(result.attachments);
     },
@@ -2192,6 +2197,7 @@ function ComposerContentImpl({
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
       useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+      dismissRetainedProviderSwitchEditFailure(serverId, agentId);
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,

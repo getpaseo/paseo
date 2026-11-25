@@ -26,6 +26,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
 import {
   clearStagedProviderSwitch,
+  dismissRetainedProviderSwitchEditFailure,
   isStagedProviderSwitchInFlight,
   type StagedProviderSwitch,
   useStagedProviderSwitch,
@@ -1320,6 +1321,7 @@ export const AgentControls = memo(function AgentControls({
       }
       try {
         await client.setAgentModel(agentId, modelId, { expectedProvider: agentProvider });
+        dismissRetainedProviderSwitchEditFailure(serverId, agentId);
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
@@ -1332,7 +1334,7 @@ export const AgentControls = memo(function AgentControls({
         toast.error(toErrorMessage(error));
       }
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [agentId, agentProvider, client, serverId, toast, updatePreferences],
   );
 
   const handleSelectModel = useCallback(
@@ -1515,7 +1517,11 @@ export const AgentControls = memo(function AgentControls({
       }
       void client
         .setAgentThinkingOption(agentId, thinkingOptionId, { expectedProvider: agentProvider })
-        .then((notice) => showProviderNoticeToast(toast, notice))
+        .then((notice) => {
+          dismissRetainedProviderSwitchEditFailure(serverId, agentId);
+          showProviderNoticeToast(toast, notice);
+          return undefined;
+        })
         .catch((error) => {
           console.warn("[AgentControls] setAgentThinkingOption failed", error);
           toast.error(toErrorMessage(error));
@@ -1561,6 +1567,10 @@ export const AgentControls = memo(function AgentControls({
       });
       void client
         .setAgentOptions(agentId, { [key]: value }, { expectedProvider: agentProvider })
+        .then(() => {
+          dismissRetainedProviderSwitchEditFailure(serverId, agentId);
+          return undefined;
+        })
         .catch((error) => {
           console.warn("[AgentControls] setAgentOptions failed", error);
           toast.error(toErrorMessage(error));

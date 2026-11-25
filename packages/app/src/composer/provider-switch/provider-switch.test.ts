@@ -14,7 +14,11 @@ import { HostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSwitchItem, StreamItem, UserMessageItem } from "@/types/stream";
-import { getStagedProviderSwitch, useStagedProviderSwitchStore } from "./index";
+import {
+  dismissRetainedProviderSwitchEditFailure,
+  getStagedProviderSwitch,
+  useStagedProviderSwitchStore,
+} from "./index";
 
 function createInMemoryRowStore(): ReplicaRowStore {
   const rows = new Map<string, ReplicaRow>();
@@ -1064,11 +1068,27 @@ describe("app provider switching integration", () => {
     expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
       plan_mode: true,
     });
-    // M4 MUST NOT have drained after settings rejection!
+    // M4 MUST NOT have drained after settings rejection, AND later drain callbacks (turn completion /
+    // reconnect / timeline sync) MUST keep automatic sending paused and preserve the error & draft!
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
+      "Plan mode rejected by provider",
+    );
+    expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
+      plan_mode: true,
+    });
     expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
     expect(useSessionStore.getState().sessions[serverId]?.queuedMessages.get("agent-1")).toEqual([
       { id: "m4", text: "Must stay queued", attachments: [] },
     ]);
+
+    // Once the user explicitly dismisses or re-applies the failed settings, automatic drain resumes.
+    dismissRetainedProviderSwitchEditFailure(serverId, "agent-1");
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(callOrder).toContain("send:Must stay queued");
+    });
 
     sessionStore.clearSession(serverId);
   });
