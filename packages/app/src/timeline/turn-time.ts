@@ -1,4 +1,4 @@
-import { isAssistantReplyItem, type StreamItem } from "@/types/stream";
+import { getAssistantReply, type StreamItem } from "@/types/stream";
 import { startsNewTurn, isTurnTrigger } from "@/agent-stream/turn-membership";
 
 export interface TurnTiming {
@@ -70,7 +70,7 @@ function walkTurns(
       assistantIds = [];
     }
     lastItemAt = item.timestamp;
-    if (isAssistantReplyItem(item)) {
+    if (getAssistantReply(item)) {
       assistantIds.push(item.id);
     }
     previousItem = item;

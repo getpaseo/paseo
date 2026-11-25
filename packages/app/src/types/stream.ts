@@ -783,7 +783,7 @@ export type AgentToolCallItem = ToolCallItem & {
 
 /** Find and scrolling address a plugin row by the source it replaces. */
 export function getStreamItemMessageId(item: StreamItem): string {
-  if (item.kind === "plugin") return item.sourceId ?? item.id;
+  if (item.kind === "plugin") return item.source?.id ?? item.id;
   return item.id;
 }
 
@@ -791,13 +791,13 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
-export function isAssistantReplyItem(
+/** The assistant reply a row shows: the row itself, or the reply a timeline plugin replaced. */
+export function getAssistantReply(
   item: StreamItem | null | undefined,
-): item is AssistantMessageItem | (PluginTimelineStreamItem & { sourceKind: "assistant_message" }) {
-  return (
-    item?.kind === "assistant_message" ||
-    (item?.kind === "plugin" && item.sourceKind === "assistant_message")
-  );
+): AssistantMessageItem | null {
+  if (item?.kind === "assistant_message") return item;
+  if (item?.kind === "plugin" && item.source?.kind === "assistant_message") return item.source;
+  return null;
 }
 
 type NotificationLevel = "info" | "warning" | "error";
@@ -827,14 +827,12 @@ export interface CompactionItem {
 export interface PluginTimelineStreamItem {
   kind: "plugin";
   id: string;
-  /** The id of the stream item a timeline transformer replaced; set only by projection. */
-  sourceId?: string;
-  /** The original row kind, retained by projection for turn folding and footers. */
-  sourceKind?: StreamItem["kind"];
-  /** The provider message id of a replaced assistant reply, for turn fork boundaries. */
-  sourceMessageId?: string;
-  /** The original text of a replaced assistant reply, for turn copy. */
-  sourceText?: string;
+  /**
+   * The row a timeline transformer replaced; set only by projection. Turn folding, timing, and the
+   * turn footer read the replaced row through it, so a transformed reply keeps its copy, fork,
+   * duration, and stats.
+   */
+  source?: StreamItem;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;

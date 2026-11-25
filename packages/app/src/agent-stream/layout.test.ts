@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TurnTiming } from "@/timeline/turn-time";
+import type { TimelineItemTransform } from "@/plugins/timeline";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import type { StreamItem } from "@/types/stream";
 import {
   orderHeadForStreamRenderStrategy,
@@ -580,61 +582,38 @@ describe("layoutStream", () => {
   );
 
   it.each(["web", "android"] as const)(
-    "attaches turn footers to the final card of plugin-projected assistant replies on %s",
+    "attaches the turn footer to the final card of a plugin-split reply on %s",
     (platform) => {
-      const part0: StreamItem = {
-        kind: "plugin",
-        id: "genui/a1/0",
-        sourceId: "a1",
-        sourceKind: "assistant_message",
-        sourceMessageId: "msg-a1",
-        sourceText: "First reply",
-        timestamp: timestamp(2),
-        pluginId: "genui",
-        pluginItemId: "a1/0",
-        itemKind: "genui-text",
-        version: 1,
-        data: {},
-      };
-      const part1: StreamItem = {
-        kind: "plugin",
-        id: "genui/a1/1",
-        sourceId: "a1",
-        sourceKind: "assistant_message",
-        sourceMessageId: "msg-a1",
-        sourceText: "First reply",
-        timestamp: timestamp(2),
-        pluginId: "genui",
-        pluginItemId: "a1/1",
-        itemKind: "genui-block",
-        version: 1,
-        data: {},
-      };
-      const latestCard: StreamItem = {
-        kind: "plugin",
-        id: "genui/a2/0",
-        sourceId: "a2",
-        sourceKind: "assistant_message",
-        sourceMessageId: "msg-a2",
-        sourceText: "Second reply",
-        timestamp: timestamp(4),
-        pluginId: "genui",
-        pluginItemId: "a2/0",
-        itemKind: "genui-block",
-        version: 1,
-        data: {},
-      };
+      const metrics = [{ label: "Model", value: "opus" }];
+      const first = { ...assistantMessage("a1", 2), turnMetrics: [{ label: "Steps", value: "1" }] };
+      const latest = { ...assistantMessage("a2", 4), turnMetrics: metrics };
+      const splitIntoCards: TimelineItemTransform = ({ item, sourceId }) =>
+        item.type !== "assistant_message"
+          ? undefined
+          : ["text", "card"].map((part) => ({
+              type: "plugin",
+              id: `${sourceId}/${part}`,
+              pluginId: "genui",
+              kind: `genui-${part}`,
+              version: 1,
+              data: {},
+            }));
+      const tail = projectPluginTimelineItems(
+        [userMessage("u1", 1), first, userMessage("u2", 3), latest],
+        splitIntoCards,
+      );
 
       const layout = layoutFor({
         platform,
-        tail: [userMessage("u1", 1), part0, part1, userMessage("u2", 3), latestCard],
-        timingIds: [part1.id, latestCard.id],
+        tail,
+        timingIds: ["genui/a1/card", "genui/a2/card"],
       });
 
-      expect(findLayoutItem(layout, part0.id).completedFooter).toBeNull();
-      expect(findLayoutItem(layout, part1.id).completedFooter?.itemId).toBe(part1.id);
-      expect(layout.auxiliaryTurnFooter?.itemId).toBe(latestCard.id);
-      expect(footerOwners(layout)).toEqual([part1.id, latestCard.id]);
+      expect(footerOwners(layout)).toEqual(["genui/a1/card", "genui/a2/card"]);
+      expect(findLayoutItem(layout, "genui/a1/card").completedFooter?.turnMetrics).toBe(
+        first.turnMetrics,
+      );
+      expect(layout.auxiliaryTurnFooter?.turnMetrics).toBe(metrics);
     },
   );
 });

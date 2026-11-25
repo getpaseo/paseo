@@ -113,16 +113,17 @@ describe("resolveAssistantTurnForkBoundary", () => {
     ).toBeUndefined();
   });
 
-  it("resolves a fork boundary from a plugin-projected assistant reply", () => {
-    const projected: StreamItem = {
+  it("resolves a fork boundary from the reply a plugin card replaced", () => {
+    const reply = {
+      ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+    };
+    const card: StreamItem = {
       kind: "plugin",
       id: "genui/assistant-1/1",
-      sourceId: "assistant-1",
-      sourceKind: "assistant_message",
-      sourceMessageId: "msg-assistant-1",
-      sourceText: "Hello",
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
-      timestamp: timestamp(2),
+      source: reply,
+      timelineCursor: reply.timelineCursor,
+      timestamp: reply.timestamp,
       pluginId: "genui",
       pluginItemId: "assistant-1/1",
       itemKind: "genui-block",
@@ -132,7 +133,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
 
     expect(
       resolveAssistantTurnForkBoundary({
-        items: [userMessage("user-1", 1), projected],
+        items: [userMessage("user-1", 1), card],
         startIndex: 1,
         supportsTimelineCursor: true,
       }),
@@ -140,19 +141,16 @@ describe("resolveAssistantTurnForkBoundary", () => {
       boundaryCursor: { epoch: "timeline-1", seq: 42 },
       boundaryMessageId: "msg-assistant-1",
     });
-
     expect(
       resolveAssistantTurnForkBoundary({
-        items: [userMessage("user-1", 1), projected],
+        items: [userMessage("user-1", 1), card],
         startIndex: 1,
         supportsTimelineCursor: false,
       }),
-    ).toEqual({
-      boundaryMessageId: "msg-assistant-1",
-    });
+    ).toEqual({ boundaryMessageId: "msg-assistant-1" });
   });
 
-  it("ignores appended plugin rows without an assistant sourceKind", () => {
+  it("ignores plugin cards that did not replace a reply", () => {
     const appended: StreamItem = {
       kind: "plugin",
       id: "plugin/card-1",

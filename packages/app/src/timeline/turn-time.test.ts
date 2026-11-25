@@ -248,42 +248,35 @@ it("times a heartbeat that ends with tools and no assistant text", () => {
   assert.equal(timing.byItemId.get("last")?.durationMs, 5000);
 });
 
-it("derives turn timing for plugin-projected assistant replies", () => {
+it("times a reply that a plugin split into cards", () => {
   const userAt = new Date("2026-05-15T00:00:00.000Z");
   const replyAt = new Date("2026-05-15T00:00:06.000Z");
-  const part1: StreamItem = {
+  const reply: StreamItem = {
+    kind: "assistant_message",
+    id: "a1",
+    text: "Intro",
+    timestamp: replyAt,
+  };
+  const card = (part: string): StreamItem => ({
     kind: "plugin",
-    id: "genui/a1/0",
-    sourceId: "a1",
-    sourceKind: "assistant_message",
+    id: `genui/a1/${part}`,
+    source: reply,
     timestamp: replyAt,
     pluginId: "genui",
-    pluginItemId: "a1/0",
-    itemKind: "genui-text",
+    pluginItemId: `a1/${part}`,
+    itemKind: `genui-${part}`,
     version: 1,
-    data: { text: "Intro" },
-  };
-  const part2: StreamItem = {
-    kind: "plugin",
-    id: "genui/a1/1",
-    sourceId: "a1",
-    sourceKind: "assistant_message",
-    timestamp: replyAt,
-    pluginId: "genui",
-    pluginItemId: "a1/1",
-    itemKind: "genui-block",
-    version: 1,
-    data: { code: 'Card("Hi", [])' },
-  };
+    data: {},
+  });
 
   const timing = deriveStreamTurnTiming({
     isTurnActive: false,
     activeTurnStartedAt: null,
-    tail: [user("u1", userAt), part1, part2],
+    tail: [user("u1", userAt), card("text"), card("card")],
     head: [],
   });
 
-  assert.deepEqual(timing.byItemId.get("genui/a1/1"), {
+  assert.deepEqual(timing.byItemId.get("genui/a1/card"), {
     completedAt: replyAt,
     durationMs: 6000,
   });

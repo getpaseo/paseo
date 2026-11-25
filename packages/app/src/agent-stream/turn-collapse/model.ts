@@ -1,7 +1,7 @@
 import { isTurnBoundary, isTurnTrigger } from "../turn-membership";
 import {
   getStreamItemMessageId,
-  isAssistantReplyItem,
+  getAssistantReply,
   type StreamItem,
   type ThoughtItem,
   type TimelinePosition,
@@ -107,12 +107,12 @@ function staysVisibleWhenCollapsed(item: StreamItem): boolean {
 function findLastReplyIndex(tail: StreamItem[], start: number, end: number): number {
   for (let index = end - 1; index >= start; index -= 1) {
     const item = tail[index]!;
-    if (!isAssistantReplyItem(item)) continue;
+    if (!getAssistantReply(item)) continue;
     const messageId = getStreamItemMessageId(item);
     // A transformer can split one reply into several cards; keep the whole reply visible.
     while (index > start) {
       const previous = tail[index - 1]!;
-      if (!isAssistantReplyItem(previous) || getStreamItemMessageId(previous) !== messageId) break;
+      if (!getAssistantReply(previous) || getStreamItemMessageId(previous) !== messageId) break;
       index -= 1;
     }
     return index;
@@ -150,7 +150,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     }
     const folded = tail.slice(runStart, replyIndex);
     const tools = summarizeTurn(folded, input.getGroupedCalls);
-    if (!hasWork(tools) && !folded.some(isAssistantReplyItem)) {
+    if (!hasWork(tools) && !folded.some((item) => getAssistantReply(item))) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }

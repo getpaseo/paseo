@@ -154,10 +154,14 @@ describe("turn stats", () => {
 const projectedReply: StreamItem = {
   kind: "plugin",
   id: "genui/reply/1",
-  sourceId: "reply",
-  sourceKind: "assistant_message",
-  sourceMessageId: "provider-reply-1",
-  sourceText: 'Done.\n\n```ui\nCard("Summary", [])\n```',
+  source: {
+    kind: "assistant_message",
+    id: "reply",
+    messageId: "provider-reply-1",
+    text: 'Done.\n\n```ui\nCard("Summary", [])\n```',
+    timelineCursor: { epoch: "e1", seq: 5 },
+    timestamp: FRIDAY_NIGHT,
+  },
   timelineCursor: { epoch: "e1", seq: 5 },
   timestamp: FRIDAY_NIGHT,
   pluginId: "genui",

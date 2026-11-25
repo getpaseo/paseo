@@ -28,7 +28,11 @@ function userMessage(id: string, text: string, seed: number): StreamItem {
   };
 }
 
-function assistantMessage(id: string, text: string, seed: number): StreamItem {
+function assistantMessage(
+  id: string,
+  text: string,
+  seed: number,
+): Extract<StreamItem, { kind: "assistant_message" }> {
   return {
     kind: "assistant_message",
     id,
@@ -244,53 +248,37 @@ describe("layout strategy edges", () => {
     );
   });
 
-  it.each(PLATFORMS)(
-    "collects source text once for split plugin-projected assistant replies on %s",
-    (platform) => {
-      const strategy = strategyFor(platform);
-      const splitReply = 'Summary\n\n```ui\nCard("Hi", [])\n```';
-      const items = orderTailForStreamRenderStrategy({
-        strategy,
-        streamItems: [
-          userMessage("u1", "prompt", 1),
-          assistantMessage("a1", "Before card", 2),
-          {
-            kind: "plugin",
-            id: "genui/a2/0",
-            sourceId: "a2",
-            sourceKind: "assistant_message",
-            sourceText: splitReply,
-            timestamp: new Date("2026-01-01T00:00:03.000Z"),
-            pluginId: "genui",
-            pluginItemId: "a2/0",
-            itemKind: "genui-text",
-            version: 1,
-            data: {},
-          },
-          {
-            kind: "plugin",
-            id: "genui/a2/1",
-            sourceId: "a2",
-            sourceKind: "assistant_message",
-            sourceText: splitReply,
-            timestamp: new Date("2026-01-01T00:00:03.000Z"),
-            pluginId: "genui",
-            pluginItemId: "a2/1",
-            itemKind: "genui-block",
-            version: 1,
-            data: {},
-          },
-        ],
-      });
-      const startIndex = items.findIndex((item) => item.id === "genui/a2/1");
+  it.each(PLATFORMS)("copies a reply split into plugin cards once on %s", (platform) => {
+    const strategy = strategyFor(platform);
+    const splitReply = assistantMessage("a2", 'Summary\n\n```ui\nCard("Hi", [])\n```', 3);
+    const card = (part: string): StreamItem => ({
+      kind: "plugin",
+      id: `genui/a2/${part}`,
+      source: splitReply,
+      timestamp: splitReply.timestamp,
+      pluginId: "genui",
+      pluginItemId: `a2/${part}`,
+      itemKind: `genui-${part}`,
+      version: 1,
+      data: {},
+    });
+    const items = orderTailForStreamRenderStrategy({
+      strategy,
+      streamItems: [
+        userMessage("u1", "prompt", 1),
+        assistantMessage("a1", "Before card", 2),
+        card("text"),
+        card("card"),
+      ],
+    });
+    const startIndex = items.findIndex((item) => item.id === "genui/a2/card");
 
-      expect(
-        collectAssistantResponseContentForStreamRenderStrategy({
-          strategy,
-          items,
-          startIndex,
-        }),
-      ).toBe(`Before card\n\n${splitReply}`);
-    },
-  );
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items,
+        startIndex,
+      }),
+    ).toBe(`Before card\n\n${splitReply.text}`);
+  });
 });

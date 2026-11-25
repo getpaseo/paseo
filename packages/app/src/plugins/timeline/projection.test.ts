@@ -98,8 +98,7 @@ describe("plugin timeline projection", () => {
       {
         kind: "plugin",
         id: "inline-thinking/thought-1/0",
-        sourceId: "thought-1",
-        sourceKind: "thought",
+        source: { kind: "thought", id: "thought-1" },
         data: { text: "First", phase: "streaming" },
       },
     ]);
@@ -193,7 +192,7 @@ describe("plugin timeline projection", () => {
     expect(filtered).toEqual([]);
   });
 
-  it("retains source message id and text on projected assistant replies", () => {
+  it("keeps the replaced reply on every card it was split into", () => {
     const source: StreamItem = {
       kind: "assistant_message",
       id: "assistant-1",
@@ -227,23 +226,19 @@ describe("plugin timeline projection", () => {
       {
         kind: "plugin",
         id: "genui/assistant-1/text",
-        sourceId: "assistant-1",
-        sourceKind: "assistant_message",
-        sourceMessageId: "provider-msg-1",
-        sourceText: source.text,
         timelineCursor: { epoch: "e1", seq: 7 },
         turnId: "turn-1",
       },
       {
         kind: "plugin",
         id: "genui/assistant-1/card",
-        sourceId: "assistant-1",
-        sourceKind: "assistant_message",
-        sourceMessageId: "provider-msg-1",
-        sourceText: source.text,
         timelineCursor: { epoch: "e1", seq: 7 },
         turnId: "turn-1",
       },
+    ]);
+    expect(projected.map((item) => item.kind === "plugin" && item.source)).toEqual([
+      source,
+      source,
     ]);
   });
 });

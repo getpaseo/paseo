@@ -1,6 +1,6 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { StreamItem } from "@/types/stream";
+import { getAssistantReply, type StreamItem } from "@/types/stream";
 import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
@@ -185,7 +185,7 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     },
     collectAssistantResponseContent: (items, startIndex) => {
       const messages: string[] = [];
-      const seenSourceIds = new Set<string>();
+      const seenReplies = new Set<StreamItem>();
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -196,18 +196,11 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
           break;
         }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
-        } else if (
-          currentItem.kind === "plugin" &&
-          currentItem.sourceKind === "assistant_message" &&
-          currentItem.sourceText !== undefined
-        ) {
-          const sourceKey = currentItem.sourceId ?? currentItem.id;
-          if (!seenSourceIds.has(sourceKey)) {
-            seenSourceIds.add(sourceKey);
-            messages.push(currentItem.sourceText);
-          }
+        // A transformer can split one reply into several cards; copy the reply once.
+        const reply = getAssistantReply(currentItem);
+        if (reply && !seenReplies.has(reply)) {
+          seenReplies.add(reply);
+          messages.push(reply.text);
         }
         laterItem = currentItem;
       }
