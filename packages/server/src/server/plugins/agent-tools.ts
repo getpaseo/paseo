@@ -27,23 +27,31 @@ export type SessionOpenWireRequest = Omit<PluginSessionOpenRequest, "tools"> & {
   tools: AgentToolMetadata[];
 };
 
-export interface ReattachedAgentTools {
-  pluginId: string;
+export type PluginSessionOpenResult = SessionOpenWireRequest & {
   tools: AttachedAgentTool[];
+  mcpServerOwners: Record<string, string>;
+};
+
+export interface PluginSessionRefreshOptions {
+  /** Tool names a refreshed plugin tool must not take, beyond the tools other plugins attached. */
+  reservedToolNames(): Promise<ReadonlySet<string>>;
 }
 
-export interface PluginAgentToolsRuntime {
-  isToolPluginAvailable(pluginId: string, pluginInstanceId: string): boolean;
+/** What the agent manager asks of plugins about a session: its open, its attached tools, and their calls. */
+export interface PluginSessionsRuntime {
+  /** Runs every `agent.open.before` callback for a session open and records what each plugin attached. */
+  openSession(request: SessionOpenWireRequest): Promise<PluginSessionOpenResult>;
   /**
-   * Replays a live session's open to the named plugins and returns their tools, stamped with the running instance.
-   * Plugins that are not running or fail the replay are left out.
+   * Reruns the open of only the plugins that changed since the session opened, swaps in their tools, and reports
+   * whether the session must reopen to apply the rest.
    */
-  reattachTools(
-    request: SessionOpenWireRequest,
-    pluginIds: readonly string[],
-  ): Promise<ReattachedAgentTools[]>;
-  /** Drops an agent's tools inside the named plugins, or inside every plugin when none are named. */
-  detachTools(agentId: string, pluginIds?: readonly string[]): void;
+  refreshSession(
+    agentId: string,
+    options: PluginSessionRefreshOptions,
+  ): Promise<{ stale: boolean }>;
+  /** The session's tools from running plugin instances. */
+  sessionTools(agentId: string): readonly AttachedAgentTool[];
+  closeSession(agentId: string): void;
   callTool(
     pluginId: string,
     pluginInstanceId: string,

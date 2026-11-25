@@ -34,10 +34,11 @@ export type PluginWireBeforeRequests = Omit<PluginHookRequests, "agent.open.befo
   "agent.open.before": SessionOpenWireRequest;
 };
 
-/** Daemon-only results; ownership never crosses the plugin process boundary. */
-export type PluginBeforeResults = PluginWireBeforeRequests & {
-  "agent.open.before": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
-};
+/** Session opens run through the plugin runtime's session attachments, which record each plugin's contribution. */
+export type PluginLifecycleBeforeName = Exclude<
+  keyof PluginWireBeforeRequests,
+  "agent.open.before"
+>;
 
 const worktreeRequestFields = {
   repoRoot: z.string(),
@@ -144,10 +145,10 @@ export interface PluginLifecycle {
     payload: PluginHookPayload<"worktree.create.after">,
   ): Promise<void>;
   emit<Name extends keyof PluginHookEvents>(name: Name, event: PluginHookEvents[Name]): void;
-  before<Name extends keyof PluginWireBeforeRequests>(
+  before<Name extends PluginLifecycleBeforeName>(
     name: Name,
     request: PluginWireBeforeRequests[Name],
-  ): Promise<PluginBeforeResults[Name]>;
+  ): Promise<PluginWireBeforeRequests[Name]>;
 }
 
 export function validateBeforeRequest<Name extends keyof PluginWireBeforeRequests>(

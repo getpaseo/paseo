@@ -477,18 +477,25 @@ test("structured tool results get model-visible text when text is omitted", asyn
   }
 }, 60_000);
 
-test("reloading a plugin retires its old attachments, and the agent MCP reattaches them from the new instance", async () => {
+test("reloading a plugin retires its old attachments, and both the agent MCP and the launch-time catalog reach the new instance", async () => {
   const h = await setup(true);
   try {
     const a = await h.create({ x: "y" });
     const mcp = await h.mcp(a.id);
-    const oldCatalog = h.launches.at(-1)!.context!.paseoTools!;
+    const launchCatalog = h.launches.at(-1)!.context!.paseoTools!;
     expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    expect((await launchCatalog.executeTool("plugin_echo", { text: "before" })).isError).not.toBe(
+      true,
+    );
     await h.client.reloadPlugin("tools-test");
     expect(h.daemon.daemon.agentManager.getPluginTools(a.id)).toEqual([]);
-    expect(await oldCatalog.executeTool("plugin_echo", { text: "retired" })).toMatchObject({
-      isError: true,
-      content: [{ type: "text", text: expect.stringContaining("not available") }],
+    // A native provider keeps the catalog it launched with. Its call reaches the restarted plugin, whose own call
+    // count starts again.
+    const result = await launchCatalog.executeTool("plugin_echo", { text: "after restart" });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toMatchObject({
+      input: { text: "after restart" },
+      calls: 1,
     });
     expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
     expect(h.daemon.daemon.agentManager.getPluginTools(a.id).map((tool) => tool.name)).toEqual([
@@ -673,13 +680,55 @@ test("a busy agent's MCP lists and calls a restarted plugin's tools without reop
     expect(h.launches).toHaveLength(1);
     expect(h.events.interrupts).toBe(0);
 
-    // The session still reopens at its next idle prompt, for env and MCP servers.
+    // The plugin's env records the open reason, and the replay's `refresh` differs from the create, so the session
+    // reopens at its next idle prompt to apply it.
     release();
     await expect.poll(() => h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(false);
     await sendAndFinish(h, a.id, "idle prompt");
     expect(h.launches).toHaveLength(2);
   } finally {
     release();
+    await h.close();
+  }
+}, 60_000);
+
+function subagentStatuses(h: Awaited<ReturnType<typeof setup>>, agentId: string) {
+  return h.daemon.daemon.agentManager
+    .listProviderSubagentActivity()
+    .filter((subagent) => subagent.parentAgentId === agentId)
+    .map((subagent) => subagent.status);
+}
+
+test("reloading a plugin keeps an agent it does not target on its provider session, with its subagents running", async () => {
+  const h = await setup();
+  try {
+    const b = await h.create();
+    await sendAndFinish(h, b.id, "Emit a provider child");
+    expect(subagentStatuses(h, b.id)).toEqual(["running"]);
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, b.id, "after reload");
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, b.id)).toEqual(["running"]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a restarted plugin that attaches the same tools keeps the agent's session, and the new instance answers", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    const a = await h.create();
+    await sendAndFinish(h, a.id, "Emit a provider child");
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, a.id, "after reload");
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, a.id)).toEqual(["running"]);
+    // The restarted instance counts the one replayed open.
+    const mcp = await h.mcp(a.id);
+    expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "1" }],
+    });
+  } finally {
     await h.close();
   }
 }, 60_000);
@@ -744,7 +793,8 @@ test("a reopen during a tool replay keeps the reopen's tool definitions in the p
     // The restarted process counts from zero, so its first open is the replay. Hold it at the gate.
     const replaying = h.mcp(a.id);
     await expect.poll(() => existsSync(entered)).toBe(true);
-    const reopening = sendAndFinish(h, a.id, "idle prompt");
+    // The restarted plugin attaches the same definition, so only an explicit reload reopens the session here.
+    const reopening = h.daemon.daemon.agentManager.reloadAgentSession(a.id);
     // Room for an unguarded reopen to reach the plugin first. A guarded one waits, so this cannot change the result.
     await new Promise((resolve) => setTimeout(resolve, 500));
     await writeFile(gate, "");
@@ -1118,7 +1168,7 @@ test("installing and disabling an MCP plugin reopens idle sessions before their 
   }
 }, 60_000);
 
-test("installing and disabling an MCP plugin never interrupts a running turn", async () => {
+test("installing and disabling an MCP plugin during a running turn neither interrupts it nor reopens the session", async () => {
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
@@ -1144,8 +1194,9 @@ test("installing and disabling an MCP plugin never interrupts a running turn", a
     expect(h.events.interrupts).toBe(0);
     release();
     await expect.poll(() => manager.hasInFlightRun(a.id)).toBe(false);
+    // The plugin came and went before the session saw it, so the launch is unchanged.
     await sendAndFinish(h, a.id, "idle");
-    expect(h.launches).toHaveLength(2);
+    expect(h.launches).toHaveLength(1);
     expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
   } finally {
     release();

@@ -1,4 +1,4 @@
-import type { PluginAgentToolsRuntime } from "./agent-tools.js";
+import type { PluginSessionsRuntime } from "./agent-tools.js";
 import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
@@ -42,11 +42,9 @@ import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
-  subscribeSessionOpenChanges?: PluginRuntime["subscribeSessionOpenChanges"];
+  sessionAttachments?: PluginRuntime["sessionAttachments"];
   isToolPluginAvailable?: PluginRuntime["isToolPluginAvailable"];
-  reattachTools?: PluginRuntime["reattachTools"];
   callTool?: PluginRuntime["callTool"];
-  detachTools?: PluginRuntime["detachTools"];
   emit?: PluginLifecycle["emit"];
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
@@ -154,26 +152,24 @@ export class PluginService {
     this.runtime.emit?.(name, event);
   };
 
-  subscribeSessionOpenChanges(listener: () => void): () => void {
-    return this.runtime.subscribeSessionOpenChanges?.(listener) ?? (() => {});
-  }
-
-  readonly isToolPluginAvailable: PluginAgentToolsRuntime["isToolPluginAvailable"] = (
-    pluginId,
-    pluginInstanceId,
-  ) => {
-    return this.runtime.isToolPluginAvailable?.(pluginId, pluginInstanceId) ?? false;
+  readonly openSession: PluginSessionsRuntime["openSession"] = async (request) => {
+    if (this.runtime.sessionAttachments) return this.runtime.sessionAttachments.open(request);
+    return { ...request, tools: [], mcpServers: {}, mcpServerOwners: {} };
   };
 
-  readonly reattachTools: PluginAgentToolsRuntime["reattachTools"] = async (request, pluginIds) => {
-    return (await this.runtime.reattachTools?.(request, pluginIds)) ?? [];
+  readonly refreshSession: PluginSessionsRuntime["refreshSession"] = async (agentId, options) => {
+    return (await this.runtime.sessionAttachments?.refresh(agentId, options)) ?? { stale: false };
   };
 
-  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId, pluginIds) => {
-    this.runtime.detachTools?.(agentId, pluginIds);
+  readonly sessionTools: PluginSessionsRuntime["sessionTools"] = (agentId) => {
+    return this.runtime.sessionAttachments?.tools(agentId) ?? [];
   };
 
-  readonly callTool: PluginAgentToolsRuntime["callTool"] = async (
+  readonly closeSession: PluginSessionsRuntime["closeSession"] = (agentId) => {
+    this.runtime.sessionAttachments?.close(agentId);
+  };
+
+  readonly callTool: PluginSessionsRuntime["callTool"] = async (
     pluginId,
     pluginInstanceId,
     agent,
@@ -181,7 +177,7 @@ export class PluginService {
     input,
     signal,
   ) => {
-    if (!this.isToolPluginAvailable(pluginId, pluginInstanceId) || !this.runtime.callTool)
+    if (!this.runtime.isToolPluginAvailable?.(pluginId, pluginInstanceId) || !this.runtime.callTool)
       return { isError: true, text: `Plugin is not available: ${pluginId}` };
     return this.runtime.callTool(pluginId, pluginInstanceId, agent, name, input, signal);
   };

@@ -1,9 +1,4 @@
-import type {
-  AttachedAgentTool,
-  PluginAgentToolsRuntime,
-  ReattachedAgentTools,
-  SessionOpenWireRequest,
-} from "../plugins/agent-tools.js";
+import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
@@ -208,13 +203,6 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
-interface PluginToolReattach {
-  runtime: PluginAgentToolsRuntime;
-  agentId: string;
-  request: SessionOpenWireRequest;
-  stale: readonly string[];
-}
-
 interface StopAgentBackgroundWorkOptions {
   agentId: string;
   itemId: string;
@@ -411,7 +399,7 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
-  pluginAgentTools?: PluginAgentToolsRuntime;
+  pluginSessions?: PluginSessionsRuntime;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
@@ -949,12 +937,7 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
-  private sessionOpenGeneration = 0;
-  private readonly sessionOpenGenerations = new Map<string, number>();
-  private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
-  private readonly pluginOpenRequests = new Map<string, SessionOpenWireRequest>();
-  private readonly pluginToolRefreshes = new Map<string, Promise<void>>();
-  private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
+  private readonly pluginSessions: PluginSessionsRuntime | undefined;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
@@ -972,7 +955,7 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
-    this.pluginAgentTools = options.pluginAgentTools;
+    this.pluginSessions = options.pluginSessions;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -1077,47 +1060,57 @@ export class AgentManager {
     this.paseoToolCatalogFactory = factory;
   }
 
-  invalidatePluginSessions(): void {
-    this.sessionOpenGeneration++;
-  }
-
+  /**
+   * Reopens an idle agent whose plugin attachment changed in a way the running provider session cannot pick up:
+   * env, instructions, MCP servers, or tool definitions. A plugin change that leaves the agent's launch as it was
+   * keeps the session, with its background work and subagents.
+   */
   async reloadStalePluginSession(agentId: string): Promise<void> {
-    if (!this.needsPluginSessionReload(agentId)) return;
+    if (!(await this.needsPluginSessionReload(agentId))) return;
     await this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, async () => {
-        if (!this.needsPluginSessionReload(agentId)) return;
+        if (!(await this.needsPluginSessionReload(agentId))) return;
         await this.reloadAgentSessionInternal(agentId);
       }),
     );
   }
 
-  private needsPluginSessionReload(agentId: string): boolean {
+  private async needsPluginSessionReload(agentId: string): Promise<boolean> {
     const agent = this.getAgent(agentId);
-    return (
-      agent !== null &&
-      agent.lifecycle !== "closed" &&
-      this.sessionOpenGenerations.get(agentId) !== this.sessionOpenGeneration &&
-      !this.hasInFlightRun(agentId)
-    );
+    if (!agent || agent.lifecycle === "closed" || this.hasInFlightRun(agentId)) return false;
+    return (await this.refreshPluginTools(agentId)).stale;
   }
 
   getPluginTools(agentId: string): readonly AttachedAgentTool[] {
-    return (this.attachedPluginTools.get(agentId) ?? []).filter((tool) =>
-      this.pluginAgentTools?.isToolPluginAvailable(tool.pluginId, tool.pluginInstanceId),
-    );
+    return this.pluginSessions?.sessionTools(agentId) ?? [];
   }
 
+  /**
+   * Brings a live session's plugin tools up to date with the running plugins. A plugin restart gives it a new
+   * instance; only that plugin's open is rerun for the session, without reopening it or interrupting its turn.
+   */
+  async refreshPluginTools(agentId: string): Promise<{ stale: boolean }> {
+    if (!this.pluginSessions) return { stale: false };
+    return this.pluginSessions.refreshSession(agentId, {
+      reservedToolNames: () => this.reservedAgentToolNames(agentId),
+    });
+  }
+
+  /** Resolves the tool by name at call time, so a launch-time catalog reaches a restarted plugin. */
   async executePluginTool(
-    tool: AttachedAgentTool,
+    toolName: string,
     agentId: string,
     input: unknown,
     signal?: AbortSignal,
   ): Promise<AgentToolResult> {
     const agent = this.getAgent(agentId);
     if (!agent || agent.lifecycle === "closed") throw new Error(`Agent is not live: ${agentId}`);
-    if (!this.pluginAgentTools) throw new Error("Plugin tools are unavailable");
+    if (!this.pluginSessions) throw new Error("Plugin tools are unavailable");
+    await this.refreshPluginTools(agentId);
+    const tool = this.getPluginTools(agentId).find((entry) => entry.name === toolName);
+    if (!tool) return { isError: true, text: `Plugin tool is not available: ${toolName}` };
     const record = await this.registry?.get(agentId);
-    return this.pluginAgentTools.callTool(
+    return this.pluginSessions.callTool(
       tool.pluginId,
       tool.pluginInstanceId,
       describeHookAgent({ ...agent, title: record?.title ?? agent.config.title }),
@@ -1127,100 +1120,18 @@ export class AgentManager {
     );
   }
 
-  /**
-   * Reattaches a live session's tools from plugins that restarted since it opened. A restart gives the plugin a
-   * new instance id, which `getPluginTools` filters out, and the session would otherwise wait for a reopen that only
-   * happens before a prompt to an idle agent. The agent MCP calls this before it builds a request's catalog.
-   */
-  async refreshPluginTools(agentId: string): Promise<void> {
-    const runtime = this.pluginAgentTools;
-    const request = this.pluginOpenRequests.get(agentId);
-    const agent = this.getAgent(agentId);
-    if (!runtime || !request || !agent || agent.lifecycle === "closed") return;
-    const pending = this.pluginToolRefreshes.get(agentId);
-    if (pending) return pending;
-    const stale = [
-      ...new Set(
-        (this.attachedPluginTools.get(agentId) ?? [])
-          .filter((tool) => !runtime.isToolPluginAvailable(tool.pluginId, tool.pluginInstanceId))
-          .map((tool) => tool.pluginId),
-      ),
-    ];
-    if (stale.length === 0) return;
-    const refresh = this.reattachPluginTools({ runtime, agentId, request, stale }).finally(() =>
-      this.pluginToolRefreshes.delete(agentId),
-    );
-    this.pluginToolRefreshes.set(agentId, refresh);
-    return refresh;
-  }
-
-  private async reattachPluginTools({
-    runtime,
-    agentId,
-    request,
-    stale,
-  }: PluginToolReattach): Promise<void> {
-    let replayed: ReattachedAgentTools[];
-    let taken: Set<string>;
-    try {
-      replayed = await runtime.reattachTools(request, stale);
-      if (replayed.length === 0) return;
-      taken = await this.takenAgentToolNames(agentId);
-    } catch (err) {
-      this.logger.warn({ err, agentId, plugins: stale }, "Plugin tool reattach failed");
-      return;
-    }
-    if (this.pluginOpenRequests.get(agentId) !== request) {
-      // The session closed during the replay, after its detach went out. A reopen waits for every pending refresh
-      // before it detaches, so dropping what the replay attached inside the replayed plugins cannot touch a newer
-      // open's tools.
-      runtime.detachTools(
-        agentId,
-        replayed.map((entry) => entry.pluginId),
-      );
-      return;
-    }
-    const replayedIds = new Set(replayed.map((entry) => entry.pluginId));
-    const kept = (this.attachedPluginTools.get(agentId) ?? []).filter(
-      (tool) => !replayedIds.has(tool.pluginId),
-    );
-    const accepted: AttachedAgentTool[] = [];
-    for (const { pluginId, tools } of replayed) {
-      const conflict = tools.find((tool) => taken.has(tool.name));
-      if (conflict) {
-        // An open with this catalog would fail. Leave the session's other tools working; the reopen reports it.
-        this.logger.warn(
-          { agentId, pluginId, tool: conflict.name },
-          "Reattached plugin tool collides with another agent tool",
-        );
-        continue;
-      }
-      for (const tool of tools) taken.add(tool.name);
-      accepted.push(...tools);
-    }
-    this.attachedPluginTools.set(agentId, [...kept, ...accepted]);
-  }
-
-  /** Names a refreshed plugin tool must not take: Paseo's own tools and the tools still attached from running plugins. */
-  private async takenAgentToolNames(agentId: string): Promise<Set<string>> {
-    const names = new Set(this.getPluginTools(agentId).map((tool) => tool.name));
-    if (this.paseoToolCatalogFactory) {
-      // An all-enabled policy, so the catalog lists every Paseo tool the plugin check reserves, including the ones
-      // the agent's provider disables. Without a policy the factory falls back to the agent's own.
-      const catalog = await this.paseoToolCatalogFactory({
-        callerAgentId: agentId,
-        paseoToolPolicy: {},
-      });
-      for (const name of catalog.tools.keys()) names.add(name);
-    }
-    return names;
+  /** Paseo's own tool names, including the ones the agent's provider disables, and its running plugin tools. */
+  private async reservedAgentToolNames(agentId: string): Promise<ReadonlySet<string>> {
+    if (!this.paseoToolCatalogFactory) return new Set();
+    const catalog = await this.paseoToolCatalogFactory({
+      callerAgentId: agentId,
+      paseoToolPolicy: {},
+    });
+    return new Set(catalog.tools.keys());
   }
 
   private detachPluginTools(agentId: string): void {
-    this.attachedPluginTools.delete(agentId);
-    this.pluginOpenRequests.delete(agentId);
-    this.sessionOpenGenerations.delete(agentId);
-    this.pluginAgentTools?.detachTools(agentId);
+    this.pluginSessions?.closeSession(agentId);
   }
 
   getPaseoToolPolicy(agentId: string): ProviderPaseoToolsPolicy | undefined {
@@ -6617,22 +6528,10 @@ export class AgentManager {
       metadata?: AgentMetadata;
     },
   ): Promise<AgentLaunchContext> {
-    // A tool replay still in flight would otherwise attach its definitions inside the plugin after this open's.
-    // The check and the detach below run in one tick, so no replay can start between them.
-    for (
-      let pending = this.pluginToolRefreshes.get(agentId);
-      pending;
-      pending = this.pluginToolRefreshes.get(agentId)
-    ) {
-      await pending;
-    }
-    // A plugin changing during this open must still make the resulting session stale.
-    const generation = this.sessionOpenGeneration;
-    this.detachPluginTools(agentId);
     let appendSystemPrompt: string[] | undefined;
     let mcpServers: AgentSessionConfig["mcpServers"];
     let mcpServerOwners: Record<string, string> | undefined;
-    if (this.pluginLifecycle) {
+    if (this.pluginSessions) {
       const request = {
         agentId,
         provider: client.provider,
@@ -6647,17 +6546,10 @@ export class AgentManager {
         tools: [],
         mcpServers: {},
       };
-      const transformed = await this.pluginLifecycle.before("agent.open.before", request);
+      const transformed = await this.pluginSessions.openSession(request);
       env = transformed.env;
       if (request.purpose === "interactive") {
-        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
         appendSystemPrompt = transformed.appendSystemPrompt;
-        const {
-          mcpServerOwners: _owners,
-          appendSystemPrompt: _instructions,
-          ...opened
-        } = transformed;
-        this.pluginOpenRequests.set(agentId, { ...opened, tools: [], mcpServers: {} });
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }
@@ -6691,7 +6583,6 @@ export class AgentManager {
         throw error;
       }
     }
-    this.sessionOpenGenerations.set(agentId, generation);
     return context;
   }
 

@@ -1,11 +1,7 @@
 import { validateWorktreePath } from "../../utils/worktree-path.js";
 import type { PluginHookPayload } from "@getpaseo/plugin/server";
-import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
-import type {
-  SessionOpenWireRequest,
-  AttachedAgentTool,
-  ReattachedAgentTools,
-} from "./agent-tools.js";
+import type { PluginLifecycleBeforeName, PluginWireBeforeRequests } from "./lifecycle/index.js";
+import { SessionAttachments, type SessionOpenPlugin } from "./session-attachments.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
   ProviderInspectionSchema,
@@ -372,15 +368,14 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
 
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
-  /** Per agent, the plugin instance whose tool replay failed. That instance is not replayed again for the agent. */
-  private readonly failedToolReplays = new Map<string, Map<string, string>>();
   private readonly pendingEvents = new Set<Promise<void>>();
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
-  private readonly sessionOpenListeners = new Set<() => void>();
+  /** What `agent.open.before` plugins attached to each live session. */
+  readonly sessionAttachments: SessionAttachments;
 
   constructor(
     logger: pino.Logger,
@@ -390,6 +385,13 @@ export class PluginRuntime {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
+    this.sessionAttachments = new SessionAttachments(
+      {
+        sessionOpenPlugins: () => this.sessionOpenPlugins(),
+        detachEverywhere: (agentId) => this.detachTools(agentId),
+      },
+      this.logger,
+    );
   }
 
   bindPaseoSessionHost(sessionHost: PluginPaseoSessionHost): void {
@@ -401,16 +403,6 @@ export class PluginRuntime {
   subscribe(listener: (pluginId: string, error?: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
-  }
-
-  subscribeSessionOpenChanges(listener: () => void): () => void {
-    this.sessionOpenListeners.add(listener);
-    return () => this.sessionOpenListeners.delete(listener);
-  }
-
-  private notifySessionOpenChange(loaded: LoadedPlugin): void {
-    if (!loaded.hooks.includes("agent.open.before")) return;
-    for (const listener of this.sessionOpenListeners) listener();
   }
 
   async startPlugin(
@@ -435,7 +427,6 @@ export class PluginRuntime {
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
     this.plugins.set(pluginId, loaded);
-    this.notifySessionOpenChange(loaded);
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
 
@@ -455,7 +446,6 @@ export class PluginRuntime {
       clientBundle: bundles.clientBundle ?? "",
     });
     this.plugins.set(input.id, loaded);
-    this.notifySessionOpenChange(loaded);
     this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
   }
 
@@ -467,7 +457,6 @@ export class PluginRuntime {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;
     this.plugins.delete(pluginId);
-    this.notifySessionOpenChange(loaded);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
     await this.stopPlugin(loaded);
     return true;
@@ -758,17 +747,14 @@ export class PluginRuntime {
     }
   }
 
-  async before<Name extends keyof PluginWireBeforeRequests>(
+  async before<Name extends PluginLifecycleBeforeName>(
     name: Name,
     input: PluginWireBeforeRequests[Name],
-  ): Promise<PluginBeforeResults[Name]> {
+  ): Promise<PluginWireBeforeRequests[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
       return left.id.localeCompare(right.id);
     });
-    const attached: AttachedAgentTool[] = [];
-    const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
-    const mcpServerOwners: Record<string, string> = {};
     for (const loaded of plugins) {
       if (!loaded.hooks.includes(name)) {
         continue;
@@ -778,7 +764,7 @@ export class PluginRuntime {
           type: "hook",
           requestId: randomUUID(),
           name,
-          input: name === "agent.open.before" ? { ...request, tools: [], mcpServers: {} } : request,
+          input: request,
         });
         request = await validateBeforeResult(name, request, output);
         if (name === "worktree.create.before") {
@@ -788,26 +774,11 @@ export class PluginRuntime {
             repoPath: worktree.repoRoot,
           });
         }
-        if (name === "agent.open.before") {
-          const opened = request as SessionOpenWireRequest;
-          this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);
-          this.collectAgentTools(attached, loaded, opened.tools);
-        }
       } catch (error) {
-        if (name === "agent.open.before")
-          this.detachTools((request as SessionOpenWireRequest).agentId);
         throw new Error(`Plugin ${loaded.id} ${name} failed: ${describeError(error)}`, {
           cause: error,
         });
       }
-    }
-    if (name === "agent.open.before") {
-      return {
-        ...request,
-        tools: attached,
-        mcpServers,
-        mcpServerOwners,
-      } as PluginBeforeResults[Name];
     }
     return request;
   }
@@ -933,97 +904,35 @@ export class PluginRuntime {
     return output;
   }
 
-  private collectMcpServers(
-    servers: SessionOpenWireRequest["mcpServers"],
-    owners: Record<string, string>,
-    loaded: LoadedPlugin,
-    contributions: SessionOpenWireRequest["mcpServers"],
-  ): void {
-    for (const [name, server] of Object.entries(contributions)) {
-      if (Object.hasOwn(servers, name)) {
-        throw new Error(
-          `MCP server ${name} from plugin ${loaded.id} collides with plugin ${owners[name]}`,
-        );
-      }
-      servers[name] = server;
-      owners[name] = loaded.id;
-    }
-  }
-
-  private collectAgentTools(
-    attached: AttachedAgentTool[],
-    loaded: LoadedPlugin,
-    tools: SessionOpenWireRequest["tools"],
-  ): void {
-    for (const tool of tools) {
-      const collision = attached.find((entry) => entry.name === tool.name);
-      if (collision)
-        throw new Error(
-          `Agent tool ${tool.name} from plugin ${loaded.id} collides with plugin ${collision.pluginId}`,
-        );
-      attached.push({ ...tool, pluginId: loaded.id, pluginInstanceId: loaded.instanceId });
-    }
-  }
-
   isToolPluginAvailable(pluginId: string, pluginInstanceId: string): boolean {
     return this.plugins.get(pluginId)?.instanceId === pluginInstanceId;
   }
 
-  // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
-  // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
-  // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
-  // The replay arrives as `refresh`, like the reopen the same restart causes for an idle agent.
-  // A plugin that is stopped, mid-restart, or fails the replay is left out of the result, so the caller keeps it
-  // eligible. A failed replay is not repeated for the same plugin instance: the next restart gets a new try.
-  async reattachTools(
-    request: SessionOpenWireRequest,
-    pluginIds: readonly string[],
-  ): Promise<ReattachedAgentTools[]> {
-    const input: SessionOpenWireRequest = {
-      ...request,
-      reason: "refresh",
-      tools: [],
-      mcpServers: {},
-    };
-    // Detaching the agent drops this record, so a replay that fails after its agent closed records nothing.
-    const failed = this.failedToolReplays.get(request.agentId) ?? new Map<string, string>();
-    this.failedToolReplays.set(request.agentId, failed);
-    const replayed: ReattachedAgentTools[] = [];
-    for (const pluginId of pluginIds) {
-      const loaded = this.plugins.get(pluginId);
-      if (!loaded || failed.get(pluginId) === loaded.instanceId) continue;
-      if (!loaded.child || !loaded.hooks.includes("agent.open.before")) {
-        replayed.push({ pluginId, tools: [] });
-        continue;
-      }
-      try {
-        const output = await this.request(loaded, {
-          type: "hook",
-          requestId: randomUUID(),
-          name: "agent.open.before",
-          input,
-        });
-        const opened = await validateBeforeResult("agent.open.before", input, output);
-        const tools: AttachedAgentTool[] = [];
-        this.collectAgentTools(tools, loaded, opened.tools);
-        replayed.push({ pluginId, tools });
-      } catch (error) {
-        // Left out like a stopped plugin. The next instance of this plugin is replayed again.
-        failed.set(pluginId, loaded.instanceId);
-        this.logger.warn(
-          { err: error, pluginId, agentId: request.agentId },
-          "Plugin tool reattach failed",
-        );
-      }
-    }
-    return replayed;
+  private sessionOpenPlugins(): SessionOpenPlugin[] {
+    return [...this.plugins.values()]
+      .filter((loaded) => loaded.child && loaded.hooks.includes("agent.open.before"))
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((loaded) => ({
+        id: loaded.id,
+        instanceId: loaded.instanceId,
+        open: async (input) => {
+          const output = await this.request(loaded, {
+            type: "hook",
+            requestId: randomUUID(),
+            name: "agent.open.before",
+            input,
+          });
+          return validateBeforeResult("agent.open.before", input, output);
+        },
+        detach: (agentId) => {
+          if (loaded.child)
+            void send(loaded.child, { type: "tools.detach", agentId }).catch(() => {});
+        },
+      }));
   }
 
-  /** Drops an agent's tools inside the named plugins, or inside every plugin when none are named. */
-  detachTools(agentId: string, pluginIds?: readonly string[]): void {
-    if (!pluginIds) this.failedToolReplays.delete(agentId);
+  private detachTools(agentId: string): void {
     for (const loaded of this.plugins.values()) {
-      if (pluginIds && !pluginIds.includes(loaded.id)) continue;
       if (loaded.child) void send(loaded.child, { type: "tools.detach", agentId }).catch(() => {});
     }
   }
@@ -1128,7 +1037,6 @@ export class PluginRuntime {
     const loaded = [...this.plugins.values()];
     this.plugins.clear();
     for (const plugin of loaded) {
-      this.notifySessionOpenChange(plugin);
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
     await Promise.all(loaded.map((plugin) => this.stopPlugin(plugin)));
@@ -1369,14 +1277,7 @@ export class PluginRuntime {
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
     if (message.type === "hooks.changed") {
-      const hadSessionOpen = loaded.hooks.includes("agent.open.before");
       loaded.hooks = message.hooks;
-      if (
-        this.plugins.get(loaded.id) === loaded &&
-        hadSessionOpen !== loaded.hooks.includes("agent.open.before")
-      ) {
-        for (const listener of this.sessionOpenListeners) listener();
-      }
       return;
     }
     if (message.type === "worktree_manager.changed") {
@@ -1708,7 +1609,6 @@ export class PluginRuntime {
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
       this.plugins.delete(loaded.id);
-      this.notifySessionOpenChange(loaded);
     }
     this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`);
     for (const state of loaded.providerConnections.values()) {
