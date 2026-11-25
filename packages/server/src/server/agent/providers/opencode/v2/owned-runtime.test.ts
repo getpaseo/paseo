@@ -75,3 +75,76 @@ test("reports a bridge port change that has not been applied", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a wrapped caller gets its own helper behind the wrap, and other callers keep the shared one", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-wrap-"));
+  const script = path.join(root, "server.cjs");
+  const launcher = path.join(root, "launcher.cjs");
+  const record = path.join(root, "argv.json");
+  await writeFile(
+    script,
+    `
+    const http = require('node:http');
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ version: '2.0.10', pid: process.pid, urls: [], paths: { tmp: '/tmp' } }));
+    });
+    server.listen(0, '127.0.0.1', () => console.log('server listening on http://127.0.0.1:' + server.address().port));
+  `,
+  );
+  await writeFile(
+    launcher,
+    `
+    const [, , ...argv] = process.argv;
+    // A launcher that needs its profile from the open hook's environment.
+    if (!process.env.SANDBOX_PROFILE) process.exit(17);
+    require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv, profile: process.env.SANDBOX_PROFILE }));
+    const child = require('node:child_process').spawn(argv[1], argv.slice(2), { stdio: 'inherit' });
+    child.on('exit', (code) => process.exit(code ?? 1));
+  `,
+  );
+  const runtime = new V2Runtime({
+    logger: createTestLogger(),
+    selection: { kind: "owned" },
+    settings: { command: { mode: "replace", argv: [process.execPath, script] } },
+  });
+  try {
+    const shared = await runtime.acquire();
+    const wrapped = await runtime.acquire({
+      dedicated: {
+        wrap: [process.execPath, launcher, "--profile"],
+        env: { SANDBOX_PROFILE: "agent" },
+      },
+    });
+    const sharedAgain = await runtime.acquire();
+
+    const sharedPid = (await shared.client.server.info()).pid;
+    expect((await wrapped.client.server.info()).pid).not.toBe(sharedPid);
+    expect((await sharedAgain.client.server.info()).pid).toBe(sharedPid);
+    const launched = JSON.parse(await readFile(record, "utf8"));
+    expect(launched.profile).toBe("agent");
+    expect(launched.argv.slice(0, 4)).toEqual(["--profile", process.execPath, script, "serve"]);
+
+    await wrapped.release();
+    await expect(wrapped.exited).resolves.toBeInstanceOf(Error);
+    await shared.release();
+    await sharedAgain.release();
+  } finally {
+    await runtime.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15_000);
+
+test("refuses to wrap a configured existing server", async () => {
+  const runtime = new V2Runtime({
+    logger: createTestLogger(),
+    selection: { kind: "explicit", server: { url: "http://127.0.0.1:1" } },
+  });
+  try {
+    await expect(
+      runtime.acquire({ dedicated: { wrap: ["/opt/sandbox/bin/run"], env: {} } }),
+    ).rejects.toThrow("cannot start it behind a launch wrap");
+  } finally {
+    await runtime.shutdown();
+  }
+});

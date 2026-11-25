@@ -192,6 +192,7 @@ import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { startWorkerTerminalManager } from "../terminal/worker-terminal-manager.js";
+import { withTerminalCreateHook } from "../terminal/terminal-create-hook.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
@@ -739,13 +740,16 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
-  const terminalManager = await startWorkerTerminalManager({
-    paseoHome: config.paseoHome,
-    paseoVersion: daemonVersion,
-    logger,
-    getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
-    eagerLaunch: !dependencies.lazyTerminalWorker,
-  });
+  const terminalManager = withTerminalCreateHook(
+    await startWorkerTerminalManager({
+      paseoHome: config.paseoHome,
+      paseoVersion: daemonVersion,
+      logger,
+      getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+      eagerLaunch: !dependencies.lazyTerminalWorker,
+    }),
+    pluginRuntime,
+  );
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
   const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
@@ -1047,7 +1051,7 @@ export async function createPaseoDaemon(
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
-    pluginAgentTools: pluginRuntime,
+    pluginSessions: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1067,10 +1071,6 @@ export async function createPaseoDaemon(
   };
   const unsubscribePluginProviders =
     pluginRuntime.subscribeProviderRegistrations(syncPluginProviders);
-
-  const unsubscribePluginSessionChanges = pluginRuntime.subscribeSessionOpenChanges(() => {
-    agentManager.invalidatePluginSessions();
-  });
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -1239,6 +1239,7 @@ export async function createPaseoDaemon(
   });
 
   setupAutoArchiveOnMerge({
+    lifecycle: pluginRuntime,
     paseoHome: config.paseoHome,
     paseoWorktreesBaseRoot: config.worktreesRoot,
     worktreeManagers: pluginRuntime,
@@ -1270,6 +1271,7 @@ export async function createPaseoDaemon(
   ) => {
     return createPaseoWorktreeWorkflow(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         worktreesRoot: config.worktreesRoot,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
@@ -1334,6 +1336,7 @@ export async function createPaseoDaemon(
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
     archiveByScope(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
         worktreeManagers: pluginRuntime,
@@ -1361,6 +1364,7 @@ export async function createPaseoDaemon(
       { scope: { kind: "workspace", workspaceId }, requestId },
     );
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
+    lifecycle: pluginRuntime,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     worktreeManagers: pluginRuntime,
@@ -1465,6 +1469,7 @@ export async function createPaseoDaemon(
   const archiveScheduleWorkspaceExternal = async (workspaceId: string) => {
     await archiveByScope(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
         worktreeManagers: pluginRuntime,
@@ -1628,6 +1633,7 @@ export async function createPaseoDaemon(
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: (workspaceId, archivedAt) =>
       archiveWorkspaceRecordExternal(workspaceId, undefined, archivedAt),
+    lifecycle: pluginRuntime,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
     projectRegistry,
@@ -1700,6 +1706,7 @@ export async function createPaseoDaemon(
     // state is retained between requests, matching the previous
     // `sessionIdGenerator: undefined` transport.
     const createAgentMcpSession = async (callerAgentId?: string) => {
+      if (callerAgentId) await agentManager.refreshPluginTools(callerAgentId);
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
@@ -2045,7 +2052,6 @@ export async function createPaseoDaemon(
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
       unsubscribePluginProviders();
-      unsubscribePluginSessionChanges();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -2067,7 +2073,6 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
-    unsubscribePluginSessionChanges();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

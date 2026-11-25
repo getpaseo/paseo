@@ -116,7 +116,8 @@ function resolveScheduleTarget(args: {
   if (hasExplicitNewAgentOption) {
     throw {
       code: "INVALID_TARGET",
-      message: "--provider/--mode/--thinking can only be used with a new-agent target",
+      message:
+        "--provider/--mode/--thinking/--archive-on-finish can only be used with a new-agent target",
       details: "Use --target new-agent or omit --target to create a new agent schedule",
     } satisfies CommandError;
   }
@@ -148,6 +149,7 @@ export function parseScheduleCreateInput(options: {
   mode?: string;
   thinking?: string;
   cwd?: string;
+  archiveOnFinish?: boolean;
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   maxRuns?: string;
@@ -191,7 +193,10 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
   const hasExplicitNewAgentOption =
-    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
+    options.provider !== undefined ||
+    options.mode !== undefined ||
+    options.thinking !== undefined ||
+    options.archiveOnFinish !== undefined;
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -204,6 +209,9 @@ export function parseScheduleCreateInput(options: {
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
         ...(thinkingOptionId ? { thinkingOptionId } : {}),
+        ...(options.archiveOnFinish !== undefined
+          ? { archiveOnFinish: options.archiveOnFinish }
+          : {}),
       },
     };
   };
@@ -249,6 +257,7 @@ export interface ScheduleUpdateOptionsInput {
   model?: string;
   mode?: string;
   cwd?: string;
+  archiveOnFinish?: boolean;
   maxRuns?: string;
   expiresIn?: string;
   clearMaxRuns?: boolean;
@@ -436,6 +445,9 @@ function buildNewAgentConfigPatch(
       } satisfies CommandError;
     }
     patch.cwd = trimmed;
+  }
+  if (options.archiveOnFinish !== undefined) {
+    patch.archiveOnFinish = options.archiveOnFinish;
   }
   return Object.keys(patch).length > 0 ? patch : undefined;
 }

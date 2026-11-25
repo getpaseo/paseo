@@ -88,9 +88,13 @@ export function SettingsRowHeader({
   const hovered = pointerOver && !disabled;
   const rowStyle = useMemo(() => [layout.row, hovered && styles.hovered], [hovered, layout]);
   const chevronStyle = useMemo(
-    () => [styles.chevron, expanded && styles.chevronExpanded],
+    () => [styles.chevron, expanded && styles.chevronExpanded, styles.passThrough],
     [expanded],
   );
+  // A hint can be a sentence, so a hinted row gives the room to the label column and caps the
+  // summary. A label alone keeps its one-line width and the summary truncates in what is left.
+  const hinted = Boolean(hint || hintStatus);
+  const contentStyle = hinted ? settingsStyles.rowContent : styles.labelContent;
   return (
     <View
       style={rowStyle}
@@ -113,7 +117,7 @@ export function SettingsRowHeader({
           {leading}
         </View>
       ) : null}
-      <View style={[settingsStyles.rowContent, styles.passThrough]}>
+      <View style={[contentStyle, styles.passThrough]}>
         <View style={labelAccessory ? styles.labelRow : undefined} {...HIDDEN_FROM_ASSISTIVE_TECH}>
           <Text style={layout.title}>{label}</Text>
           {labelAccessory}
@@ -128,28 +132,15 @@ export function SettingsRowHeader({
           <ControlSizeProvider size={layout.controlSize}>{control}</ControlSizeProvider>
         </View>
       ) : null}
-      <View style={[styles.trailing, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
-        {external ? (
-          // Drawn the same as a section header's docs link, so the two read as one thing.
-          <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel>
-        ) : (
-          <>
-            {summary ? (
-              <Text style={styles.summary} numberOfLines={1}>
-                {summary}
-              </Text>
-            ) : null}
-            {disabled ? null : (
-              <View style={chevronStyle}>
-                <ThemedChevron
-                  size={ICON_SIZE.sm}
-                  uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
-                />
-              </View>
-            )}
-          </>
-        )}
-      </View>
+      <RowTrailing hinted={hinted} external={external} hovered={hovered} summary={summary} />
+      {external || disabled ? null : (
+        <View style={chevronStyle} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+          <ThemedChevron
+            size={ICON_SIZE.sm}
+            uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -159,6 +150,32 @@ const HIDDEN_FROM_ASSISTIVE_TECH = {
   importantForAccessibility: "no-hide-descendants",
   "aria-hidden": true,
 } as const;
+
+/** The summary before the chevron, or the external link label in its place. */
+function RowTrailing({
+  hinted,
+  external,
+  hovered,
+  summary,
+}: {
+  hinted: boolean;
+  external: boolean;
+  hovered: boolean;
+  summary: string | undefined;
+}) {
+  const style = hinted ? styles.hintedTrailing : styles.labelTrailing;
+  return (
+    <View style={[style, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+      {/* Drawn the same as a section header's docs link, so the two read as one thing. */}
+      {external ? <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel> : null}
+      {!external && summary ? (
+        <Text style={styles.summary} numberOfLines={1}>
+          {summary}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 /**
  * The hint with its status mark. The line keeps the hint's own height in every status, so a row
@@ -222,10 +239,30 @@ const styles = StyleSheet.create((theme) => ({
   passThrough: {
     pointerEvents: "none",
   },
-  trailing: {
+  // The label keeps its one-line width and takes the free space; the summary truncates in what is
+  // left. Any shrink, even a fraction of a pixel, would wrap the label, so it does not shrink. The
+  // cap lets a long label wrap before it pushes the chevron off the row. Past the cap, the auto
+  // margin takes the rest of the row, so the control, summary and chevron stay together at the end.
+  labelContent: {
+    flexGrow: 1,
+    flexShrink: 0,
+    maxWidth: "75%",
+    paddingRight: theme.spacing[3],
+    marginRight: "auto",
+  },
+  labelTrailing: {
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 1,
+    minWidth: 0,
+  },
+  // A hinted row's column grows from zero width, so an unbounded summary would squeeze it to
+  // nothing and wrap the label one glyph per line. The summary keeps at most half the row.
+  hintedTrailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    maxWidth: "50%",
   },
   hintLine: {
     flexDirection: "row",

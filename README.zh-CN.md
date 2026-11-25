@@ -51,7 +51,7 @@
 - **多提供商：** 通过同一个界面使用 Claude Code、Codex、Copilot、OpenCode 和 Pi。为每个任务选择合适的模型。
 - **语音控制：** 在语音模式下口述任务或讨论问题。需要免手操作时很方便。
 - **跨设备：** 支持 iOS、Android、桌面端、Web 和 CLI。在桌前开始工作，用手机查看进度，也可以从终端脚本化操作。
-- **隐私优先：** Paseo 没有遥测、追踪，也不会强制登录。
+- **隐私优先**：无遥测、无追踪、不强制登录。远程访问可使用可选的端到端加密中继。
 
 ## 赞助商
 
@@ -93,7 +93,7 @@ npm install -g @getpaseo/cli
 paseo
 ```
 
-终端中会显示一个二维码。你可以从任意客户端连接。这个方式适合服务器和远程机器。
+Paseo 启动后会询问是否启用端到端加密中继以进行设备配对。如果拒绝，可以通过 TCP、Tailscale 或其他 VPN 直接连接。这个方式适合服务器和远程机器。
 
 完整安装和配置见：
 
@@ -140,7 +140,7 @@ Monorepo 包结构速览：
 - `packages/app`：Expo 客户端（iOS、Android、Web）
 - `packages/cli`：用于 daemon 和 agent 工作流的 `paseo` CLI
 - `packages/desktop`：Electron 桌面 app
-- `packages/relay`：用于远程连接的 relay 包
+- `packages/relay`：daemon 和客户端使用的中继传输与端到端加密包
 - `packages/website`：营销站点和文档（`paseo.sh`）
 
 常用命令：

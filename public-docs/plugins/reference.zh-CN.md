@@ -13,15 +13,18 @@ nav: 参考
 本地插件是安装到某个 Paseo daemon 中的目录来源。插件可以贡献：
 
 - 为 Paseo 客户端添加 React Native 界面，以及侧边栏顶部和底部项；
+- 替换侧边栏列表的[侧边栏视图](/docs/plugins/sidebar-views)，以及工作区行上的[徽标](#workspace-row-badge-items)；
 - 作为工作区标签页打开的工作区面板和 Agent 面板；
 - 用于查看或编辑匹配文件的[文件面板](#file-panels)；
 - Command Center 中的全局、工作区和 Agent 操作；
-- 消息 Composer 中的斜杠命令；
+- 消息 Composer 中的斜杠命令、[控件](#composer-items)、胶囊和可搜索的外部资源；
+- 工作区标题栏中的[按钮](#header-buttons)，以及新建工作区界面上的[字段](#new-workspace-items)；
+- [设置界面](#settings-screens)，以及 **设置 → 外观** 中的浅色和深色主题；
 - 经过转换的、以及由 daemon 推送的 Agent 时间线行；
-- **设置 → 外观** 中的浅色和深色主题；
-- 在 daemon 旁运行、经过 schema 校验的 RPC 处理函数；
-- 通过 TypeScript SDK 执行的普通 Paseo 操作；
-- 消息 Composer 中可搜索的外部资源。
+- 在 daemon 旁运行、经过 schema 校验的 RPC 处理函数和事件流；
+- 修改或观察工作区、worktree 和 Agent 操作的[钩子](/docs/plugins/hooks)；
+- [Agent Provider](/docs/plugins/providers)、[用量来源](#usage-sources)和 [worktree 管理器](#worktree-managers)；
+- 通过 TypeScript SDK 执行的普通 Paseo 操作。
 
 插件代码是受信任的，没有沙盒。客户端界面在 Paseo 应用中运行。后端贡献在一个子进程中运行，可以访问 daemon 所在的机器，包括它的文件、进程、凭据和网络。
 
@@ -349,7 +352,7 @@ openBrowser({ url, workspaceId: remoteWorkspaceId, serverId: remoteServerId });
 
 ### 服务端运行时 {#server-runtime}
 
-Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、`@getpaseo/plugin/server/provider`、`@getpaseo/plugin/server/acp` 和 `zod`。后端贡献在 daemon 子进程中运行，可以通过 Node 访问宿主机器。请把文件系统、进程、凭据以及其他本机工作放在 `server/` 下。没有 `index.server.ts` 的插件不会启动子进程。
+Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、`@getpaseo/plugin/server/provider`、`@getpaseo/plugin/server/acp`、`@getpaseo/plugin/server/usage` 和 `zod`。后端贡献在 daemon 子进程中运行，可以通过 Node 访问宿主机器。请把文件系统、进程、凭据以及其他本机工作放在 `server/` 下。没有 `index.server.ts` 的插件不会启动子进程。
 
 ### Provider {#providers}
 
@@ -1552,6 +1555,7 @@ const [state, setState] = useTabState(tab, schema, { view: "preview" });
 | `statusEnteredAt`    | ISO 时间戳或 `null`                                               |
 | `archivingAt`        | ISO 时间戳或 `null`                                               |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| `parentWorkspace`    | `WorkspaceRef \| null`                                            |
 
 Agent 快照字段：
 

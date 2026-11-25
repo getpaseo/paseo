@@ -78,6 +78,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   applyToolPolicy: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -101,6 +102,7 @@ export interface RegisteredProviderDefinition extends AgentProviderDefinition {
   requiresConfiguration?: boolean;
   iconSvg?: string;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
 }
 
@@ -148,17 +150,29 @@ interface ResolvedProvider {
 
 interface ProviderContract {
   supportsExactMcpPreapproval: boolean;
+  /** Sessions spawn their harness behind an `agent.open.before` wrap. */
+  supportsLaunchWrap?: boolean;
   applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
 }
 
+// Every built-in provider that starts a local harness honors a wrap; the mock providers start none.
 const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
-  claude: { supportsExactMcpPreapproval: true },
-  codex: { supportsExactMcpPreapproval: true },
-  opencode: { supportsExactMcpPreapproval: true },
+  claude: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  codex: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  copilot: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
+  opencode: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  pi: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
+  omp: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
   supportsExactMcpPreapproval: false,
+};
+
+// A user-defined ACP provider is a local command, which starts behind the wrap.
+const CUSTOM_ACP_PROVIDER_CONTRACT: ProviderContract = {
+  supportsExactMcpPreapproval: false,
+  supportsLaunchWrap: true,
 };
 
 const HUB_E2E_PROVIDER_ID = "hub-e2e";
@@ -167,6 +181,7 @@ const HUB_E2E_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
 // The cross-repository Hub harness owns this synthetic provider ID. It exercises the production
 // registry path without extending exact-preapproval support to user-defined ACP providers.
 const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
+  ...CUSTOM_ACP_PROVIDER_CONTRACT,
   supportsExactMcpPreapproval: true,
   applyToolPolicy: (provider, toolPolicy) => {
     for (const grant of toolPolicy.preapproved) {
@@ -498,6 +513,7 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   configuredOptions: ProviderOptions | undefined,
+  supportsLaunchWrap: boolean,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -517,6 +533,7 @@ function wrapClientProvider(
     get capabilities() {
       return inner.capabilities;
     },
+    supportsLaunchWrap,
     shutdown: inner.shutdown?.bind(inner),
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
@@ -626,6 +643,7 @@ function wrapClientProvider(
       ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
       : undefined,
     resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
+    requireLaunchWrap: inner.requireLaunchWrap?.bind(inner),
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
@@ -670,6 +688,7 @@ function createRegistryEntry(
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
+    supportsLaunchWrap: resolved.contract.supportsLaunchWrap === true,
     applyToolPolicy: (config, toolPolicy) => {
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
         throw new ToolPolicyUnsupportedError(provider);
@@ -747,6 +766,7 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.contract.supportsLaunchWrap === true,
   );
 }
 
@@ -880,7 +900,7 @@ function addDerivedProviders(
         contract:
           providerId === HUB_E2E_PROVIDER_ID
             ? HUB_E2E_PROVIDER_CONTRACT
-            : UNSUPPORTED_PROVIDER_CONTRACT,
+            : CUSTOM_ACP_PROVIDER_CONTRACT,
       });
       continue;
     }
@@ -962,6 +982,7 @@ export function buildProviderRegistry(
         createClient: definition.createClient,
         contract: {
           supportsExactMcpPreapproval: definition.supportsExactMcpPreapproval,
+          supportsLaunchWrap: definition.supportsLaunchWrap,
         },
       }),
     );

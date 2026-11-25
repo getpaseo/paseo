@@ -65,6 +65,7 @@ export class PiCliRuntime implements PiRuntime {
       args,
       cwd: launch.cwd,
       env: launch.env,
+      wrap: launch.wrap,
     };
     const spawn = this.spawnProcess;
     const processOptions = {

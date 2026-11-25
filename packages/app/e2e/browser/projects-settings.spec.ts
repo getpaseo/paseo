@@ -46,11 +46,7 @@ import {
 } from "../support/helpers/project-settings";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCompactSettings } from "../support/helpers/settings";
-import {
-  addProjectFlowInput,
-  chooseAddProjectMethod,
-  openAddProjectFlow,
-} from "../support/helpers/add-project-flow";
+import { addProjectFlowInput, openAddProjectFlow } from "../support/helpers/add-project-flow";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
   buildOpenProjectRoute,
@@ -167,7 +163,6 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
 
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
   await openAddProjectFlow(page);
-  await chooseAddProjectMethod(page, "directory-search");
 
   const input = addProjectFlowInput(page);
   await input.fill(projectPath);

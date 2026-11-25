@@ -17,6 +17,7 @@ A release has exactly two steps. The agent does the first, the user authorizes t
   run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag
 - push the `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` branch and confirm its `CI` and
   `Desktop Packages` runs pass (never wait on `main` CI)
+- run the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 
 **Go-ahead** (user says "go ahead"):
 
@@ -107,6 +108,7 @@ An explicit user instruction can select another base.
    `CI` (all 21 jobs) and `Desktop Packages` (Linux user-namespace smoke) in their own concurrency
    groups, isolated from `main` traffic. Never wait on `main` CI, because `main` cancels in-progress
    runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
+   Complete the [pre-release dependency checks](#pre-release-dependency-checks) on that commit.
    Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
 6. After go-ahead, run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta). This
    publishes to npm and pushes the `v*` tag on the already-verified commit. Because the release
@@ -126,7 +128,9 @@ shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version
 as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
 computes that from a prerelease, so run `npm run release:check`, bump with
 `npm version 0.13.4-beta.1 --include-workspace-root --no-git-tag-version && git commit -m "chore(release): cut 0.13.4-beta.1"`,
-push the release branch for `CI` and `Desktop Packages`, then ship with `npm run release:ship:beta`.
+push the release branch for `CI` and `Desktop Packages`, and complete the
+[pre-release dependency checks](#pre-release-dependency-checks) before shipping with
+`npm run release:ship:beta`.
 Record the tested beta tag as its source so its soak still counts for the unchanged content.
 
 ## Release inventory
@@ -234,6 +238,7 @@ npm run release:prep:minor
 
 # 2. Push the release branch and wait for CI + Desktop Packages on this commit.
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead and green release-branch checks: publish npm and push the tag.
 npm run release:ship
@@ -269,7 +274,8 @@ npm run release:check        # Typecheck, build, dry-run pack
 npm run version:all:patch
 npm run version:all:minor
 git push -u origin HEAD      # Trigger CI + Desktop Packages on release/vX.Y.Z
-# Wait for CI and Desktop Packages on this branch to pass, then after go-ahead:
+# Wait for CI and Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:publish      # Publish to npm (idempotent, with propagation + beta dist-tag sync)
 npm run release:push         # Create tag vX.Y.Z on HEAD and push (triggers release workflows)
 ```
@@ -286,6 +292,7 @@ npm run release:prep:beta:next   # Cut X.Y.Z-beta.2, beta.3, ...
 
 # 2. Push the release branch and wait for CI + Desktop Packages to pass:
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead:
 npm run release:ship:beta
@@ -293,7 +300,8 @@ npm run release:ship:beta
 # Later, after soak, promote on release/vX.Y.Z:
 npm run release:prep:promote
 git push -u origin HEAD
-# Wait for CI + Desktop Packages to pass, then after go-ahead:
+# Wait for CI + Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:ship
 ```
 
@@ -329,22 +337,21 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 ### Default behavior
 
-`npm run release:prep:patch` or `npm run release:prep:minor` → push release branch → green checks → `npm run release:ship` → tag push → 36h ramp. No extra action needed.
+Follow the [standard stable release procedure](#standard-release-stable). The tag push starts
+the desktop release workflow, which sets a 36-hour rollout when it publishes the release.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
 ### Instant-admit release (rollout_hours=0)
 
-Tag-push runs from `npm run release:ship` always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), ship the release normally, wait for it to publish, then flip the manifests:
+Follow the [standard stable release procedure](#standard-release-stable). Wait for Desktop
+Release to publish, then update the manifests to admit everyone immediately.
 
 ```bash
-# 1. Ship the verified release branch (36h ramp from tag push).
-npm run release:ship
-
-# 2. Wait for Desktop Release to publish the GitHub Release.
+# 1. Wait for Desktop Release to publish the GitHub Release.
 gh run watch <desktop-release-run-id> --exit-status
 
-# 3. Flip the published manifests to instant admit.
+# 2. Flip the published manifests to instant admit.
 gh workflow run desktop-rollout.yml \
   -f tag=v0.1.64 \
   -f rollout_hours=0
@@ -390,7 +397,8 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases shipped via `npm run release:ship` — tag-push runs always stamp 36. For a fresh release with a custom ramp, ship normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+For a fresh release with a custom ramp, follow the [instant-admit procedure](#instant-admit-release-rollout_hours0)
+and set `rollout_hours` to your chosen duration.
 
 ### Releasing during an active rollout
 
@@ -859,6 +867,18 @@ Bullets within each section (Added, Changed, Fixed) follow this order:
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.
 3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
 
+## Pre-release dependency checks
+
+Run these checks from the repository root on the release commit before shipping a beta or stable release.
+Use Linux x64 so the audit includes the platform-specific dependencies that the CI job checked.
+
+1. Review changes to dependency versions, download URLs, and integrity hashes in `git diff <previous-release-tag> HEAD -- package-lock.json`.
+2. Install the exact dependencies from the release lockfile with `npm ci`.
+3. Run `npm audit signatures`. Investigate failures before shipping. See [Dependency signature audit](development.md#dependency-signature-audit) for help.
+
+Checking signatures and reviewing the lockfile diff reduce the risk of shipping compromised dependencies.
+These checks help prevent supply-chain attacks from reaching users through Paseo.
+
 ## Pre-release sanity check
 
 Before cutting a **stable** release, the release agent reviews the diff as a last line of defence against shipping bugs. Skip this for betas — the beta itself is the smoke test, and gating each beta on a code review defeats the point of using betas as fast release candidates.
@@ -886,6 +906,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before running `release:prep:*`
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
 - [ ] `npm run release:prep:beta:patch`, `release:prep:beta:minor`, or `release:prep:beta:next` created the version commit on `release/vX.Y.Z-beta.N` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship:beta` published npm and pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
@@ -909,6 +930,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] Ensure local format, lint, and typecheck pass and the working tree is clean before running `release:prep:*`
 - [ ] `npm run release:prep:patch`, `release:prep:minor`, or `release:prep:promote` created the version commit on `release/vX.Y.Z` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship` published npm, updated dist-tags, and pushed the `vX.Y.Z` tag without triggering a second CI run
 - [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
