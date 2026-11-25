@@ -27,8 +27,8 @@ const argumentsToPreserve = [
   "feature^bugfix",
 ];
 
-// A bare extensionless command selects the Windows shell; an absolute node.exe path would
-// skip that path. The real child checks quoting through the public process capabilities.
+// A real child checks quoting through the public process capabilities. On Windows the bare name
+// resolves on PATH to node.exe, which starts directly.
 test("execCommand delivers shell arguments to the real child unchanged", async () => {
   const script = await writeArgumentReader();
   const { stdout } = await execCommand("node", [script, ...argumentsToPreserve]);
@@ -53,9 +53,16 @@ test("spawnProcess delivers shell arguments to the real child unchanged", async 
   expect(JSON.parse(stdout)).toEqual(argumentsToPreserve);
 });
 
-// A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess runs it
-// through cmd.exe and quotes each argument that the script would read as more than one.
-test("a Windows script launch wrap starts through cmd.exe with each argument quoted", () => {
+// A Windows environment with an empty PATH, so a bare name is never found on the test host.
+const windowsEnv = { ComSpec: "C:\\Windows\\System32\\cmd.exe", PATH: "" };
+
+function onWindows(command: string, args: string[], shell?: boolean | string) {
+  return resolveSpawnInvocation(command, args, shell, "win32", windowsEnv);
+}
+
+// A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess starts it as
+// one verbatim cmd.exe line.
+test("a Windows script launch wrap starts as one verbatim cmd.exe line", () => {
   const wrapped = [
     "C:\\Program Files\\Sandbox\\run.cmd",
     "--profile",
@@ -64,10 +71,16 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
     "C:\\tools\\agy.cmd",
     "acp",
   ];
-  expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "win32")).toEqual({
-    command: '"C:\\Program Files\\Sandbox\\run.cmd"',
-    args: ["--profile", '"work profile"', '""', "C:\\tools\\agy.cmd", "acp"],
-    shell: true,
+  expect(onWindows(wrapped[0]!, wrapped.slice(1))).toEqual({
+    command: "C:\\Windows\\System32\\cmd.exe",
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      '""C:\\Program Files\\Sandbox\\run.cmd" --profile ^"work^ profile^" ^"^" C:\\tools\\agy.cmd acp"',
+    ],
+    shell: false,
+    windowsVerbatimArguments: true,
   });
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "linux")).toEqual({
     command: wrapped[0],
@@ -79,16 +92,14 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
 // cmd.exe ends a command at a line break, and the text after it would run as a second command.
 test("a Windows cmd.exe launch refuses an argument with a line break before it starts", () => {
   for (const argument of ["line one\nline two", "line one\r\n& calc"]) {
-    expect(() =>
-      resolveSpawnInvocation("C:\\Sandbox\\run.cmd", ["--", argument], undefined, "win32"),
-    ).toThrow("cmd.exe cannot pass an argument with a line break to C:\\Sandbox\\run.cmd");
-    expect(() => resolveSpawnInvocation("codex", [argument], undefined, "win32")).toThrow(
+    expect(() => onWindows("C:\\Sandbox\\run.cmd", ["--", argument])).toThrow(
+      "cmd.exe cannot pass an argument with a line break to C:\\Sandbox\\run.cmd",
+    );
+    expect(() => onWindows("codex", [argument])).toThrow(
       "cmd.exe cannot pass an argument with a line break to codex",
     );
   }
-  expect(resolveSpawnInvocation("C:\\tools\\node.exe", ["a\nb"], undefined, "win32").args).toEqual([
-    "a\nb",
-  ]);
+  expect(onWindows("C:\\tools\\node.exe", ["a\nb"]).args).toEqual(["a\nb"]);
   expect(resolveSpawnInvocation("/usr/bin/sandbox", ["a\nb"], undefined, "linux").args).toEqual([
     "a\nb",
   ]);
@@ -97,15 +108,31 @@ test("a Windows cmd.exe launch refuses an argument with a line break before it s
 // Only cmd.exe reads cmd.exe quoting. A shell the caller names parses the line by its own rules.
 test("a Windows launch quotes for cmd.exe only when cmd.exe parses the command line", () => {
   for (const shell of [true, "cmd.exe", "C:\\Windows\\System32\\CMD.EXE"]) {
-    expect(resolveSpawnInvocation("echo", ["a & b"], shell, "win32").args).toEqual(['"a & b"']);
+    expect(onWindows("echo", ["hello", "a & b"], shell).args).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      '"echo hello ^"a^ ^&^ b^""',
+    ]);
   }
   for (const shell of ["bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe", "pwsh"]) {
-    expect(resolveSpawnInvocation("echo", ["'a & b'", "line\nbreak"], shell, "win32")).toEqual({
+    expect(onWindows("echo", ["'a & b'", "line\nbreak"], shell)).toEqual({
       command: "echo",
       args: ["'a & b'", "line\nbreak"],
       shell,
     });
   }
+  // A program starts directly, and `shell: false` keeps a bare name that is not on PATH direct.
+  expect(onWindows("C:\\tools\\node.exe", ["a & b"])).toEqual({
+    command: "C:\\tools\\node.exe",
+    args: ["a & b"],
+    shell: false,
+  });
+  expect(onWindows("missing", ["a & b"], false)).toEqual({
+    command: "missing",
+    args: ["a & b"],
+    shell: false,
+  });
 });
 
 // Real Git Bash on Windows: the arguments reach Bash as given, without cmd.exe escapes.
@@ -170,6 +197,9 @@ const commandScriptArguments = [
   'mixed "a & b" quote',
   "--profile=restricted",
   "a,b;c",
+  // cmd.exe expands a set variable inside a quoted region, so this checks that none opens.
+  "value with %PATH% inside",
+  'quote "then %PATH%" & more',
 ];
 
 async function writeCommandScriptLauncher(): Promise<string> {
@@ -236,7 +266,7 @@ test.runIf(process.platform === "win32")(
     // `set /p` without input exits 1, so the script exits 0 on its own.
     await writeFile(
       script,
-      '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5|%~6|%~7|%~8"\r\nexit /b 0\r\n',
+      '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5|%~6|%~7|%~8|%~9"\r\nexit /b 0\r\n',
     );
     const { stdout } = await execCommand(script, [
       "plain",
@@ -246,17 +276,36 @@ test.runIf(process.platform === "win32")(
       "--profile=restricted",
       "a,b",
       "a;b",
+      "value with %PATH% inside",
       "",
     ]);
-    expect(stdout).toBe("plain|with space|feature&bugfix|100%|--profile=restricted|a,b|a;b|");
+    expect(stdout).toBe(
+      "plain|with space|feature&bugfix|100%|--profile=restricted|a,b|a;b|value with %PATH% inside|",
+    );
   },
 );
 
+// Real cmd.exe: a bare name is found on PATH like cmd.exe finds it. A `.cmd` shim that forwards
+// `%*`, as npm writes them, passes every argument on unchanged; a program starts directly.
 test.runIf(process.platform === "win32")(
-  "a bare command name gets its arguments unchanged through cmd.exe on Windows",
+  "a bare command name found on PATH gets its arguments unchanged on Windows",
   async () => {
     const reader = await writeArgumentReader();
-    const { stdout } = await execCommand("node", [reader, ...commandScriptArguments]);
-    expect(JSON.parse(stdout)).toEqual(commandScriptArguments);
+    const directory = await mkdtemp(path.join(os.tmpdir(), "plugin bare shim "));
+    roots.push(directory);
+    await writeFile(
+      path.join(directory, "paseo-forward.cmd"),
+      `@"${process.execPath}" "${reader}" %*\r\n`,
+    );
+    // Windows env names ignore case, so drop the inherited `Path` before setting the new one.
+    const inherited = Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path");
+    const env = {
+      ...Object.fromEntries(inherited),
+      PATH: `${directory};${process.env.PATH ?? ""}`,
+    };
+    const shim = await execCommand("paseo-forward", commandScriptArguments, { env });
+    expect(JSON.parse(shim.stdout)).toEqual(commandScriptArguments);
+    const program = await execCommand("node", [reader, ...commandScriptArguments], { env });
+    expect(JSON.parse(program.stdout)).toEqual(commandScriptArguments);
   },
 );

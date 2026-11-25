@@ -8,9 +8,10 @@ import {
 import { extname } from "node:path";
 import { promisify } from "node:util";
 import {
+  findWindowsCommand,
   isWindowsCommandScript,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
+  windowsCommandLine,
+  windowsCommandShell,
 } from "./process-internal/windows-command.js";
 import type { PluginLaunchWrap } from "./lifecycle.js";
 const execFileAsync = promisify(execFile);
@@ -32,58 +33,54 @@ interface ExecCommandResult {
   stdout: string;
   stderr: string;
 }
-function hasPathSeparator(value: string): boolean {
-  return value.includes("/") || value.includes("\\");
-}
-
-function shouldUseWindowsShell(
-  command: string,
-  requestedShell: boolean | string | undefined,
-  platform: NodeJS.Platform,
-): boolean | string {
-  if (isWindowsCommandScript(command, platform)) {
-    return true;
-  }
-  if (requestedShell !== undefined) {
-    return requestedShell;
-  }
-  return platform === "win32" && !hasPathSeparator(command) && !extname(command);
-}
 
 export interface SpawnInvocation {
   command: string;
   args: string[];
   shell: boolean | string;
+  /** The args are one cmd.exe line that Node must pass as given. */
+  windowsVerbatimArguments?: boolean;
 }
 
-function parsesWithCmd(shell: boolean | string): boolean {
+function namesCmd(shell: boolean | string | undefined): boolean {
   return (
     shell === true || (typeof shell === "string" && /^(?:.*[\\/])?cmd(?:\.exe)?$/iu.test(shell))
   );
 }
 
 /**
- * How `spawnProcess` and `execCommand` start `command` on `platform`. On Windows a command script
- * or a bare name runs through cmd.exe, so the command and every argument are quoted for it.
- * cmd.exe ends a command at a line break whatever the quoting, so an argument with one is refused
- * before cmd.exe starts. Another shell the caller names gets them as given.
+ * How `spawnProcess` and `execCommand` start `command` on `platform`.
+ *
+ * On Windows a bare name is first found on `PATH`, as cmd.exe would find it. A program then starts
+ * directly. A `.cmd` or `.bat` script, a name that is not on `PATH` (a cmd.exe builtin), or a
+ * `shell: true` launch runs as `cmd.exe /d /s /c "..."`, quoted by `windowsCommandLine`. A shell
+ * the caller names other than cmd.exe gets the command and arguments as given.
  */
 export function resolveSpawnInvocation(
   command: string,
   args: readonly string[],
   requestedShell: boolean | string | undefined,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): SpawnInvocation {
-  const shell = shouldUseWindowsShell(command, requestedShell, platform);
-  if (platform !== "win32" || !parsesWithCmd(shell)) return { command, args: [...args], shell };
-  if (args.some((argument) => /[\r\n]/u.test(argument))) {
-    throw new Error(`cmd.exe cannot pass an argument with a line break to ${command}`);
+  if (platform !== "win32") return { command, args: [...args], shell: requestedShell ?? false };
+  if (typeof requestedShell === "string" && !namesCmd(requestedShell)) {
+    return { command, args: [...args], shell: requestedShell };
   }
-  const commandScript = isWindowsCommandScript(command, platform);
+  const bareName = !/[\\/]/u.test(command) && !extname(command);
+  const found = bareName ? findWindowsCommand(command, env) : undefined;
+  const target = found ?? command;
+  const commandScript = isWindowsCommandScript(target, platform);
+  // Only cmd.exe knows a builtin, so a bare name off `PATH` goes to it unless the caller said no shell.
+  const builtin = bareName && !found && requestedShell === undefined;
+  if (!commandScript && !namesCmd(requestedShell) && !builtin) {
+    return { command: target, args: [...args], shell: false };
+  }
   return {
-    command: quoteWindowsCommand(command, platform),
-    args: args.map((argument) => quoteWindowsArgument(argument, { platform, commandScript })),
-    shell,
+    command: windowsCommandShell(env),
+    args: ["/d", "/s", "/c", windowsCommandLine(target, args, { commandScript })],
+    shell: false,
+    windowsVerbatimArguments: true,
   };
 }
 
@@ -112,14 +109,16 @@ export function spawnProcess(
   options?: SpawnProcessOptions,
 ): ChildProcess {
   const { wrap, ...spawnOptions } = options ?? {};
+  const env = options?.env ?? process.env;
   const invocation = wrap
-    ? resolveSpawnInvocation(wrap[0], [...wrap.slice(1), command, ...args], false)
-    : resolveSpawnInvocation(command, args, spawnOptions.shell);
+    ? resolveSpawnInvocation(wrap[0], [...wrap.slice(1), command, ...args], false, undefined, env)
+    : resolveSpawnInvocation(command, args, spawnOptions.shell, undefined, env);
 
   return spawn(invocation.command, invocation.args, {
     ...spawnOptions,
     env: options?.env,
     shell: invocation.shell,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     signal: options?.signal,
     windowsHide: true,
   });
@@ -130,7 +129,13 @@ export async function execCommand(
   args: string[],
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
-  const invocation = resolveSpawnInvocation(command, args, options?.shell);
+  const invocation = resolveSpawnInvocation(
+    command,
+    args,
+    options?.shell,
+    undefined,
+    options?.env ?? process.env,
+  );
 
   return execFileAsync(invocation.command, invocation.args, {
     cwd: options?.cwd,
@@ -141,6 +146,7 @@ export async function execCommand(
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,
     shell: invocation.shell,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }

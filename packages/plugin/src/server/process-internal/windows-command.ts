@@ -1,4 +1,10 @@
-import { extname } from "node:path";
+import { statSync } from "node:fs";
+import { extname, join } from "node:path";
+
+/**
+ * How Paseo starts a program through cmd.exe on Windows: `cmd.exe /d /s /c "<line>"`, with the line
+ * passed verbatim. The SDK process functions and the daemon's terminals share this one dialect.
+ */
 
 export function isWindowsCommandScript(
   executablePath: string,
@@ -9,85 +15,86 @@ export function isWindowsCommandScript(
 }
 
 /**
- * When spawning with `shell: true` on Windows, the command is passed to
- * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
- * command path with spaces (e.g. `C:\Program Files\...`) is split at the
- * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
- * Inside the quotes cmd.exe reads `&`, `(` and `)` as text, so a path such as
- * `C:\Program Files (x86)\...` needs no `^`.
+ * Find a bare command name the way cmd.exe would on `PATH`, trying each `PATHEXT` extension. The
+ * current directory is not searched. Returns undefined for a name with a path or an extension, and
+ * for a name that is not on `PATH`, such as a cmd.exe builtin.
  */
-export function quoteWindowsCommand(
-  command: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform !== "win32") return command;
+export function findWindowsCommand(name: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (name.includes("/") || name.includes("\\") || extname(name)) return undefined;
+  const extensions = (readEnv(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const directory of (readEnv(env, "PATH") ?? "").split(";").filter(Boolean)) {
+    for (const extension of extensions) {
+      const candidate = join(directory, name + extension);
+      if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate;
+    }
+  }
+  return undefined;
+}
+
+/** The cmd.exe that runs a command line: the child's `ComSpec`, else the daemon's. */
+export function windowsCommandShell(env: NodeJS.ProcessEnv): string {
+  return readEnv(env, "ComSpec") ?? readEnv(process.env, "ComSpec") ?? "cmd.exe";
+}
+
+// Windows environment names ignore case, and a copied env object keeps whatever case it had.
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : env[key] || undefined;
+}
+
+// The cmd.exe metacharacters, as cross-spawn's `lib/util/escape.js` lists them.
+const CMD_METACHARACTERS = /([()\][%!^"`<>&|;, *?])/g;
+// A batch script also splits its arguments at `=` and tab.
+const NEEDS_ESCAPE = /[()\][%!^"`<>&|;, *?=\t]/u;
+
+/**
+ * Escape one argument for a `cmd.exe /c` line by the qntm algorithm (https://qntm.org/cmd), the
+ * one cross-spawn's `lib/util/escape.js` implements: quote it for the program's own argv parser,
+ * then put a `^` before every cmd.exe metacharacter, the added quotes included. cmd.exe then sees
+ * no quoted region, so a `%NAME%` never expands, and the program gets the argument unchanged.
+ * `twice` escapes again for a batch script that reads the argument a second time.
+ */
+function escapeCmdArgument(argument: string, twice: boolean): string {
+  const quoted = `"${argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
+  const escaped = quoted.replace(CMD_METACHARACTERS, "^$1");
+  return twice ? escaped.replace(CMD_METACHARACTERS, "^$1") : escaped;
+}
+
+/**
+ * Quote the program path for the start of a cmd.exe line. Inside the quotes cmd.exe reads `&`, `(`
+ * and `)` as text, so a path such as `C:\Program Files (x86)\...` starts.
+ */
+export function quoteWindowsCommand(command: string): string {
   if (command.startsWith('"') && command.endsWith('"')) return command;
-  if (command === "" || /[\s()!^"<>&|]/u.test(command)) return `"${command}"`;
+  if (command === "" || /[\s()!^"<>&|%;,=]/u.test(command)) return `"${command}"`;
   return command;
 }
 
-// A `^` makes the next character literal outside a quoted region. `%` and `!` expand only once,
-// because cmd.exe does not expand the text a script's `%*` produces; the others are read again.
-const EXPANDED_ONCE = /[%!]/u;
-const READ_AS_SYNTAX = /[&|<>()^"]/u;
-// A script splits its arguments at `=`, `,` and `;` outside quotes, and reads the syntax again.
-const SPLIT_BY_SCRIPT = /[&|<>()^=,;]/u;
-
-function escapeOutsideQuotes(character: string, commandScript: boolean): string {
-  if (EXPANDED_ONCE.test(character)) return `^${character}`;
-  if (READ_AS_SYNTAX.test(character)) return commandScript ? `^^^${character}` : `^${character}`;
-  return character;
-}
-
-/** Quote the argument the way programs split their command line. */
-function quoteForProgram(argument: string): string {
-  return `"${argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
-}
-
 /**
- * Escape a quoted argument for cmd.exe. Each `"` switches cmd.exe in or out of a quoted region,
- * where everything is text, so only the parts outside a region are escaped. A closing quote that
- * would open a region is escaped instead, so the next argument starts outside one.
- */
-function escapeQuotedForCmd(quoted: string, commandScript: boolean): string {
-  const characters = [...quoted];
-  let inside = false;
-  let escaped = "";
-  for (const [index, character] of characters.entries()) {
-    const closing = index === characters.length - 1;
-    if (character === '"' && (inside || !closing)) {
-      inside = !inside;
-      escaped += character;
-    } else {
-      escaped += inside ? character : escapeOutsideQuotes(character, commandScript);
-    }
-  }
-  return escaped;
-}
-
-/**
- * Quote one argument for the `cmd.exe /d /s /c "..."` line that `spawn(..., { shell: true })`
- * builds on Windows, so the program receives it unchanged.
+ * The quoted line for `cmd.exe /d /s /c <line>` that starts `command` with `args`.
  *
- * A plain argument stays as it is, so cmd.exe builtins and scripts that read `%1` get it as
- * given. An argument with whitespace or a quote, or an empty one, is quoted for the program;
- * cmd.exe keeps the text inside the quotes and `%~1` removes them. A `.cmd` or `.bat` script
- * splits its arguments at `=`, `,` and `;` as well, and reads them a second time when it forwards
- * them with `%*`. So for `commandScript` an argument with one of those or with cmd.exe syntax is
- * quoted too, and syntax outside quotes is escaped for both reads. A script then gets each one as
- * a single `%~1`, and `%*` forwards it unchanged.
+ * - An argument without a metacharacter needs no escape and stays as given, so cmd.exe builtins
+ *   and batch scripts that read `%1` get it unchanged.
+ * - Any other argument is escaped once. A batch script that reads it as `%~1` gets it without the
+ *   quotes, and one that forwards it with `%*` hands the program the quoted argument, where cmd.exe
+ *   reads every metacharacter as text.
+ * - For a batch script (`commandScript`), an argument with a `"` is escaped twice. Its quotes
+ *   would otherwise open and close regions when the script reads it again, and leave the
+ *   arguments after it outside the quotes.
  *
- * Inside quotes cmd.exe still expands a `%NAME%` that names a set variable.
+ * cmd.exe ends a command at a line break whatever the quoting, so an argument with one throws.
  */
-export function quoteWindowsArgument(
-  argument: string,
-  { platform = process.platform, commandScript = false } = {},
+export function windowsCommandLine(
+  command: string,
+  args: readonly string[],
+  { commandScript }: { commandScript: boolean },
 ): string {
-  if (platform !== "win32") return argument;
-  const quote =
-    argument === "" || /[\s"]/u.test(argument) || (commandScript && SPLIT_BY_SCRIPT.test(argument));
-  if (!quote) {
-    return [...argument].map((character) => escapeOutsideQuotes(character, false)).join("");
-  }
-  return escapeQuotedForCmd(quoteForProgram(argument), commandScript);
+  const escaped = args.map((argument) => {
+    if (/[\r\n]/u.test(argument)) {
+      throw new Error(`cmd.exe cannot pass an argument with a line break to ${command}`);
+    }
+    if (argument !== "" && !NEEDS_ESCAPE.test(argument)) return argument;
+    return escapeCmdArgument(argument, commandScript && argument.includes('"'));
+  });
+  return `"${[quoteWindowsCommand(command), ...escaped].join(" ")}"`;
 }
