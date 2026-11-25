@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
 import { useNavigation, useRouter } from "expo-router";
-import { useFocusEffect } from "expo-router/react-navigation";
+import { useFocusEffect, usePreventRemove } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -1114,19 +1114,41 @@ function SettingsSidebar({
 interface SettingsBeforeLeaveGuard {
   isDirty: () => boolean;
   confirmDiscard: () => Promise<boolean>;
+  subscribeDirty?: (listener: () => void) => () => void;
 }
 
 /**
  * Lets an active Settings editor (such as Agent profiles) veto both in-app
  * section switches and route-boundary exits (browser Back, native swipe-back,
  * hardware Back) with a single discard confirmation.
+ *
+ * Uses `usePreventRemove` so native stacks set `preventNativeDismiss` before
+ * iOS can interactively dismiss the screen on a back swipe.
  */
 function useSettingsBeforeLeaveGuard() {
   const navigation = useNavigation();
   const beforeLeaveRef = useRef<SettingsBeforeLeaveGuard | null>(null);
+  const dirtyUnsubRef = useRef<(() => void) | null>(null);
+  const [preventRemove, setPreventRemove] = useState(false);
 
   const registerBeforeLeave = useCallback((guard: SettingsBeforeLeaveGuard | null) => {
+    dirtyUnsubRef.current?.();
+    dirtyUnsubRef.current = null;
     beforeLeaveRef.current = guard;
+    const syncDirty = () => {
+      setPreventRemove(Boolean(beforeLeaveRef.current?.isDirty()));
+    };
+    syncDirty();
+    if (guard?.subscribeDirty) {
+      dirtyUnsubRef.current = guard.subscribeDirty(syncDirty);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      dirtyUnsubRef.current?.();
+      dirtyUnsubRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -1136,22 +1158,19 @@ function useSettingsBeforeLeaveGuard() {
     });
   }, []);
 
-  useEffect(() => {
-    const unsubscribe = navigation.addListener("beforeRemove", (event) => {
-      const guard = beforeLeaveRef.current;
-      if (!guard?.isDirty()) {
-        return;
+  usePreventRemove(preventRemove, ({ data }) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigation.dispatch(data.action);
+      return;
+    }
+    const confirmAndLeave = async () => {
+      if (await guard.confirmDiscard()) {
+        navigation.dispatch(data.action);
       }
-      event.preventDefault();
-      const confirmAndLeave = async () => {
-        if (await guard.confirmDiscard()) {
-          navigation.dispatch(event.data.action);
-        }
-      };
-      void confirmAndLeave();
-    });
-    return unsubscribe;
-  }, [navigation]);
+    };
+    void confirmAndLeave();
+  });
 
   const guardNavigation = useCallback((navigate: () => void) => {
     const guard = beforeLeaveRef.current;

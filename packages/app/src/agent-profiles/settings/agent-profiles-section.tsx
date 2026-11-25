@@ -520,6 +520,7 @@ function AgentProfileEditorHost({
   canStepPrev,
   canStepNext,
   activeFormRef,
+  onDirtyChange,
   onStepPrev,
   onStepNext,
   onClose,
@@ -537,6 +538,7 @@ function AgentProfileEditorHost({
   canStepPrev: boolean;
   canStepNext: boolean;
   activeFormRef: MutableRefObject<ActiveProfileFormHandle | null>;
+  onDirtyChange: () => void;
   onStepPrev: () => void;
   onStepNext: () => void;
   onClose: () => void;
@@ -561,12 +563,16 @@ function AgentProfileEditorHost({
       draftRevision: () => session.model.getState().draftRevision,
     };
     activeFormRef.current = handle;
+    onDirtyChange();
+    const unsubscribe = session.model.subscribe(onDirtyChange);
     return () => {
+      unsubscribe();
       if (activeFormRef.current === handle) {
         activeFormRef.current = null;
+        onDirtyChange();
       }
     };
-  }, [activeFormRef, session.model, sessionToken]);
+  }, [activeFormRef, onDirtyChange, session.model, sessionToken]);
 
   if (canUseDrawer) {
     return (
@@ -605,6 +611,7 @@ function AgentProfileEditorHost({
 export interface AgentProfilesBeforeLeaveGuard {
   isDirty: () => boolean;
   confirmDiscard: () => Promise<boolean>;
+  subscribeDirty: (listener: () => void) => () => void;
 }
 
 /**
@@ -635,6 +642,20 @@ export function AgentProfilesPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [paneWidth, setPaneWidth] = useState(0);
   const activeFormRef = useRef<ActiveProfileFormHandle | null>(null);
+  const dirtyListenersRef = useRef(new Set<() => void>());
+
+  const notifyDirtyListeners = useCallback(() => {
+    for (const listener of dirtyListenersRef.current) {
+      listener();
+    }
+  }, []);
+
+  const subscribeDirty = useCallback((listener: () => void) => {
+    dirtyListenersRef.current.add(listener);
+    return () => {
+      dirtyListenersRef.current.delete(listener);
+    };
+  }, []);
 
   const getActiveForm = useCallback((): ActiveProfileFormHandle | null => {
     const form = activeFormRef.current;
@@ -649,11 +670,15 @@ export function AgentProfilesPage({
     [getActiveForm],
   );
 
-  const commitEditTarget = useCallback((next: EditTarget | null) => {
-    const nextToken = editorTokenRef.current + 1;
-    editorTokenRef.current = nextToken;
-    setEditorState({ target: next, token: nextToken });
-  }, []);
+  const commitEditTarget = useCallback(
+    (next: EditTarget | null) => {
+      const nextToken = editorTokenRef.current + 1;
+      editorTokenRef.current = nextToken;
+      setEditorState({ target: next, token: nextToken });
+      notifyDirtyListeners();
+    },
+    [notifyDirtyListeners],
+  );
 
   const applyDelayedEditTarget = useCallback(
     (
@@ -748,11 +773,12 @@ export function AgentProfilesPage({
     onRegisterBeforeLeave?.({
       isDirty: isDraftDirty,
       confirmDiscard: confirmLeaveDiscard,
+      subscribeDirty,
     });
     return () => {
       onRegisterBeforeLeave?.(null);
     };
-  }, [confirmLeaveDiscard, isDraftDirty, onRegisterBeforeLeave]);
+  }, [confirmLeaveDiscard, isDraftDirty, onRegisterBeforeLeave, subscribeDirty]);
 
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {
@@ -966,6 +992,7 @@ export function AgentProfilesPage({
           canStepPrev={activeIndex > 0}
           canStepNext={canStepNext}
           activeFormRef={activeFormRef}
+          onDirtyChange={notifyDirtyListeners}
           onStepPrev={handleStepPrev}
           onStepNext={handleStepNext}
           onClose={handleEditClose}
