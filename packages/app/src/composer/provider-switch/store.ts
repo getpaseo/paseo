@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AgentProvider, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { AgentConfigApply } from "@getpaseo/protocol/messages";
 
 export interface StagedProviderSwitch {
   provider: AgentProvider;
@@ -14,6 +15,11 @@ function stagedKey(serverId: string, agentId: string): string {
 }
 
 export interface LiveAgentSettingsWriter {
+  applyAgentConfig?: (
+    agentId: string,
+    config: AgentConfigApply,
+    options?: { expectedProvider?: AgentProvider },
+  ) => Promise<unknown>;
   setAgentModel?: (
     agentId: string,
     modelId: string | null,
@@ -36,9 +42,14 @@ export interface LiveAgentSettingsWriter {
   ) => Promise<unknown>;
 }
 
+export type SettleCommittedProviderSwitchResult =
+  | { applied: true }
+  | { applied: false; errorMessage: string };
+
 interface StagedProviderSwitchState {
   stagedByKey: Map<string, StagedProviderSwitch>;
   inFlightByKey: Map<string, number>;
+  retainedOnEditFailureByKey: Set<string>;
   stage: (serverId: string, agentId: string, draft: StagedProviderSwitch) => void;
   patch: (
     serverId: string,
@@ -47,6 +58,7 @@ interface StagedProviderSwitchState {
   ) => void;
   beginSwitch: (serverId: string, agentId: string) => void;
   endSwitch: (serverId: string, agentId: string) => void;
+  markRetainedOnEditFailure: (serverId: string, agentId: string) => void;
   settle: (serverId: string, agentId: string, sentDraft: StagedProviderSwitch) => void;
   clear: (serverId: string, agentId: string) => void;
   clearForServer: (serverId: string) => void;
@@ -55,12 +67,16 @@ interface StagedProviderSwitchState {
 export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((set) => ({
   stagedByKey: new Map(),
   inFlightByKey: new Map(),
+  retainedOnEditFailureByKey: new Set(),
 
   stage: (serverId, agentId, draft) =>
     set((state) => {
+      const key = stagedKey(serverId, agentId);
       const next = new Map(state.stagedByKey);
-      next.set(stagedKey(serverId, agentId), draft);
-      return { stagedByKey: next };
+      next.set(key, draft);
+      const nextRetained = new Set(state.retainedOnEditFailureByKey);
+      nextRetained.delete(key);
+      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
     }),
 
   patch: (serverId, agentId, updater) =>
@@ -72,7 +88,9 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (updated === current) return state;
       const next = new Map(state.stagedByKey);
       next.set(key, updated);
-      return { stagedByKey: next };
+      const nextRetained = new Set(state.retainedOnEditFailureByKey);
+      nextRetained.delete(key);
+      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
     }),
 
   beginSwitch: (serverId, agentId) =>
@@ -97,6 +115,15 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       return { inFlightByKey: next };
     }),
 
+  markRetainedOnEditFailure: (serverId, agentId) =>
+    set((state) => {
+      const key = stagedKey(serverId, agentId);
+      if (state.retainedOnEditFailureByKey.has(key)) return state;
+      const next = new Set(state.retainedOnEditFailureByKey);
+      next.add(key);
+      return { retainedOnEditFailureByKey: next };
+    }),
+
   settle: (serverId, agentId, sentDraft) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
@@ -104,16 +131,20 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
       if (!current || current !== sentDraft) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      return { stagedByKey: next };
+      const nextRetained = new Set(state.retainedOnEditFailureByKey);
+      nextRetained.delete(key);
+      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
     }),
 
   clear: (serverId, agentId) =>
     set((state) => {
       const key = stagedKey(serverId, agentId);
-      if (!state.stagedByKey.has(key)) return state;
+      if (!state.stagedByKey.has(key) && !state.retainedOnEditFailureByKey.has(key)) return state;
       const next = new Map(state.stagedByKey);
       next.delete(key);
-      return { stagedByKey: next };
+      const nextRetained = new Set(state.retainedOnEditFailureByKey);
+      nextRetained.delete(key);
+      return { stagedByKey: next, retainedOnEditFailureByKey: nextRetained };
     }),
 
   clearForServer: (serverId) =>
@@ -134,7 +165,20 @@ export const useStagedProviderSwitchStore = create<StagedProviderSwitchState>((s
           changed = true;
         }
       }
-      return changed ? { stagedByKey: next, inFlightByKey: nextInFlight } : state;
+      const nextRetained = new Set(state.retainedOnEditFailureByKey);
+      for (const key of nextRetained) {
+        if (key.startsWith(prefix)) {
+          nextRetained.delete(key);
+          changed = true;
+        }
+      }
+      return changed
+        ? {
+            stagedByKey: next,
+            inFlightByKey: nextInFlight,
+            retainedOnEditFailureByKey: nextRetained,
+          }
+        : state;
     }),
 }));
 
@@ -162,6 +206,12 @@ export function isStagedProviderSwitchInFlight(serverId: string, agentId: string
   );
 }
 
+export function hasRetainedProviderSwitchEditFailure(serverId: string, agentId: string): boolean {
+  return useStagedProviderSwitchStore
+    .getState()
+    .retainedOnEditFailureByKey.has(stagedKey(serverId, agentId));
+}
+
 export function settleStagedProviderSwitch(
   serverId: string,
   agentId: string,
@@ -185,78 +235,103 @@ function diffProviderOptions(
   return hasDiff ? patch : null;
 }
 
-async function applyEditedDraftSettingsToLiveAgent(
-  agentId: string,
+function buildEditedSettingsBundle(
   sentDraft: StagedProviderSwitch,
   editedDraft: StagedProviderSwitch,
+): AgentConfigApply | null {
+  const config: AgentConfigApply = {};
+  let hasChanges = false;
+  if (editedDraft.model !== sentDraft.model) {
+    config.modelId = editedDraft.model;
+    hasChanges = true;
+  }
+  if (editedDraft.modeId !== sentDraft.modeId && editedDraft.modeId !== null) {
+    config.modeId = editedDraft.modeId;
+    hasChanges = true;
+  }
+  if (
+    editedDraft.thinkingOptionId !== sentDraft.thinkingOptionId &&
+    editedDraft.thinkingOptionId !== null
+  ) {
+    config.thinkingOptionId = editedDraft.thinkingOptionId;
+    hasChanges = true;
+  }
+  const optionsPatch = diffProviderOptions(sentDraft.providerOptions, editedDraft.providerOptions);
+  if (optionsPatch) {
+    config.options = optionsPatch;
+    hasChanges = true;
+  }
+  return hasChanges ? config : null;
+}
+
+async function applyEditedDraftSettingsToLiveAgent(
+  agentId: string,
+  bundle: AgentConfigApply,
   expectedProvider: AgentProvider,
   client: LiveAgentSettingsWriter,
 ): Promise<void> {
   const providerGuard = { expectedProvider };
-  if (editedDraft.model !== sentDraft.model && client.setAgentModel) {
-    await client.setAgentModel(agentId, editedDraft.model, providerGuard).catch((error) => {
-      console.warn("[ProviderSwitch] failed to forward edited model after switch", error);
-    });
+  if (client.applyAgentConfig) {
+    await client.applyAgentConfig(agentId, bundle, providerGuard);
+    return;
+  }
+  if (bundle.modelId !== undefined && client.setAgentModel) {
+    await client.setAgentModel(agentId, bundle.modelId, providerGuard);
+  }
+  if (bundle.modeId !== undefined && client.setAgentMode) {
+    await client.setAgentMode(agentId, bundle.modeId, providerGuard);
   }
   if (
-    editedDraft.modeId !== sentDraft.modeId &&
-    editedDraft.modeId !== null &&
-    client.setAgentMode
-  ) {
-    await client.setAgentMode(agentId, editedDraft.modeId, providerGuard).catch((error) => {
-      console.warn("[ProviderSwitch] failed to forward edited mode after switch", error);
-    });
-  }
-  if (
-    editedDraft.thinkingOptionId !== sentDraft.thinkingOptionId &&
-    editedDraft.thinkingOptionId !== null &&
+    bundle.thinkingOptionId !== undefined &&
+    bundle.thinkingOptionId !== null &&
     client.setAgentThinkingOption
   ) {
-    await client
-      .setAgentThinkingOption(agentId, editedDraft.thinkingOptionId, providerGuard)
-      .catch((error) => {
-        console.warn(
-          "[ProviderSwitch] failed to forward edited thinking option after switch",
-          error,
-        );
-      });
+    await client.setAgentThinkingOption(agentId, bundle.thinkingOptionId, providerGuard);
   }
-  const optionsPatch = diffProviderOptions(sentDraft.providerOptions, editedDraft.providerOptions);
-  if (optionsPatch && client.setAgentOptions) {
-    await client.setAgentOptions(agentId, optionsPatch, providerGuard).catch((error) => {
-      console.warn(
-        "[ProviderSwitch] failed to forward edited provider options after switch",
-        error,
-      );
-    });
+  if (bundle.options && client.setAgentOptions) {
+    await client.setAgentOptions(agentId, bundle.options, providerGuard);
   }
 }
 
 /**
- * Settles the staged draft captured by a committed switch.
+ * Settles the staged draft captured by a committed switch and awaits any edited settings
+ * for the provider that just became live before callers release queued follow-up prompts.
  * - Untouched draft: cleared.
  * - Newer draft targeting a different provider: preserved for the next switch.
- * - Newer draft editing settings of the provider that just became live: settled and forwarded
- *   to the live agent so the next prompt uses the edited settings.
+ * - Newer draft editing settings of the provider that just became live: applied atomically
+ *   (via `applyAgentConfig` when available, else sequential setters) before settling the draft.
+ *   If the daemon rejects an edit, the draft is kept intact and `{ applied: false, errorMessage }`
+ *   is returned so callers surface the error and hold any queued follow-up prompt.
  */
-export function settleCommittedProviderSwitch(input: {
+export async function settleCommittedProviderSwitch(input: {
   serverId: string;
   agentId: string;
   sentDraft: StagedProviderSwitch;
   committedProvider?: AgentProvider | null;
   client?: LiveAgentSettingsWriter | null;
-}): void {
+}): Promise<SettleCommittedProviderSwitchResult> {
   const { serverId, agentId, sentDraft, committedProvider, client } = input;
   const store = useStagedProviderSwitchStore.getState();
   store.settle(serverId, agentId, sentDraft);
   const remaining = getStagedProviderSwitch(serverId, agentId);
   const liveProvider = committedProvider ?? sentDraft.provider;
   if (!remaining || remaining.provider !== liveProvider) {
-    return;
+    return { applied: true };
   }
-  store.settle(serverId, agentId, remaining);
-  if (client) {
-    void applyEditedDraftSettingsToLiveAgent(agentId, sentDraft, remaining, liveProvider, client);
+  const bundle = buildEditedSettingsBundle(sentDraft, remaining);
+  if (!bundle || !client) {
+    store.settle(serverId, agentId, remaining);
+    return { applied: true };
+  }
+  try {
+    await applyEditedDraftSettingsToLiveAgent(agentId, bundle, liveProvider, client);
+    store.settle(serverId, agentId, remaining);
+    return { applied: true };
+  } catch (error) {
+    store.markRetainedOnEditFailure(serverId, agentId);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn("[ProviderSwitch] failed to forward edited settings after switch", error);
+    return { applied: false, errorMessage };
   }
 }
 

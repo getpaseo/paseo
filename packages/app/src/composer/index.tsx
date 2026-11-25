@@ -15,6 +15,7 @@ import {
   clearStagedProviderSwitch,
   endStagedProviderSwitch,
   getStagedProviderSwitch,
+  hasRetainedProviderSwitchEditFailure,
   isStagedProviderSwitchInFlight,
   settleCommittedProviderSwitch,
   useStagedProviderSwitch,
@@ -1399,7 +1400,8 @@ function ComposerContentImpl({
       rawStagedSwitch &&
       agentState.provider &&
       rawStagedSwitch.provider === agentState.provider &&
-      !isStagedProviderSwitchInFlight(serverId, agentId)
+      !isStagedProviderSwitchInFlight(serverId, agentId) &&
+      !hasRetainedProviderSwitchEditFailure(serverId, agentId)
     ) {
       clearStagedProviderSwitch(serverId, agentId);
     }
@@ -1793,21 +1795,24 @@ function ComposerContentImpl({
           encodeImages,
           submission: createMessageSubmissionWriter(serverId),
           stagedProviderSwitch,
-          onProviderSwitchCommitted: (agent) => {
+          onProviderSwitchCommitted: async (agent) => {
+            if (agent) {
+              getHostRuntimeStore().tryAcceptAgentSnapshot(
+                serverId,
+                normalizeAgentSnapshot(agent, serverId),
+              );
+            }
             if (stagedProviderSwitch) {
-              settleCommittedProviderSwitch({
+              const settled = await settleCommittedProviderSwitch({
                 serverId,
                 agentId: targetAgentId,
                 sentDraft: stagedProviderSwitch,
                 committedProvider: agent?.provider ?? null,
                 client,
               });
-            }
-            if (agent) {
-              getHostRuntimeStore().tryAcceptAgentSnapshot(
-                serverId,
-                normalizeAgentSnapshot(agent, serverId),
-              );
+              if (!settled.applied) {
+                setSendError(settled.errorMessage);
+              }
             }
           },
           activeTurnBehavior,

@@ -3,11 +3,13 @@ export {
   clearStagedProviderSwitch,
   endStagedProviderSwitch,
   getStagedProviderSwitch,
+  hasRetainedProviderSwitchEditFailure,
   isStagedProviderSwitchInFlight,
   settleCommittedProviderSwitch,
   settleStagedProviderSwitch,
   useStagedProviderSwitch,
   useStagedProviderSwitchStore,
   type LiveAgentSettingsWriter,
+  type SettleCommittedProviderSwitchResult,
   type StagedProviderSwitch,
 } from "./store";

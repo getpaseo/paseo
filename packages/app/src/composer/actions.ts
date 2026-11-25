@@ -218,7 +218,7 @@ export interface DispatchComposerAgentMessageInput {
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
   stagedProviderSwitch?: StagedProviderSwitch | null;
-  onProviderSwitchCommitted?: (agent: AgentSnapshotPayload | undefined) => void;
+  onProviderSwitchCommitted?: (agent: AgentSnapshotPayload | undefined) => void | Promise<void>;
 }
 
 export async function dispatchComposerAgentMessage(
@@ -253,8 +253,8 @@ export async function dispatchComposerAgentMessage(
         images: imagesData ?? [],
         attachments: wirePayload.attachments,
       });
-      input.onProviderSwitchCommitted?.(result.agent);
       input.submission.accept(input.agentId, clientMessageId);
+      await input.onProviderSwitchCommitted?.(result.agent);
       return;
     }
     await input.client.sendAgentMessage(input.agentId, input.text, {
@@ -267,7 +267,7 @@ export async function dispatchComposerAgentMessage(
   } catch (error) {
     input.submission.reject(input.agentId, clientMessageId);
     if (error instanceof AgentProviderSwitchError && error.agent) {
-      input.onProviderSwitchCommitted?.(error.agent);
+      await input.onProviderSwitchCommitted?.(error.agent);
     }
     throw error;
   }

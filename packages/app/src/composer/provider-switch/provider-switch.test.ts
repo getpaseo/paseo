@@ -121,7 +121,9 @@ describe("app provider switching integration", () => {
       encodeImages: async () => [],
       submission,
       stagedProviderSwitch: staged,
-      onProviderSwitchCommitted: (agent) => committed.push(agent),
+      onProviderSwitchCommitted: (agent) => {
+        committed.push(agent);
+      },
     });
 
     expect(sendAgentMessage).not.toHaveBeenCalled();
@@ -141,7 +143,9 @@ describe("app provider switching integration", () => {
         encodeImages: async () => [],
         submission,
         stagedProviderSwitch: staged,
-        onProviderSwitchCommitted: (agent) => committed.push(agent),
+        onProviderSwitchCommitted: (agent) => {
+          committed.push(agent);
+        },
       }),
     ).rejects.toThrow("Codex CLI unavailable");
     expect(committed).toEqual([]);
@@ -159,7 +163,9 @@ describe("app provider switching integration", () => {
         encodeImages: async () => [],
         submission,
         stagedProviderSwitch: staged,
-        onProviderSwitchCommitted: (agent) => committed.push(agent),
+        onProviderSwitchCommitted: (agent) => {
+          committed.push(agent);
+        },
       }),
     ).rejects.toThrow("Rate limited");
     expect(committed).toEqual([expect.objectContaining({ provider: "codex" })]);
@@ -886,6 +892,183 @@ describe("app provider switching integration", () => {
         { expectedProvider: "codex" },
       );
     });
+
+    sessionStore.clearSession(serverId);
+  });
+
+  it("holds queued follow-up M2 until edited startup settings (including plan_mode) finish applying, and retains the draft if an edit rejects", async () => {
+    const serverId = "srv-startup-edit-ordering";
+    const callOrder: string[] = [];
+    let resolveSwitch!: (value: { agent?: AgentSnapshotPayload }) => void;
+    let resolveApplyConfig!: () => void;
+    let rejectApplyConfig: ((err: Error) => void) | null = null;
+
+    const fakeClient = {
+      switchAgentProvider: vi.fn((_agentId: string, _opts: { provider: string; text: string }) => {
+        callOrder.push("switch:codex");
+        return new Promise<{ agent?: AgentSnapshotPayload }>((resolve) => {
+          resolveSwitch = resolve;
+        });
+      }),
+      applyAgentConfig: vi.fn((_agentId: string, config: unknown, opts?: unknown) => {
+        callOrder.push(`applyConfig:${JSON.stringify({ config, opts })}`);
+        return new Promise<null>((resolve, reject) => {
+          resolveApplyConfig = () => resolve(null);
+          rejectApplyConfig = reject;
+        });
+      }),
+      sendAgentMessage: vi.fn(async (_agentId: string, text: string) => {
+        callOrder.push(`send:${text}`);
+        return { messageId: "m2-ack" };
+      }),
+      uploadFile: vi.fn(),
+    } as unknown as DaemonClient;
+
+    const runtime = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient,
+        connectToDaemon: async () => ({ client: fakeClient, serverId, hostname: null }),
+        getClientId: async () => "cid_startup_edit_ordering",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(serverId, fakeClient, 1);
+    useSessionStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [serverId]: {
+          ...state.sessions[serverId]!,
+          serverInfo: {
+            serverId,
+            hostname: "localhost",
+            version: "0.18.0",
+            features: { providerSwitching: true },
+          },
+        },
+      },
+    }));
+    sessionStore.setAgents(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          {
+            ...agentSnapshot("claude"),
+            serverId,
+            parentAgentId: null,
+            createdAt: new Date(TS),
+            updatedAt: new Date(TS),
+            lastUserMessageAt: null,
+            lastActivityAt: new Date(TS),
+            attentionTimestamp: null,
+            archivedAt: null,
+            status: "idle",
+            turn: { phase: "idle", cancellationRequestId: null },
+          },
+        ],
+      ]),
+    );
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m1", text: "First prompt", attachments: [] },
+            { id: "m2", text: "Follow-up in Plan mode", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.3",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: { plan_mode: false },
+    });
+
+    // M1 starts switching; while Codex opens, user changes model AND enables plan_mode.
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(callOrder).toEqual(["switch:codex"]);
+    });
+    useStagedProviderSwitchStore.getState().patch(serverId, "agent-1", (current) => ({
+      ...current,
+      model: "gpt-5.4",
+      providerOptions: { plan_mode: true },
+    }));
+
+    // Fast turn finishes idle and triggers queue drain BEFORE switch + settings edits complete.
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "idle" } });
+
+    await vi.waitFor(() => {
+      expect(callOrder).toHaveLength(2);
+    });
+    // M2 MUST NOT have sent yet while applyAgentConfig (model + plan_mode: true) is still pending!
+    expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
+
+    // Once applyAgentConfig completes, M2 drains strictly AFTER plan_mode: true took effect!
+    resolveApplyConfig();
+    await vi.waitFor(() => {
+      expect(callOrder).toHaveLength(3);
+    });
+    expect(callOrder[1]).toContain('"plan_mode":true');
+    expect(callOrder[1]).toContain('"modelId":"gpt-5.4"');
+    expect(callOrder[1]).toContain('"expectedProvider":"codex"');
+    expect(callOrder[2]).toBe("send:Follow-up in Plan mode");
+    expect(getStagedProviderSwitch(serverId, "agent-1")).toBeNull();
+
+    // Case 2: If daemon rejects the edited settings, draft is RETAINED, error is surfaced, and M2 is HELD.
+    callOrder.length = 0;
+    sessionStore.setQueuedMessages(
+      serverId,
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "m3", text: "Switch with rejected edit", attachments: [] },
+            { id: "m4", text: "Must stay queued", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    useStagedProviderSwitchStore.getState().stage(serverId, "agent-1", {
+      provider: "codex",
+      model: "gpt-5.3",
+      thinkingOptionId: null,
+      modeId: null,
+      providerOptions: { plan_mode: false },
+    });
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    await vi.waitFor(() => {
+      expect(callOrder).toEqual(["switch:codex"]);
+    });
+    useStagedProviderSwitchStore.getState().patch(serverId, "agent-1", (current) => ({
+      ...current,
+      providerOptions: { plan_mode: true },
+    }));
+    runtime.drainQueuedAgentMessage(serverId, "agent-1");
+    resolveSwitch({ agent: { ...agentSnapshot("codex"), status: "idle" } });
+    await vi.waitFor(() => {
+      expect(callOrder).toHaveLength(2);
+    });
+
+    rejectApplyConfig!(new Error("Plan mode rejected by provider"));
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().sessions[serverId]?.queuedSendErrors.get("agent-1")).toBe(
+        "Plan mode rejected by provider",
+      );
+    });
+    expect(getStagedProviderSwitch(serverId, "agent-1")?.providerOptions).toEqual({
+      plan_mode: true,
+    });
+    // M4 MUST NOT have drained after settings rejection!
+    expect(callOrder.some((entry) => entry.startsWith("send:"))).toBe(false);
+    expect(useSessionStore.getState().sessions[serverId]?.queuedMessages.get("agent-1")).toEqual([
+      { id: "m4", text: "Must stay queued", attachments: [] },
+    ]);
 
     sessionStore.clearSession(serverId);
   });

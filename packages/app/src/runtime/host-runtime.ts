@@ -2908,6 +2908,7 @@ export class HostRuntimeStore {
     useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
     const next = queue[0];
     let drainSent = false;
+    let drainBlockedBySettingsError: string | null = null;
     void sendQueuedComposerMessageNow({
       agentId,
       messageId: next.id,
@@ -2942,18 +2943,21 @@ export class HostRuntimeStore {
             encodeImages,
             submission: createMessageSubmissionWriter(serverId),
             stagedProviderSwitch,
-            onProviderSwitchCommitted: (agent) => {
+            onProviderSwitchCommitted: async (agent) => {
+              if (agent) {
+                this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
+              }
               if (stagedProviderSwitch) {
-                settleCommittedProviderSwitch({
+                const settled = await settleCommittedProviderSwitch({
                   serverId,
                   agentId,
                   sentDraft: stagedProviderSwitch,
                   committedProvider: agent?.provider ?? null,
                   client,
                 });
-              }
-              if (agent) {
-                this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
+                if (!settled.applied) {
+                  drainBlockedBySettingsError = settled.errorMessage;
+                }
               }
             },
             // The queue drains when the agent goes idle, but the agent can start a turn of its own
@@ -2971,8 +2975,10 @@ export class HostRuntimeStore {
     })
       .then((result) => {
         if (result.status === "submitted") {
-          drainSent = true;
-          useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+          drainSent = drainBlockedBySettingsError === null;
+          useSessionStore
+            .getState()
+            .setQueuedSendError(serverId, agentId, drainBlockedBySettingsError);
         } else if (result.status === "failed") {
           useSessionStore.getState().setQueuedSendError(serverId, agentId, result.errorMessage);
           console.error("[HostRuntime] failed to drain queued agent message", {
