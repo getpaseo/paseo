@@ -8,26 +8,11 @@ export function isWindowsCommandScript(
   return platform === "win32" && (extension === ".cmd" || extension === ".bat");
 }
 
-function escapeWindowsCmdValue(value: string, platform: NodeJS.Platform): string {
-  if (platform !== "win32") return value;
+// cmd.exe reads these as syntax outside a quoted region. A `^` before each one makes it literal.
+const CMD_METACHARACTERS = /([()%!^"<>&|])/g;
 
-  const isQuoted = value.startsWith('"') && value.endsWith('"');
-  const unquoted = isQuoted ? value.slice(1, -1) : value;
-  // Do NOT double `%` here. cmd.exe only collapses `%%` → `%` inside batch
-  // files; on the command line / `cmd /c "..."` `%%` stays literal, which
-  // breaks args like git's `--format=%(refname)` (git treats `%%` as the
-  // escape for a literal `%`, so the format atoms become literals).
-  const escaped = unquoted.replace(/([&|^<>()!])/g, "^$1");
-
-  // An empty argument is quoted so cmd.exe keeps it in its position instead of dropping it.
-  if (isQuoted || unquoted === "" || /[\s"]/u.test(unquoted)) {
-    const quoted = escaped
-      .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
-      .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
-    return `"${quoted}"`;
-  }
-
-  return escaped;
+function escapeCmdMetacharacters(value: string): string {
+  return value.replace(CMD_METACHARACTERS, "^$1");
 }
 
 /**
@@ -35,22 +20,37 @@ function escapeWindowsCmdValue(value: string, platform: NodeJS.Platform): string
  * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
  * command path with spaces (e.g. `C:\Program Files\...`) is split at the
  * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
+ * Inside the quotes cmd.exe reads `&`, `(` and `)` as text, so a path such as
+ * `C:\Program Files (x86)\...` needs no `^`.
  */
 export function quoteWindowsCommand(
   command: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  return escapeWindowsCmdValue(command, platform);
+  if (platform !== "win32") return command;
+  if (command.startsWith('"') && command.endsWith('"')) return command;
+  if (command === "" || /[\s()!^"<>&|]/u.test(command)) return `"${command}"`;
+  return command;
 }
 
 /**
- * `spawn(..., { shell: true })` on Windows also passes argv through `cmd.exe`.
- * Any argument containing spaces must be quoted or it will be split before the
- * child process sees it.
+ * Quote one argument for the `cmd.exe /d /s /c "..."` line that `spawn(..., { shell: true })`
+ * builds on Windows, so the program receives it unchanged.
+ *
+ * The argument is quoted the way programs split their command line (backslashes before a quote
+ * doubled, the quote escaped), then every cmd.exe metacharacter is escaped with `^`, including
+ * those quotes. cmd.exe then sees no quoted region and keeps `&`, `%` and the others as text.
+ * A `.cmd` or `.bat` script reads its arguments a second time when it forwards them with `%*`,
+ * so `commandScript` escapes them twice. See https://qntm.org/cmd.
+ *
+ * cmd.exe has no escape for a line break, so a CR or LF still ends the command.
  */
 export function quoteWindowsArgument(
   argument: string,
-  platform: NodeJS.Platform = process.platform,
+  { platform = process.platform, commandScript = false } = {},
 ): string {
-  return escapeWindowsCmdValue(argument, platform);
+  if (platform !== "win32") return argument;
+  const quoted = `"${argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`;
+  const escaped = escapeCmdMetacharacters(quoted);
+  return commandScript ? escapeCmdMetacharacters(escaped) : escaped;
 }

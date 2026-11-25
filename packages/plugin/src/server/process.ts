@@ -64,9 +64,10 @@ export function resolveSpawnInvocation(
 ): SpawnInvocation {
   const shell = shouldUseWindowsShell(command, requestedShell, platform);
   if (platform !== "win32" || shell === false) return { command, args: [...args], shell };
+  const commandScript = isWindowsCommandScript(command, platform);
   return {
     command: quoteWindowsCommand(command, platform),
-    args: args.map((argument) => quoteWindowsArgument(argument, platform)),
+    args: args.map((argument) => quoteWindowsArgument(argument, { platform, commandScript })),
     shell,
   };
 }

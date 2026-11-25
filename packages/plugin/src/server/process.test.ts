@@ -53,8 +53,8 @@ test("spawnProcess delivers shell arguments to the real child unchanged", async 
   expect(JSON.parse(stdout)).toEqual(argumentsToPreserve);
 });
 
-// A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess must run it
-// through cmd.exe with every argument quoted whole, as it does for any provider launcher.
+// A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess runs it
+// through cmd.exe with every argument escaped twice, because the script forwards them with `%*`.
 test("a Windows script launch wrap starts through cmd.exe with each argument quoted", () => {
   const wrapped = [
     "C:\\Program Files\\Sandbox\\run.cmd",
@@ -66,7 +66,13 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
   ];
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "win32")).toEqual({
     command: '"C:\\Program Files\\Sandbox\\run.cmd"',
-    args: ["--profile", '"work profile"', '""', "C:\\tools\\agy.cmd", "acp"],
+    args: [
+      '^^^"--profile^^^"',
+      '^^^"work profile^^^"',
+      '^^^"^^^"',
+      '^^^"C:\\tools\\agy.cmd^^^"',
+      '^^^"acp^^^"',
+    ],
     shell: true,
   });
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "linux")).toEqual({
