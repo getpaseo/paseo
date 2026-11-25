@@ -93,9 +93,9 @@ test("Explorer drag previews without rerendering panes or changing the shared st
   ).toBe(true);
   const grown = await previewExplorerResize(page, -100);
   const shrunk = await previewExplorerResize(page, 50);
-  expect(grown.stylesheetChanges).toEqual({ added: 0, removed: 0, rebuilt: 0 });
+  expect(grown.stylesheetChanges).toEqual({ added: 0, removed: 0, edited: 0, rebuilt: 0 });
   expect(grown.paneRenders).toBe(0);
-  expect(shrunk.stylesheetChanges).toEqual({ added: 0, removed: 0, rebuilt: 0 });
+  expect(shrunk.stylesheetChanges).toEqual({ added: 0, removed: 0, edited: 0, rebuilt: 0 });
   expect(shrunk.paneRenders).toBe(0);
   await expectExplorerWidthSurvivesReload(page, shrunk.width);
 });
