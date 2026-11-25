@@ -366,10 +366,15 @@ test("terminal collection reports workspace script ownership after runtime regis
   try {
     expect((await client.startWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
     await expect
-      .poll(() =>
-        terminals.some((terminal) => terminal.workspaceId === workspaceId && terminal.isScript),
+      .poll(
+        () =>
+          terminals.map((terminal) => ({
+            workspaceId: terminal.workspaceId,
+            isScript: terminal.isScript,
+          })),
+        { timeout: 10_000 },
       )
-      .toBe(true);
+      .toContainEqual({ workspaceId, isScript: true });
     const terminalId = terminals.find((terminal) => terminal.workspaceId === workspaceId)!.id;
     const pidFile = path.join(cwd, "sleeper.pid");
     await expect
