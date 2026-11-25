@@ -337,22 +337,21 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 ### Default behavior
 
-`npm run release:prep:patch` or `npm run release:prep:minor` → push release branch → green checks → `npm run release:ship` → tag push → 36h ramp. No extra action needed.
+Follow the [standard stable release procedure](#standard-release-stable). The tag push starts
+the desktop release workflow, which sets a 36-hour rollout when it publishes the release.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
 ### Instant-admit release (rollout_hours=0)
 
-Tag-push runs from `npm run release:ship` always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), ship the release normally, wait for it to publish, then flip the manifests:
+Follow the [standard stable release procedure](#standard-release-stable). Wait for Desktop
+Release to publish, then update the manifests to admit everyone immediately.
 
 ```bash
-# 1. Ship the verified release branch (36h ramp from tag push).
-npm run release:ship
-
-# 2. Wait for Desktop Release to publish the GitHub Release.
+# 1. Wait for Desktop Release to publish the GitHub Release.
 gh run watch <desktop-release-run-id> --exit-status
 
-# 3. Flip the published manifests to instant admit.
+# 2. Flip the published manifests to instant admit.
 gh workflow run desktop-rollout.yml \
   -f tag=v0.1.64 \
   -f rollout_hours=0
@@ -398,7 +397,8 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases shipped via `npm run release:ship` — tag-push runs always stamp 36. For a fresh release with a custom ramp, ship normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+For a fresh release with a custom ramp, follow the [instant-admit procedure](#instant-admit-release-rollout_hours0)
+and set `rollout_hours` to your chosen duration.
 
 ### Releasing during an active rollout
 
