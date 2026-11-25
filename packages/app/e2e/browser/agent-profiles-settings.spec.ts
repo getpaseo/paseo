@@ -22,6 +22,7 @@ import {
   saveOpenAgentProfile,
   seedAgentProfiles,
   stageLegacyFavoritesForHostMigration,
+  switchSettingsSectionWithConfirm,
   toggleAgentProfileCustomize,
 } from "../support/helpers/agent-profiles";
 
@@ -215,6 +216,56 @@ test.describe("Agent profiles settings", () => {
         await duplicateOpenAgentProfileWithConfirm(page, "accept");
         await expectAgentProfileOrder(page, ["UI work", "UI work (copy)"]);
         await expectAgentProfileNameDraft(page, "UI work (copy)");
+      });
+    } finally {
+      await seed.restore();
+    }
+  });
+
+  test("docked drawer allows roster search and section switches ask before discarding a draft", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([
+      {
+        id: "agent_profile_e2e_docked_1",
+        name: "UI work",
+        provider: "mock",
+        model: "one-minute-stream",
+      },
+      {
+        id: "agent_profile_e2e_docked_2",
+        name: "Deep review",
+        provider: "mock",
+        model: "five-minute-stream",
+      },
+    ]);
+
+    try {
+      await page.setViewportSize({ width: 1680, height: 900 });
+      await openAgentProfileSettings(page);
+      await openAgentProfileEditor(page, "UI work");
+      await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+
+      await test.step("typing in roster search works while the docked drawer is open", async () => {
+        const searchInput = page.getByTestId("agent-profiles-search-input");
+        await searchInput.click();
+        await page.keyboard.type("Deep");
+        await expect(searchInput).toHaveValue("Deep");
+        await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+        await expectAgentProfileOrder(page, ["Deep review"]);
+        await page.getByTestId("agent-profiles-search-clear").click();
+      });
+
+      await test.step("switching Settings sections asks before discarding an edited draft", async () => {
+        await fillAgentProfileName(page, "Unsaved sidebar edit");
+
+        await switchSettingsSectionWithConfirm(page, "Agents", "dismiss");
+        await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+        await expectAgentProfileNameDraft(page, "Unsaved sidebar edit");
+
+        await switchSettingsSectionWithConfirm(page, "Agents", "accept");
+        await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
+        await expect(page.getByTestId("settings-detail-header-title")).toHaveText("Agents");
       });
     } finally {
       await seed.restore();

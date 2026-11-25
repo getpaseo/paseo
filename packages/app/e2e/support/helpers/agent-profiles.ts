@@ -447,6 +447,24 @@ export async function removeOpenModalAgentProfileWithConfirm(
   expect(await dialogMessage).toMatch(/remove/i);
 }
 
+export async function switchSettingsSectionWithConfirm(
+  page: Page,
+  sectionName: string,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByRole("button", { name: sectionName, exact: true }).click();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
 /** Opens the inspector for a profile purely to read back what it stored. */
 export async function expectAgentProfileForm(
   page: Page,

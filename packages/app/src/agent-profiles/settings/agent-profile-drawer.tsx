@@ -316,6 +316,9 @@ function AgentProfileDrawerContent({
     keys: ["Escape"],
     active: true,
     layer: drawerLayer,
+    // Only trap focus in slide-over overlay mode; a docked drawer sits beside the
+    // interactive roster and must let users click and type in roster search.
+    manageFocus: overlay,
     onKeyDown: handleOverlayKeyDown,
   });
 

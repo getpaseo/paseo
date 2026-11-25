@@ -577,9 +577,11 @@ function AgentProfileEditorHost({
 export function AgentProfilesPage({
   serverId,
   onBack,
+  onRegisterBeforeLeave,
 }: {
   serverId: string;
   onBack?: () => void;
+  onRegisterBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void;
 }): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -631,6 +633,13 @@ export function AgentProfilesPage({
     }
     return confirmed;
   }, [t]);
+
+  useEffect(() => {
+    onRegisterBeforeLeave?.(confirmDiscardIfDirty);
+    return () => {
+      onRegisterBeforeLeave?.(null);
+    };
+  }, [confirmDiscardIfDirty, onRegisterBeforeLeave]);
 
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {

@@ -1117,6 +1117,7 @@ function SettingsDetailPane({
   detailActions,
   detailWidth,
   onBack,
+  onRegisterBeforeLeave,
   content,
 }: {
   view: SettingsView;
@@ -1125,6 +1126,7 @@ function SettingsDetailPane({
   detailActions: React.ReactNode;
   detailWidth: React.ComponentProps<typeof PageLayout>["width"];
   onBack: () => void;
+  onRegisterBeforeLeave: (guard: (() => Promise<boolean>) | null) => void;
   content: React.ReactNode;
 }) {
   const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
@@ -1143,6 +1145,7 @@ function SettingsDetailPane({
           <HostAgentProfilesPage
             serverId={view.serverId}
             onBack={isCompactLayout ? onBack : undefined}
+            onRegisterBeforeLeave={onRegisterBeforeLeave}
           />
         ) : (
           <PageLayout
@@ -1259,10 +1262,27 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   );
 
   const handleAddHost = useAddHost({ onAdded: handleHostAdded });
+  const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const registerBeforeLeave = useCallback((guard: (() => Promise<boolean>) | null) => {
+    beforeLeaveRef.current = guard;
+  }, []);
 
-  const handleSelectSection = useCallback(
-    (section: SettingsSectionSlug) => {
-      const target = buildSettingsSectionRoute(section);
+  const guardNavigation = useCallback((navigate: () => void) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard) {
+      navigate();
+      return;
+    }
+    const run = async () => {
+      if (await guard()) {
+        navigate();
+      }
+    };
+    void run();
+  }, []);
+
+  const navigateRoute = useCallback(
+    (target: Parameters<typeof router.push>[0]) => {
       if (isCompactLayout) {
         router.push(target);
       } else {
@@ -1272,51 +1292,62 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [isCompactLayout, router],
   );
 
+  const handleSelectSection = useCallback(
+    (section: SettingsSectionSlug) => {
+      if (view.kind === "section" && view.section === section) {
+        return;
+      }
+      const target = buildSettingsSectionRoute(section);
+      guardNavigation(() => navigateRoute(target));
+    },
+    [guardNavigation, navigateRoute, view],
+  );
+
   // Picker: choose the host for host-section rows. If the user is already on a
   // host detail route, keep that detail section and swap only the host segment.
   const handleSelectHost = useCallback(
     (serverId: string) => {
-      selectSettingsHost(serverId);
-      if (view.kind === "project" || view.kind === "provider") {
-        // The detail belongs to the old host; open the same list on the new one.
-        const target = buildSettingsHostSectionRoute(
-          serverId,
-          view.kind === "project" ? "projects" : "providers",
-        );
-        if (isCompactLayout) {
-          router.push(target);
-        } else {
-          router.replace(target);
+      if (view.kind === "host" && view.serverId === serverId) {
+        return;
+      }
+      const applySelection = () => {
+        selectSettingsHost(serverId);
+        if (view.kind === "project" || view.kind === "provider") {
+          // The detail belongs to the old host; open the same list on the new one.
+          navigateRoute(
+            buildSettingsHostSectionRoute(
+              serverId,
+              view.kind === "project" ? "projects" : "providers",
+            ),
+          );
+          return;
         }
-        return;
-      }
-      if (view.kind !== "host") {
-        return;
-      }
-      const target = buildSettingsHostSectionRoute(serverId, view.section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+        if (view.kind === "host") {
+          navigateRoute(buildSettingsHostSectionRoute(serverId, view.section));
+        }
+      };
+      guardNavigation(applySelection);
     },
-    [isCompactLayout, router, view],
+    [guardNavigation, navigateRoute, view],
   );
 
   const handleSelectHostSection = useCallback(
     (section: HostSectionSlug) => {
       if (!activeHostServerId) {
-        handleAddHost();
+        guardNavigation(handleAddHost);
+        return;
+      }
+      if (
+        view.kind === "host" &&
+        view.serverId === activeHostServerId &&
+        view.section === section
+      ) {
         return;
       }
       const target = buildSettingsHostSectionRoute(activeHostServerId, section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+      guardNavigation(() => navigateRoute(target));
     },
-    [activeHostServerId, handleAddHost, isCompactLayout, router],
+    [activeHostServerId, guardNavigation, handleAddHost, navigateRoute, view],
   );
 
   const handleHostRemoved = useCallback(() => {
@@ -1329,12 +1360,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [isCompactLayout, router]);
 
   const handleBackFromDetail = useCallback(() => {
-    returnFromSettings(view);
-  }, [view]);
+    guardNavigation(() => returnFromSettings(view));
+  }, [guardNavigation, view]);
 
   const handleBackToWorkspace = useCallback(() => {
-    returnFromSettings({ kind: "root" });
-  }, []);
+    guardNavigation(() => returnFromSettings({ kind: "root" }));
+  }, [guardNavigation]);
 
   // A plugin's page draws its own header; the compact back header names the plugin.
   const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
@@ -1497,6 +1528,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           detailActions={detailActions}
           detailWidth={detailWidth}
           onBack={handleBackFromDetail}
+          onRegisterBeforeLeave={registerBeforeLeave}
           content={content}
         />
       </View>

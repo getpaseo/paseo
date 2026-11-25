@@ -312,9 +312,11 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
 export function HostAgentProfilesPage({
   serverId,
   onBack,
+  onRegisterBeforeLeave,
 }: {
   serverId: string;
   onBack?: () => void;
+  onRegisterBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void;
 }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
@@ -331,7 +333,13 @@ export function HostAgentProfilesPage({
     );
   }
 
-  return <AgentProfilesPage serverId={serverId} onBack={onBack} />;
+  return (
+    <AgentProfilesPage
+      serverId={serverId}
+      onBack={onBack}
+      onRegisterBeforeLeave={onRegisterBeforeLeave}
+    />
+  );
 }
 
 export function HostWorkspacesPage({ serverId }: { serverId: string }) {
