@@ -1,17 +1,22 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import process from "node:process";
 
-const [, , videoPath, toleranceArg = "4"] = process.argv;
+const [, , videoPath, toleranceArg = "4", navBarHeightArg = "0"] = process.argv;
 
 if (!videoPath) {
   throw new Error(
-    "Usage: node assert-sheet-footer-keyboard.mjs <screenrecord.mp4> [pixel-tolerance]",
+    "Usage: node assert-sheet-footer-keyboard.mjs <screenrecord.mp4> [pixel-tolerance] [nav-bar-height-px]",
   );
 }
 
 const tolerance = Number(toleranceArg);
 if (!Number.isFinite(tolerance) || tolerance < 0) {
   throw new Error(`Invalid pixel tolerance: ${toleranceArg}`);
+}
+
+const navBarHeight = Number(navBarHeightArg);
+if (!Number.isFinite(navBarHeight) || navBarHeight < 0) {
+  throw new Error(`Invalid navigation bar height: ${navBarHeightArg}`);
 }
 
 function probeDimensions(filePath) {
@@ -136,20 +141,22 @@ if (closedSettled === null || openSettled === null || closedSettled - openSettle
   );
 }
 
-const belowNavViolations = visibleFrames.filter(
-  (entry) => entry.bottom > closedSettled + tolerance,
-);
+const maxAllowedBottom =
+  navBarHeight > 0
+    ? Math.min(closedSettled + tolerance, height - navBarHeight)
+    : closedSettled + tolerance;
+const belowNavViolations = visibleFrames.filter((entry) => entry.bottom > maxAllowedBottom);
 const overshootViolations = visibleFrames.filter((entry) => entry.bottom < openSettled - tolerance);
 
 if (belowNavViolations.length > 0 || overshootViolations.length > 0) {
   const summary = [
     `Sheet footer keyboard transition jank detected in ${videoPath}:`,
-    `  settled closed bottom=${closedSettled}px (gap=${height - closedSettled}px), settled open bottom=${openSettled}px (gap=${height - openSettled}px)`,
+    `  settled closed bottom=${closedSettled}px (gap=${height - closedSettled}px), settled open bottom=${openSettled}px (gap=${height - openSettled}px), maxAllowedBottom=${maxAllowedBottom}px`,
   ];
   if (belowNavViolations.length > 0) {
     const worst = Math.max(...belowNavViolations.map((entry) => entry.bottom));
     summary.push(
-      `  dropped below resting safe-area clearance on ${belowNavViolations.length} frames (first=f${belowNavViolations[0].frame}, last=f${belowNavViolations.at(-1).frame}, worst bottom=${worst}px, drop=+${worst - closedSettled}px)`,
+      `  dropped below safe-area clearance on ${belowNavViolations.length} frames (first=f${belowNavViolations[0].frame}, last=f${belowNavViolations.at(-1).frame}, worst bottom=${worst}px, excess=+${worst - maxAllowedBottom}px)`,
     );
   }
   if (overshootViolations.length > 0) {
@@ -162,5 +169,5 @@ if (belowNavViolations.length > 0 || overshootViolations.length > 0) {
 }
 
 process.stdout.write(
-  `Sheet footer stayed within bounds across ${bottoms.length} frames (${visibleFrames.length} visible): closed=${closedSettled}px, open=${openSettled}px, 0 nav-bar overlap frames, 0 overshoot frames\n`,
+  `Sheet footer stayed within bounds across ${bottoms.length} frames (${visibleFrames.length} visible): closed=${closedSettled}px, open=${openSettled}px, maxAllowed=${maxAllowedBottom}px, 0 nav-bar overlap frames, 0 overshoot frames\n`,
 );
