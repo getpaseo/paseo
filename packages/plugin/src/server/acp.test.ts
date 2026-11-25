@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
@@ -6722,5 +6723,405 @@ describe("deferTurnOnRunningTools", () => {
       capabilities: ["prompt.message"],
     });
     await connection.close();
+  });
+});
+
+describe("ACP tool call rows", () => {
+  function jsonRecord(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> {
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+  }
+
+  function text(value: string) {
+    return [{ type: "content", content: { type: "text", text: value } }];
+  }
+
+  async function toolRows(
+    updates: unknown[],
+    transformers?: Parameters<typeof runAcpProvider>[0]["transformers"],
+  ) {
+    const harness = connectorHarness({ promptUpdates: () => updates });
+    const registration = runAcpProvider({
+      id: "tool-rows-acp",
+      label: "Tool rows ACP",
+      connector: harness.connector,
+      transformers,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Use a tool" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      const rows = events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      for (const row of rows) {
+        expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+      }
+      return rows;
+    } finally {
+      await connection.close();
+    }
+  }
+
+  it.each([
+    {
+      kind: "execute",
+      start: { title: "Run tests", rawInput: { command: "npm", args: ["test"], cwd: "/repo" } },
+      end: { content: text("passed"), rawOutput: { exitCode: 0 } },
+      detail: { type: "shell", command: "npm test", cwd: "/repo", output: "passed", exitCode: 0 },
+    },
+    {
+      kind: "execute",
+      start: { title: "Run tests" },
+      end: { content: text("passed") },
+      detail: { type: "shell", command: "Run tests", output: "passed" },
+    },
+    {
+      kind: "read",
+      start: { title: "Read a.ts", locations: [{ path: "/repo/a.ts" }], rawInput: { offset: 3 } },
+      end: { content: text("const a = 1;") },
+      detail: { type: "read", filePath: "/repo/a.ts", content: "const a = 1;", offset: 3 },
+    },
+    {
+      kind: "search",
+      start: { title: "Search TODO", rawInput: { pattern: "TODO" } },
+      end: { content: text("a.ts:1"), locations: [{ path: "/repo/a.ts" }] },
+      detail: {
+        type: "search",
+        query: "TODO",
+        toolName: "search",
+        content: "a.ts:1",
+        filePaths: ["/repo/a.ts"],
+      },
+    },
+    {
+      kind: "fetch",
+      start: { title: "Fetch example", rawInput: { url: "https://example.com" } },
+      end: { content: text("Example Domain") },
+      detail: { type: "fetch", url: "https://example.com", result: "Example Domain" },
+    },
+    {
+      kind: "edit",
+      start: {
+        title: "Edit a.ts",
+        content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }],
+      },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", oldString: "a", newString: "b" },
+    },
+    {
+      kind: "edit",
+      start: { title: "Edit a.ts", locations: [{ path: "/repo/a.ts" }] },
+      end: { content: text("Replaced 1 occurrence") },
+      detail: { type: "edit", filePath: "/repo/a.ts", unifiedDiff: "Replaced 1 occurrence" },
+    },
+    {
+      kind: "edit",
+      start: {
+        title: "Edit a.ts",
+        rawInput: { filePath: "/repo/a.ts", oldString: "remove me", newString: "  " },
+      },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", oldString: "remove me", newString: "  " },
+    },
+    {
+      kind: "delete",
+      start: { title: "Delete a.ts", locations: [{ path: "/repo/a.ts" }] },
+      end: {},
+      detail: { type: "edit", filePath: "/repo/a.ts", newString: "" },
+    },
+    {
+      kind: "think",
+      start: { title: "Plan" },
+      end: { content: text("First read the tests") },
+      detail: { type: "plain_text", label: "Plan", icon: "brain", text: "First read the tests" },
+    },
+    {
+      kind: "other",
+      start: { title: "Update todos" },
+      end: { content: text("2 open") },
+      detail: { type: "plain_text", label: "Update todos", icon: "wrench", text: "2 open" },
+    },
+    {
+      kind: "other",
+      start: { title: "Custom tool", rawInput: { value: 1 } },
+      end: { content: text("done"), rawOutput: { ok: true } },
+      detail: { type: "unknown", input: { value: 1 }, output: { ok: true } },
+    },
+  ])("presents a completed $kind call as its standard row ($start.title)", async (example) => {
+    const rows = await toolRows([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        kind: example.kind,
+        status: "in_progress",
+        ...example.start,
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "completed",
+        ...example.end,
+      },
+    ]);
+    expect(rows.at(-1)?.detail).toEqual(example.detail);
+  });
+
+  it("gives transformers the call's content and the call as it was last presented", async () => {
+    const commandFromStart: NonNullable<
+      NonNullable<Parameters<typeof runAcpProvider>[0]["transformers"]>[number]["toolCall"]
+    > = (call, { previous }) => {
+      const first = Array.isArray(call.content) ? call.content[0] : undefined;
+      const startText = jsonRecord(jsonRecord(first).content).text;
+      if (typeof startText === "string" && startText.startsWith("$ ")) {
+        return { ...call, input: { command: startText.slice(2) } };
+      }
+      const command = jsonRecord(previous?.input).command;
+      return typeof command === "string" ? { ...call, input: { command } } : call;
+    };
+    const rows = await toolRows(
+      [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "git status + 1 command",
+          kind: "execute",
+          status: "in_progress",
+          content: text("$ git status && git diff"),
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          content: text("clean"),
+        },
+      ],
+      [{ toolCall: commandFromStart }],
+    );
+    expect(rows.map((row) => row.detail)).toEqual([
+      { type: "shell", command: "git status && git diff", output: "$ git status && git diff" },
+      { type: "shell", command: "git status && git diff", output: "clean" },
+    ]);
+  });
+
+  it("keeps a transformer's own detail over the standard row", async () => {
+    const rows = await toolRows(
+      [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run tests",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: "npm test" },
+        },
+      ],
+      [
+        {
+          toolCall: (call) => ({
+            ...call,
+            detail: { type: "unknown", input: call.input, output: null },
+          }),
+        },
+      ],
+    );
+    expect(rows.at(-1)?.detail).toEqual({
+      type: "unknown",
+      input: { command: "npm test" },
+      output: null,
+    });
+  });
+
+  it("shows the call's row on its approval", async () => {
+    const harness = connectorHarness({
+      handleRequest(runtime, request) {
+        if (request.method !== "session/prompt") return false;
+        void runtime.request("session/request_permission", {
+          sessionId: "connector-session",
+          toolCall: {
+            toolCallId: "edit-1",
+            title: "Edit a.ts",
+            kind: "edit",
+            status: "pending",
+            content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }],
+          },
+          options: [
+            { optionId: "allow", name: "Allow edit", kind: "allow_once" },
+            { optionId: "deny", name: "Deny", kind: "reject_once" },
+          ],
+        });
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "approval-rows",
+      label: "Approval rows",
+      connector: harness.connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message", "permission"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "edit",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Edit a.ts" }] },
+        },
+      });
+      expect(
+        await waitForEvent(events, (event) => event.type === "session.permission"),
+      ).toMatchObject({
+        request: {
+          id: "permission:edit-1",
+          title: "Edit a.ts",
+          detail: { type: "edit", filePath: "/repo/a.ts", oldString: "a", newString: "b" },
+        },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("lists sessions across every page the agent returns", async () => {
+    const pages: Record<string, { sessions: unknown[]; nextCursor?: string }> = {
+      first: {
+        sessions: [{ sessionId: "s1", cwd: "/repo", title: "One" }],
+        nextCursor: "second",
+      },
+      second: { sessions: [{ sessionId: "s2", cwd: "/repo", title: "Two" }] },
+    };
+    const harness = connectorHarness({
+      capabilities: { sessionCapabilities: { list: {} } },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/list") return false;
+        const { cursor } = request.params as { cursor?: string };
+        runtime.respond(request, pages[cursor ?? "first"]);
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "paged-sessions",
+      label: "Paged sessions",
+      connector: harness.connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "list" });
+      const listed = await waitForEvent(events, (event) => event.type === "sessions");
+      expect(listed.type === "sessions" && listed.sessions.map((session) => session.title)).toEqual(
+        ["One", "Two"],
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("resumes the generic ACP adapter's saved Auto Accept toggle in the unattended mode", async () => {
+    const harness = connectorHarness({
+      configOptions: [
+        {
+          id: "edit_approval_policy",
+          name: "Edits",
+          category: "mode",
+          type: "select",
+          currentValue: "ask",
+          options: [
+            { value: "ask", name: "Default" },
+            { value: "session", name: "Don't Ask" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({
+      id: "former-generic",
+      label: "Former generic",
+      connector: harness.connector,
+      acpOptions: {
+        autoAcceptMode: { mode: { id: "full-access", label: "Full access" }, nativeMode: "ask" },
+      },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.configure"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.settings = { auto_accept: true };
+      await connection.send(input);
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const configs = events.flatMap((event) =>
+        event.type === "session.config" ? [event.config.mode] : [],
+      );
+      expect(configs.at(-1)).toBe("full-access");
+      const sentOptions = harness.instances
+        .flatMap((instance) => instance.requests)
+        .filter((request) => request.method === "session/set_config_option")
+        .map((request) => (request.params as { configId: string }).configId);
+      expect(sentOptions).not.toContain("auto_accept");
+      expect(events.some((event) => event.type === "request.failed")).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps a mode chosen after the generic ACP adapter's Auto Accept toggle was saved", async () => {
+    const harness = connectorHarness({
+      configOptions: [
+        {
+          id: "edit_approval_policy",
+          name: "Edits",
+          category: "mode",
+          type: "select",
+          currentValue: "session",
+          options: [
+            { value: "ask", name: "Default" },
+            { value: "session", name: "Don't Ask" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({
+      id: "former-generic",
+      label: "Former generic",
+      connector: harness.connector,
+      acpOptions: {
+        autoAcceptMode: { mode: { id: "full-access", label: "Full access" }, nativeMode: "ask" },
+      },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.configure"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.mode = "ask";
+      input.config.settings = { auto_accept: true };
+      await connection.send(input);
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const configs = events.flatMap((event) =>
+        event.type === "session.config" ? [event.config.mode] : [],
+      );
+      expect(configs.at(-1)).toBe("ask");
+    } finally {
+      await connection.close();
+    }
   });
 });

@@ -1,5 +1,20 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createAssistantSelectionClipboardContent } from "./content.web";
+import { createElement as h } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/dom";
+import { EnrichedMarkdownText } from "react-native-enriched-markdown";
+import { I18nextProvider } from "react-i18next";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WEB_RENDERERS } from "@/components/markdown/renderers.web";
+import type { ToastApi } from "@/components/toast-host";
+import { ToastApiProvider } from "@/contexts/toast-api-context";
+import { i18n } from "@/i18n/i18next";
+import {
+  createAssistantSelectionClipboardContent,
+  createElementClipboardContent,
+} from "./content.web";
+import { MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE } from "./markup";
 
 const fixture = `
   <div data-testid="assistant-message">
@@ -952,4 +967,159 @@ it("copies a workspace image path instead of its temporary display URL", () => {
   expect(createAssistantSelectionClipboardContent(selection)?.plainText).toBe(
     "![chart](assets/chart.png)",
   );
+});
+
+describe("quote copy", () => {
+  let root: Root | undefined;
+  let host: HTMLDivElement | undefined;
+  const toast: ToastApi = { show: () => () => {}, copied: () => {}, error: () => {} };
+  const queryClient = new QueryClient();
+
+  afterEach(() => {
+    const mounted = root;
+    if (mounted) flushSync(() => mounted.unmount());
+    root = undefined;
+    host?.remove();
+    host = undefined;
+  });
+
+  /** Renders Markdown through the web engine with the app's renderers, as a message does. */
+  async function renderMarkdown(markdown: string, lastText: string): Promise<HTMLElement> {
+    if (!host || !root) {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+    }
+    const mounted = root;
+    flushSync(() =>
+      mounted.render(
+        h(
+          QueryClientProvider,
+          { client: queryClient },
+          h(
+            I18nextProvider,
+            { i18n },
+            h(ToastApiProvider, {
+              api: toast,
+              children: h(EnrichedMarkdownText, {
+                markdown,
+                flavor: "github",
+                md4cFlags: { latexMath: false, admonitions: true },
+                renderers: WEB_RENDERERS,
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+    const rendered = host;
+    await vi.waitFor(() => expect(rendered.textContent).toContain(lastText));
+    return rendered;
+  }
+
+  it("copies a quote's body with its formatting and without the quote marker", async () => {
+    const rendered = await renderMarkdown(
+      "> Hello **team**, see [the PR](https://example.test/pr).\n>\n> - Review\n>\n> > Nested reply",
+      "Nested reply",
+    );
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe(
+      "Hello **team**, see [the PR](https://example.test/pr).\n\n- Review\n\n> Nested reply",
+    );
+    expect(content?.html).toContain("<strong>team</strong>");
+    expect(content?.html).toContain("<blockquote>");
+    expect(content?.html).not.toContain("Copy quote");
+  });
+
+  it("gives a nested quote its own control that copies only the nested quote", async () => {
+    const rendered = await renderMarkdown("> Outer\n>\n> > Nested reply", "Nested reply");
+    const nested = fixtureElement(rendered, "blockquote", 1);
+
+    expect(within(rendered).getAllByRole("button", { name: "Copy quote" })).toHaveLength(2);
+    expect(within(nested).getAllByRole("button", { name: "Copy quote" })).toHaveLength(1);
+    expect(createElementClipboardContent(nested)?.plainText).toBe("Nested reply");
+  });
+
+  it("copies a code block inside a quote as its fence and keeps the code's own control", async () => {
+    const rendered = await renderMarkdown("> Run:\n>\n> ```sh\n> npm test\n> ```", "npm test");
+    const quote = fixtureElement(rendered, "blockquote");
+
+    expect(within(quote).getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(createElementClipboardContent(quote)?.plainText).toBe("Run:\n\n```sh\nnpm test\n```");
+  });
+
+  it("copies what a streaming quote shows at the time of the copy", async () => {
+    const first = await renderMarkdown("> First draft", "First draft");
+    const quote = fixtureElement(first, "blockquote");
+
+    const revised = await renderMarkdown("> First draft, revised", "revised");
+
+    expect(fixtureElement(revised, "blockquote")).toBe(quote);
+    expect(createElementClipboardContent(quote)?.plainText).toBe("First draft, revised");
+  });
+
+  it("copies literal Markdown characters raw in text/plain and escaped in text/html", async () => {
+    const rendered = await renderMarkdown("> literal \\_word\\_ stays literal", "stays literal");
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe("literal _word_ stays literal");
+    expect(content?.html).toContain("literal _word_ stays literal");
+    expect(content?.html).not.toContain("<em>");
+  });
+
+  it("gives an admonition no copy control", async () => {
+    const rendered = await renderMarkdown("> [!NOTE]\n> Heads up", "Heads up");
+
+    expect(within(rendered).queryByRole("button", { name: "Copy quote" })).toBeNull();
+  });
+
+  it("copies a nested admonition as its callout source", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe("Before\n\n> [!WARNING]\n> Do not deploy.\n\nAfter");
+  });
+
+  it("copies a selection across an admonition as the text it shows, without a callout marker", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+    rendered.setAttribute("data-testid", "assistant-message");
+    const body = tokenText(rendered, "Do not deploy.");
+
+    expect(
+      copyBetween([body, "Do not ".length], [tokenText(rendered, "After"), 5])?.plainText,
+    ).toBe("deploy.\n\nAfter");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [tokenText(rendered, "Warning"), 4])
+        ?.plainText,
+    ).toBe("Before\n\nWarn");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [body, "Do not".length])?.plainText,
+    ).not.toContain("[!WARNING]");
+  });
+
+  it("copies a rendered Mermaid diagram as its fence", () => {
+    const quote = document.createElement("blockquote");
+    quote.innerHTML = `<p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid"><svg aria-label="diagram"></svg></div><p>After</p>`;
+
+    expect(createElementClipboardContent(quote)?.plainText).toBe(
+      "Before\n\n```mermaid\ngraph TD; A-->B\n```\n\nAfter",
+    );
+  });
+
+  it("copies nothing from a quote that holds only its control", () => {
+    const quote = document.createElement("blockquote");
+    quote.innerHTML = '<button data-paseo-markdown-ignore="true">Copy quote</button>';
+
+    expect(createElementClipboardContent(quote)).toBeNull();
+  });
 });

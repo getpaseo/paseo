@@ -62,6 +62,9 @@ class BlockquoteContainerView(
   // Cached markdown source for the "Copy as Markdown" action.
   private var cachedMarkdown: String = ""
 
+  // Cached markdown of the quote's body, without its own `> ` prefix, for the copy button.
+  private var cachedBodyMarkdown: String = ""
+
   // Cached plain text for the "Copy" action.
   private var cachedPlainText: String = ""
 
@@ -85,7 +88,15 @@ class BlockquoteContainerView(
   private val iconPaint =
     Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
-  private fun reservedHeaderHeight(): Int = if (admonitionType != null) ceil(admonitionHeaderReservedHeight(blockquoteStyle)).toInt() else 0
+  // A plain quote shows the code block's copy control in a header band of the
+  // same height; an admonition keeps its title band and has no copy control.
+  private val copyButton =
+    HeaderCopyButton(context, parentConfig.style.codeBlockStyle) { parentConfig.dynamicProps.copyLabel }.apply {
+      setOnClickListener { copyBody() }
+    }
+
+  private fun reservedHeaderHeight(): Int =
+    if (admonitionType != null) ceil(admonitionHeaderReservedHeight(blockquoteStyle)).toInt() else copyButton.bandHeight
 
   // Only the outermost quote carries vertical margins; a quote nested directly
   // inside another quote is separated by the parent's padding alone (matches the
@@ -108,7 +119,12 @@ class BlockquoteContainerView(
 
   init {
     setWillNotDraw(false)
-    setPadding(leftInset, verticalInset, rightInset, verticalInset)
+    // The copy control sits in the header band, which top padding reserves.
+    clipToPadding = false
+    setPadding(leftInset, verticalInset + reservedHeaderHeight(), rightInset, verticalInset)
+    // applySegments keeps segment views at the front of the child array, so the
+    // control stays the last child, drawn and hit-tested above the body.
+    addView(copyButton)
     segmentViewFactory = ChildFactory()
     trailingMarginEnabled = false
     isLongClickable = true
@@ -125,6 +141,9 @@ class BlockquoteContainerView(
     // Reserve the header band above the body by enlarging the top padding.
     setPadding(leftInset, verticalInset + reservedHeaderHeight(), rightInset, verticalInset)
 
+    copyButton.visibility = if (admonitionType == null) View.VISIBLE else View.GONE
+    cachedBodyMarkdown = MarkdownASTSerializer.serializeBlockquoteBody(node)
+    copyButton.isEnabled = cachedBodyMarkdown.isNotEmpty()
     cachedMarkdown = MarkdownASTSerializer.serializeBlockquote(node)
     cachedPlainText = MarkdownASTSerializer.plainText(node)
 
@@ -141,6 +160,12 @@ class BlockquoteContainerView(
       )
     applySegments(rendered, reset = false)
     requestLayout()
+  }
+
+  private fun copyBody() {
+    if (cachedBodyMarkdown.isEmpty()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Blockquote", cachedBodyMarkdown))
   }
 
   private fun showContextMenu(anchor: View): Boolean {
@@ -167,6 +192,7 @@ class BlockquoteContainerView(
   ) {
     val measuredWidth = MeasureSpec.getSize(widthSpec)
     measureSegmentChildren(measuredWidth)
+    if (copyButton.visibility != View.GONE) copyButton.measureInBand()
     setMeasuredDimension(measuredWidth, computeSegmentsTotalHeight())
   }
 
@@ -178,6 +204,7 @@ class BlockquoteContainerView(
     b: Int,
   ) {
     layoutSegments()
+    if (copyButton.visibility != View.GONE) copyButton.layoutInBand(width)
   }
 
   override fun onDraw(canvas: Canvas) {
@@ -368,7 +395,7 @@ class BlockquoteContainerView(
         if (node.type == MarkdownASTNode.NodeType.Admonition) {
           ceil(admonitionHeaderReservedHeight(style))
         } else {
-          0f
+          CodeBlockContainerView.headerHeight(config.codeBlockStyle).toFloat()
         }
       val innerWidth = (width - leftInset - rightInset).coerceAtLeast(1f)
 

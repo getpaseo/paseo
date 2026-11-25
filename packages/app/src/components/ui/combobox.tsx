@@ -72,9 +72,13 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+const TRAILING_ACTION_DATASET = { comboboxTrailingAction: true };
+const FOOTER_DATASET = { comboboxFooter: true };
+const FOCUSED_COMBOBOX_ACTION_SELECTOR =
+  '[data-combobox-trailing-action] button, [data-combobox-trailing-action] [role="button"], [data-combobox-footer] button, [data-combobox-footer] [role="button"]';
 
 export type ComboboxOption = ComboboxOptionModel;
-export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start" | "bottom-end";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -90,6 +94,11 @@ export interface ComboboxProps {
   searchable?: boolean;
   /** The caller answers the search query itself, so the options are shown as given. */
   remoteSearch?: boolean;
+  /**
+   * With `remoteSearch`, the options still answer an earlier query. No option is picked until
+   * the user moves to one, so Enter cannot confirm a row the new query may not match.
+   */
+  remoteSearchPending?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -235,6 +244,11 @@ export interface ComboboxItemProps {
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
+  /**
+   * A button shown outside the row's own pressable. The button owns its spacing
+   * and hit area.
+   */
+  trailingAction?: ReactNode;
   selected?: boolean;
   active?: boolean;
   disabled?: boolean;
@@ -252,6 +266,7 @@ export function ComboboxItem({
   kind,
   leadingSlot,
   trailingSlot,
+  trailingAction,
   selected,
   active,
   disabled,
@@ -300,15 +315,29 @@ export function ComboboxItem({
     [labelPrefix],
   );
 
-  return (
-    <Pressable
-      testID={testID}
-      disabled={disabled}
-      onPress={onPress}
-      style={itemPressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-    >
+  const [hovered, setHovered] = useState(false);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+  const splitPressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.comboboxItemSplitPressable,
+      pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
+    ],
+    [elevated],
+  );
+  const splitRowStyle = useMemo(
+    () => [
+      styles.comboboxItem,
+      styles.comboboxItemSplitRow,
+      hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
+      active && styles.comboboxItemActive,
+      disabled && styles.comboboxItemDisabled,
+    ],
+    [active, disabled, elevated, hovered],
+  );
+
+  const content = (
+    <>
       {leadingContent}
       <View style={itemContentStyle}>
         {labelPrefix ? (
@@ -333,7 +362,40 @@ export function ComboboxItem({
           {trailingSlot}
         </View>
       ) : null}
-    </Pressable>
+    </>
+  );
+
+  if (!trailingAction) {
+    return (
+      <Pressable
+        testID={testID}
+        disabled={disabled}
+        onPress={onPress}
+        style={itemPressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={splitRowStyle} onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
+      <Pressable
+        testID={testID}
+        disabled={disabled}
+        onPress={onPress}
+        style={splitPressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+      >
+        {content}
+      </Pressable>
+      <View style={styles.comboboxItemActionSlot} dataSet={TRAILING_ACTION_DATASET}>
+        {trailingAction}
+      </View>
+    </View>
   );
 }
 
@@ -348,6 +410,7 @@ export function ComboboxEmpty({ children }: { children: ReactNode }): ReactEleme
 type RenderOptionFn = NonNullable<ComboboxProps["renderOption"]>;
 
 interface OptionRowProps {
+  index: number;
   option: ComboboxOption;
   selected: boolean;
   active: boolean;
@@ -355,20 +418,27 @@ interface OptionRowProps {
   renderOption: RenderOptionFn | undefined;
 }
 
-function OptionRow({ option, selected, active, onSelect, renderOption }: OptionRowProps) {
+function OptionRow({ index, option, selected, active, onSelect, renderOption }: OptionRowProps) {
   const handlePress = useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  const optionDataset = useMemo(() => ({ comboboxOptionIndex: String(index) }), [index]);
   if (renderOption) {
-    return <View>{renderOption({ option, selected, active, onPress: handlePress })}</View>;
+    return (
+      <View dataSet={optionDataset}>
+        {renderOption({ option, selected, active, onPress: handlePress })}
+      </View>
+    );
   }
   return (
-    <ComboboxItem
-      label={option.label}
-      description={option.description}
-      kind={option.kind}
-      selected={selected}
-      active={active}
-      onPress={handlePress}
-    />
+    <View dataSet={optionDataset}>
+      <ComboboxItem
+        label={option.label}
+        description={option.description}
+        kind={option.kind}
+        selected={selected}
+        active={active}
+        onPress={handlePress}
+      />
+    </View>
   );
 }
 
@@ -397,6 +467,7 @@ function OptionsList({
       {options.map((opt, index) => (
         <OptionRow
           key={opt.id}
+          index={index}
           option={opt}
           selected={opt.id === value}
           active={index === activeIndex}
@@ -544,6 +615,7 @@ interface DesktopKeyHandlerInput {
   isOpen: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
+  remoteSearchPending: boolean;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
   handleSelect: (id: string) => void;
   handleClose: () => void;
@@ -556,7 +628,9 @@ function handleDesktopArrowKey(input: DesktopKeyHandlerInput, key: "ArrowDown" |
 function handleDesktopEnterKey(input: DesktopKeyHandlerInput) {
   if (input.orderedVisibleOptions.length === 0) return;
   const { activeIndex, orderedVisibleOptions } = input;
-  const index = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+  const picked = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length;
+  if (!picked && input.remoteSearchPending) return;
+  const index = picked ? activeIndex : 0;
   input.handleSelect(orderedVisibleOptions[index].id);
 }
 
@@ -612,18 +686,21 @@ function useActiveIndexSync(
   effectiveOptionsPosition: "below-search" | "above-search",
   normalizedSearch: string,
   value: string,
+  remoteSearchPending: boolean,
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>,
 ) {
   useEffect(() => {
     if (!isOpen) return;
     if (!IS_WEB && isMobile) return;
     setActiveIndex(
-      resolveInitialActiveIndex(
-        orderedVisibleOptions,
-        effectiveOptionsPosition,
-        normalizedSearch,
-        value,
-      ),
+      remoteSearchPending
+        ? -1
+        : resolveInitialActiveIndex(
+            orderedVisibleOptions,
+            effectiveOptionsPosition,
+            normalizedSearch,
+            value,
+          ),
     );
   }, [
     effectiveOptionsPosition,
@@ -632,6 +709,7 @@ function useActiveIndexSync(
     normalizedSearch,
     value,
     orderedVisibleOptions,
+    remoteSearchPending,
     setActiveIndex,
   ]);
 }
@@ -898,6 +976,11 @@ function dispatchDesktopKey(
     return true;
   }
   if (key === "Enter") {
+    // Consume the shortcut but keep the browser's default button activation when the user moved
+    // keyboard focus onto a trailing action or footer button inside the combobox.
+    if (isWeb && document.activeElement?.matches(FOCUSED_COMBOBOX_ACTION_SELECTOR)) {
+      return true;
+    }
     if (input.orderedVisibleOptions.length === 0) return false;
     event?.preventDefault();
     handleDesktopEnterKey(input);
@@ -1069,7 +1152,12 @@ function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children
     [safeAreaBottom],
   );
   const footerView = useMemo(
-    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
+    () =>
+      footer ? (
+        <View style={footerStyle} dataSet={FOOTER_DATASET}>
+          {footer}
+        </View>
+      ) : undefined,
     [footer, footerStyle],
   );
   return (
@@ -1283,7 +1371,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
               renderOption={props.renderOption}
             />
           )}
-          {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+          {props.footer ? (
+            <View style={styles.footer} dataSet={FOOTER_DATASET}>
+              {props.footer}
+            </View>
+          ) : null}
         </FloatingSurface>
       </View>
     </OverlayLayerProvider>
@@ -1318,6 +1410,7 @@ export function Combobox({
   onSearchQueryChange,
   searchable = true,
   remoteSearch,
+  remoteSearchPending,
   placeholder,
   searchPlaceholder,
   emptyText,
@@ -1536,8 +1629,33 @@ export function Combobox({
     effectiveOptionsPosition,
     normalizedSearch,
     value,
+    remoteSearchPending === true,
     setActiveIndex,
   );
+
+  // Keep activeIndex aligned when a keyboard user Tabs onto a specific option button on web.
+  useEffect(() => {
+    if (!IS_WEB || !isOpen || isMobile) return;
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const optionEl = target.closest("[data-combobox-option-index]");
+      if (!optionEl) return;
+      const nextIndex = Number.parseInt(
+        optionEl.getAttribute("data-combobox-option-index") ?? "",
+        10,
+      );
+      if (
+        Number.isInteger(nextIndex) &&
+        nextIndex >= 0 &&
+        nextIndex < orderedVisibleOptions.length
+      ) {
+        setActiveIndex(nextIndex);
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [isMobile, isOpen, orderedVisibleOptions.length]);
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -1559,6 +1677,7 @@ export function Combobox({
           isOpen,
           orderedVisibleOptions,
           activeIndex,
+          remoteSearchPending: remoteSearchPending === true,
           setActiveIndex,
           handleSelect,
           handleClose,
@@ -1567,7 +1686,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions, remoteSearchPending],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
@@ -1741,6 +1860,26 @@ const styles = StyleSheet.create((theme) => ({
           marginHorizontal: theme.spacing[1],
           marginBottom: theme.spacing[1],
         }),
+  },
+  // Share the highlight while each control owns its padding and hit area.
+  comboboxItemSplitRow: {
+    gap: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  comboboxItemSplitPressable: {
+    flex: 1,
+    alignSelf: "stretch",
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[1],
+    paddingVertical: theme.spacing[2],
+  },
+  comboboxItemActionSlot: {
+    alignSelf: "stretch",
   },
   comboboxItemHovered: {
     backgroundColor: theme.colors.surface1,

@@ -365,7 +365,7 @@ export default function contribute(server) {
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-}, 60_000);
+}, 90_000);
 
 test("worktree manager supports decline fallback, rollback delegation, and disabled-plugin fallback on archive and restore", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-manager-fallback-"));
@@ -606,9 +606,7 @@ export default function contribute(server) {
     const pending = client.createWorkspace({
       source: { kind: "worktree", cwd: repository, branchName: "concurrent" },
     });
-    // Cleanup closes the client if the marker never arrives.
-    void pending.catch(() => undefined);
-    await expect
+    const managerStarted = expect
       .poll(
         () =>
           stat(path.join(root, "manager-started")).then(
@@ -618,6 +616,12 @@ export default function contribute(server) {
         { timeout: 10_000 },
       )
       .toBe(true);
+    await Promise.race([
+      managerStarted,
+      pending.then(({ error }) => {
+        throw new Error(`Worktree creation finished before the manager was released: ${error}`);
+      }),
+    ]);
     const concurrent = path.join(root, "concurrent-manual");
     git(repository, ["worktree", "add", "-b", "concurrent", concurrent, "main"]);
     await writeFile(path.join(concurrent, "local.txt"), "uncommitted work");

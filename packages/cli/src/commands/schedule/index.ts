@@ -35,6 +35,8 @@ export function createScheduleCommand(): Command {
       .option("--thinking <id>", "Thinking option ID for new-agent runs")
       .option("--cwd <path>", "Working directory (default: current; required with --host)")
       .option("--run-now", "Fire one immediate run on creation")
+      .option("--archive-on-finish", "Archive each run's workspace when the run ends (default)")
+      .option("--no-archive-on-finish", "Keep each run's workspace and agent active")
       .option("--max-runs <n>", "Maximum number of runs")
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));
@@ -93,6 +95,8 @@ export function createScheduleCommand(): Command {
       .option("--model <model>", "New agent model (only for new-agent target)")
       .option("--mode <mode>", "New agent provider mode (only for new-agent target)")
       .option("--cwd <path>", "New working directory (only for new-agent target)")
+      .option("--archive-on-finish", "Archive later runs' workspaces when each run ends")
+      .option("--no-archive-on-finish", "Keep later runs' workspaces and agents active")
       .option("--max-runs <n>", "Set or change maximum number of runs")
       .option("--no-max-runs", "Clear the max-runs limit")
       .option("--expires-in <duration>", "Set or change time to live for the schedule")

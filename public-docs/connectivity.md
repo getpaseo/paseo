@@ -51,7 +51,7 @@ If the remote daemon has a password, enter it in **Daemon password**; it is stor
 
 ## Paseo relay
 
-The relay works without Tailscale, port forwarding, or network configuration. Traffic is end-to-end encrypted.
+The relay works without Tailscale, port forwarding, or network configuration. Traffic is [end-to-end encrypted](/docs/security).
 
 Relay is disabled until you enable it.
 

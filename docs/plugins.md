@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite, fx, goose, and Hermes use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -583,8 +583,12 @@ daemon launch from `connect` and the per-session env and MCP servers from `sessi
 no provider reload input.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
-`@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
-whole provider event stream. The shim uses the resolved launch for every probe and session, overlaying
+`@getpaseo/plugin/server/acp`. The shim builds the standard row for each ACP tool `kind`
+(`acp-internal/tool-call-detail.ts`). Its transformer hooks cover narrow vendor differences; do not translate the
+whole provider event stream. A `toolCall` transformer sees the raw `input`, `output` and `content`, and a
+`detail` it sets replaces the standard row. Parse vendor display text defensively and return the call
+unchanged when the shape does not match, so an upstream format change falls back to the standard row
+(`plugins/hermes-provider/server/terminal-command.ts`). The shim uses the resolved launch for every probe and session, overlaying
 only the supplied per-session env for sessions. The direct and ACP examples live in
 `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
@@ -878,6 +882,13 @@ runtime plugin ID, preserves the source timeline cursor and identity, validates 
 its Zod schema, and mounts the component inside the normal plugin runtime and error boundary. An
 optional output `id` distinguishes several stable replacements from the same source item; its output
 index is the default.
+
+Each replacement keeps a reference to the source row (`source` on the projected stream item), and
+turn logic reads a replaced reply through it. A reply split into several cards stays one reply: turn
+folding keeps every card visible, and the turn footer hangs under the last card, copies the original
+reply text once, forks at its message, and shows its duration and stats. Read the reply with
+`getAssistantReply` (`packages/app/src/types/stream.ts`) instead of checking `kind ===
+"assistant_message"`.
 
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
