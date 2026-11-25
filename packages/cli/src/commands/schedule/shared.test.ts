@@ -159,6 +159,46 @@ describe("parseScheduleCreateInput thinking", () => {
   });
 });
 
+describe("parseScheduleCreateInput new workspace", () => {
+  test("--new-workspace worktree isolates each scheduled run in a fresh worktree", () => {
+    const input = parseScheduleCreateInput({
+      ...baseOptions,
+      cwd: "/project",
+      mode: "auto",
+      thinking: "medium",
+      newWorkspace: "worktree",
+    });
+
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/project",
+        modeId: "auto",
+        thinkingOptionId: "medium",
+        isolation: "worktree",
+      },
+    });
+  });
+
+  test("rejects unsupported new workspace kinds", () => {
+    expect(() =>
+      parseScheduleCreateInput({ ...baseOptions, cwd: "/project", newWorkspace: "isolated" }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_OPTIONS" }));
+  });
+
+  test("rejects --new-workspace with an existing-agent target", () => {
+    expect(() =>
+      parseScheduleCreateInput({
+        ...baseOptions,
+        cwd: "/project",
+        target: "11111111-1111-4111-8111-111111111111",
+        newWorkspace: "worktree",
+      }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_TARGET" }));
+  });
+});
+
 describe("parseScheduleUpdateInput", () => {
   test("rejects calls with no fields to update", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc" })).toThrow(
@@ -252,6 +292,28 @@ describe("parseScheduleUpdateInput", () => {
       id: "abc",
       newAgentConfig: { modeId: null },
     });
+  });
+
+  test("patches thinking and new workspace isolation together", () => {
+    expect(
+      parseScheduleUpdateInput({ id: "abc", thinking: "  medium ", newWorkspace: "worktree" }),
+    ).toEqual({
+      id: "abc",
+      newAgentConfig: { thinkingOptionId: "medium", isolation: "worktree" },
+    });
+  });
+
+  test("--thinking with empty value clears the thinking option", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", thinking: "" })).toEqual({
+      id: "abc",
+      newAgentConfig: { thinkingOptionId: null },
+    });
+  });
+
+  test("rejects unsupported new workspace kinds", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", newWorkspace: "sandbox" })).toThrow(
+      expect.objectContaining({ code: "INVALID_OPTIONS" }),
+    );
   });
 
   test("rejects empty --cwd", () => {

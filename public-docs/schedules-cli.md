@@ -64,6 +64,22 @@ paseo schedule create \
   "Review overnight CI failures and summarize anything urgent."
 ```
 
+Daily sweep in a fresh worktree, with an explicit mode and thinking level:
+
+```bash
+paseo schedule create \
+  --cron "0 9 * * *" \
+  --name daily-sweep \
+  --provider claude/claude-opus-5-5 \
+  --mode auto \
+  --thinking medium \
+  --new-workspace worktree \
+  --cwd ~/dev/my-app \
+  "Sweep open issues and leave a summary."
+```
+
+`--mode`, `--thinking`, and `--new-workspace` set the same agent settings as the app's **Edit schedule** form. Mode and thinking option IDs are provider-specific, the same values `paseo run` accepts. `--new-workspace worktree` cuts a fresh git worktree from `--cwd` for each run; `local`, the default, runs in the directory itself.
+
 ## Heartbeats
 
 Inside a running Paseo agent, create a heartbeat for that same conversation:
@@ -96,8 +112,11 @@ paseo schedule pause <id>
 paseo schedule resume <id>
 paseo schedule run-once <id>
 paseo schedule update <id> --every 10m --max-runs 6
+paseo schedule update <id> --thinking medium --new-workspace worktree
 paseo schedule delete <id>
 ```
+
+`update` takes the same `--provider`, `--model`, `--mode`, `--thinking`, `--new-workspace`, and `--cwd` flags as `create`. Pass an empty string to `--mode` or `--thinking` to clear it.
 
 ## Cadence
 
