@@ -1895,6 +1895,7 @@ Workspace snapshot fields:
 | `statusEnteredAt`    | ISO timestamp or `null`                                           |
 | `archivingAt`        | ISO timestamp or `null`                                           |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| `parentWorkspace`    | `WorkspaceRef \| null`                                            |
 
 Agent snapshot fields:
 
