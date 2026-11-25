@@ -938,7 +938,6 @@ function StatusWorkspaceRowInnerContent({
 
   const { onPress: handleRowPress, onPressIn: handleRowPressIn } = useWorkspaceSelectionPress({
     workspaceKey: workspace.workspaceKey,
-    didLongPressRef,
     onNavigate: handleNavigatePress,
     onPressIn: startDragPress,
   });

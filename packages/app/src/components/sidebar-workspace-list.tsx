@@ -1119,7 +1119,6 @@ function WorkspaceRowInner({
 
   const { onPress: handleRowPress, onPressIn: handleRowPressIn } = useWorkspaceSelectionPress({
     workspaceKey: workspace.workspaceKey,
-    didLongPressRef: interaction.didLongPressRef,
     onNavigate: handleNavigatePress,
     onPressIn: interaction.handlePressIn,
   });

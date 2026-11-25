@@ -18,6 +18,7 @@ import {
   useKeyboardActionDispatcher,
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import {
   registerSidebarVisibleWorkspaceKeysReader,
   SidebarSelectionHost,
@@ -90,8 +91,7 @@ function SidebarToastProbe() {
 
 const noop = () => {};
 let navigatedKeys: string[] = [];
-// Shared by every probe row, standing in for the row's long-press drag interaction.
-const staleLongPressRef = { current: false };
+const rowLongPressRefs = new Map<string, { current: boolean }>();
 
 function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
   const isSelectionMode = useIsSidebarSelectionMode();
@@ -99,10 +99,13 @@ function SelectableRowProbe({ entry }: { entry: SidebarWorkspaceEntry }) {
   const handleNavigate = useCallback(() => {
     navigatedKeys.push(entry.workspaceKey);
   }, [entry.workspaceKey]);
+  // The row's gesture state, wired the way sidebar rows wire it.
+  const interaction = useLongPressDragInteraction({ drag: noop, menuController: null });
+  rowLongPressRefs.set(entry.workspaceKey, interaction.didLongPressRef);
   const { onPress, onPressIn } = useWorkspaceSelectionPress({
     workspaceKey: entry.workspaceKey,
-    didLongPressRef: staleLongPressRef,
     onNavigate: handleNavigate,
+    onPressIn: interaction.handlePressIn,
   });
   return (
     <SidebarWorkspaceContextMenu
@@ -163,7 +166,7 @@ afterEach(() => {
   capturedSidebarToast = null;
   fallbackArchiveCount = 0;
   navigatedKeys = [];
-  staleLongPressRef.current = false;
+  rowLongPressRefs.clear();
   act(() => {
     useSidebarSelectionStore.getState().exit();
   });
@@ -187,6 +190,12 @@ function selectedIds(): string[] {
   const state = useSidebarSelectionStore.getState();
   if (!state.active) return [];
   return [...state.selectedKeys].map((key) => key.replace("srv:", "")).sort();
+}
+
+function markGestureCanceled(id: string) {
+  const ref = rowLongPressRefs.get(`srv:${id}`);
+  if (!ref) throw new Error(`Row ${id} is not mounted`);
+  ref.current = true;
 }
 
 /** Holds the primary mouse button on a row past the long-press delay, then releases it. */
@@ -235,13 +244,13 @@ describe("sidebar workspace row presses", () => {
   it("selects on the first modifier or select-mode click after an earlier gesture ended as a long press", async () => {
     mountHost(["a", "b"].map(makeEntry));
 
-    // A scroll, drag, or long-press menu leaves the flag set and never fires onPress to clear it.
-    // Shift, because react-native-web grants no press-in to a Ctrl mousedown.
-    staleLongPressRef.current = true;
-    await userEvent.click(row("a"), { modifiers: ["Shift"] });
+    // A scroll, swipe, drag, or long-press menu leaves the flag set without firing onPress.
+    // Ctrl+click on Windows/Linux gets no press-in on web, so nothing clears it first.
+    markGestureCanceled("a");
+    await userEvent.click(row("a"), { modifiers: [MOD_KEY] });
     expect(selectedIds()).toEqual(["a"]);
 
-    staleLongPressRef.current = true;
+    markGestureCanceled("b");
     await userEvent.click(row("b"));
     expect(selectedIds()).toEqual(["a", "b"]);
   });
