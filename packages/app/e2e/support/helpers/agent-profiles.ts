@@ -329,7 +329,7 @@ async function fillAgentProfileForm(page: Page, draft: AgentProfileDraft): Promi
 }
 
 async function saveAgentProfile(page: Page): Promise<void> {
-  await editSurface(page).getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByTestId("agent-profile-save-button").click();
   await expect(editSurface(page)).toHaveCount(0, { timeout: 30_000 });
 }
 
@@ -375,27 +375,23 @@ export async function openCreateAgentProfileEditor(page: Page): Promise<void> {
 }
 
 export async function fillAgentProfileName(page: Page, name: string): Promise<void> {
-  await editSurface(page).getByRole("textbox", { name: "Name", exact: true }).fill(name);
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill(name);
 }
 
 export async function expectAgentProfileNameDraft(page: Page, name: string): Promise<void> {
-  await expect(editSurface(page).getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
-    name,
-  );
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
 }
 
 export async function toggleAgentProfileCustomize(page: Page): Promise<void> {
-  await editSurface(page).getByTestId("agent-profile-customize-toggle").click();
+  await page.getByTestId("agent-profile-customize-toggle").click();
 }
 
 export async function fillAgentProfileNotes(page: Page, notes: string): Promise<void> {
-  await editSurface(page).getByRole("textbox", { name: "When to use", exact: true }).fill(notes);
+  await page.getByRole("textbox", { name: "When to use", exact: true }).fill(notes);
 }
 
 export async function expectAgentProfileNotesDraft(page: Page, notes: string): Promise<void> {
-  await expect(
-    editSurface(page).getByRole("textbox", { name: "When to use", exact: true }),
-  ).toHaveValue(notes);
+  await expect(page.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(notes);
 }
 
 export async function saveOpenAgentProfile(page: Page): Promise<void> {
@@ -418,6 +414,37 @@ export async function duplicateOpenAgentProfileWithConfirm(
   await page.getByTestId("agent-profile-drawer-more").click();
   await page.getByTestId("agent-profile-drawer-duplicate").click();
   expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+export async function openEditProfileFromModelRow(
+  page: Page,
+  input: { provider: string; modelId: string },
+): Promise<void> {
+  const row = modelRow(page, input);
+  await row.hover();
+  const editButton = pickerViewport(page).getByTestId(
+    `model-edit-profile-${input.provider}-${input.modelId}`,
+  );
+  await expect(editButton).toBeVisible({ timeout: 30_000 });
+  await editButton.click();
+  await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
+}
+
+export async function removeOpenModalAgentProfileWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByTestId("agent-profile-modal-remove-button").click();
+  expect(await dialogMessage).toMatch(/remove/i);
 }
 
 /** Opens the inspector for a profile purely to read back what it stored. */

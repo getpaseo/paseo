@@ -193,7 +193,14 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
           return;
         }
         try {
-          await mutateProfiles((current) => removeAgentProfileById(current, profileId));
+          const updated = await mutateProfiles((current) =>
+            removeAgentProfileById(current, profileId),
+          );
+          if (updated) {
+            setRequest((current) =>
+              current?.mode === "edit" && current.profile.id === profileId ? null : current,
+            );
+          }
         } catch (error) {
           Alert.alert(
             t("common.errors.unableToSave"),

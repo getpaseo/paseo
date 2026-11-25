@@ -1110,6 +1110,58 @@ function SettingsSidebar({
   );
 }
 
+function SettingsDetailPane({
+  view,
+  isCompactLayout,
+  detailTitle,
+  detailActions,
+  detailWidth,
+  onBack,
+  content,
+}: {
+  view: SettingsView;
+  isCompactLayout: boolean;
+  detailTitle: string | undefined;
+  detailActions: React.ReactNode;
+  detailWidth: React.ComponentProps<typeof PageLayout>["width"];
+  onBack: () => void;
+  content: React.ReactNode;
+}) {
+  const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
+  const pageTitle =
+    !isCompactLayout && (view.kind === "project" || view.kind === "provider")
+      ? undefined
+      : detailTitle;
+
+  return (
+    <WindowChromeRegion corners={isCompactLayout ? "both" : "top-right"}>
+      <View
+        style={isCompactLayout ? desktopStyles.compactContentPane : desktopStyles.contentPane}
+        testID={isCompactLayout ? undefined : "settings-detail-pane"}
+      >
+        {isStandaloneAgentProfilesView ? (
+          <HostAgentProfilesPage
+            serverId={view.serverId}
+            onBack={isCompactLayout ? onBack : undefined}
+          />
+        ) : (
+          <PageLayout
+            // A project or provider page draws its own title on desktop, naming the list it came from.
+            title={pageTitle}
+            onBack={isCompactLayout ? onBack : undefined}
+            actions={detailActions}
+            width={detailWidth}
+            titleTestID={isCompactLayout ? undefined : "settings-detail-header-title"}
+            testID={isCompactLayout ? undefined : "settings-detail-scroll-body"}
+          >
+            {content}
+          </PageLayout>
+        )}
+      </View>
+    </WindowChromeRegion>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
@@ -1418,68 +1470,35 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     );
   }
 
-  const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
-
-  if (isCompactLayout) {
-    if (isStandaloneAgentProfilesView) {
-      return (
-        <View style={styles.container} onLayout={onContentLayout}>
-          <HostAgentProfilesPage serverId={view.serverId} onBack={handleBackFromDetail} />
-        </View>
-      );
-    }
-    return (
-      <View style={styles.container} onLayout={onContentLayout}>
-        <PageLayout
-          title={detailTitle}
-          onBack={handleBackFromDetail}
-          actions={detailActions}
-          width={detailWidth}
-        >
-          {content}
-        </PageLayout>
-      </View>
-    );
-  }
-
-  // Desktop split view — mirrors AppContainer: sidebar owns the titlebar drag
-  // region + traffic-light padding; detail pane renders whatever header the
-  // selected section provides.
+  // Desktop split view and compact detail view share one wrapper tree around the
+  // detail pane so resizing across the compact breakpoint never unmounts active
+  // detail screens or discards in-progress edits (e.g., Agent profiles drawer → sheet).
   return (
     <View style={styles.container} onLayout={onContentLayout}>
       <View style={desktopStyles.row}>
-        <WindowChromeRegion corners="top-left">
-          <SettingsSidebar
-            view={view}
-            onSelectSection={handleSelectSection}
-            onSelectHostSection={handleSelectHostSection}
-            onSelectHost={handleSelectHost}
-            onAddHost={handleAddHost}
-            onBackToWorkspace={handleBackToWorkspace}
-            activeHostServerId={activeHostServerId}
-            layout="desktop"
-          />
-        </WindowChromeRegion>
-        <WindowChromeRegion corners="top-right">
-          <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            {isStandaloneAgentProfilesView ? (
-              <HostAgentProfilesPage serverId={view.serverId} />
-            ) : (
-              <PageLayout
-                // A project or provider page draws its own title, which names the list it came from.
-                title={
-                  view.kind === "project" || view.kind === "provider" ? undefined : detailTitle
-                }
-                actions={detailActions}
-                width={detailWidth}
-                titleTestID="settings-detail-header-title"
-                testID="settings-detail-scroll-body"
-              >
-                {content}
-              </PageLayout>
-            )}
-          </View>
-        </WindowChromeRegion>
+        {isCompactLayout ? null : (
+          <WindowChromeRegion corners="top-left">
+            <SettingsSidebar
+              view={view}
+              onSelectSection={handleSelectSection}
+              onSelectHostSection={handleSelectHostSection}
+              onSelectHost={handleSelectHost}
+              onAddHost={handleAddHost}
+              onBackToWorkspace={handleBackToWorkspace}
+              activeHostServerId={activeHostServerId}
+              layout="desktop"
+            />
+          </WindowChromeRegion>
+        )}
+        <SettingsDetailPane
+          view={view}
+          isCompactLayout={isCompactLayout}
+          detailTitle={detailTitle}
+          detailActions={detailActions}
+          detailWidth={detailWidth}
+          onBack={handleBackFromDetail}
+          content={content}
+        />
       </View>
     </View>
   );
@@ -1547,6 +1566,10 @@ const desktopStyles = StyleSheet.create({
   contentPane: {
     flex: 1,
     minWidth: SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
+  },
+  compactContentPane: {
+    flex: 1,
+    minWidth: 0,
   },
 });
 

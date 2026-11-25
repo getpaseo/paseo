@@ -166,8 +166,7 @@ function AgentProfileEditModalContent({
       return;
     }
     onRemove(profile.id);
-    onClose();
-  }, [onClose, onRemove, profile]);
+  }, [onRemove, profile]);
 
   const footer = useMemo(
     () => (

@@ -152,12 +152,16 @@ test.describe("Agent profiles settings", () => {
       await page.setViewportSize({ width: 1680, height: 900 });
       await openAgentProfileSettings(page);
 
-      await test.step("drawer-to-modal resize keeps the edited name and saves it", async () => {
+      await test.step("drawer-to-modal and compact resizes keep the edited name and save it", async () => {
         await openAgentProfileEditor(page, "Original profile");
         await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
         await fillAgentProfileName(page, "Draft rename");
 
         await page.setViewportSize({ width: 1000, height: 900 });
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
+        await expectAgentProfileNameDraft(page, "Draft rename");
+
+        await page.setViewportSize({ width: 390, height: 844 });
         await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
         await expectAgentProfileNameDraft(page, "Draft rename");
 
@@ -170,6 +174,7 @@ test.describe("Agent profiles settings", () => {
       });
 
       await test.step("collapsing and reopening advanced settings keeps the draft note", async () => {
+        await page.setViewportSize({ width: 1000, height: 900 });
         await openCreateAgentProfileEditor(page);
         await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
         await toggleAgentProfileCustomize(page);
