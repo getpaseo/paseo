@@ -319,6 +319,9 @@ describe("SidebarSelectionHost", () => {
       rowB?.dispatchEvent(
         new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
       );
+      rowB?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", repeat: true, bubbles: true, cancelable: true }),
+      );
     });
     expect(rowB?.getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(

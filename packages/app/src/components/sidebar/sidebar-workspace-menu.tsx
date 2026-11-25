@@ -453,6 +453,7 @@ export function SidebarWorkspaceContextMenu({
       // React Native Web's Pressable activates Space only for role="button", not checkbox.
       onKeyDown: (event: {
         key?: string;
+        repeat?: boolean;
         target?: unknown;
         currentTarget?: unknown;
         preventDefault?: () => void;
@@ -461,7 +462,9 @@ export function SidebarWorkspaceContextMenu({
         if (event.target !== event.currentTarget) return;
         if (event.key === " " || event.key === "Spacebar") {
           event.preventDefault?.();
-          onPress(event as unknown as GestureResponderEvent);
+          if (!event.repeat) {
+            onPress(event as unknown as GestureResponderEvent);
+          }
         }
       },
     };
