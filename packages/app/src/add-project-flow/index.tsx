@@ -135,18 +135,24 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   });
   const actions = useAddProjectActions({ hostId: state.hostId, setState, onClose });
 
-  const existing = useExistingTab({ state, host, recommendedPaths, actions });
-  const clone = useCloneTab({ state, host, defaultLocation, actions });
-  const newFolder = useNewFolderTab({ state, host, defaultLocation, actions });
+  // An offline host keeps its drafts, but nothing submits until it is back or the user picks
+  // another host. Gated here, once, so the footer, Enter and the native Go key all agree.
+  const offline = host?.online === false;
+  const existing = blockSubmitWhen(
+    offline,
+    useExistingTab({ state, host, recommendedPaths, actions }),
+  );
+  const clone = blockSubmitWhen(offline, useCloneTab({ state, host, defaultLocation, actions }));
+  const newFolder = blockSubmitWhen(
+    offline,
+    useNewFolderTab({ state, host, defaultLocation, actions }),
+  );
   const views: Record<AddProjectTab, AddProjectTabView> = {
     existing,
     clone,
     "new-folder": newFolder,
   };
-  // An offline host keeps its drafts, but nothing submits until it is back or the user picks
-  // another host.
-  const tabView = views[state.tab];
-  const view = host?.online === false ? withoutSubmit(tabView) : tabView;
+  const view = views[state.tab];
 
   const selectTab = useCallback(
     (tab: AddProjectTab) => setState((current) => selectAddProjectTab(current, tab)),
@@ -232,7 +238,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   // On a pointer layout the failure sits left of the button; compact stacks it above a
   // full-width button.
-  const problem = failure ?? (host?.online === false ? `${host.label} is offline` : null);
+  const problem = failure ?? (offline && host ? `${host.label} is offline` : null);
   const failureLine = problem ? (
     <Text style={styles.failure} numberOfLines={2} testID="add-project-flow-error">
       {problem}
@@ -330,8 +336,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 }
 
-function withoutSubmit(view: AddProjectTabView): AddProjectTabView {
-  return { ...view, primary: { ...view.primary, submit: null } };
+function blockSubmitWhen<TabView extends AddProjectTabView>(
+  blocked: boolean,
+  view: TabView,
+): TabView {
+  return blocked ? { ...view, primary: { ...view.primary, submit: null } } : view;
 }
 
 function hostOptionTestID(serverId: string): string {
