@@ -16,6 +16,7 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
+import { useAllDirectoryDemand } from "./use-directory-demand";
 
 const AGENT_HISTORY_PAGE_LIMIT = 200;
 const AGENT_HISTORY_SORT: NonNullable<FetchAgentHistoryOptions["sort"]> = [
@@ -257,6 +258,7 @@ export function useAgentHistory(options: {
     ),
   );
   const serverIds = options.searchableHostsOnly ? searchableServerIds : requestedServerIds;
+  useAllDirectoryDemand({ serverIds, enabled });
   const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
   // A host the user asked about splits two ways: one this fetch can reach, and
   // one whose sessions will be missing from the answer. Both come out of here,

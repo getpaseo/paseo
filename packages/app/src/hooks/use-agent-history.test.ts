@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InfiniteQueryObserver, QueryClient } from "@tanstack/react-query";
 import type {
   DaemonClient,
   FetchAgentHistoryEntry,
@@ -6,6 +7,7 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentHistoryClient, AgentHistoryHost } from "./use-agent-history";
 import { allAgentHistoryQueryKey } from "./agent-history-query-key";
+import { refreshAgentHistoryForDirectoryChanges } from "./refresh-agent-history";
 
 (
   globalThis as unknown as {
@@ -634,4 +636,29 @@ describe("fetchAgentHistoryPage", () => {
       }),
     ).rejects.toThrow("No connected hosts could load agent history");
   });
+});
+
+it("keeps a pending History page when an unrelated agent enters the directory", async () => {
+  const client = new QueryClient();
+  const firstPage = { agents: [{ serverId: "server-a", id: "first" }] };
+  const nextPage = { agents: [{ serverId: "server-a", id: "second" }] };
+  const reply = Promise.withResolvers<typeof nextPage>();
+  const observer = new InfiniteQueryObserver(client, {
+    queryKey: [...allAgentHistoryQueryKey(["server-a"]), "search"],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => (pageParam === 1 ? firstPage : reply.promise),
+    getNextPageParam: (_lastPage, pages) => (pages.length === 1 ? 2 : undefined),
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  try {
+    await observer.refetch();
+    const loadingMore = observer.fetchNextPage();
+    await refreshAgentHistoryForDirectoryChanges(client, "server-a", new Set(["unrelated"]));
+    reply.resolve(nextPage);
+    const result = await loadingMore;
+    expect(result.data?.pages).toEqual([firstPage, nextPage]);
+  } finally {
+    unsubscribe();
+    client.clear();
+  }
 });

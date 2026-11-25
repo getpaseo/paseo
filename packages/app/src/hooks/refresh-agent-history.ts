@@ -12,7 +12,7 @@ export async function refreshAgentHistoryForDirectoryChanges(
       if (!agentHistoryQueryIncludesServer(query.queryKey, serverId)) return false;
       const data = query.state.data as InfiniteData<AgentHistoryBatchPage> | undefined;
       return (
-        query.state.fetchStatus === "fetching" ||
+        (!data && query.state.fetchStatus === "fetching") ||
         (data?.pages.some((page) =>
           page.agents.some((agent) => agent.serverId === serverId && agentIds.has(agent.id)),
         ) ??

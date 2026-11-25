@@ -4,7 +4,7 @@ import { test } from "../support/fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { buildHostWorkspaceRoute, buildSessionsRoute } from "@/utils/host-routes";
 import {
   closeActiveAgentWithShortcut,
   archiveAgentFromDaemon,
@@ -78,8 +78,8 @@ test.describe("Archive tab reconciliation", () => {
       await openSessions(page);
       await expectSessionRowArchived(page, "Restore unsent draft");
       await test.step("Keep a second client on the archived History row", async () => {
-        await primeAdditionalPage(otherClient);
-        await openSessions(otherClient);
+        await otherClient.setViewportSize({ width: 390, height: 844 });
+        await primeAdditionalPage(otherClient, buildSessionsRoute());
         await expectSessionRowArchived(otherClient, "Restore unsent draft");
       });
       await clickSessionRow(page, "Restore unsent draft");

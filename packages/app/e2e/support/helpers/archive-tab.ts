@@ -129,7 +129,7 @@ export async function fetchAgentArchivedAt(
   return result?.agent.archivedAt ?? null;
 }
 
-export async function primeAdditionalPage(page: Page): Promise<void> {
+export async function primeAdditionalPage(page: Page, url = "/"): Promise<void> {
   const seedNonce = randomUUID();
   const { daemon, preferences } = buildSeededStoragePayload();
 
@@ -156,7 +156,7 @@ export async function primeAdditionalPage(page: Page): Promise<void> {
     },
     { daemon, preferences, seedNonce },
   );
-  await page.goto("/");
+  await page.goto(url);
 }
 
 export async function resetSeededPageState(page: Page): Promise<void> {
