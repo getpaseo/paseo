@@ -3,7 +3,7 @@ import { Pressable, Text, View, type PressableStateCallbackType } from "react-na
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
@@ -40,7 +40,7 @@ interface CombinedModelSelectorProps {
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   renderTrigger?: (input: {
     selectedModelLabel: string;
@@ -195,12 +195,17 @@ export function CombinedModelSelector({
     onEditProfiles?.();
   }, [handleOpenChange, onEditProfiles]);
 
+  // 1-tap `+` saves the profile, selects the model immediately, and closes the picker;
+  // useAgentProfileEditor surfaces a toast with Edit and Undo actions.
   const handleCreateProfile = useCallback(
     (seed: AgentProfileSeed) => {
+      if (seed.modelId) {
+        onSelect(seed.provider, seed.modelId);
+      }
       handleOpenChange(false);
-      onCreateProfile?.(seed);
+      void onCreateProfile?.(seed);
     },
-    [handleOpenChange, onCreateProfile],
+    [handleOpenChange, onCreateProfile, onSelect],
   );
 
   const handleEditProfile = useCallback(

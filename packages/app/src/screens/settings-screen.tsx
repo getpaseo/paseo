@@ -1,12 +1,13 @@
 import { useSettingsContentPresented } from "@/navigation/settings-presentation";
+import { registerRouteLeaveGuard } from "@/navigation/route-leave-guard";
 import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
-import { useRouter } from "expo-router";
-import { useFocusEffect } from "expo-router/react-navigation";
+import { useNavigation, useRouter } from "expo-router";
+import { useFocusEffect, usePreventRemove } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -40,6 +41,7 @@ import {
   PanelLeft,
   MessageSquare,
   ChevronRight,
+  Layers,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -102,6 +104,7 @@ import {
   HostConnectionsPage,
   HostPairDevicePage,
   HostAgentsPage,
+  HostAgentProfilesPage,
   HostSettingsPage,
   HostProvidersPage,
   HostUsagePage,
@@ -249,6 +252,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
   { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
+  { id: "agent-profiles", labelKey: "settings.hostSections.agentProfiles", icon: Layers },
   { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
   { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
@@ -271,6 +275,9 @@ function renderHostSettingsContent(
       return <HostPairDevicePage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
+    case "agent-profiles":
+      // Rendered directly in SettingsScreen so AgentProfilesPage owns its wide PageLayout + drawer split.
+      return null;
     case "metadata":
       return <MetadataGenerationPage serverId={view.serverId} />;
     case "voice":
@@ -1104,6 +1111,139 @@ function SettingsSidebar({
   );
 }
 
+interface SettingsBeforeLeaveGuard {
+  isDirty: () => boolean;
+  confirmDiscard: () => Promise<boolean>;
+  subscribeDirty?: (listener: () => void) => () => void;
+}
+
+/**
+ * Lets an active Settings editor (such as Agent profiles) veto both in-app
+ * section switches and route-boundary exits (browser Back, native swipe-back,
+ * hardware Back) with a single discard confirmation.
+ *
+ * Uses `usePreventRemove` so native stacks set `preventNativeDismiss` before
+ * iOS can interactively dismiss the screen on a back swipe.
+ */
+function useSettingsBeforeLeaveGuard() {
+  const navigation = useNavigation();
+  const beforeLeaveRef = useRef<SettingsBeforeLeaveGuard | null>(null);
+  const dirtyUnsubRef = useRef<(() => void) | null>(null);
+  const [preventRemove, setPreventRemove] = useState(false);
+
+  const registerBeforeLeave = useCallback((guard: SettingsBeforeLeaveGuard | null) => {
+    dirtyUnsubRef.current?.();
+    dirtyUnsubRef.current = null;
+    beforeLeaveRef.current = guard;
+    const syncDirty = () => {
+      setPreventRemove(Boolean(beforeLeaveRef.current?.isDirty()));
+    };
+    syncDirty();
+    if (guard?.subscribeDirty) {
+      dirtyUnsubRef.current = guard.subscribeDirty(syncDirty);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      dirtyUnsubRef.current?.();
+      dirtyUnsubRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    return registerRouteLeaveGuard({
+      isDirty: () => Boolean(beforeLeaveRef.current?.isDirty()),
+      confirmDiscard: async () => (await beforeLeaveRef.current?.confirmDiscard()) ?? true,
+    });
+  }, []);
+
+  usePreventRemove(preventRemove, ({ data }) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigation.dispatch(data.action);
+      return;
+    }
+    const confirmAndLeave = async () => {
+      if (await guard.confirmDiscard()) {
+        navigation.dispatch(data.action);
+      }
+    };
+    void confirmAndLeave();
+  });
+
+  const guardNavigation = useCallback((navigate: () => void) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigate();
+      return;
+    }
+    const run = async () => {
+      if (await guard.confirmDiscard()) {
+        navigate();
+      }
+    };
+    void run();
+  }, []);
+
+  return { registerBeforeLeave, guardNavigation };
+}
+
+function SettingsDetailPane({
+  view,
+  isCompactLayout,
+  detailTitle,
+  detailActions,
+  detailWidth,
+  onBack,
+  onRegisterBeforeLeave,
+  content,
+}: {
+  view: SettingsView;
+  isCompactLayout: boolean;
+  detailTitle: string | undefined;
+  detailActions: React.ReactNode;
+  detailWidth: React.ComponentProps<typeof PageLayout>["width"];
+  onBack: () => void;
+  onRegisterBeforeLeave: (guard: SettingsBeforeLeaveGuard | null) => void;
+  content: React.ReactNode;
+}) {
+  const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
+  const pageTitle =
+    !isCompactLayout && (view.kind === "project" || view.kind === "provider")
+      ? undefined
+      : detailTitle;
+
+  return (
+    <WindowChromeRegion corners={isCompactLayout ? "both" : "top-right"}>
+      <View
+        style={isCompactLayout ? desktopStyles.compactContentPane : desktopStyles.contentPane}
+        testID={isCompactLayout ? undefined : "settings-detail-pane"}
+      >
+        {isStandaloneAgentProfilesView ? (
+          <HostAgentProfilesPage
+            serverId={view.serverId}
+            onBack={isCompactLayout ? onBack : undefined}
+            onRegisterBeforeLeave={onRegisterBeforeLeave}
+          />
+        ) : (
+          <PageLayout
+            // A project or provider page draws its own title on desktop, naming the list it came from.
+            title={pageTitle}
+            onBack={isCompactLayout ? onBack : undefined}
+            actions={detailActions}
+            width={detailWidth}
+            titleTestID={isCompactLayout ? undefined : "settings-detail-header-title"}
+            testID={isCompactLayout ? undefined : "settings-detail-scroll-body"}
+          >
+            {content}
+          </PageLayout>
+        )}
+      </View>
+    </WindowChromeRegion>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
@@ -1201,10 +1341,10 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   );
 
   const handleAddHost = useAddHost({ onAdded: handleHostAdded });
+  const { registerBeforeLeave, guardNavigation } = useSettingsBeforeLeaveGuard();
 
-  const handleSelectSection = useCallback(
-    (section: SettingsSectionSlug) => {
-      const target = buildSettingsSectionRoute(section);
+  const navigateRoute = useCallback(
+    (target: Parameters<typeof router.push>[0]) => {
       if (isCompactLayout) {
         router.push(target);
       } else {
@@ -1214,51 +1354,62 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [isCompactLayout, router],
   );
 
+  const handleSelectSection = useCallback(
+    (section: SettingsSectionSlug) => {
+      if (view.kind === "section" && view.section === section) {
+        return;
+      }
+      const target = buildSettingsSectionRoute(section);
+      guardNavigation(() => navigateRoute(target));
+    },
+    [guardNavigation, navigateRoute, view],
+  );
+
   // Picker: choose the host for host-section rows. If the user is already on a
   // host detail route, keep that detail section and swap only the host segment.
   const handleSelectHost = useCallback(
     (serverId: string) => {
-      selectSettingsHost(serverId);
-      if (view.kind === "project" || view.kind === "provider") {
-        // The detail belongs to the old host; open the same list on the new one.
-        const target = buildSettingsHostSectionRoute(
-          serverId,
-          view.kind === "project" ? "projects" : "providers",
-        );
-        if (isCompactLayout) {
-          router.push(target);
-        } else {
-          router.replace(target);
+      if (view.kind === "host" && view.serverId === serverId) {
+        return;
+      }
+      const applySelection = () => {
+        selectSettingsHost(serverId);
+        if (view.kind === "project" || view.kind === "provider") {
+          // The detail belongs to the old host; open the same list on the new one.
+          navigateRoute(
+            buildSettingsHostSectionRoute(
+              serverId,
+              view.kind === "project" ? "projects" : "providers",
+            ),
+          );
+          return;
         }
-        return;
-      }
-      if (view.kind !== "host") {
-        return;
-      }
-      const target = buildSettingsHostSectionRoute(serverId, view.section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+        if (view.kind === "host") {
+          navigateRoute(buildSettingsHostSectionRoute(serverId, view.section));
+        }
+      };
+      guardNavigation(applySelection);
     },
-    [isCompactLayout, router, view],
+    [guardNavigation, navigateRoute, view],
   );
 
   const handleSelectHostSection = useCallback(
     (section: HostSectionSlug) => {
       if (!activeHostServerId) {
-        handleAddHost();
+        guardNavigation(handleAddHost);
+        return;
+      }
+      if (
+        view.kind === "host" &&
+        view.serverId === activeHostServerId &&
+        view.section === section
+      ) {
         return;
       }
       const target = buildSettingsHostSectionRoute(activeHostServerId, section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+      guardNavigation(() => navigateRoute(target));
     },
-    [activeHostServerId, handleAddHost, isCompactLayout, router],
+    [activeHostServerId, guardNavigation, handleAddHost, navigateRoute, view],
   );
 
   const handleHostRemoved = useCallback(() => {
@@ -1271,12 +1422,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [isCompactLayout, router]);
 
   const handleBackFromDetail = useCallback(() => {
-    returnFromSettings(view);
-  }, [view]);
+    guardNavigation(() => returnFromSettings(view));
+  }, [guardNavigation, view]);
 
   const handleBackToWorkspace = useCallback(() => {
-    returnFromSettings({ kind: "root" });
-  }, []);
+    guardNavigation(() => returnFromSettings({ kind: "root" }));
+  }, [guardNavigation]);
 
   // A plugin's page draws its own header; the compact back header names the plugin.
   const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
@@ -1412,53 +1563,36 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     );
   }
 
-  if (isCompactLayout) {
-    return (
-      <View style={styles.container} onLayout={onContentLayout}>
-        <PageLayout
-          title={detailTitle}
-          onBack={handleBackFromDetail}
-          actions={detailActions}
-          width={detailWidth}
-        >
-          {content}
-        </PageLayout>
-      </View>
-    );
-  }
-
-  // Desktop split view — mirrors AppContainer: sidebar owns the titlebar drag
-  // region + traffic-light padding; detail pane renders whatever header the
-  // selected section provides.
+  // Desktop split view and compact detail view share one wrapper tree around the
+  // detail pane so resizing across the compact breakpoint never unmounts active
+  // detail screens or discards in-progress edits (e.g., Agent profiles drawer → sheet).
   return (
     <View style={styles.container} onLayout={onContentLayout}>
       <View style={desktopStyles.row}>
-        <WindowChromeRegion corners="top-left">
-          <SettingsSidebar
-            view={view}
-            onSelectSection={handleSelectSection}
-            onSelectHostSection={handleSelectHostSection}
-            onSelectHost={handleSelectHost}
-            onAddHost={handleAddHost}
-            onBackToWorkspace={handleBackToWorkspace}
-            activeHostServerId={activeHostServerId}
-            layout="desktop"
-          />
-        </WindowChromeRegion>
-        <WindowChromeRegion corners="top-right">
-          <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            <PageLayout
-              // A project or provider page draws its own title, which names the list it came from.
-              title={view.kind === "project" || view.kind === "provider" ? undefined : detailTitle}
-              actions={detailActions}
-              width={detailWidth}
-              titleTestID="settings-detail-header-title"
-              testID="settings-detail-scroll-body"
-            >
-              {content}
-            </PageLayout>
-          </View>
-        </WindowChromeRegion>
+        {isCompactLayout ? null : (
+          <WindowChromeRegion corners="top-left">
+            <SettingsSidebar
+              view={view}
+              onSelectSection={handleSelectSection}
+              onSelectHostSection={handleSelectHostSection}
+              onSelectHost={handleSelectHost}
+              onAddHost={handleAddHost}
+              onBackToWorkspace={handleBackToWorkspace}
+              activeHostServerId={activeHostServerId}
+              layout="desktop"
+            />
+          </WindowChromeRegion>
+        )}
+        <SettingsDetailPane
+          view={view}
+          isCompactLayout={isCompactLayout}
+          detailTitle={detailTitle}
+          detailActions={detailActions}
+          detailWidth={detailWidth}
+          onBack={handleBackFromDetail}
+          onRegisterBeforeLeave={registerBeforeLeave}
+          content={content}
+        />
       </View>
     </View>
   );
@@ -1527,6 +1661,10 @@ const desktopStyles = StyleSheet.create({
     flex: 1,
     minWidth: SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
   },
+  compactContentPane: {
+    flex: 1,
+    minWidth: 0,
+  },
 });
 
 const sidebarStyles = StyleSheet.create((theme) => ({
@@ -1548,8 +1686,10 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   // Compact values draw each group as an island of tiles; desktop keeps a plain list.
+  // Use vertical margin rather than padding so trailing empty group padding cannot
+  // intersect the scrollport top alone and capture browser scroll anchoring.
   group: {
-    paddingVertical: theme.spacing[2],
+    marginVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     gap: { xs: theme.spacing[1], md: theme.spacing[0.5] },
   },
