@@ -77,10 +77,13 @@ import {
   Text,
   View,
   ViewStyle,
+  Platform,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   type TextStyle,
 } from "react-native";
+import type { PluginAssistantSelectionAction } from "@/plugins/assistant-selection";
+import { buildAssistantSelectionMenuItems } from "@/plugins/assistant-selection/model";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -781,6 +784,8 @@ interface AssistantMessageProps {
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
   phase: MarkdownPhase;
+  messageId?: string;
+  assistantSelectionActions?: readonly PluginAssistantSelectionAction[];
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -1197,6 +1202,13 @@ function NativeShimmerPeakSvg({ gradientId }: { gradientId: string }) {
   );
 }
 
+function reportAssistantSelectionError(
+  action: PluginAssistantSelectionAction,
+  error: unknown,
+): void {
+  console.error(`Assistant selection action failed: ${action.pluginId}/${action.id}`, error);
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   renderFullContent = false,
   occurrenceKey,
@@ -1207,6 +1219,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
   phase,
+  messageId,
+  assistantSelectionActions,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
   const renderedMessage = useMemo(
@@ -1216,6 +1230,18 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
   const revealedText = useRevealedText(renderedMessage.text, phase);
   const revealedMessage = renderFullContent ? renderedMessage.text : revealedText;
+  const isFinished = phase === "complete" && revealedMessage.length >= renderedMessage.text.length;
+  const contextMenuItems = useMemo(
+    () =>
+      buildAssistantSelectionMenuItems({
+        platform: Platform.OS,
+        finished: isFinished,
+        messageId,
+        actions: assistantSelectionActions,
+        onError: reportAssistantSelectionError,
+      }),
+    [assistantSelectionActions, isFinished, messageId],
+  );
   const fullMessageByteLength = useMemo(
     () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
     [message, phase, renderedMessage.capped],
@@ -1256,6 +1282,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       <MarkdownRenderer
         text={revealedMessage}
         agentCommands
+        contextMenuItems={contextMenuItems}
         streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
         client={client}
         workspaceRoot={workspaceRoot}

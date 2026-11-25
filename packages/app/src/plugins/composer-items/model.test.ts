@@ -41,6 +41,7 @@ function installed(): InstalledPlugin {
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    assistantSelectionActions: [],
     attachmentSources: [
       {
         id: "issues",

@@ -33,6 +33,7 @@ import type {
   PluginThemeContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginAssistantSelectionActionContribution,
   PluginSidebarContribution,
   PluginScreenContribution,
   PluginSidebarItemContribution,
@@ -141,6 +142,7 @@ export function runPluginClientBundle(
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    assistantSelectionActions: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -160,6 +162,7 @@ export function runPluginClientBundle(
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
+  const assistantSelectionActionIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
@@ -481,6 +484,23 @@ export function runPluginClientBundle(
         () => clientSlashCommandNames.delete(name),
       );
     },
+    addAssistantSelectionAction(contribution: PluginAssistantSelectionActionContribution) {
+      const actionId = requireId(contribution.id, "assistant selection action id");
+      if (assistantSelectionActionIds.has(actionId)) {
+        throw new Error(`Duplicate assistant selection action: ${actionId}`);
+      }
+      const title = normalizePluginText(contribution.title);
+      if (!title) throw new Error(`Assistant selection action ${actionId} has no title`);
+      if (typeof contribution.onSelect !== "function") {
+        throw new Error(`Assistant selection action ${actionId} has no callback`);
+      }
+      assistantSelectionActionIds.add(actionId);
+      return register(
+        collector.assistantSelectionActions,
+        { ...contribution, id: actionId, title },
+        () => assistantSelectionActionIds.delete(actionId),
+      );
+    },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
       const normalizedId = requireId(contribution.id, "attachment source id");
       if (attachmentSourceIds.has(normalizedId)) {
@@ -661,6 +681,7 @@ export function runPluginClientBundle(
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
+    assistantSelectionActions: collector.assistantSelectionActions,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,

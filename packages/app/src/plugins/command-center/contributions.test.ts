@@ -143,6 +143,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
       },
     ],
     clientSlashCommands: [],
+    assistantSelectionActions: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

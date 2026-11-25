@@ -34,6 +34,7 @@ function plugin(input: {
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    assistantSelectionActions: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [

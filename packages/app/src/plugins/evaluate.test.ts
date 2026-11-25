@@ -944,6 +944,50 @@ it("binds imported getters to each originating installation across delayed callb
   await second.cleanup();
 });
 
+describe("assistant selection actions", () => {
+  it("registers an action and removes it on cleanup", () => {
+    const plugin = evaluatePluginClientBundle(
+      "selection",
+      bundle(`
+        globalThis.__selectionRemoval = plugin.addAssistantSelectionAction({
+          id: " annotate ",
+          title: " Annotate ",
+          onSelect() {},
+        });
+      `),
+    );
+
+    expect(plugin.assistantSelectionActions.map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: "annotate", title: "Annotate" },
+    ]);
+
+    (Reflect.get(globalThis, "__selectionRemoval") as () => void)();
+    Reflect.deleteProperty(globalThis, "__selectionRemoval");
+    expect(plugin.assistantSelectionActions).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a duplicate id",
+      `plugin.addAssistantSelectionAction({ id: "a", title: "A", onSelect() {} });
+       plugin.addAssistantSelectionAction({ id: "a", title: "B", onSelect() {} });`,
+      "Duplicate assistant selection action: a",
+    ],
+    [
+      "an empty title",
+      `plugin.addAssistantSelectionAction({ id: "a", title: " ", onSelect() {} });`,
+      "Assistant selection action a has no title",
+    ],
+    [
+      "a missing callback",
+      `plugin.addAssistantSelectionAction({ id: "a", title: "A" });`,
+      "Assistant selection action a has no callback",
+    ],
+  ])("rejects %s", (_name, body, message) => {
+    expect(() => evaluatePluginClientBundle("selection", bundle(body))).toThrow(message);
+  });
+});
+
 describe("file panels", () => {
   const panel =
     '{ id: "pdf", title: "PDF", icon: "FileText", files: { extensions: ["pdf"] }, Component() { return null; } }';

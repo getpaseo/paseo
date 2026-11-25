@@ -43,6 +43,8 @@ export type {
   PluginAgentCommandContext,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginAssistantSelection,
+  PluginAssistantSelectionActionContribution,
   SettingsState,
 } from "./contracts.js";
 export type {
