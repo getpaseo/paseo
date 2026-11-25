@@ -42,8 +42,6 @@ export function quoteWindowsCommand(
  * those quotes. cmd.exe then sees no quoted region and keeps `&`, `%` and the others as text.
  * A `.cmd` or `.bat` script reads its arguments a second time when it forwards them with `%*`,
  * so `commandScript` escapes them twice. See https://qntm.org/cmd.
- *
- * cmd.exe has no escape for a line break, so a CR or LF still ends the command.
  */
 export function quoteWindowsArgument(
   argument: string,

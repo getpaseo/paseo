@@ -942,6 +942,40 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(existsSync(join(repoDir, "refused.log"))).toBe(false);
     });
 
+    it("reports a streamed setup command that cannot start as a failed command", async () => {
+      // Node refuses a null byte in an argument before it starts the process, as the SDK refuses a
+      // line break for a Windows cmd.exe launch.
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo a\0b" } }),
+      );
+      const events: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        signal: new AbortController().signal,
+        onEvent: (event) => events.push(event.type),
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        results: [
+          expect.objectContaining({
+            exitCode: null,
+            stderr: expect.stringContaining("null bytes"),
+          }),
+        ],
+      });
+      expect(events).toEqual(["command_started", "output", "command_completed"]);
+    });
+
     it("runs string setup scripts from paseo.json as a single shell command", async () => {
       const paseoConfig = {
         worktree: {

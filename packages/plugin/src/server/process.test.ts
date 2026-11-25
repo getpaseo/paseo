@@ -82,6 +82,24 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
   });
 });
 
+// cmd.exe ends a command at a line break, and the text after it would run as a second command.
+test("a Windows cmd.exe launch refuses an argument with a line break before it starts", () => {
+  for (const argument of ["line one\nline two", "line one\r\n& calc"]) {
+    expect(() =>
+      resolveSpawnInvocation("C:\\Sandbox\\run.cmd", ["--", argument], undefined, "win32"),
+    ).toThrow("cmd.exe cannot pass an argument with a line break to C:\\Sandbox\\run.cmd");
+    expect(() => resolveSpawnInvocation("codex", [argument], undefined, "win32")).toThrow(
+      "cmd.exe cannot pass an argument with a line break to codex",
+    );
+  }
+  expect(resolveSpawnInvocation("C:\\tools\\node.exe", ["a\nb"], undefined, "win32").args).toEqual([
+    "a\nb",
+  ]);
+  expect(resolveSpawnInvocation("/usr/bin/sandbox", ["a\nb"], undefined, "linux").args).toEqual([
+    "a\nb",
+  ]);
+});
+
 // A launch wrap starts its executable with the command and its arguments after the wrap's own.
 // The caller's shell choice belongs to the unwrapped command, so a wrap ignores it.
 test("spawnProcess starts a wrap's executable with the command after the wrap arguments", async () => {

@@ -619,20 +619,28 @@ async function execSetupCommandStreamed(options: {
     });
 
     const shellInvocation = lifecycleCommandInvocation(options.command, options.wrap);
-    const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child: ReturnType<typeof spawnProcess>;
+    try {
+      child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
+        cwd: options.cwd,
+        env: options.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      // A command that cannot start fails like one whose process reports a spawn error.
+      emitOutput("stderr", error instanceof Error ? error.message : String(error));
+      void finish(null);
+      return;
+    }
 
-    const abort = () => {
+    function abort(): void {
       termination ??= terminateWithTreeKill(child, {
         gracefulTimeoutMs: 1000,
         forceTimeoutMs: 1000,
       });
       void finish(null);
-    };
+    }
     if (options.signal?.aborted) {
       abort();
     } else {
