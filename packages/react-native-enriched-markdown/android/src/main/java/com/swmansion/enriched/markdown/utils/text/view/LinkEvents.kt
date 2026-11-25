@@ -38,31 +38,13 @@ fun View.emitLinkLongPressEvent(url: String) {
  * Cancels the JS touch for an active link tap, preventing parent
  * Pressable/TouchableOpacity from firing onPress for the same tap.
  *
- * Also requests that parent ViewGroups do not intercept subsequent touch
- * events in this gesture. This is necessary for react-native-gesture-handler's
- * Pressable, which intercepts at the native ViewGroup level and would otherwise
- * steal the gesture before ACTION_UP reaches the TextView.
+ * Parent intercept is handled by [LinkLongPressMovementMethod], which
+ * disallows it for the press and releases it when the press ends.
  */
 fun TextView.cancelJSTouchForLinkTap(event: MotionEvent) {
   val currentMovementMethod = movementMethod
   if (currentMovementMethod is LinkLongPressMovementMethod && currentMovementMethod.isLinkTouchActive) {
-    parent?.requestDisallowInterceptTouchEvent(true)
     NativeGestureUtil.notifyNativeGestureStarted(this, event)
-  }
-}
-
-/**
- * Re-allows parent ViewGroups to intercept touch events once the link
- * touch is no longer active (slop exceeded, gesture ended, or cancelled).
- * This restores normal scrolling behavior for parent ScrollView/RecyclerView.
- *
- * Must be called after [LinkLongPressMovementMethod.onTouchEvent] has
- * processed the event, since that is where [isLinkTouchActive] is updated.
- */
-fun TextView.reallowParentInterceptIfLinkReleased() {
-  val currentMovementMethod = movementMethod
-  if (currentMovementMethod is LinkLongPressMovementMethod && !currentMovementMethod.isLinkTouchActive) {
-    parent?.requestDisallowInterceptTouchEvent(false)
   }
 }
 
