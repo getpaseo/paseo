@@ -2,8 +2,10 @@ import { expect, test } from "../support/fixtures";
 import {
   applyProfileFromPicker,
   closeModelPicker,
+  expectAgentProfileNameDraft,
   expectComposerDoesNotName,
   expectAgentProfilesEmptyPrompt,
+  expectHostAgentProfiles,
   expectProfileEditTooltip,
   expectComposerMode,
   expectCreateProfileFromModelRow,
@@ -14,8 +16,11 @@ import {
   expectProfileReachableByScrolling,
   expectProfileSearchResult,
   expectProfileVisibleForProvider,
+  fillAgentProfileName,
+  openEditProfileFromModelRow,
   openModelPicker,
   openAgentProfilesFromEmptyPrompt,
+  removeOpenModalAgentProfileWithConfirm,
   searchModelPicker,
   seedAgentProfiles,
   selectModelRow,
@@ -146,10 +151,10 @@ test.describe("Agent profiles in the model picker", () => {
       await openModelPicker(page);
       await expectModelRowProfileActionBesideRow(page, oneMinute);
       await expectCreateProfileFromModelRow(page, oneMinute);
-      await expectComposerModel(page, "Ten second stream");
-      await openModelPicker(page);
-      await selectModelRow(page, oneMinute);
       await expectComposerModel(page, oneMinute.modelLabel);
+      await openModelPicker(page);
+      await selectModelRow(page, { provider: "mock", modelId: "ten-second-stream" });
+      await expectComposerModel(page, "Ten second stream");
     } finally {
       await workspace.cleanup();
       await seed.restore();
@@ -229,6 +234,46 @@ test.describe("Agent profiles in the model picker", () => {
       await searchModelPicker(page, "release review");
       await expectProfileSearchResult(page, { name: "Release review 01" });
       await expectProfileReachableByScrolling(page, "Release review 12");
+    } finally {
+      await workspace.cleanup();
+      await seed.restore();
+    }
+  });
+
+  test("canceling Remove in the composer profile editor keeps the editor and draft open", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([PROFILE]);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-profiles-remove-cancel-",
+      title: "Agent profiles remove cancel",
+      model: "ten-second-stream",
+      modeId: "load-test",
+    });
+
+    try {
+      await openAgentRoute(page, workspace);
+      await expectComposerVisible(page);
+      await openModelPicker(page);
+      await openEditProfileFromModelRow(page, {
+        provider: "mock",
+        modelId: "one-minute-stream",
+      });
+      await fillAgentProfileName(page, "Draft name");
+
+      await test.step("canceling Remove keeps the modal and draft intact", async () => {
+        await removeOpenModalAgentProfileWithConfirm(page, "dismiss");
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible();
+        await expectAgentProfileNameDraft(page, "Draft name");
+      });
+
+      await test.step("confirming Remove deletes the profile and closes the modal", async () => {
+        await removeOpenModalAgentProfileWithConfirm(page, "accept");
+        await expect(page.getByTestId("agent-profile-edit-modal")).toHaveCount(0, {
+          timeout: 30_000,
+        });
+        await expectHostAgentProfiles([]);
+      });
     } finally {
       await workspace.cleanup();
       await seed.restore();

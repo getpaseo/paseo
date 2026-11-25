@@ -142,8 +142,22 @@ export async function openAgentProfileSettings(page: Page): Promise<void> {
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, serverId);
-  await page.getByRole("button", { name: "Agents", exact: true }).click();
-  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "agents"));
+  await page.getByRole("button", { name: "Agent profiles", exact: true }).click();
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "agent-profiles"));
+  await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
+}
+
+/** Reach agent profiles on a compact viewport so Open project -> Settings -> Agent profiles are pushed. */
+export async function openCompactAgentProfileSettings(page: Page): Promise<void> {
+  const serverId = getServerId();
+  await gotoAppShell(page);
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
+  await expect(settingsButton).toBeVisible({ timeout: 30_000 });
+  await settingsButton.click();
+  await expect(page).toHaveURL(/\/settings(?:\?|$)/, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Agent profiles", exact: true }).click();
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "agent-profiles"));
   await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -156,7 +170,9 @@ export async function expectNoAgentProfiles(page: Page): Promise<void> {
 // ─── Settings: the profile list ────────────────────────────────────────────
 
 export function agentProfileRow(page: Page, name: string): Locator {
-  return page.locator('[data-testid^="agent-profile-row-"]').filter({ hasText: name });
+  return page
+    .locator('[data-testid^="agent-profile-row-"]')
+    .filter({ has: page.getByText(name, { exact: true }) });
 }
 
 export async function expectAgentProfile(
@@ -165,7 +181,9 @@ export async function expectAgentProfile(
 ): Promise<void> {
   const row = agentProfileRow(page, expected.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect(row.getByText(expected.tags.join(" · "), { exact: true })).toBeVisible();
+  for (const tag of expected.tags) {
+    await expect(row).toContainText(tag);
+  }
   if (expected.notes !== undefined) {
     await expect(row.getByText(expected.notes, { exact: true })).toBeVisible();
   }
@@ -177,7 +195,7 @@ export async function expectAgentProfileTagsGone(
 ): Promise<void> {
   const row = agentProfileRow(page, input.name);
   for (const tag of input.tags) {
-    await expect(row.getByText(tag, { exact: true })).toHaveCount(0);
+    await expect(row).not.toContainText(tag);
   }
 }
 
@@ -196,12 +214,22 @@ export async function expectAgentProfileOrder(page: Page, names: string[]): Prom
     .toEqual(names);
 }
 
+async function openRowActionMenu(page: Page, name: string): Promise<void> {
+  const row = agentProfileRow(page, name);
+  await row.hover();
+  const trigger = row.locator('[data-testid^="agent-profile-menu-"]');
+  await expect(trigger).toBeVisible({ timeout: 15_000 });
+  await trigger.click();
+}
+
 export async function moveAgentProfileUp(page: Page, name: string): Promise<void> {
-  await agentProfileRow(page, name).getByRole("button", { name: "Move up", exact: true }).click();
+  await openRowActionMenu(page, name);
+  await page.getByRole("menuitem", { name: "Move up", exact: true }).click();
 }
 
 export async function moveAgentProfileDown(page: Page, name: string): Promise<void> {
-  await agentProfileRow(page, name).getByRole("button", { name: "Move down", exact: true }).click();
+  await openRowActionMenu(page, name);
+  await page.getByRole("menuitem", { name: "Move down", exact: true }).click();
 }
 
 /**
@@ -215,12 +243,13 @@ export async function removeAgentProfile(page: Page, name: string): Promise<void
     await dialog.accept();
     return message;
   });
-  await agentProfileRow(page, name).getByRole("button", { name: "Remove", exact: true }).click();
+  await openRowActionMenu(page, name);
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   expect(await dialogMessage).toContain(`Remove "${name}"?`);
   await expect(agentProfileRow(page, name)).toHaveCount(0, { timeout: 30_000 });
 }
 
-// ─── Settings: the edit modal ──────────────────────────────────────────────
+// ─── Settings: the inspector drawer / edit sheet ───────────────────────────
 
 export interface AgentProfileDraft {
   name?: string;
@@ -231,62 +260,96 @@ export interface AgentProfileDraft {
   notes?: string;
 }
 
-function editModal(page: Page): Locator {
-  return page.getByTestId("agent-profile-edit-modal");
+function editSurface(page: Page): Locator {
+  return page.locator(
+    '[data-testid="agent-profile-drawer"], [data-testid="agent-profile-edit-modal"]',
+  );
 }
 
 async function chooseSelectFieldOption(
   page: Page,
-  input: { field: "provider" | "model" | "mode" | "thinking"; option: string },
+  input: { field: "model" | "mode" | "thinking"; option: string },
 ): Promise<void> {
-  await editModal(page).getByTestId(`agent-profile-${input.field}-trigger`).click();
+  await editSurface(page).getByTestId(`agent-profile-${input.field}-trigger`).click();
   const option = page
     .getByTestId("combobox-desktop-container")
     .getByRole("button", { name: input.option, exact: true });
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
-  await expect(
-    page.getByRole("button", { name: `${capitalize(input.field)} (${input.option})` }),
-  ).toBeVisible({ timeout: 30_000 });
 }
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+async function ensureCustomizeExpanded(surface: Locator): Promise<void> {
+  const toggle = surface.getByTestId("agent-profile-customize-toggle");
+  if ((await toggle.count()) > 0 && (await toggle.isVisible())) {
+    await toggle.click();
+  }
+}
+
+async function chooseProfileModel(
+  page: Page,
+  input: { provider?: string; model?: string },
+): Promise<void> {
+  await editSurface(page).getByTestId("agent-profile-model-trigger").click();
+  const container = page.getByTestId("combobox-desktop-container");
+  await expect(container).toBeVisible({ timeout: 30_000 });
+  if (input.provider) {
+    const providerRow = container.getByRole("button", {
+      name: new RegExp(escapeForRegex(input.provider)),
+    });
+    if ((await providerRow.count()) > 0 && (await providerRow.first().isVisible())) {
+      await providerRow.first().click();
+    }
+  }
+  const targetLabel = input.model ?? input.provider;
+  if (targetLabel) {
+    const option = container
+      .getByRole("button", { name: new RegExp(escapeForRegex(targetLabel)) })
+      .first();
+    await expect(option).toBeVisible({ timeout: 30_000 });
+    await option.click();
+  }
 }
 
 async function fillAgentProfileForm(page: Page, draft: AgentProfileDraft): Promise<void> {
-  const modal = editModal(page);
+  const surface = editSurface(page);
+  // Model first: CombinedModelSelector sets provider + model and auto-suggests defaults.
+  if (draft.model !== undefined || draft.provider !== undefined) {
+    await chooseProfileModel(page, { provider: draft.provider, model: draft.model });
+  }
   if (draft.name !== undefined) {
-    await modal.getByRole("textbox", { name: "Name", exact: true }).fill(draft.name);
+    await surface.getByRole("textbox", { name: "Name", exact: true }).fill(draft.name);
   }
-  // Provider first: it resets every provider-scoped field below it.
-  if (draft.provider !== undefined) {
-    await chooseSelectFieldOption(page, { field: "provider", option: draft.provider });
-  }
-  // Thinking after model: thinking levels hang off the model, and switching the
-  // model drops a level the new one does not offer.
-  if (draft.model !== undefined) {
-    await chooseSelectFieldOption(page, { field: "model", option: draft.model });
-  }
-  if (draft.thinking !== undefined) {
-    await chooseSelectFieldOption(page, { field: "thinking", option: draft.thinking });
+  if (draft.thinking !== undefined || draft.mode !== undefined || draft.notes !== undefined) {
+    await ensureCustomizeExpanded(surface);
   }
   if (draft.mode !== undefined) {
     await chooseSelectFieldOption(page, { field: "mode", option: draft.mode });
   }
+  if (draft.thinking !== undefined) {
+    const thinkingContainer = surface.getByTestId("agent-profile-thinking-field");
+    const segmentButton = thinkingContainer.getByRole("button", {
+      name: draft.thinking,
+      exact: true,
+    });
+    if ((await segmentButton.count()) > 0) {
+      await segmentButton.click();
+    } else {
+      await chooseSelectFieldOption(page, { field: "thinking", option: draft.thinking });
+    }
+  }
   if (draft.notes !== undefined) {
-    await modal.getByRole("textbox", { name: "When to use", exact: true }).fill(draft.notes);
+    await surface.getByRole("textbox", { name: "When to use", exact: true }).fill(draft.notes);
   }
 }
 
 async function saveAgentProfile(page: Page): Promise<void> {
-  await editModal(page).getByRole("button", { name: "Save", exact: true }).click();
-  await expect(editModal(page)).toHaveCount(0, { timeout: 30_000 });
+  await page.getByTestId("agent-profile-save-button").click();
+  await expect(editSurface(page)).toHaveCount(0, { timeout: 30_000 });
 }
 
 export async function createAgentProfile(page: Page, draft: AgentProfileDraft): Promise<void> {
-  await page.getByRole("button", { name: "Add agent profile", exact: true }).click();
-  await expect(editModal(page)).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("agent-profiles-add-button").click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
   await fillAgentProfileForm(page, draft);
   await saveAgentProfile(page);
 }
@@ -299,7 +362,7 @@ export async function createAgentProfileFromEmptyState(
     .getByTestId("agent-profiles-card")
     .getByRole("button", { name: "New profile", exact: true })
     .click();
-  await expect(editModal(page)).toBeVisible({ timeout: 30_000 });
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
   await fillAgentProfileForm(page, draft);
   await saveAgentProfile(page);
 }
@@ -309,46 +372,183 @@ export async function editAgentProfile(
   name: string,
   changes: AgentProfileDraft,
 ): Promise<void> {
-  await agentProfileRow(page, name)
-    .getByRole("button", { name: "Edit profile", exact: true })
-    .click();
-  await expect(editModal(page)).toBeVisible({ timeout: 30_000 });
+  await agentProfileRow(page, name).click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
   await fillAgentProfileForm(page, changes);
   await saveAgentProfile(page);
 }
 
-/** Opens the modal for a profile purely to read back what it stored. */
+export async function openAgentProfileEditor(page: Page, name: string): Promise<void> {
+  await agentProfileRow(page, name).click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
+}
+
+export async function openCreateAgentProfileEditor(page: Page): Promise<void> {
+  await page.getByTestId("agent-profiles-add-button").click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
+}
+
+export async function fillAgentProfileName(page: Page, name: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill(name);
+}
+
+export async function expectAgentProfileNameDraft(page: Page, name: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
+}
+
+export async function toggleAgentProfileCustomize(page: Page): Promise<void> {
+  await page.getByTestId("agent-profile-customize-toggle").click();
+}
+
+export async function fillAgentProfileNotes(page: Page, notes: string): Promise<void> {
+  await page.getByRole("textbox", { name: "When to use", exact: true }).fill(notes);
+}
+
+export async function expectAgentProfileNotesDraft(page: Page, notes: string): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(notes);
+}
+
+export async function saveOpenAgentProfile(page: Page): Promise<void> {
+  await saveAgentProfile(page);
+}
+
+export async function duplicateOpenAgentProfileWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByTestId("agent-profile-drawer-more").click();
+  await page.getByTestId("agent-profile-drawer-duplicate").click();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+export async function openEditProfileFromModelRow(
+  page: Page,
+  input: { provider: string; modelId: string },
+): Promise<void> {
+  const row = modelRow(page, input);
+  await row.hover();
+  const editButton = pickerViewport(page).getByTestId(
+    `model-edit-profile-${input.provider}-${input.modelId}`,
+  );
+  await expect(editButton).toBeVisible({ timeout: 30_000 });
+  await editButton.click();
+  await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
+}
+
+export async function removeOpenModalAgentProfileWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByTestId("agent-profile-modal-remove-button").click();
+  expect(await dialogMessage).toMatch(/remove/i);
+}
+
+export async function switchSettingsSectionWithConfirm(
+  page: Page,
+  sectionName: string,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByRole("button", { name: sectionName, exact: true }).click();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+export async function browserBackWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.goBack();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+export async function browserHistoryJumpWithConfirm(
+  page: Page,
+  delta: number,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.evaluate((step) => window.history.go(step), delta);
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+/** Opens the inspector for a profile purely to read back what it stored. */
 export async function expectAgentProfileForm(
   page: Page,
   name: string,
   expected: { provider?: string; model?: string; mode?: string; notes?: string },
 ): Promise<void> {
-  await agentProfileRow(page, name)
-    .getByRole("button", { name: "Edit profile", exact: true })
-    .click();
-  const modal = editModal(page);
-  await expect(modal).toBeVisible({ timeout: 30_000 });
-  await expect(modal.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
-  const notesHint = modal.getByTestId("agent-profile-notes-field-hint");
-  await expect(notesHint).toHaveText(
-    "Helps agents choose this profile when starting another agent.",
-  );
+  await agentProfileRow(page, name).click();
+  const surface = editSurface(page);
+  await expect(surface).toBeVisible({ timeout: 30_000 });
+  await expect(surface.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
+  const notesHint = surface.getByTestId("agent-profile-notes-field-hint");
+  await expect(notesHint).toHaveText("Tells agents when to pick this profile");
   expect(await notesHint.evaluate((element) => getComputedStyle(element).webkitLineClamp)).not.toBe(
     "1",
   );
-  for (const [field, value] of Object.entries(expected)) {
-    if (field === "notes") {
-      await expect(modal.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(
-        value,
-      );
-      continue;
-    }
-    await expect(
-      modal.getByRole("button", { name: `${capitalize(field)} (${value})` }),
-    ).toBeVisible({ timeout: 30_000 });
+  if (expected.model) {
+    await expect(surface.getByTestId("agent-profile-model-trigger")).toContainText(expected.model);
+  } else if (expected.provider) {
+    await expect(surface.getByTestId("agent-profile-model-trigger")).toContainText(
+      expected.provider,
+    );
   }
-  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(editModal(page)).toHaveCount(0, { timeout: 30_000 });
+  if (expected.provider) {
+    await expect(surface).toContainText(expected.provider);
+  }
+  if (expected.mode) {
+    await expect(surface.getByTestId("agent-profile-mode-trigger")).toContainText(expected.mode);
+  }
+  if (expected.notes !== undefined) {
+    await expect(surface.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(
+      expected.notes,
+    );
+  }
+  await surface.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(editSurface(page)).toHaveCount(0, { timeout: 30_000 });
 }
 
 // ─── The model picker ──────────────────────────────────────────────────────
@@ -535,7 +735,10 @@ export async function expectModelRowProfileActionBesideRow(
   await expect(row.getByRole("button")).toHaveCount(0);
 }
 
-/** The hover-revealed plus on an unprofiled model row opens a seeded profile form. */
+/**
+ * The hover-revealed plus on an unprofiled model row saves the profile,
+ * selects the model immediately, closes the picker, and surfaces an Edit / Undo toast.
+ */
 export async function expectCreateProfileFromModelRow(
   page: Page,
   input: { provider: string; modelId: string; modelLabel: string },
@@ -548,14 +751,14 @@ export async function expectCreateProfileFromModelRow(
   await modelRow(page, input).hover();
   await expect(action).toHaveCSS("pointer-events", "auto");
   await action.click();
-  const modal = editModal(page);
-  await expect(modal).toBeVisible({ timeout: 30_000 });
-  await expect(modal.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
-    input.modelLabel,
-  );
-  await expect(modal.getByRole("button", { name: `Model (${input.modelLabel})` })).toBeVisible();
-  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(modal).toHaveCount(0, { timeout: 30_000 });
+
+  const toast = page.getByTestId("model-profile-created-toast");
+  await expect(toast).toBeVisible({ timeout: 30_000 });
+  await expect(toast).toContainText(input.modelLabel);
+
+  // Undo removes the newly saved profile from the toast.
+  await toast.getByTestId("model-profile-created-undo").click();
+  await expect(toast).toHaveCount(0, { timeout: 30_000 });
 }
 
 export async function selectModelRow(
