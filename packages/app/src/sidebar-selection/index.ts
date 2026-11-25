@@ -1,4 +1,3 @@
-export { isShiftPressEvent } from "./internal/selection-state";
 export {
   registerSidebarVisibleWorkspaceKeysReader,
   useIsSidebarSelectionMode,
@@ -6,3 +5,4 @@ export {
   useSidebarSelectionStore,
 } from "./internal/selection-store";
 export { SidebarSelectionHost } from "./internal/sidebar-selection-host";
+export { useWorkspaceSelectionPress } from "./internal/workspace-selection-press";

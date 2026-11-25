@@ -12,7 +12,7 @@ import {
   type Ref,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text, ScrollView, type GestureResponderEvent } from "react-native";
+import { View, Text, ScrollView } from "react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -74,11 +74,11 @@ import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle
 import { selectSidebarGroupVisibility } from "@/components/sidebar/sidebar-group-visibility";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
-  isShiftPressEvent,
   registerSidebarVisibleWorkspaceKeysReader,
   useIsSidebarSelectionMode,
   useIsWorkspaceBulkSelected,
   useSidebarSelectionStore,
+  useWorkspaceSelectionPress,
 } from "@/sidebar-selection";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
@@ -936,35 +936,11 @@ function StatusWorkspaceRowInnerContent({
     selected,
   });
 
-  const handleRowPress = useCallback(
-    (event: GestureResponderEvent) => {
-      const shiftKey = isShiftPressEvent(event);
-      if (isSelectionMode || shiftKey) {
-        if (didLongPressRef?.current) {
-          didLongPressRef.current = false;
-          return;
-        }
-        event.preventDefault?.();
-        useSidebarSelectionStore.getState().pressWorkspace(workspace.workspaceKey, { shiftKey });
-        return;
-      }
-      handleNavigatePress();
-    },
-    [didLongPressRef, handleNavigatePress, isSelectionMode, workspace.workspaceKey],
-  );
-
-  const handleRowPressIn = useCallback(
-    (event: GestureResponderEvent) => {
-      if (isShiftPressEvent(event)) {
-        event.preventDefault?.();
-        return;
-      }
-      if (!isSelectionMode) {
-        startDragPress?.(event);
-      }
-    },
-    [isSelectionMode, startDragPress],
-  );
+  const { onPress: handleRowPress, onPressIn: handleRowPressIn } = useWorkspaceSelectionPress({
+    workspaceKey: workspace.workspaceKey,
+    onNavigate: handleNavigatePress,
+    onPressIn: startDragPress,
+  });
 
   return (
     <SidebarWorkspaceRowFrame

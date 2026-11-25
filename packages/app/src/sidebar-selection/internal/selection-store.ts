@@ -29,7 +29,8 @@ export function registerSidebarVisibleWorkspaceKeysReader(reader: VisibleKeysRea
 interface SidebarSelectionStoreState extends WorkspaceSelectionState {
   isArchiving: boolean;
   enter: (workspaceKey: string) => void;
-  pressWorkspace: (workspaceKey: string, options: { shiftKey: boolean }) => void;
+  /** Shift+click selects a range from the anchor; any other press toggles the workspace. */
+  pressWorkspace: (workspaceKey: string, options: { range: boolean }) => void;
   reconcile: (availableKeys: ReadonlySet<string>) => void;
   setArchiving: (archiving: boolean) => void;
   exit: () => void;
@@ -43,10 +44,10 @@ export const useSidebarSelectionStore = create<SidebarSelectionStoreState>((set)
       ...enterWorkspaceSelection(workspaceKey),
       isArchiving: false,
     })),
-  pressWorkspace: (workspaceKey, { shiftKey }) =>
+  pressWorkspace: (workspaceKey, { range }) =>
     set((state) => {
       if (state.isArchiving) return state;
-      const next = shiftKey
+      const next = range
         ? selectWorkspaceRange(state, workspaceKey, visibleKeysReader())
         : toggleWorkspaceSelection(state, workspaceKey);
       return next === state ? state : { ...next };

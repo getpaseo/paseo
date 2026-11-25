@@ -1,7 +1,7 @@
 import { usesDesktopBindings } from "./internal/conventions";
 import { createKeyboardPipeline } from "./internal/pipeline";
 import { overlays } from "./internal/overlays";
-import { shiftModifier } from "./internal/shift-modifier";
+import { heldModifiers } from "./internal/press-modifiers";
 import { attachKeyboardSources, publishKeyboardPolicy } from "./internal/sources";
 import type { KeyboardSourceInput } from "./internal/sources/contract";
 import type { KeyboardInputEvent } from "./internal/overlays";
@@ -251,12 +251,12 @@ export function useKeyboardShortcuts({
   );
 
   const handleKeyDown = useStableEvent((input: KeyboardSourceInput) => {
-    shiftModifier.handleKeyDown(input.event);
+    heldModifiers.handleKeyDown(input.event);
     return pipeline.keyDown(input);
   });
 
   const handleKeyUp = useStableEvent((event: KeyboardInputEvent) => {
-    shiftModifier.handleKeyUp(event);
+    heldModifiers.handleKeyUp(event);
     const key = event.key ?? "";
     if (key === badgeModifierKey) {
       setBadgeModifierDown(false);
@@ -264,7 +264,7 @@ export function useKeyboardShortcuts({
   });
 
   const handleBlur = useStableEvent(() => {
-    shiftModifier.reset();
+    heldModifiers.reset();
     resetModifiers();
   });
 
@@ -282,7 +282,7 @@ export function useKeyboardShortcuts({
     });
     return () => {
       detach();
-      shiftModifier.reset();
+      heldModifiers.reset();
       pipeline.dispose();
     };
   }, [enabled, pipeline, handleKeyDown, handleKeyUp, handleBlur]);

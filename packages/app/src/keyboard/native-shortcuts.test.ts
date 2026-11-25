@@ -300,49 +300,111 @@ describe("hardware source adapter", () => {
   });
 });
 
-describe("shift modifier tracking", () => {
+function modifierKey(
+  key: string,
+  code: string,
+  flags: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } = {},
+) {
+  return { key, code, shiftKey: false, metaKey: false, ctrlKey: false, ...flags };
+}
+
+describe("held modifier tracking", () => {
   it("tracks left/right Shift holds, self-heals on non-shifted keys, and resets on blur", async () => {
-    const { createShiftModifierTracker } = await import("./internal/shift-modifier");
-    const tracker = createShiftModifierTracker();
-    expect(tracker.isDown()).toBe(false);
+    const { createHeldModifierTracker } = await import("./internal/press-modifiers");
+    const tracker = createHeldModifierTracker();
+    expect(tracker.isDown("Shift")).toBe(false);
 
-    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
-    expect(tracker.isDown()).toBe(true);
+    tracker.handleKeyDown(modifierKey("Shift", "ShiftLeft", { shiftKey: true }));
+    expect(tracker.isDown("Shift")).toBe(true);
 
-    tracker.handleKeyDown({ key: "Shift", code: "ShiftRight", shiftKey: true });
-    tracker.handleKeyUp({ key: "Shift", code: "ShiftLeft", shiftKey: true });
-    expect(tracker.isDown()).toBe(true);
+    tracker.handleKeyDown(modifierKey("Shift", "ShiftRight", { shiftKey: true }));
+    tracker.handleKeyUp(modifierKey("Shift", "ShiftLeft", { shiftKey: true }));
+    expect(tracker.isDown("Shift")).toBe(true);
 
-    tracker.handleKeyUp({ key: "Shift", code: "ShiftRight", shiftKey: false });
-    expect(tracker.isDown()).toBe(false);
+    tracker.handleKeyUp(modifierKey("Shift", "ShiftRight"));
+    expect(tracker.isDown("Shift")).toBe(false);
 
     // Self-heals if a Shift key-up was swallowed by the OS.
-    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
-    expect(tracker.isDown()).toBe(true);
-    tracker.handleKeyDown({ key: "a", code: "KeyA", shiftKey: false });
-    expect(tracker.isDown()).toBe(false);
+    tracker.handleKeyDown(modifierKey("Shift", "ShiftLeft", { shiftKey: true }));
+    expect(tracker.isDown("Shift")).toBe(true);
+    tracker.handleKeyDown(modifierKey("a", "KeyA"));
+    expect(tracker.isDown("Shift")).toBe(false);
 
     // Clears on blur / backgrounding.
-    tracker.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
-    expect(tracker.isDown()).toBe(true);
+    tracker.handleKeyDown(modifierKey("Shift", "ShiftLeft", { shiftKey: true }));
+    expect(tracker.isDown("Shift")).toBe(true);
     tracker.reset();
-    expect(tracker.isDown()).toBe(false);
+    expect(tracker.isDown("Shift")).toBe(false);
   });
 
-  it("exposes live hardware Shift state through isShiftKeyDown", async () => {
-    const { shiftModifier } = await import("./internal/shift-modifier");
-    const { isShiftKeyDown } = await import("./index");
-    try {
-      shiftModifier.reset();
-      expect(isShiftKeyDown()).toBe(false);
+  it("tracks Cmd and Ctrl holds independently of Shift", async () => {
+    const { createHeldModifierTracker } = await import("./internal/press-modifiers");
+    const tracker = createHeldModifierTracker();
 
-      shiftModifier.handleKeyDown({ key: "Shift", code: "ShiftLeft", shiftKey: true });
-      expect(isShiftKeyDown()).toBe(true);
+    tracker.handleKeyDown(modifierKey("Meta", "MetaLeft", { metaKey: true }));
+    tracker.handleKeyDown(modifierKey("Shift", "ShiftLeft", { metaKey: true, shiftKey: true }));
+    expect([tracker.isDown("Meta"), tracker.isDown("Shift"), tracker.isDown("Control")]).toEqual([
+      true,
+      true,
+      false,
+    ]);
 
-      shiftModifier.handleKeyUp({ key: "Shift", code: "ShiftLeft", shiftKey: false });
-      expect(isShiftKeyDown()).toBe(false);
-    } finally {
-      shiftModifier.reset();
-    }
+    tracker.handleKeyUp(modifierKey("Shift", "ShiftLeft", { metaKey: true }));
+    expect([tracker.isDown("Meta"), tracker.isDown("Shift")]).toEqual([true, false]);
+
+    // A key reported without the Meta flag means its key-up was swallowed.
+    tracker.handleKeyDown(modifierKey("a", "KeyA"));
+    expect(tracker.isDown("Meta")).toBe(false);
+
+    tracker.handleKeyDown(modifierKey("Control", "ControlRight", { ctrlKey: true }));
+    expect(tracker.isDown("Control")).toBe(true);
+    tracker.handleKeyUp(modifierKey("Control", "ControlRight"));
+    expect(tracker.isDown("Control")).toBe(false);
+  });
+});
+
+describe("press modifiers", () => {
+  it("reads Shift and the platform primary modifier from a pointer press", async () => {
+    const { createHeldModifierTracker, readPressModifiers } =
+      await import("./internal/press-modifiers");
+    const held = createHeldModifierTracker();
+    const mac = { isMac: true, held };
+    const other = { isMac: false, held };
+
+    expect(readPressModifiers({ shiftKey: true }, mac)).toEqual({ shift: true, mod: false });
+    expect(readPressModifiers({ nativeEvent: { shiftKey: true } }, other)).toEqual({
+      shift: true,
+      mod: false,
+    });
+    expect(readPressModifiers({ metaKey: true }, mac)).toEqual({ shift: false, mod: true });
+    expect(readPressModifiers({ ctrlKey: true }, other)).toEqual({ shift: false, mod: true });
+    // Ctrl+click is the secondary click on macOS, and Windows/Linux have no Cmd.
+    expect(readPressModifiers({ ctrlKey: true }, mac)).toEqual({ shift: false, mod: false });
+    expect(readPressModifiers({ metaKey: true }, other)).toEqual({ shift: false, mod: false });
+    expect(readPressModifiers(null, mac)).toEqual({ shift: false, mod: false });
+  });
+
+  it("falls back to held hardware keys when a native press omits modifiers", async () => {
+    const { createHeldModifierTracker, readPressModifiers } =
+      await import("./internal/press-modifiers");
+    const held = createHeldModifierTracker();
+    const responderEvent = { nativeEvent: { locationX: 12, locationY: 8 } };
+
+    held.handleKeyDown(modifierKey("Meta", "MetaLeft", { metaKey: true }));
+    expect(readPressModifiers(responderEvent, { isMac: true, held })).toEqual({
+      shift: false,
+      mod: true,
+    });
+    expect(readPressModifiers(responderEvent, { isMac: false, held })).toEqual({
+      shift: false,
+      mod: false,
+    });
+
+    held.reset();
+    held.handleKeyDown(modifierKey("Shift", "ShiftLeft", { shiftKey: true }));
+    expect(readPressModifiers(responderEvent, { isMac: true, held })).toEqual({
+      shift: true,
+      mod: false,
+    });
   });
 });

@@ -106,11 +106,11 @@ import {
   selectSidebarGroupVisibility,
 } from "@/components/sidebar/sidebar-group-visibility";
 import {
-  isShiftPressEvent,
   registerSidebarVisibleWorkspaceKeysReader,
   useIsSidebarSelectionMode,
   useIsWorkspaceBulkSelected,
   useSidebarSelectionStore,
+  useWorkspaceSelectionPress,
 } from "@/sidebar-selection";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
@@ -1117,35 +1117,11 @@ function WorkspaceRowInner({
     selected,
   });
 
-  const handleRowPress = useCallback(
-    (event: GestureResponderEvent) => {
-      const shiftKey = isShiftPressEvent(event);
-      if (isSelectionMode || shiftKey) {
-        if (interaction.didLongPressRef.current) {
-          interaction.didLongPressRef.current = false;
-          return;
-        }
-        event.preventDefault?.();
-        useSidebarSelectionStore.getState().pressWorkspace(workspace.workspaceKey, { shiftKey });
-        return;
-      }
-      handleNavigatePress();
-    },
-    [handleNavigatePress, interaction.didLongPressRef, isSelectionMode, workspace.workspaceKey],
-  );
-
-  const handleRowPressIn = useCallback(
-    (event: GestureResponderEvent) => {
-      if (isShiftPressEvent(event)) {
-        event.preventDefault?.();
-        return;
-      }
-      if (!isSelectionMode) {
-        interaction.handlePressIn(event);
-      }
-    },
-    [interaction, isSelectionMode],
-  );
+  const { onPress: handleRowPress, onPressIn: handleRowPressIn } = useWorkspaceSelectionPress({
+    workspaceKey: workspace.workspaceKey,
+    onNavigate: handleNavigatePress,
+    onPressIn: interaction.handlePressIn,
+  });
 
   const rowSelected = isSelectionMode ? isBulkSelected : selected;
   const accessibilityState = useMemo(
