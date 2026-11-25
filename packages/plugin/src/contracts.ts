@@ -35,8 +35,8 @@ export interface PluginWorkspaceSnapshot {
   readonly lastPromptAt: string | null;
   readonly parentAgent: AgentRef | null;
   /**
-   * The workspace whose agent created this one, on the same host. Null for root workspaces and
-   * on older hosts. The parent may be archived, so `useWorkspace(parentWorkspace)` can return null.
+   * The workspace whose agent created this one, on the same host. Null when the host records no
+   * parent, as for root workspaces. The parent may be archived, so `useWorkspace` can return null.
    */
   readonly parentWorkspace: WorkspaceRef | null;
   readonly indicator: WorkspaceIndicator;

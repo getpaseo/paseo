@@ -117,8 +117,8 @@ Existing workspace panels can continue passing a host-local string ID to `useWor
 
 Workspace snapshots include `project`, `pinnedAt`, `labels`, `background`, `branch`,
 `lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). `parentWorkspace` is the ref
-of the workspace whose agent created this one, on the same host, and requires Paseo 0.18. It is
-null for root workspaces and on older hosts. The parent may be archived, so `useWorkspace` can
+of the workspace whose agent created this one, on the same host. The app requires Paseo 0.18.
+It is null when the host records no parent, as for root workspaces. The parent may be archived, so `useWorkspace` can
 return null for it. Nest dispatched workspaces with
 `useWorkspaces({ where: (item) => item.parentWorkspace?.key === reference.key })`. Use
 `indicator` and the localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
