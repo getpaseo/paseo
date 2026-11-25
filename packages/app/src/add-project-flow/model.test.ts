@@ -1,26 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  backAddProjectPage,
-  chooseAddProjectHost,
-  currentAddProjectPage,
+  applyAvailableAddProjectHosts,
+  failAddProjectSubmission,
   moveAddProjectActiveIndex,
-  moveAddProjectSelection,
   openAddProjectFlow,
-  openDirectorySearchPage,
-  openGithubLocationPage,
-  openNewDirectoryNamePage,
-  openNewDirectoryParentPage,
+  resolveAddProjectKey,
+  selectAddProjectHost,
+  selectAddProjectTab,
   setAddProjectActiveIndex,
-  setAddProjectPageInput,
-  setNewDirectoryName,
+  setAddProjectLocation,
+  setAddProjectQuery,
+  setNewFolderName,
+  startAddProjectSubmission,
   type AddProjectHost,
 } from "./model";
-import {
-  addProjectMethodEmptyText,
-  buildAddProjectMethods,
-  buildCloneLocationOptions,
-  buildManualGithubRepositoryChoices,
-} from "./options";
+import { buildManualGithubRepositoryChoices, validateNewFolderName } from "./options";
 
 const HOST: AddProjectHost = {
   serverId: "host-1",
@@ -31,123 +25,124 @@ const HOST: AddProjectHost = {
   canSearchGithubRepositories: true,
   canCreateDirectory: true,
 };
+const REMOTE: AddProjectHost = { ...HOST, serverId: "host-2", label: "Remote", canBrowse: false };
 
-describe("Add Project navigation", () => {
-  it("skips a single connected host without adding it to history", () => {
-    const state = openAddProjectFlow({ hosts: [HOST] });
+const KEY = { key: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
 
-    expect(currentAddProjectPage(state)).toEqual({
-      kind: "method",
-      hostId: "host-1",
-      activeIndex: 0,
-      error: null,
-      isSubmitting: false,
-    });
-    expect(backAddProjectPage(state)).toBeNull();
+describe("Add Project flow", () => {
+  it("opens on the Existing tab of the preferred host", () => {
+    const state = openAddProjectFlow({ hosts: [HOST, REMOTE], preferredHostId: "host-2" });
+
+    expect(state.tab).toBe("existing");
+    expect(state.hostId).toBe("host-2");
   });
 
-  it("restores page input and selection after Back", () => {
-    const secondHost = { ...HOST, serverId: "host-2", label: "Remote" };
-    let state = openAddProjectFlow({ hosts: [HOST, secondHost] });
-    state = setAddProjectPageInput(state, "rem");
-    state = setAddProjectActiveIndex(state, 1);
-    state = chooseAddProjectHost(state, secondHost.serverId);
-    state = openDirectorySearchPage(state, secondHost.serverId);
-
-    state = backAddProjectPage(state) ?? state;
-    state = backAddProjectPage(state) ?? state;
-
-    expect(currentAddProjectPage(state)).toEqual({
-      kind: "host",
-      query: "rem",
-      activeIndex: 1,
-      error: null,
-    });
+  it("falls back to the first host, and to no host when none is connected", () => {
+    expect(openAddProjectFlow({ hosts: [HOST, REMOTE] }).hostId).toBe("host-1");
+    expect(openAddProjectFlow({ hosts: [] }).hostId).toBeNull();
   });
 
-  it("wraps keyboard selection in both directions", () => {
+  it("keeps each tab's input when switching tabs", () => {
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = setAddProjectQuery(state, "paseo");
+    state = selectAddProjectTab(state, "clone");
+    state = setAddProjectQuery(state, "getpaseo/");
+    state = selectAddProjectTab(state, "new-folder");
+    state = setNewFolderName(state, "acme-api");
+    state = selectAddProjectTab(state, "existing");
+
+    expect(state.existing.query).toBe("paseo");
+    expect(state.clone.query).toBe("getpaseo/");
+    expect(state.newFolder.name).toBe("acme-api");
+  });
+
+  it("switching host keeps typed input but drops host-specific locations and selection", () => {
+    let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
+    state = setAddProjectQuery(state, "paseo");
+    state = setAddProjectActiveIndex(state, 3);
+    state = selectAddProjectTab(state, "new-folder");
+    state = setNewFolderName(state, "acme-api");
+    state = setAddProjectLocation(state, "~/work");
+
+    state = selectAddProjectHost(state, "host-2");
+
+    expect(state.hostId).toBe("host-2");
+    expect(state.existing).toEqual({ query: "paseo", activeIndex: 0 });
+    expect(state.newFolder).toEqual({ name: "acme-api", location: null });
+  });
+
+  it("locks tab and host while a submission runs, and unlocks with the failure", () => {
+    let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
+    state = selectAddProjectTab(state, "clone");
+    state = startAddProjectSubmission(state);
+
+    expect(selectAddProjectTab(state, "existing").tab).toBe("clone");
+    expect(selectAddProjectHost(state, "host-2").hostId).toBe("host-1");
+    expect(startAddProjectSubmission(state)).toBe(state);
+
+    state = failAddProjectSubmission(state, "Unable to clone project");
+    expect(state.submission).toEqual({
+      status: "failed",
+      tab: "clone",
+      message: "Unable to clone project",
+    });
+    expect(selectAddProjectTab(state, "existing").submission).toEqual({ status: "idle" });
+  });
+
+  it("clears a failure once the user edits the input", () => {
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = startAddProjectSubmission(state);
+    state = failAddProjectSubmission(state, "Directory not found");
+
+    expect(setAddProjectQuery(state, "~/dev").submission).toEqual({ status: "idle" });
+  });
+
+  it("keeps the current host when the host list refreshes, and recovers when it disconnects", () => {
+    let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
+    state = selectAddProjectHost(state, "host-2");
+
+    expect(applyAvailableAddProjectHosts(state, [HOST, REMOTE]).hostId).toBe("host-2");
+    expect(applyAvailableAddProjectHosts(state, [HOST]).hostId).toBe("host-1");
+    expect(applyAvailableAddProjectHosts(openAddProjectFlow({ hosts: [] }), [REMOTE]).hostId).toBe(
+      "host-2",
+    );
+  });
+
+  it("wraps keyboard selection at both ends", () => {
     expect(moveAddProjectActiveIndex(2, 3, "next")).toBe(0);
     expect(moveAddProjectActiveIndex(0, 3, "previous")).toBe(2);
-    expect(moveAddProjectSelection(0, [true, false, true], "next")).toBe(2);
+  });
+});
+
+describe("Add Project keys", () => {
+  it("maps Mod+1/2/3 to tabs using the platform's modifier", () => {
+    expect(resolveAddProjectKey({ ...KEY, key: "2", metaKey: true }, true)).toEqual({
+      kind: "tab",
+      tab: "clone",
+    });
+    expect(resolveAddProjectKey({ ...KEY, key: "3", ctrlKey: true }, false)).toEqual({
+      kind: "tab",
+      tab: "new-folder",
+    });
+    expect(resolveAddProjectKey({ ...KEY, key: "1", ctrlKey: true }, true)).toBeNull();
+    expect(resolveAddProjectKey({ ...KEY, key: "1" }, true)).toBeNull();
   });
 
-  it("restores a directory name after returning to and reselecting its parent", () => {
-    let state = openAddProjectFlow({ hosts: [HOST] });
-    state = openNewDirectoryParentPage(state, HOST.serverId);
-    state = openNewDirectoryNamePage(state, HOST.serverId, "~/dev");
-    state = setNewDirectoryName(state, "command-center");
-    state = backAddProjectPage(state) ?? state;
-    state = openNewDirectoryNamePage(state, HOST.serverId, "~/dev");
-
-    expect(currentAddProjectPage(state)).toMatchObject({
-      kind: "new-directory-name",
-      parentPath: "~/dev",
-      name: "command-center",
+  it("maps arrows and Enter to list commands", () => {
+    expect(resolveAddProjectKey({ ...KEY, key: "ArrowDown" }, true)).toEqual({
+      kind: "move",
+      direction: "next",
     });
-  });
-
-  it("restores the GitHub destination query and active parent when reopening a repository", () => {
-    const repository = {
-      id: "repo-1",
-      nameWithOwner: "getpaseo/paseo",
-      cloneUrl: "git@github.com:getpaseo/paseo.git",
-      description: null,
-      visibility: "public",
-      updatedAt: null,
-    };
-    let state = openAddProjectFlow({ hosts: [HOST] });
-    state = openGithubLocationPage(state, HOST.serverId, repository);
-    state = setAddProjectPageInput(state, "~/dev");
-    state = setAddProjectActiveIndex(state, 2);
-    state = backAddProjectPage(state) ?? state;
-    state = openGithubLocationPage(state, HOST.serverId, repository);
-
-    expect(currentAddProjectPage(state)).toMatchObject({
-      kind: "github-location",
-      query: "~/dev",
-      activeIndex: 2,
+    expect(resolveAddProjectKey({ ...KEY, key: "ArrowUp" }, true)).toEqual({
+      kind: "move",
+      direction: "previous",
     });
+    expect(resolveAddProjectKey({ ...KEY, key: "Enter" }, true)).toEqual({ kind: "submit" });
+    expect(resolveAddProjectKey({ ...KEY, key: "Enter", shiftKey: true }, true)).toBeNull();
   });
 });
 
 describe("Add Project options", () => {
-  it("hides every mutating method when the host lacks stable project identity", () => {
-    const outdatedHost = { ...HOST, canAddProject: false };
-
-    expect(buildAddProjectMethods(outdatedHost)).toEqual([]);
-    expect(addProjectMethodEmptyText(outdatedHost)).toBe("Update the host to use Add Project.");
-  });
-
-  it("keeps host-upgrade methods discoverable while hiding local-only Browse", () => {
-    expect(
-      buildAddProjectMethods({
-        ...HOST,
-        canBrowse: false,
-        canCloneGithubRepositories: false,
-        canSearchGithubRepositories: false,
-        canCreateDirectory: false,
-      }),
-    ).toEqual([
-      {
-        id: "directory-search",
-        label: "Search for directory",
-        description: "Find a directory on Local",
-      },
-      {
-        id: "github",
-        label: "Clone from GitHub",
-        description: "Update this host to clone GitHub repositories",
-        disabled: true,
-      },
-      {
-        id: "new-directory",
-        label: "New directory",
-        description: "Update this host to create directories",
-        disabled: true,
-      },
-    ]);
-  });
-
   it("offers manual URL and protocol-specific owner/repo clone choices", () => {
     expect(buildManualGithubRepositoryChoices("git@github.com:getpaseo/paseo.git")).toEqual([
       expect.objectContaining({
@@ -163,46 +158,10 @@ describe("Add Project options", () => {
     expect(buildManualGithubRepositoryChoices("paseo")).toEqual([]);
   });
 
-  it("shows final clone paths while retaining parent paths as values", () => {
-    expect(
-      buildCloneLocationOptions({
-        parents: ["~/dev", "~/workspace"],
-        repositoryName: "paseo",
-        existingPaths: ["~/workspace/paseo"],
-      }),
-    ).toEqual([
-      {
-        id: "~/dev",
-        path: "~/dev",
-        displayPath: "~/dev/paseo",
-        secondaryText: "Parent directory: ~/dev",
-        disabled: false,
-      },
-      {
-        id: "~/workspace",
-        path: "~/workspace",
-        displayPath: "~/workspace/paseo",
-        secondaryText: "Already exists",
-        disabled: true,
-      },
-    ]);
-  });
-
-  it("shows equivalent absolute-home and tilde destinations only once", () => {
-    expect(
-      buildCloneLocationOptions({
-        parents: ["/Users/moboudra/dev", "~/dev"],
-        repositoryName: "dotfiles",
-        existingPaths: [],
-      }),
-    ).toEqual([
-      {
-        id: "/Users/moboudra/dev",
-        path: "/Users/moboudra/dev",
-        displayPath: "/Users/moboudra/dev/dotfiles",
-        secondaryText: "Parent directory: /Users/moboudra/dev",
-        disabled: false,
-      },
-    ]);
+  it("rejects folder names that are empty or leave the location", () => {
+    expect(validateNewFolderName("")).toBe("Enter a folder name");
+    expect(validateNewFolderName("..")).toBe("Enter a folder name");
+    expect(validateNewFolderName("../invalid")).toBe("Use a name without slashes");
+    expect(validateNewFolderName(" acme-api ")).toBeNull();
   });
 });

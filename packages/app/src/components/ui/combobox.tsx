@@ -78,7 +78,7 @@ const FOCUSED_COMBOBOX_ACTION_SELECTOR =
   '[data-combobox-trailing-action] button, [data-combobox-trailing-action] [role="button"], [data-combobox-footer] button, [data-combobox-footer] [role="button"]';
 
 export type ComboboxOption = ComboboxOptionModel;
-export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start" | "bottom-end";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
