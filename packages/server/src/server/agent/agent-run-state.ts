@@ -19,6 +19,7 @@ export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
+  checkingPromptAdmission?: boolean;
   start: ForegroundRunStart;
   turnStartedPromise: Promise<void>;
   resolveTurnStarted: () => void;

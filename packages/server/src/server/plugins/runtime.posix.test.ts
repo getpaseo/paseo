@@ -1632,6 +1632,30 @@ export default function contribute(server: { registerProvider(provider: Provider
     await runtime.stopAll();
   });
 
+  it("waits for pre-send admission and propagates rejection from the plugin process", async () => {
+    const directory = await createPlugin(
+      "prompt-admission",
+      `export default function contribute(server) {
+  return server.addHook("agent.prompt.before", async ({ request }) => {
+    if (request.model === "capped-model") throw new Error("Quota maximum reached");
+  });
+}`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("prompt-admission", directory);
+      const request = { agentId: "agent", provider: "codex", model: "available-model" };
+      await expect(runtime.before("agent.prompt.before", request)).resolves.toEqual(request);
+      await expect(
+        runtime.before("agent.prompt.before", { ...request, model: "capped-model" }),
+      ).rejects.toThrow(
+        "Plugin prompt-admission agent.prompt.before failed: Quota maximum reached",
+      );
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
   it("loads separate entries, exposes the client bundle, and invokes the server RPC", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);

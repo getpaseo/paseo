@@ -61,6 +61,7 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 | `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
 | `agent.close.after`       | no    | `{ agent }`                               |                                                                |
 | `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
+| `agent.prompt.before`     | yes   | `{ request }`                             |                                                                |
 | `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
 | `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
 | `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
@@ -525,6 +526,15 @@ server.addHook("agent.archive.after", async ({ agent, archivedAt }) => {
   console.log(agent, archivedAt);
 });
 ```
+
+## agent.prompt.before
+
+Paseo waits for this hook before sending a prompt to a provider, including when a queued message
+comes up for delivery or a message steers an active turn. The session is already open. The hook
+receives the agent ID, provider, and model (or `null`), with no prompt text or attachments. Throw an
+error to reject delivery, or return nothing to allow it. Local commands handled outside a turn can
+still run. Use the supplied metadata or plugin-owned state in this hook. Awaiting a send or
+foreground mutation on the same agent can deadlock.
 
 ## agent.turn.before
 
