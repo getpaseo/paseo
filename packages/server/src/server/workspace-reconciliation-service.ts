@@ -1,5 +1,5 @@
 import { watch as watchPath } from "node:fs";
-import { stat } from "node:fs/promises";
+import { opendir, stat } from "node:fs/promises";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import pLimit from "p-limit";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
@@ -63,6 +63,15 @@ const systemClock: ReconciliationClock = {
   clearInterval: (timer) => clearInterval(timer as ReturnType<typeof setInterval>),
 };
 
+// `fs.watch` opens the directory synchronously on the main thread. On macOS a folder under
+// privacy protection (Documents, Desktop, Downloads) makes that open wait for the user to
+// answer an access prompt, which froze daemon startup for hours. Opening it here first runs
+// on the threadpool, so only this probe waits; the watch is installed once it returns.
+const probeProjectRoot = async (rootPath: string): Promise<void> => {
+  const dir = await opendir(rootPath);
+  await dir.close();
+};
+
 const watchProjectRoot: ProjectRootWatch = (rootPath, options, onChange, onError) => {
   const watcher = watchPath(rootPath, options, onChange);
   watcher.on("error", onError);
@@ -100,6 +109,7 @@ export interface WorkspaceReconciliationServiceOptions {
   onWorkspaceArchived?: (workspaceId: string) => void | Promise<void>;
   onWorkspacesChanged?: (workspaceIds: string[]) => Promise<void>;
   watchProjectRoot?: ProjectRootWatch;
+  probeProjectRoot?: (rootPath: string) => Promise<void>;
   clock?: ReconciliationClock;
   rescanIntervalMs?: number;
   debounceMs?: number;
@@ -141,6 +151,9 @@ export class WorkspaceReconciliationService {
   private readonly onWorkspaceArchived: ((workspaceId: string) => void | Promise<void>) | null;
   private readonly onWorkspacesChanged: ((workspaceIds: string[]) => Promise<void>) | null;
   private readonly watchProjectRoot: ProjectRootWatch;
+  private readonly probeProjectRoot: (rootPath: string) => Promise<void>;
+  private readonly rootProbes = new Map<string, Promise<boolean>>();
+  private initialRootWatches: Promise<void> = Promise.resolve();
   private readonly clock: ReconciliationClock;
   private readonly rescanIntervalMs: number;
   private readonly debounceMs: number;
@@ -168,6 +181,7 @@ export class WorkspaceReconciliationService {
     this.onWorkspaceArchived = options.onWorkspaceArchived ?? null;
     this.onWorkspacesChanged = options.onWorkspacesChanged ?? null;
     this.watchProjectRoot = options.watchProjectRoot ?? watchProjectRoot;
+    this.probeProjectRoot = options.probeProjectRoot ?? probeProjectRoot;
     this.clock = options.clock ?? systemClock;
     this.rescanIntervalMs = options.rescanIntervalMs ?? DEFAULT_RESCAN_INTERVAL_MS;
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -192,12 +206,21 @@ export class WorkspaceReconciliationService {
           this.logger.warn({ err: error }, "Project reconciliation mutation handling failed");
         }
       }) ?? null;
-    await this.syncProjectRootWatches();
+    // Startup must not wait on a root whose access check is pending, or the daemon never
+    // listens. Each root's watch is installed as soon as its probe returns.
+    this.initialRootWatches = this.syncProjectRootWatches().catch((error) => {
+      this.logger.warn({ err: error }, "Initial project root watch setup failed");
+    });
     this.rescanTimer = this.clock.setInterval(
       () => this.reconcileObservedGitMetadata("full"),
       this.rescanIntervalMs,
     );
     this.rescanTimer.unref?.();
+  }
+
+  /** Resolves once every root readable at startup has its watch; never awaited by startup. */
+  rootWatchesReady(): Promise<void> {
+    return this.initialRootWatches;
   }
 
   dispose(): void {
@@ -484,40 +507,57 @@ export class WorkspaceReconciliationService {
       this.watchers.splice(index, 1);
     }
 
-    for (const project of activeProjects) {
-      const alreadyWatching = this.watchers.some((target) =>
-        areEquivalentPaths(target.rootPath, project.rootPath),
+    await Promise.all(
+      activeProjects.map((project) => this.watchProjectRootWhenReadable(project.rootPath)),
+    );
+  }
+
+  private isWatchingRoot(rootPath: string): boolean {
+    return this.watchers.some((target) => areEquivalentPaths(target.rootPath, rootPath));
+  }
+
+  private probeRoot(rootPath: string): Promise<boolean> {
+    const pending = this.rootProbes.get(rootPath);
+    if (pending) return pending;
+    const probe = this.probeProjectRoot(rootPath)
+      .then(
+        () => true,
+        (error: unknown) => {
+          // The periodic reconciliation is the convergence path for roots that
+          // are temporarily missing or unwatchable.
+          this.logger.debug({ err: error, rootPath }, "Project root is not watchable yet");
+          return false;
+        },
+      )
+      .finally(() => this.rootProbes.delete(rootPath));
+    this.rootProbes.set(rootPath, probe);
+    return probe;
+  }
+
+  private async watchProjectRootWhenReadable(rootPath: string): Promise<void> {
+    if (this.isWatchingRoot(rootPath)) return;
+    if (!(await this.probeRoot(rootPath))) return;
+    if (this.disposed || this.isWatchingRoot(rootPath)) return;
+    try {
+      let watcher: ProjectRootWatcher;
+      watcher = this.watchProjectRoot(
+        rootPath,
+        { recursive: false },
+        (_event, filename) => {
+          if (filename === null || filename.toString() === ".git") {
+            this.scheduleObservedReconciliation();
+          }
+        },
+        (error) => {
+          watcher.close();
+          const index = this.watchers.findIndex((target) => target.watcher === watcher);
+          if (index >= 0) this.watchers.splice(index, 1);
+          this.logger.warn({ err: error, rootPath }, "Project root watch failed");
+        },
       );
-      if (alreadyWatching) continue;
-      try {
-        let watcher: ProjectRootWatcher;
-        watcher = this.watchProjectRoot(
-          project.rootPath,
-          { recursive: false },
-          (_event, filename) => {
-            if (filename === null || filename.toString() === ".git") {
-              this.scheduleObservedReconciliation();
-            }
-          },
-          (error) => {
-            watcher.close();
-            const index = this.watchers.findIndex((target) => target.watcher === watcher);
-            if (index >= 0) this.watchers.splice(index, 1);
-            this.logger.warn(
-              { err: error, rootPath: project.rootPath },
-              "Project root watch failed",
-            );
-          },
-        );
-        this.watchers.push({ rootPath: project.rootPath, watcher });
-      } catch (error) {
-        // The periodic reconciliation is the convergence path for roots that
-        // are temporarily missing or unwatchable.
-        this.logger.debug(
-          { err: error, rootPath: project.rootPath },
-          "Project root is not watchable yet",
-        );
-      }
+      this.watchers.push({ rootPath, watcher });
+    } catch (error) {
+      this.logger.debug({ err: error, rootPath }, "Project root is not watchable yet");
     }
   }
 
