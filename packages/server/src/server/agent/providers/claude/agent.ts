@@ -39,7 +39,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
+  readTaskNotificationOutcomeFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -6821,10 +6821,8 @@ async function readClaudeReplayParentFacts(
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
+    for (const notificationOutcome of readClaudeReplayNotificationOutcomes(entry, linksByAgentId)) {
+      outcomes.set(notificationOutcome.toolCallId, { status: notificationOutcome.status });
     }
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
@@ -6842,6 +6840,7 @@ async function readClaudeReplayParentFacts(
         outcomes.set(block.tool_use_id, {
           status: block.is_error === true ? "failed" : "completed",
         });
+      if (!toolCalls.has(block.tool_use_id)) continue;
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {
@@ -6854,6 +6853,26 @@ async function readClaudeReplayParentFacts(
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
   };
+}
+
+function* readClaudeReplayNotificationOutcomes(
+  entry: ClaudeHistoryEntry,
+  linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
+): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
+  const notification = readTaskNotificationOutcomeFromHistoryRecord(entry);
+  if (!notification) return;
+  const status = mapTaskStatus(notification.status ?? undefined);
+  if (!status) return;
+
+  if (notification.toolUseId) {
+    yield { toolCallId: notification.toolUseId, status };
+    return;
+  }
+  // Stopped tasks can omit tool-use-id; their launch results already link the native IDs.
+  for (const taskId of notification.taskIds) {
+    const link = linksByAgentId.get(taskId);
+    if (link) yield { toolCallId: link.toolCallId, status };
+  }
 }
 
 function readClaudeReplayTaskDeclaration(
