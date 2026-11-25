@@ -154,8 +154,13 @@ async function stageDirectProviderCompact(page: Page): Promise<void> {
   await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
   await expect(page.getByTestId("agent-controls-model")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("agent-controls-model").click();
+  const browserSheet = page.getByTestId("agent-controls-model-browser-sheet");
   const browserViewport = page.getByTestId("agent-controls-model-browser-viewport");
   await expect(browserViewport).toBeVisible({ timeout: 30_000 });
+  const backButton = browserSheet.getByTestId("sheet-header-back");
+  if (await backButton.isVisible()) {
+    await backButton.click();
+  }
   await browserViewport.getByTestId(`model-provider-${DIRECT_PROVIDER.id}`).click();
   await browserViewport
     .getByTestId(`model-row-${DIRECT_PROVIDER.id}-${DIRECT_PROVIDER.modelId}`)

@@ -148,6 +148,7 @@ interface ControlledAgentControlsProps {
   modeControl?: AgentModeControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  openModelBrowserAtProviders?: boolean;
 }
 
 export interface DraftAgentControlsProps {
@@ -461,6 +462,7 @@ function ControlledAgentControls({
   modeControl,
   modelSelectorServerId = null,
   isCompactLayout,
+  openModelBrowserAtProviders,
 }: ControlledAgentControlsProps) {
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -720,6 +722,7 @@ function ControlledAgentControls({
             showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
+            openModelBrowserAtProviders={openModelBrowserAtProviders}
           />
         )}
         {!isCompact ? (
@@ -917,6 +920,7 @@ interface SheetAgentControlsContentProps extends AgentControlsContentProps {
   displayThinking: string | null;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   canSwitchProvider: boolean;
+  openModelBrowserAtProviders?: boolean;
 }
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
@@ -949,6 +953,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     showLabels,
     modelSelectorServerId,
     canSwitchProvider,
+    openModelBrowserAtProviders,
   } = props;
 
   const sheetControls = (
@@ -998,6 +1003,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
+      openModelBrowserAtProviders={openModelBrowserAtProviders}
     >
       {sheetControls}
     </CompactModelSheet>
@@ -1933,6 +1939,7 @@ export function DraftAgentControls({
               modeControl={modeControl}
               modelSelectorServerId={modelSelectorServerId}
               isCompactLayout={isCompactLayout}
+              openModelBrowserAtProviders
             />
           </>
         ) : null}
