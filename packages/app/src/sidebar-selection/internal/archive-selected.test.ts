@@ -79,7 +79,7 @@ describe("archiveSelectedWorkspaces", () => {
         order.push(
           `archive:${input.entries.map((entry) => entry.workspace.workspaceId).join(",")}`,
         );
-        return [];
+        return { failures: [], showPartialFailure: () => false };
       },
       archiveWithoutUndo: async () => "archived",
       purgeWorkspaceState: vi.fn(),
@@ -105,7 +105,10 @@ describe("archiveSelectedWorkspaces", () => {
     const client = createFakeClient();
     const { toast, errors } = createFakeToast();
     const onArchiveStarted = vi.fn();
-    const archiveWithUndo = vi.fn(async () => []);
+    const archiveWithUndo = vi.fn(async () => ({
+      failures: [],
+      showPartialFailure: () => false,
+    }));
     const confirmRiskyBulkArchive = vi.fn(async () => false);
 
     const ok = await archiveSelectedWorkspaces({
@@ -182,10 +185,13 @@ describe("archiveSelectedWorkspaces", () => {
         supportsUndo: () => true,
         readWorktreeRisk: vi.fn(),
         confirmRiskyBulkArchive: vi.fn(),
-        archiveWithUndo: async () => [
-          { workspace: { serverId: "srv", workspaceId: "w1" }, error: new Error("boom 1") },
-          { workspace: { serverId: "srv", workspaceId: "w2" }, error: new Error("boom 2") },
-        ],
+        archiveWithUndo: async () => ({
+          failures: [
+            { workspace: { serverId: "srv", workspaceId: "w1" }, error: new Error("boom 1") },
+            { workspace: { serverId: "srv", workspaceId: "w2" }, error: new Error("boom 2") },
+          ],
+          showPartialFailure: () => false,
+        }),
         archiveWithoutUndo: vi.fn(),
         purgeWorkspaceState: vi.fn(),
         redirectActiveWorkspace: vi.fn(),
@@ -194,5 +200,39 @@ describe("archiveSelectedWorkspaces", () => {
 
     expect(ok).toBe(false);
     expect(errors).toEqual(["Failed to archive 2 workspaces"]);
+  });
+
+  it("keeps Undo open via showPartialFailure instead of replacing it with toast.error on partial failure", async () => {
+    const client = createFakeClient();
+    const { toast, errors } = createFakeToast();
+    const partialErrors: string[] = [];
+
+    const ok = await archiveSelectedWorkspaces({
+      workspaces: [makeEntry({ workspaceId: "w1" }), makeEntry({ workspaceId: "w2" })],
+      toast,
+      onArchiveStarted: vi.fn(),
+      deps: {
+        getClient: () => client,
+        supportsUndo: () => true,
+        readWorktreeRisk: vi.fn(),
+        confirmRiskyBulkArchive: vi.fn(),
+        archiveWithUndo: async () => ({
+          failures: [
+            { workspace: { serverId: "srv", workspaceId: "w2" }, error: new Error("Host offline") },
+          ],
+          showPartialFailure: (message) => {
+            partialErrors.push(message);
+            return true;
+          },
+        }),
+        archiveWithoutUndo: vi.fn(),
+        purgeWorkspaceState: vi.fn(),
+        redirectActiveWorkspace: vi.fn(),
+      },
+    });
+
+    expect(ok).toBe(false);
+    expect(partialErrors).toEqual(["Host offline"]);
+    expect(errors).toEqual([]);
   });
 });

@@ -8,9 +8,11 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 
 export function WorkspaceArchivedToast({
   count = 1,
+  message: customMessage,
   onUndo,
 }: {
   count?: number;
+  message?: string;
   onUndo: () => void;
 }) {
   const { t } = useTranslation();
@@ -20,9 +22,10 @@ export function WorkspaceArchivedToast({
     [undoKeys],
   );
   const message =
-    count === 1
+    customMessage ??
+    (count === 1
       ? t("sidebar.workspace.toasts.archived")
-      : t("sidebar.workspace.toasts.archivedCount", { count });
+      : t("sidebar.workspace.toasts.archivedCount", { count }));
 
   return (
     <View style={styles.row}>

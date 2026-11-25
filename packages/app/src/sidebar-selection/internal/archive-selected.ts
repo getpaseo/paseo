@@ -43,7 +43,7 @@ function defaultPurgeWorkspaceState(workspace: WorkspaceArchiveTarget): void {
 }
 
 export function createDefaultBulkArchiveDeps(
-  activeWorkspaceSelection: ActiveWorkspaceSelection | null,
+  getActiveWorkspaceSelection: () => ActiveWorkspaceSelection | null,
 ): BulkArchiveWorkspacesDeps {
   return {
     getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
@@ -57,10 +57,18 @@ export function createDefaultBulkArchiveDeps(
       redirectIfArchivingActiveWorkspace({
         serverId: workspace.serverId,
         workspaceId: workspace.workspaceId,
-        activeWorkspaceSelection,
+        activeWorkspaceSelection: getActiveWorkspaceSelection(),
       });
     },
   };
+}
+
+function formatArchiveFailureMessage(failures: ReadonlyArray<{ error: unknown }>): string {
+  if (failures.length > 1) {
+    return i18n.t("sidebar.workspace.toasts.archiveMultipleFailed", { count: failures.length });
+  }
+  const error = failures[0]?.error;
+  return error instanceof Error ? error.message : i18n.t("sidebar.workspace.toasts.archiveFailed");
 }
 
 interface ResolvedWorkspaceTarget {
@@ -139,11 +147,12 @@ export async function archiveSelectedWorkspaces(input: {
   }
 
   const failures: Array<{ error: unknown }> = [];
+  let showPartialFailure: (message: string) => boolean = () => false;
 
   await Promise.all([
     undoable.length > 0
       ? (async () => {
-          const batchFailures = await deps.archiveWithUndo({
+          const result = await deps.archiveWithUndo({
             entries: undoable.map(({ entry, client }) => {
               const workspace = { serverId: entry.serverId, workspaceId: entry.workspaceId };
               return {
@@ -154,7 +163,8 @@ export async function archiveSelectedWorkspaces(input: {
             }),
             toast,
           });
-          failures.push(...batchFailures);
+          failures.push(...result.failures);
+          showPartialFailure = result.showPartialFailure;
         })()
       : Promise.resolve(),
     // COMPAT(workspaceArchiveUndo): hosts before v0.15.3 cannot undo; remove after 2027-05-06.
@@ -169,15 +179,11 @@ export async function archiveSelectedWorkspaces(input: {
     }),
   ]);
 
-  if (failures.length === 1) {
-    const error = failures[0]?.error;
-    toast.error(
-      error instanceof Error ? error.message : i18n.t("sidebar.workspace.toasts.archiveFailed"),
-    );
-  } else if (failures.length > 1) {
-    toast.error(
-      i18n.t("sidebar.workspace.toasts.archiveMultipleFailed", { count: failures.length }),
-    );
+  if (failures.length > 0) {
+    const errorMessage = formatArchiveFailureMessage(failures);
+    if (!showPartialFailure(errorMessage)) {
+      toast.error(errorMessage);
+    }
   }
 
   return failures.length === 0;

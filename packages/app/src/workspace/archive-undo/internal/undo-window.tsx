@@ -47,18 +47,46 @@ let latest: UndoWindow | null = null;
  */
 class UndoWindow {
   phase: "open" | "closed" | "undone" = "open";
-  private readonly dismissToast: DismissToast;
+  private dismissToast: DismissToast = () => {};
+  private toastToken: object | null = null;
 
   constructor(private readonly input: UndoWindowInput) {
-    this.dismissToast = input.toast.show(
-      <WorkspaceArchivedToast count={input.entries.length} onUndo={this.undo} />,
+    this.showToast({ variant: "default" });
+  }
+
+  private showToast(options: { message?: string; variant: "default" | "error" }): void {
+    const token = {};
+    this.toastToken = token;
+    const remainingCount = this.input.entries.filter((entry) => !entry.failed).length;
+    this.dismissToast = this.input.toast.show(
+      <WorkspaceArchivedToast
+        count={remainingCount}
+        message={options.message}
+        onUndo={this.undo}
+      />,
       {
+        variant: options.variant,
         layout: "action",
         durationMs: WORKSPACE_ARCHIVE_UNDO_WINDOW_MS,
         testID: "workspace-archived-toast",
-        onDismiss: this.close,
+        onDismiss: () => {
+          // Replacing our own toast in place (for example to surface a partial failure) must not
+          // close the undo window or purge surviving workspaces.
+          if (this.toastToken !== token) return;
+          this.close();
+        },
       },
     );
+  }
+
+  /**
+   * Surfaces a partial-failure message on the active undo toast without dismissing Undo for the
+   * workspaces that did archive. Returns false once the window is closed, undone, or superseded.
+   */
+  showPartialFailure(message: string): boolean {
+    if (this.phase !== "open" || latest !== this) return false;
+    this.showToast({ message, variant: "error" });
+    return true;
   }
 
   /** The host finished archiving this entry. It commits now if undo is no longer offered. */
@@ -124,6 +152,15 @@ export interface WorkspaceArchiveBatchFailure {
   error: unknown;
 }
 
+export interface WorkspaceArchiveBatchResult {
+  failures: WorkspaceArchiveBatchFailure[];
+  /**
+   * Updates this batch's live undo toast to show a partial-failure error while keeping Undo active
+   * for the workspaces that succeeded. Returns false if the undo window is no longer open.
+   */
+  showPartialFailure: (message: string) => boolean;
+}
+
 /**
  * Archives one or more workspaces together and offers one undo until the toast goes away.
  *
@@ -134,8 +171,10 @@ export interface WorkspaceArchiveBatchFailure {
 export async function archiveWorkspacesWithUndo(input: {
   entries: readonly UndoableWorkspaceArchiveEntryInput[];
   toast: ToastApi;
-}): Promise<WorkspaceArchiveBatchFailure[]> {
-  if (input.entries.length === 0) return [];
+}): Promise<WorkspaceArchiveBatchResult> {
+  if (input.entries.length === 0) {
+    return { failures: [], showPartialFailure: () => false };
+  }
 
   const started = input.entries.map((entry) => {
     const archive = beginOptimisticWorkspaceArchive(entry);
@@ -171,7 +210,10 @@ export async function archiveWorkspacesWithUndo(input: {
     }),
   );
 
-  return failures;
+  return {
+    failures,
+    showPartialFailure: (message) => window.showPartialFailure(message),
+  };
 }
 
 /**
@@ -188,7 +230,7 @@ export async function archiveWorkspaceWithUndo(input: {
   toast: ToastApi;
   onArchiveCommitted: () => void;
 }): Promise<void> {
-  const failures = await archiveWorkspacesWithUndo({
+  const { failures } = await archiveWorkspacesWithUndo({
     entries: [
       {
         client: input.client,

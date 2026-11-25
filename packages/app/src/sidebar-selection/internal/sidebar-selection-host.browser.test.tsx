@@ -8,7 +8,11 @@ import { ToastProvider } from "@/contexts/toast-context";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { i18n } from "@/i18n/i18next";
 import { dispatchTopOverlayKeyDown } from "@/keyboard";
-import { KeyboardActionDispatcherProvider } from "@/keyboard/keyboard-action-dispatcher-context";
+import {
+  KeyboardActionDispatcherProvider,
+  useKeyboardActionDispatcher,
+} from "@/keyboard/keyboard-action-dispatcher-context";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import {
   registerSidebarVisibleWorkspaceKeysReader,
   SidebarSelectionHost,
@@ -51,6 +55,24 @@ function makeEntry(id: string): SidebarWorkspaceEntry {
   };
 }
 
+let capturedDispatcher: ReturnType<typeof useKeyboardActionDispatcher> | null = null;
+let fallbackArchiveCount = 0;
+
+function FallbackArchiveProbe() {
+  capturedDispatcher = useKeyboardActionDispatcher();
+  useKeyboardActionHandler({
+    handlerId: "test-global-workspace-archive-fallback",
+    actions: ["workspace.archive"],
+    enabled: true,
+    priority: 0,
+    handle: () => {
+      fallbackArchiveCount += 1;
+      return true;
+    },
+  });
+  return null;
+}
+
 function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
   const entriesByKey = new Map(entries.map((entry) => [entry.workspaceKey, entry]));
   releaseVisibleKeys = registerSidebarVisibleWorkspaceKeysReader(() =>
@@ -64,6 +86,7 @@ function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
       <I18nextProvider i18n={i18n}>
         <SafeAreaProvider>
           <KeyboardActionDispatcherProvider>
+            <FallbackArchiveProbe />
             <ToastProvider>
               <SidebarToastRegion active>
                 <SidebarSelectionHost active workspaceEntriesByKey={entriesByKey} />
@@ -77,6 +100,8 @@ function mountHost(entries: readonly SidebarWorkspaceEntry[]) {
 }
 
 afterEach(() => {
+  capturedDispatcher = null;
+  fallbackArchiveCount = 0;
   act(() => {
     useSidebarSelectionStore.getState().exit();
   });
@@ -152,5 +177,46 @@ describe("SidebarSelectionHost", () => {
     await expect
       .poll(() => document.querySelector('[data-testid="workspace-selection-toast"]'))
       .toBeNull();
+  });
+
+  it("consumes workspace.archive while in select mode even with zero rows selected or while archiving", () => {
+    mountHost([makeEntry("a"), makeEntry("b")]);
+
+    // Outside select mode, the global fallback receives workspace.archive.
+    act(() => {
+      expect(capturedDispatcher?.dispatch({ id: "workspace.archive", scope: "sidebar" })).toBe(
+        true,
+      );
+    });
+    expect(fallbackArchiveCount).toBe(1);
+
+    // Enter select mode then deselect the only row -> 0 selected.
+    act(() => {
+      useSidebarSelectionStore.getState().enter("srv:a");
+      useSidebarSelectionStore.getState().pressWorkspace("srv:a", { shiftKey: false });
+    });
+    expect(document.querySelector('[data-testid="workspace-selection-count"]')?.textContent).toBe(
+      "0 selected",
+    );
+
+    // The archive shortcut must be absorbed by select mode rather than archiving the open workspace.
+    act(() => {
+      expect(capturedDispatcher?.dispatch({ id: "workspace.archive", scope: "sidebar" })).toBe(
+        true,
+      );
+    });
+    expect(fallbackArchiveCount).toBe(1);
+
+    // Same while a worktree safety check is in progress.
+    act(() => {
+      useSidebarSelectionStore.getState().enter("srv:a");
+      useSidebarSelectionStore.getState().setArchiving(true);
+    });
+    act(() => {
+      expect(capturedDispatcher?.dispatch({ id: "workspace.archive", scope: "sidebar" })).toBe(
+        true,
+      );
+    });
+    expect(fallbackArchiveCount).toBe(1);
   });
 });

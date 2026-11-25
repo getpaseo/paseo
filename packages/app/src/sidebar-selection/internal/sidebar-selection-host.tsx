@@ -41,6 +41,7 @@ export function SidebarSelectionHost({
   entriesRef.current = workspaceEntriesByKey;
   const activeSelectionRef = useRef(activeWorkspaceSelection);
   activeSelectionRef.current = activeWorkspaceSelection;
+  const archiveAttemptRef = useRef(0);
 
   useEffect(() => {
     if (!selectionMode) return;
@@ -77,6 +78,8 @@ export function SidebarSelectionHost({
       return;
     }
 
+    const attemptId = archiveAttemptRef.current + 1;
+    archiveAttemptRef.current = attemptId;
     store.setArchiving(true);
     void archiveSelectedWorkspaces({
       workspaces: entries,
@@ -84,8 +87,9 @@ export function SidebarSelectionHost({
       onArchiveStarted: () => {
         useSidebarSelectionStore.getState().exit();
       },
-      deps: createDefaultBulkArchiveDeps(activeSelectionRef.current),
+      deps: createDefaultBulkArchiveDeps(() => activeSelectionRef.current),
     }).finally(() => {
+      if (archiveAttemptRef.current !== attemptId) return;
       const current = useSidebarSelectionStore.getState();
       if (current.isArchiving) {
         current.setArchiving(false);
@@ -109,7 +113,9 @@ export function SidebarSelectionHost({
   useKeyboardActionHandler({
     handlerId: "sidebar-selection-archive",
     actions: WORKSPACE_ARCHIVE_ACTIONS,
-    enabled: selectionMode && active && selectedCount > 0 && !isArchiving,
+    // Keep ownership of workspace.archive for the entire lifetime of select mode so pressing it
+    // at 0 selected or during a worktree check never falls through to archive the open workspace.
+    enabled: selectionMode && active,
     priority: 10,
     handle: () => {
       handleArchiveSelected();
