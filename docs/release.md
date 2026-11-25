@@ -108,6 +108,7 @@ An explicit user instruction can select another base.
    `CI` (all 21 jobs) and `Desktop Packages` (Linux user-namespace smoke) in their own concurrency
    groups, isolated from `main` traffic. Never wait on `main` CI, because `main` cancels in-progress
    runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
+   Complete the [pre-release dependency checks](#pre-release-dependency-checks) on that commit.
    Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
 6. After go-ahead, run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta). This
    publishes to npm and pushes the `v*` tag on the already-verified commit. Because the release
@@ -127,7 +128,9 @@ shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version
 as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
 computes that from a prerelease, so run `npm run release:check`, bump with
 `npm version 0.13.4-beta.1 --include-workspace-root --no-git-tag-version && git commit -m "chore(release): cut 0.13.4-beta.1"`,
-push the release branch for `CI` and `Desktop Packages`, then ship with `npm run release:ship:beta`.
+push the release branch for `CI` and `Desktop Packages`, and complete the
+[pre-release dependency checks](#pre-release-dependency-checks) before shipping with
+`npm run release:ship:beta`.
 Record the tested beta tag as its source so its soak still counts for the unchanged content.
 
 ## Release inventory
@@ -235,6 +238,7 @@ npm run release:prep:minor
 
 # 2. Push the release branch and wait for CI + Desktop Packages on this commit.
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead and green release-branch checks: publish npm and push the tag.
 npm run release:ship
@@ -270,7 +274,8 @@ npm run release:check        # Typecheck, build, dry-run pack
 npm run version:all:patch
 npm run version:all:minor
 git push -u origin HEAD      # Trigger CI + Desktop Packages on release/vX.Y.Z
-# Wait for CI and Desktop Packages on this branch to pass, then after go-ahead:
+# Wait for CI and Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:publish      # Publish to npm (idempotent, with propagation + beta dist-tag sync)
 npm run release:push         # Create tag vX.Y.Z on HEAD and push (triggers release workflows)
 ```
@@ -287,6 +292,7 @@ npm run release:prep:beta:next   # Cut X.Y.Z-beta.2, beta.3, ...
 
 # 2. Push the release branch and wait for CI + Desktop Packages to pass:
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead:
 npm run release:ship:beta
@@ -294,7 +300,8 @@ npm run release:ship:beta
 # Later, after soak, promote on release/vX.Y.Z:
 npm run release:prep:promote
 git push -u origin HEAD
-# Wait for CI + Desktop Packages to pass, then after go-ahead:
+# Wait for CI + Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:ship
 ```
 
@@ -863,6 +870,7 @@ Bullets within each section (Added, Changed, Fixed) follow this order:
 ## Pre-release dependency checks
 
 Run these checks from the repository root on the release commit before shipping a beta or stable release.
+Use Linux x64 so the audit includes the platform-specific dependencies that the CI job checked.
 
 1. Review changes to dependency versions, download URLs, and integrity hashes in `git diff <previous-release-tag> HEAD -- package-lock.json`.
 2. Install the exact dependencies from the release lockfile with `npm ci`.
