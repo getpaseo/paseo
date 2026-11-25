@@ -4,10 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
   type MutableRefObject,
   type ReactElement,
-  type SetStateAction,
 } from "react";
 import { Alert, Text, View, type LayoutChangeEvent } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -250,13 +248,21 @@ function useAgentProfileRosterActions({
   mutateProfiles,
   confirmDiscardIfDirty,
   editTarget,
-  setEditTarget,
+  getEditorToken,
+  applyDelayedEditTarget,
+  closeIfEditingProfile,
 }: {
   profiles: AgentProfile[] | null | undefined;
   mutateProfiles: (updater: AgentProfileListUpdater) => Promise<AgentProfile[] | null>;
   confirmDiscardIfDirty: () => Promise<boolean>;
   editTarget: EditTarget | null;
-  setEditTarget: Dispatch<SetStateAction<EditTarget | null>>;
+  getEditorToken: () => number;
+  applyDelayedEditTarget: (
+    expectedToken: number,
+    next: EditTarget | null,
+    options?: { requireClean?: boolean },
+  ) => void;
+  closeIfEditingProfile: (profileId: string) => void;
 }) {
   const { t } = useTranslation();
 
@@ -351,8 +357,9 @@ function useAgentProfileRosterActions({
     (id: string) => {
       const formatCopyName = (name: string) => t("settings.host.agentProfiles.copyName", { name });
       const duplicate = async () => {
+        const expectedToken = getEditorToken();
         const canProceed = await confirmDiscardIfDirty();
-        if (!canProceed) {
+        if (!canProceed || getEditorToken() !== expectedToken) {
           return;
         }
         let copyId: string | null = null;
@@ -365,12 +372,17 @@ function useAgentProfileRosterActions({
           return result.next;
         });
         if (saved && copyId) {
-          setEditTarget({ mode: "edit", profileId: copyId });
+          // Only open the copy if no newer editor session or draft appeared while saving.
+          applyDelayedEditTarget(
+            expectedToken,
+            { mode: "edit", profileId: copyId },
+            { requireClean: true },
+          );
         }
       };
       void duplicate();
     },
-    [confirmDiscardIfDirty, persistMutation, setEditTarget, t],
+    [applyDelayedEditTarget, confirmDiscardIfDirty, getEditorToken, persistMutation, t],
   );
 
   const handleRemove = useCallback(
@@ -392,14 +404,12 @@ function useAgentProfileRosterActions({
         }
         const removed = await persistMutation((current) => removeAgentProfileById(current, id));
         if (removed) {
-          setEditTarget((current) =>
-            current?.mode === "edit" && current.profileId === id ? null : current,
-          );
+          closeIfEditingProfile(id);
         }
       };
       void confirmAndRemove();
     },
-    [persistMutation, profiles, setEditTarget, t],
+    [closeIfEditingProfile, persistMutation, profiles, t],
   );
 
   return {
@@ -489,7 +499,7 @@ function RosterBody({
  */
 function AgentProfileEditorHost({
   serverId,
-  targetKey,
+  sessionToken,
   mode,
   profile,
   canUseDrawer,
@@ -506,7 +516,7 @@ function AgentProfileEditorHost({
   onRemove,
 }: {
   serverId: string;
-  targetKey: string;
+  sessionToken: number;
   mode: "create" | "edit";
   profile?: AgentProfile;
   canUseDrawer: boolean;
@@ -517,12 +527,12 @@ function AgentProfileEditorHost({
   onStepPrev: () => void;
   onStepNext: () => void;
   onClose: () => void;
-  onSaved: (savedKey: string) => void;
+  onSaved: (savedToken: number) => void;
   onSave: (value: AgentProfileValue) => Promise<void>;
   onDuplicate: (profileId: string) => void;
   onRemove: (profileId: string) => void;
 }): ReactElement {
-  const handleSaved = useCallback(() => onSaved(targetKey), [onSaved, targetKey]);
+  const handleSaved = useCallback(() => onSaved(sessionToken), [onSaved, sessionToken]);
   const session = useAgentProfileFormSession({
     serverId,
     mode,
@@ -596,10 +606,49 @@ export function AgentProfilesPage({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { profiles, isSupported, mutateProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
-  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [editorState, setEditorState] = useState<{ target: EditTarget | null; token: number }>({
+    target: null,
+    token: 0,
+  });
+  const editTarget = editorState.target;
+  const editorTokenRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [paneWidth, setPaneWidth] = useState(0);
   const isDirtyRef = useRef(false);
+
+  const getEditorToken = useCallback(() => editorTokenRef.current, []);
+
+  const commitEditTarget = useCallback((next: EditTarget | null) => {
+    const nextToken = editorTokenRef.current + 1;
+    editorTokenRef.current = nextToken;
+    isDirtyRef.current = false;
+    setEditorState({ target: next, token: nextToken });
+  }, []);
+
+  const applyDelayedEditTarget = useCallback(
+    (expectedToken: number, next: EditTarget | null, options?: { requireClean?: boolean }) => {
+      if (editorTokenRef.current !== expectedToken) {
+        return;
+      }
+      if (options?.requireClean && isDirtyRef.current) {
+        return;
+      }
+      commitEditTarget(next);
+    },
+    [commitEditTarget],
+  );
+
+  const closeIfEditingProfile = useCallback((profileId: string) => {
+    setEditorState((current) => {
+      if (current.target?.mode !== "edit" || current.target.profileId !== profileId) {
+        return current;
+      }
+      const nextToken = editorTokenRef.current + 1;
+      editorTokenRef.current = nextToken;
+      isDirtyRef.current = false;
+      return { target: null, token: nextToken };
+    });
+  }, []);
 
   const handlePaneLayout = useCallback((event: LayoutChangeEvent) => {
     setPaneWidth(event.nativeEvent.layout.width);
@@ -654,31 +703,27 @@ export function AgentProfilesPage({
 
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {
+      const expectedToken = editorTokenRef.current;
       if (!isDirtyRef.current) {
-        setEditTarget(next);
+        commitEditTarget(next);
         return;
       }
       const confirmAndTransition = async () => {
         if (await confirmDiscardIfDirty()) {
-          setEditTarget(next);
+          applyDelayedEditTarget(expectedToken, next);
         }
       };
       void confirmAndTransition();
     },
-    [confirmDiscardIfDirty],
+    [applyDelayedEditTarget, commitEditTarget, confirmDiscardIfDirty],
   );
 
   const handleAddOpen = useCallback(() => transitionTarget({ mode: "create" }), [transitionTarget]);
   const handleEditClose = useCallback(() => transitionTarget(null), [transitionTarget]);
-  const handleSavedClose = useCallback((savedKey: string) => {
-    setEditTarget((current) => {
-      if (!current || editTargetKey(current) !== savedKey) {
-        return current;
-      }
-      isDirtyRef.current = false;
-      return null;
-    });
-  }, []);
+  const handleSavedClose = useCallback(
+    (savedToken: number) => applyDelayedEditTarget(savedToken, null),
+    [applyDelayedEditTarget],
+  );
 
   const handleEditOpen = useCallback(
     (id: string) => {
@@ -723,7 +768,9 @@ export function AgentProfilesPage({
     mutateProfiles,
     confirmDiscardIfDirty,
     editTarget,
-    setEditTarget,
+    getEditorToken,
+    applyDelayedEditTarget,
+    closeIfEditingProfile,
   });
 
   const formatFeatureCount = useCallback(
@@ -857,8 +904,8 @@ export function AgentProfilesPage({
 
       {editorTarget ? (
         <AgentProfileEditorHost
-          key={editTargetKey(editorTarget)}
-          targetKey={editTargetKey(editorTarget)}
+          key={`${editTargetKey(editorTarget)}:${editorState.token}`}
+          sessionToken={editorState.token}
           serverId={serverId}
           mode={editorTarget.mode}
           profile={activeProfile}
