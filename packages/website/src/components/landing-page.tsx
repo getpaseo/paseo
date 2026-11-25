@@ -13,6 +13,7 @@ import {
   Gem,
   GitFork,
   GitPullRequest,
+  Globe,
   Laptop,
   Lock,
   Merge,
@@ -387,7 +388,7 @@ function FeatureSection({
 }: {
   eyebrow?: string;
   title: string;
-  description: string;
+  description: React.ReactNode;
   badge?: string;
   links?: ReadonlyArray<{ href: string; label: string }>;
   children: React.ReactNode;
@@ -941,9 +942,50 @@ function HubSection() {
   );
 }
 
+/** A client that runs plugins, named in the section lede with its icon. */
+function PluginClient({
+  icon: Icon,
+  className,
+  iconClassName = "mr-[0.3em]",
+  children,
+}: {
+  icon: LucideIcon;
+  className: string;
+  iconClassName?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <span className={`whitespace-nowrap ${className}`}>
+      <Icon
+        aria-hidden="true"
+        className={`inline-block size-[1em] align-[-0.15em] ${iconClassName}`}
+        strokeWidth={1.75}
+      />
+      {children}
+    </span>
+  );
+}
+
+const PLUGIN_CLIENT_COMPONENTS = {
+  desktop: <PluginClient icon={Monitor} className="text-sky-300" />,
+  web: <PluginClient icon={Globe} className="text-emerald-300" />,
+  // Optical: the phone glyph is narrower than its box, so pull both sides in.
+  mobile: (
+    <PluginClient
+      icon={Smartphone}
+      className="text-purple-300"
+      iconClassName="-ml-[0.12em] mr-[0.18em]"
+    />
+  ),
+};
+
 function ExtensibleSection({ pluginCount }: { pluginCount?: number | null }) {
   const { t } = useTranslation();
   const pluginActions = React.useMemo(() => <PluginActions />, []);
+  const description = React.useMemo(
+    () => <Trans i18nKey="landing.plugins.description" components={PLUGIN_CLIENT_COMPONENTS} />,
+    [],
+  );
   const libraryTitle =
     pluginCount && pluginCount > 0
       ? t("landing.plugins.libraryTitleCount", { count: pluginCount })
@@ -952,7 +994,7 @@ function ExtensibleSection({ pluginCount }: { pluginCount?: number | null }) {
     <FeatureSection
       eyebrow={t("landing.eyebrows.plugins")}
       title={t("landing.plugins.title")}
-      description={t("landing.plugins.description")}
+      description={description}
     >
       <div className="space-y-6">
         <SelfModifyDemo />
