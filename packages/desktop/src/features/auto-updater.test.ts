@@ -5,10 +5,14 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock, getAllWindowsMock } = vi.hoisted(() => {
+const { autoUpdaterMock, getAllWindowsMock, desktopSettingsMock } = vi.hoisted(() => {
   const handlers = new Map<string, Set<(value: unknown) => void>>();
   return {
     getAllWindowsMock: vi.fn<() => unknown[]>(() => []),
+    desktopSettingsMock: {
+      mode: "automatic" as "automatic" | "notify" | "off",
+      error: null as Error | null,
+    },
     autoUpdaterMock: {
       handlers: {
         get: (event: string) => (value: unknown) => {
@@ -50,6 +54,22 @@ vi.mock("electron", () => ({
   BrowserWindow: {
     getAllWindows: getAllWindowsMock,
   },
+}));
+
+vi.mock("../settings/desktop-settings-electron.js", () => ({
+  getDesktopSettingsStore: () => ({
+    get: async () => {
+      if (desktopSettingsMock.error) {
+        throw desktopSettingsMock.error;
+      }
+      return {
+        releaseChannel: "stable",
+        updates: { mode: desktopSettingsMock.mode },
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+      };
+    },
+  }),
 }));
 
 vi.mock("electron-updater", () => ({
@@ -181,6 +201,59 @@ describe("checkForAppUpdate", () => {
     getAllWindowsMock.mockReturnValue([]);
   });
 
+  it("gates automatic checks and autoDownload from desktop settings and falls back to automatic on read failure", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      autoUpdaterMock.checkForUpdates.mockClear();
+      desktopSettingsMock.mode = "off";
+      const offAuto = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+      });
+      expect(offAuto.hasUpdate).toBe(false);
+      expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
+
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.9" },
+      });
+      const offManual = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "manual",
+      });
+      expect(offManual).toMatchObject({
+        hasUpdate: true,
+        downloading: false,
+        latestVersion: "1.2.9",
+      });
+
+      desktopSettingsMock.mode = "automatic";
+      desktopSettingsMock.error = new SyntaxError("Unexpected token } in JSON");
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.10" },
+      });
+      const fallbackResult = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+      });
+      expect(fallbackResult).toMatchObject({
+        hasUpdate: true,
+        downloading: true,
+        latestVersion: "1.2.10",
+      });
+      expect(consoleWarn).toHaveBeenCalled();
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.10" });
+    } finally {
+      desktopSettingsMock.mode = "automatic";
+      desktopSettingsMock.error = null;
+      consoleWarn.mockRestore();
+    }
+  });
+
   it("does not fail update events when setProgressBar throws", async () => {
     const send = vi.fn();
     getAllWindowsMock.mockReturnValue([
@@ -288,6 +361,24 @@ describe("checkForAppUpdate", () => {
         isForceRunAfter: false,
       }),
     ).resolves.toEqual({ started: true });
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
+
+    // Explicit install times out cleanly instead of hanging forever if Squirrel never emits.
+    await expect(
+      runElectronQuitAndInstall({
+        platform: "darwin",
+        updater,
+        nativeUpdater,
+        isSilent: false,
+        isForceRunAfter: true,
+        timeoutMs: 10,
+      }),
+    ).resolves.toEqual({
+      started: false,
+      errorMessage: "Timed out waiting for the update installer to start.",
+    });
+    expect(updater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("error")).toBe(0);
     expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
   });
 

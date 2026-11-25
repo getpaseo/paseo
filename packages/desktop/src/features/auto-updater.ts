@@ -5,6 +5,7 @@ import { app, autoUpdater as electronAutoUpdater, BrowserWindow } from "electron
 import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
+import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import {
   createAppUpdateService,
   type AppUpdateCheckResult,
@@ -153,10 +154,6 @@ function resolveProgressBarValue(progress: AppUpdateDownloadProgress | null): nu
 }
 
 function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): void {
-  if (typeof BrowserWindow?.getAllWindows !== "function") {
-    return;
-  }
-
   const normalizedBar = resolveProgressBarValue(progress);
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
@@ -172,6 +169,8 @@ function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): 
     }
   }
 }
+
+export const MACOS_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1000;
 
 export interface QuitAndInstallEventSource {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
@@ -190,6 +189,7 @@ export function runElectronQuitAndInstall({
   nativeUpdater,
   isSilent,
   isForceRunAfter,
+  timeoutMs = MACOS_INSTALL_HANDOFF_TIMEOUT_MS,
 }: {
   platform: NodeJS.Platform;
   updater: QuitAndInstallEventSource & {
@@ -198,6 +198,7 @@ export function runElectronQuitAndInstall({
   nativeUpdater?: QuitAndInstallEventSource;
   isSilent: boolean;
   isForceRunAfter: boolean;
+  timeoutMs?: number;
 }): Promise<AppUpdateInstallLaunchResult> {
   // Only await macOS Squirrel preparation for explicit Download / Restart Now
   // installs (isForceRunAfter === true). Quit-time installs (isForceRunAfter === false)
@@ -223,16 +224,24 @@ export function runElectronQuitAndInstall({
 
   // With autoInstallOnAppQuit disabled, electron-updater's MacUpdater starts
   // native Squirrel preparation asynchronously inside quitAndInstall(). Keep
-  // the explicit install promise pending until Squirrel hands off to quit or fails.
+  // the explicit install promise pending until Squirrel hands off to quit, fails,
+  // or hits the safety timeout.
   return new Promise<AppUpdateInstallLaunchResult>((resolve) => {
     let settled = false;
-    const finish = (result: AppUpdateInstallLaunchResult) => {
-      if (settled) return;
-      settled = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
       updater.removeListener?.("error", handleError);
       nativeUpdater.removeListener?.("error", handleError);
       nativeUpdater.removeListener?.("update-not-available", handleNotAvailable);
       nativeUpdater.removeListener?.("before-quit-for-update", handleQuitStarted);
+    };
+    const finish = (result: AppUpdateInstallLaunchResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve(result);
     };
 
@@ -245,6 +254,13 @@ export function runElectronQuitAndInstall({
     const handleQuitStarted = () => {
       finish({ started: true });
     };
+
+    timer = setTimeout(() => {
+      finish({
+        started: false,
+        errorMessage: "Timed out waiting for the update installer to start.",
+      });
+    }, timeoutMs);
 
     updater.on("error", handleError);
     nativeUpdater.on("error", handleError);
@@ -366,7 +382,14 @@ const appUpdateService = createAppUpdateService({
   isPackaged: () => app.isPackaged,
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  updateMode: async () => (await getDesktopSettingsStore().get()).updates.mode,
   onDownloadProgress: broadcastDownloadProgress,
+  reportSettingsError: (error) => {
+    console.warn(
+      "[auto-updater] Failed to read desktop update mode, defaulting to automatic:",
+      error,
+    );
+  },
   reportCheckError: (error) => {
     console.error("[auto-updater] Failed to check for updates:", error);
   },
@@ -386,16 +409,12 @@ export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
   intent,
-  autoDownload = true,
-  shouldCheck,
-  shouldAutoDownload,
+  autoDownload,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
   autoDownload?: boolean;
-  shouldCheck?: () => boolean | Promise<boolean>;
-  shouldAutoDownload?: () => boolean | Promise<boolean>;
 }): Promise<AppUpdateCheckResult> {
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
@@ -403,8 +422,6 @@ export async function checkForAppUpdate({
     releaseChannel,
     intent,
     autoDownload,
-    shouldCheck,
-    shouldAutoDownload,
   });
   updateLifecycleLog.checkCompleted({
     currentVersion,

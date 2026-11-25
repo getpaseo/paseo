@@ -1,3 +1,4 @@
+import type { DesktopUpdateMode } from "../settings/desktop-settings.js";
 import {
   rolloutManifestSchema,
   shouldAdmitAppUpdate,
@@ -78,7 +79,7 @@ export interface AppUpdateRuntime {
   downloadUpdate(targetVersion: string): Promise<unknown>;
   quitAndInstall(
     input: AppUpdateInstallRequest,
-  ): Promise<AppUpdateInstallLaunchResult | void> | AppUpdateInstallLaunchResult | void;
+  ): Promise<AppUpdateInstallLaunchResult> | AppUpdateInstallLaunchResult;
 }
 
 export interface AppUpdateService {
@@ -87,8 +88,6 @@ export interface AppUpdateService {
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
-    shouldCheck?: () => boolean | Promise<boolean>;
-    shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult>;
   downloadAndInstallUpdate(
     input: {
@@ -109,7 +108,9 @@ export interface AppUpdateServiceDeps {
   isPackaged(): boolean;
   now(): number;
   bucket(): Promise<number>;
+  updateMode?: () => DesktopUpdateMode | Promise<DesktopUpdateMode>;
   onDownloadProgress?(progress: AppUpdateDownloadProgress | null): void;
+  reportSettingsError?(error: unknown): void;
   reportCheckError?(error: unknown): void;
   reportRuntimeError?(error: unknown): void;
   reportInstallError?(message: string): void;
@@ -162,7 +163,7 @@ async function performQuitAndInstall(
     isSilent: !restart,
     isForceRunAfter: restart,
   });
-  if (launch && !launch.started) {
+  if (!launch.started) {
     throw new Error(launch.errorMessage ?? "Failed to launch update installer.");
   }
 }
@@ -223,24 +224,40 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     });
   }
 
+  async function resolveUpdateMode(): Promise<DesktopUpdateMode> {
+    if (!deps.updateMode) {
+      return "automatic";
+    }
+    try {
+      return await deps.updateMode();
+    } catch (error) {
+      deps.reportSettingsError?.(error);
+      return "automatic";
+    }
+  }
+
+  function resolveAutoDownload(mode: DesktopUpdateMode, override: boolean | undefined): boolean {
+    return override ?? mode === "automatic";
+  }
+
   function configureRuntime(
     releaseChannel: AppReleaseChannel,
     intent: AppUpdateCheckIntent,
-    autoDownload: boolean,
-    shouldCheck?: () => boolean | Promise<boolean>,
-    shouldAutoDownload?: () => boolean | Promise<boolean>,
+    initialAutoDownload: boolean,
+    autoDownloadOverride: boolean | undefined,
   ): void {
     if (configuredReleaseChannel !== releaseChannel) {
       clearUpdateState();
       configuredReleaseChannel = releaseChannel;
     }
-    currentAutoDownload = autoDownload;
+    currentAutoDownload = initialAutoDownload;
 
     deps.runtime.configure({
       releaseChannel,
-      autoDownload,
+      autoDownload: initialAutoDownload,
       shouldAdmitUpdate: async (info) => {
-        if (shouldCheck && !(await shouldCheck())) {
+        const liveMode = await resolveUpdateMode();
+        if (intent === "automatic" && liveMode === "off") {
           return false;
         }
         const parsed = rolloutManifestSchema.parse(info);
@@ -252,8 +269,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           now: deps.now(),
           bucket: await deps.bucket(),
         });
-        if (admitted && shouldAutoDownload) {
-          currentAutoDownload = await shouldAutoDownload();
+        if (admitted) {
+          currentAutoDownload = resolveAutoDownload(liveMode, autoDownloadOverride);
           deps.runtime.setAutoDownload?.(currentAutoDownload);
         }
         return admitted;
@@ -360,16 +377,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     currentVersion,
     releaseChannel,
     intent,
-    autoDownload = true,
-    shouldCheck,
-    shouldAutoDownload,
+    autoDownload,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
-    shouldCheck?: () => boolean | Promise<boolean>;
-    shouldAutoDownload?: () => boolean | Promise<boolean>;
   }): Promise<AppUpdateCheckResult> {
     if (!deps.isPackaged()) {
       return buildCheckResult({
@@ -380,7 +393,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     return runCheckExclusively(async () => {
-      if (shouldCheck && !(await shouldCheck())) {
+      const mode = deps.updateMode ? await resolveUpdateMode() : "automatic";
+      if (intent === "automatic" && mode === "off") {
         return buildCheckResult({
           currentVersion,
           hasUpdate: false,
@@ -390,18 +404,16 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       if (intent === "manual") {
         preparationError = null;
       }
-      const effectiveAutoDownload = shouldAutoDownload ? await shouldAutoDownload() : autoDownload;
       configureRuntime(
         releaseChannel,
         intent,
-        effectiveAutoDownload,
-        shouldCheck,
-        shouldAutoDownload,
+        resolveAutoDownload(mode, autoDownload),
+        autoDownload,
       );
 
       try {
         const result = await deps.runtime.checkForUpdates();
-        if (shouldCheck && !(await shouldCheck())) {
+        if (intent === "automatic" && deps.updateMode && (await resolveUpdateMode()) === "off") {
           return buildCheckResult({
             currentVersion,
             hasUpdate: false,
@@ -612,6 +624,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     signal: AbortSignal;
   }): Promise<boolean> {
     if (!deps.isPackaged() || !downloadedUpdateVersion) {
+      return false;
+    }
+    if ((await resolveUpdateMode()) !== "automatic") {
       return false;
     }
 

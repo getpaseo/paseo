@@ -316,10 +316,12 @@ export function createDesktopSettingsStore({
 
   return {
     async get(): Promise<DesktopSettings> {
-      if (cachedDocument) {
-        return toDesktopSettings(cachedDocument.settings);
-      }
-      const document = await enqueueOperation(() => loadDocumentUnlocked());
+      const document = await enqueueOperation(async () => {
+        if (cachedDocument) {
+          return cachedDocument;
+        }
+        return loadDocumentUnlocked();
+      });
       return toDesktopSettings(document.settings);
     },
 

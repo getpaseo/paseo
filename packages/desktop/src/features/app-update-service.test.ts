@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DesktopUpdateMode } from "../settings/desktop-settings";
 
 import {
   createAppUpdateService,
@@ -174,6 +175,8 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
 function createService(input?: {
   now?: () => number;
   bucket?: () => Promise<number>;
+  updateMode?: () => DesktopUpdateMode | Promise<DesktopUpdateMode>;
+  reportSettingsError?: (error: unknown) => void;
   onDownloadProgress?: (progress: AppUpdateDownloadProgress | null) => void;
 }) {
   const runtime = new FakeAppUpdateRuntime();
@@ -182,6 +185,8 @@ function createService(input?: {
     isPackaged: () => true,
     now: input?.now ?? (() => Date.parse("2026-04-28T12:00:00.000Z")),
     bucket: input?.bucket ?? (async () => 0.99),
+    updateMode: input?.updateMode,
+    reportSettingsError: input?.reportSettingsError,
     onDownloadProgress: input?.onDownloadProgress,
   });
   return { runtime, service };
@@ -1122,21 +1127,20 @@ describe("app update service", () => {
     });
   });
 
-  it("applies updated autoDownload preference before authorizing a download after a slow check", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
-    let modeAllowsAutoDownload = true;
+  it("applies updated updateMode before authorizing a download after a slow check", async () => {
+    let mode: DesktopUpdateMode = "automatic";
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      updateMode: async () => mode,
+    });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    const result = await service.checkForAppUpdate({
+    const check = service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "automatic",
-      autoDownload: true,
-      shouldAutoDownload: async () => {
-        modeAllowsAutoDownload = false;
-        return modeAllowsAutoDownload;
-      },
     });
+    mode = "notify";
+    const result = await check;
 
     expect(runtime.lastAutoDownload).toBe(false);
     expect(result).toMatchObject({
@@ -1148,37 +1152,103 @@ describe("app update service", () => {
   });
 
   it("skips a queued automatic check after Off is saved while an earlier check is in flight", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
-    let allowAutomaticChecks = true;
+    let mode: DesktopUpdateMode = "automatic";
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      updateMode: async () => mode,
+    });
     const firstCheck = runtime.deferNextCheck();
 
     const firstPending = service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "automatic",
-      autoDownload: true,
-      shouldCheck: async () => allowAutomaticChecks,
-      shouldAutoDownload: async () => allowAutomaticChecks,
     });
     const queuedPending = service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "automatic",
-      autoDownload: true,
-      shouldCheck: async () => allowAutomaticChecks,
-      shouldAutoDownload: async () => allowAutomaticChecks,
     });
 
     await vi.waitFor(() => {
       expect(runtime.checkCount).toBe(1);
     });
-    allowAutomaticChecks = false;
+    mode = "off";
     firstCheck.resolve({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
     const [firstResult, queuedResult] = await Promise.all([firstPending, queuedPending]);
     expect(runtime.checkCount).toBe(1);
     expect(firstResult.hasUpdate).toBe(false);
     expect(queuedResult.hasUpdate).toBe(false);
+  });
+
+  it("falls back to automatic mode when reading updateMode fails so updates are never stranded", async () => {
+    const settingsErrors: unknown[] = [];
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      updateMode: async () => {
+        throw new SyntaxError("Unexpected token } in JSON");
+      },
+      reportSettingsError: (error) => settingsErrors.push(error),
+    });
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const autoResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    expect(autoResult).toMatchObject({
+      hasUpdate: true,
+      downloading: true,
+      latestVersion: "1.2.4",
+      errorMessage: null,
+    });
+
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const installedOnQuit = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+    expect(installedOnQuit).toBe(true);
+    expect(settingsErrors.length).toBeGreaterThan(0);
+  });
+
+  it("skips installUpdateOnQuit when updateMode is notify or off", async () => {
+    let mode: DesktopUpdateMode = "automatic";
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      updateMode: async () => mode,
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    mode = "notify";
+    expect(
+      await service.installUpdateOnQuit({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      }),
+    ).toBe(false);
+
+    mode = "off";
+    expect(
+      await service.installUpdateOnQuit({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      }),
+    ).toBe(false);
+
+    expect(runtime.installedVersions).toEqual([]);
   });
 
   it("reports installer launch failures instead of success on both cached and downloaded paths", async () => {

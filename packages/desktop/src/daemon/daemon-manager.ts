@@ -481,7 +481,17 @@ async function getLocalDaemonVersion(): Promise<{ version: string | null; error:
 async function resolveRequestedReleaseChannel(
   args: Record<string, unknown> | undefined,
 ): Promise<AppReleaseChannel> {
-  return parseReleaseChannel(args) ?? (await getDesktopSettingsStore().get()).releaseChannel;
+  const explicit = parseReleaseChannel(args);
+  if (explicit) return explicit;
+  try {
+    return (await getDesktopSettingsStore().get()).releaseChannel;
+  } catch (error) {
+    console.warn(
+      "[auto-updater] Failed to read release channel from desktop settings, defaulting to stable:",
+      error,
+    );
+    return "stable";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -541,32 +551,12 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     check_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
-      const settings = await getDesktopSettingsStore().get();
+      const releaseChannel = await resolveRequestedReleaseChannel(args);
       const intent = parseAppUpdateCheckIntent(args);
-      const updateMode = settings.updates.mode;
-      if (intent === "automatic" && updateMode === "off") {
-        return {
-          hasUpdate: false,
-          readyToInstall: false,
-          downloading: false,
-          currentVersion,
-          latestVersion: currentVersion,
-          body: null,
-          date: null,
-          errorMessage: null,
-        };
-      }
       return checkForAppUpdate({
         currentVersion,
-        releaseChannel: parseReleaseChannel(args) ?? settings.releaseChannel,
+        releaseChannel,
         intent,
-        autoDownload: updateMode === "automatic",
-        shouldCheck:
-          intent === "automatic"
-            ? async () => (await getDesktopSettingsStore().get()).updates.mode !== "off"
-            : undefined,
-        shouldAutoDownload: async () =>
-          (await getDesktopSettingsStore().get()).updates.mode === "automatic",
       });
     },
     install_app_update: async (args) => {

@@ -14,6 +14,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   paseoHome: "",
+  settingsError: null as Error | null,
   settings: {
     releaseChannel: "stable" as "stable" | "beta",
     updates: {
@@ -49,6 +50,7 @@ vi.mock("electron", () => ({
     getVersion: vi.fn(() => "1.2.3"),
     isPackaged: true,
   },
+  autoUpdater: undefined,
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
   ipcMain: { handle: vi.fn() },
   powerMonitor: { getSystemIdleTime: vi.fn(() => 0) },
@@ -74,7 +76,12 @@ vi.mock("@getpaseo/server/daemon-control", async (importOriginal) => ({
 
 vi.mock("../settings/desktop-settings-electron.js", () => ({
   getDesktopSettingsStore: () => ({
-    get: async () => mocks.settings,
+    get: async () => {
+      if (mocks.settingsError) {
+        throw mocks.settingsError;
+      }
+      return mocks.settings;
+    },
     patch: vi.fn(),
     migrateLegacyRendererSettings: vi.fn(),
   }),
@@ -200,80 +207,52 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
   });
 
-  it("blocks automatic update checks when updates.mode is off", async () => {
-    mocks.settings = {
-      ...DEFAULT_DESKTOP_SETTINGS,
-      updates: { mode: "off" },
-    };
-
-    const result = await createDaemonCommandHandlers().check_app_update({
-      intent: "automatic",
-    });
-
-    expect(mocks.checkForAppUpdate).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      hasUpdate: false,
-      readyToInstall: false,
-      downloading: false,
-      currentVersion: "1.2.3",
-      latestVersion: "1.2.3",
-      body: null,
-      date: null,
-      errorMessage: null,
-    });
-  });
-
-  it("checks without auto-downloading when updates.mode is notify or manual in off mode", async () => {
+  it("delegates update checks to checkForAppUpdate even when desktop-settings.json cannot be read", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.checkForAppUpdate.mockResolvedValue({
       hasUpdate: true,
       readyToInstall: false,
-      downloading: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.4",
       body: null,
       date: null,
       errorMessage: null,
     });
-
-    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "notify" } };
-    await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
-    expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-      autoDownload: false,
-      shouldCheck: expect.any(Function),
-      shouldAutoDownload: expect.any(Function),
+    mocks.downloadAndInstallUpdate.mockResolvedValue({
+      installed: true,
+      version: "1.2.4",
+      message: "Update downloaded.",
     });
 
-    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "off" } };
-    await createDaemonCommandHandlers().check_app_update({ intent: "manual" });
-    expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-      autoDownload: false,
-      shouldCheck: undefined,
-      shouldAutoDownload: expect.any(Function),
-    });
+    mocks.settingsError = new SyntaxError("Unexpected token } in JSON");
+    try {
+      await createDaemonCommandHandlers().check_app_update({
+        intent: "manual",
+        releaseChannel: "beta",
+      });
+      expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
+        currentVersion: "1.2.3",
+        releaseChannel: "beta",
+        intent: "manual",
+      });
 
-    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "automatic" } };
-    await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
-    const lastCall = mocks.checkForAppUpdate.mock.calls.at(-1)?.[0] as {
-      shouldCheck: () => Promise<boolean>;
-      shouldAutoDownload: () => Promise<boolean>;
-    };
-    expect(lastCall).toMatchObject({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-      autoDownload: true,
-    });
-    expect(await lastCall.shouldCheck()).toBe(true);
-    expect(await lastCall.shouldAutoDownload()).toBe(true);
-    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "off" } };
-    expect(await lastCall.shouldCheck()).toBe(false);
-    expect(await lastCall.shouldAutoDownload()).toBe(false);
+      await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
+      expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+      });
+
+      await createDaemonCommandHandlers().install_app_update({});
+      expect(mocks.downloadAndInstallUpdate).toHaveBeenLastCalledWith(
+        { currentVersion: "1.2.3", releaseChannel: "stable" },
+        expect.any(Function),
+      );
+    } finally {
+      mocks.settingsError = null;
+      consoleWarn.mockRestore();
+    }
   });
 });
 

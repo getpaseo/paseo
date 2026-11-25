@@ -160,6 +160,20 @@ describe("desktop-settings", () => {
     expect(reloaded.releaseChannel).toBe("beta");
   });
 
+  it("waits for an in-flight patch before resolving get() from cache", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    await store.patch({ updates: { mode: "off" } });
+    const patchPromise = store.patch({ updates: { mode: "automatic" } });
+    const readDuringPatch = store.get();
+
+    const [patched, read] = await Promise.all([patchPromise, readDuringPatch]);
+    expect(patched.updates.mode).toBe("automatic");
+    expect(read.updates.mode).toBe("automatic");
+  });
+
   it("defaults notification sounds on for existing settings documents", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
