@@ -78,7 +78,7 @@ const FOCUSED_COMBOBOX_ACTION_SELECTOR =
   '[data-combobox-trailing-action] button, [data-combobox-trailing-action] [role="button"], [data-combobox-footer] button, [data-combobox-footer] [role="button"]';
 
 export type ComboboxOption = ComboboxOptionModel;
-export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start" | "bottom-end";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -94,6 +94,11 @@ export interface ComboboxProps {
   searchable?: boolean;
   /** The caller answers the search query itself, so the options are shown as given. */
   remoteSearch?: boolean;
+  /**
+   * With `remoteSearch`, the options still answer an earlier query. No option is picked until
+   * the user moves to one, so Enter cannot confirm a row the new query may not match.
+   */
+  remoteSearchPending?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -610,6 +615,7 @@ interface DesktopKeyHandlerInput {
   isOpen: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
+  remoteSearchPending: boolean;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
   handleSelect: (id: string) => void;
   handleClose: () => void;
@@ -622,7 +628,9 @@ function handleDesktopArrowKey(input: DesktopKeyHandlerInput, key: "ArrowDown" |
 function handleDesktopEnterKey(input: DesktopKeyHandlerInput) {
   if (input.orderedVisibleOptions.length === 0) return;
   const { activeIndex, orderedVisibleOptions } = input;
-  const index = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+  const picked = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length;
+  if (!picked && input.remoteSearchPending) return;
+  const index = picked ? activeIndex : 0;
   input.handleSelect(orderedVisibleOptions[index].id);
 }
 
@@ -678,18 +686,21 @@ function useActiveIndexSync(
   effectiveOptionsPosition: "below-search" | "above-search",
   normalizedSearch: string,
   value: string,
+  remoteSearchPending: boolean,
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>,
 ) {
   useEffect(() => {
     if (!isOpen) return;
     if (!IS_WEB && isMobile) return;
     setActiveIndex(
-      resolveInitialActiveIndex(
-        orderedVisibleOptions,
-        effectiveOptionsPosition,
-        normalizedSearch,
-        value,
-      ),
+      remoteSearchPending
+        ? -1
+        : resolveInitialActiveIndex(
+            orderedVisibleOptions,
+            effectiveOptionsPosition,
+            normalizedSearch,
+            value,
+          ),
     );
   }, [
     effectiveOptionsPosition,
@@ -698,6 +709,7 @@ function useActiveIndexSync(
     normalizedSearch,
     value,
     orderedVisibleOptions,
+    remoteSearchPending,
     setActiveIndex,
   ]);
 }
@@ -1398,6 +1410,7 @@ export function Combobox({
   onSearchQueryChange,
   searchable = true,
   remoteSearch,
+  remoteSearchPending,
   placeholder,
   searchPlaceholder,
   emptyText,
@@ -1616,6 +1629,7 @@ export function Combobox({
     effectiveOptionsPosition,
     normalizedSearch,
     value,
+    remoteSearchPending === true,
     setActiveIndex,
   );
 
@@ -1663,6 +1677,7 @@ export function Combobox({
           isOpen,
           orderedVisibleOptions,
           activeIndex,
+          remoteSearchPending: remoteSearchPending === true,
           setActiveIndex,
           handleSelect,
           handleClose,
@@ -1671,7 +1686,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions, remoteSearchPending],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
