@@ -51,8 +51,10 @@ fun TextView.cancelJSTouchForLinkTap(event: MotionEvent) {
 /**
  * Cancels the JS touch unconditionally, preventing parent
  * Pressable/TouchableOpacity from firing onPress for the same gesture.
+ *
+ * Parent intercept is handled by [CheckboxTouchHelper], which disallows it
+ * for the press and releases it when the press ends or exceeds touch slop.
  */
 fun View.cancelJSTouchForCheckboxTap(event: MotionEvent) {
-  parent?.requestDisallowInterceptTouchEvent(true)
   NativeGestureUtil.notifyNativeGestureStarted(this, event)
 }

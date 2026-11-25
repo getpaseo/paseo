@@ -12,6 +12,8 @@ import android.view.View
 import android.view.View.MeasureSpec
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ScrollView
 import android.widget.TextView
 import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.JavaOnlyMap
@@ -23,7 +25,11 @@ import com.swmansion.enriched.markdown.renderer.SpanStyleCache
 import com.swmansion.enriched.markdown.segments.TableContainerView
 import com.swmansion.enriched.markdown.spans.LinkSpan
 import com.swmansion.enriched.markdown.styles.StyleConfig
+import com.swmansion.enriched.markdown.test.MarkdownRenderTestSupport.render
+import com.swmansion.enriched.markdown.test.TestAstFactory.paragraph
+import com.swmansion.enriched.markdown.test.TestAstFactory.taskListItem
 import com.swmansion.enriched.markdown.test.TestAstFactory.text
+import com.swmansion.enriched.markdown.test.TestAstFactory.unorderedList
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -219,36 +225,87 @@ class LongPressSelectionInterceptTest {
   }
 
   @Test
-  fun tableCellMoveOverPlainTextDoesNotReleaseUnownedParentIntercept() {
+  fun overflowingTableHorizontalDragKeepsParentInterceptDisallowedAndScrollsTable() {
     val table = TableContainerView(context, createStyleConfig())
-    val cell = MarkdownASTNode(NodeType.TableCell, children = listOf(text("Plain cell text")))
-    val row = MarkdownASTNode(NodeType.TableRow, children = listOf(cell))
+    val cells =
+      (1..6).map { i ->
+        MarkdownASTNode(NodeType.TableCell, children = listOf(text("Column $i wide cell content")))
+      }
+    val row = MarkdownASTNode(NodeType.TableRow, children = cells)
     val body = MarkdownASTNode(NodeType.TableBody, children = listOf(row))
     table.applyTableNode(MarkdownASTNode(NodeType.Table, children = listOf(body)))
-    layoutInParent(table)
+    val parent = layoutInParent(table, width = 240)
 
-    val cellTextView = findFirstTextView(table)
-    val parent = RecordingParent(context)
-    (cellTextView.parent as? android.view.ViewGroup)?.removeView(cellTextView)
-    parent.addView(cellTextView)
-    parent.measure(
-      MeasureSpec.makeMeasureSpec(300, MeasureSpec.EXACTLY),
-      MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
-    )
-    parent.layout(0, 0, parent.measuredWidth, parent.measuredHeight)
+    val horizontalScrollView = findFirstViewOfType(table, HorizontalScrollView::class.java)
+    assertTrue("Table must overflow horizontally to test scroll ownership", horizontalScrollView.canScrollHorizontally(1))
 
-    val (x, y) = pointOnChar(cellTextView, 2)
+    val startX = table.width * 0.75f
+    val startY = table.height / 2f
     val slop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     val downTime = SystemClock.uptimeMillis()
 
-    cellTextView.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_DOWN, x, y))
-    parent.requestDisallowInterceptTouchEvent(true)
+    table.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_DOWN, startX, startY))
+    assertTrue("Overflowing table must claim parent intercept on ACTION_DOWN", parent.disallowIntercept)
     parent.resetCalls()
 
-    cellTextView.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, x, y + slop * 2f))
+    table.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, startX - slop * 2f, startY))
+    table.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, startX - slop * 6f, startY))
 
-    assertTrue("Table cell must not clear an ancestor's disallow-intercept flag on plain text", parent.disallowIntercept)
+    assertTrue("CellTextView must not release ClaimingHorizontalScrollView's disallow-intercept on horizontal drag", parent.disallowIntercept)
     assertFalse(parent.calls.contains(false))
+    assertTrue("Intact table scroll view must scroll horizontally", horizontalScrollView.scrollX > 0)
+
+    table.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_UP, startX - slop * 6f, startY))
+  }
+
+  @Test
+  fun verticalSwipeStartingOnCheckboxReleasesParentInterceptAndScrolls() {
+    var tapped = false
+    val style = createStyleConfig()
+    val taskList =
+      unorderedList(
+        *(1..30)
+          .map { i -> taskListItem(checked = false, paragraph(text("Review the draft item $i"))) }
+          .toTypedArray(),
+      )
+    val view =
+      EnrichedMarkdownInternalText(context).apply {
+        enableTaskListItemToggle = true
+        onTaskListItemPressCallback = { _, _, _ -> tapped = true }
+        applyStyledText(render(style, taskList))
+      }
+
+    val scrollView = ScrollView(context)
+    val parent = RecordingParent(context)
+    parent.addView(view)
+    scrollView.addView(parent)
+    scrollView.measure(
+      MeasureSpec.makeMeasureSpec(400, MeasureSpec.EXACTLY),
+      MeasureSpec.makeMeasureSpec(200, MeasureSpec.EXACTLY),
+    )
+    scrollView.layout(0, 0, scrollView.measuredWidth, scrollView.measuredHeight)
+
+    val layout = requireNotNull(view.layout)
+    // Pick a checkbox midway down the 200px viewport so an upward swipe stays inside bounds.
+    val targetLine = 5
+    val checkboxX = view.totalPaddingLeft + 8f
+    val checkboxY = view.totalPaddingTop + (layout.getLineTop(targetLine) + layout.getLineBottom(targetLine)) / 2f
+    val slop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    val downTime = SystemClock.uptimeMillis()
+
+    scrollView.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_DOWN, checkboxX, checkboxY))
+    assertTrue("Checkbox press must claim parent intercept on ACTION_DOWN", parent.disallowIntercept)
+
+    scrollView.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, checkboxX, checkboxY - slop * 2f))
+    assertFalse("Moving past slop must release checkbox's disallow-intercept claim", parent.disallowIntercept)
+
+    // ScrollView intercepts on the next move after disallow is released, then scrolls on subsequent moves.
+    scrollView.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, checkboxX, checkboxY - slop * 4f))
+    scrollView.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_MOVE, checkboxX, checkboxY - slop * 8f))
+    scrollView.dispatchTouchEvent(motionEvent(downTime, MotionEvent.ACTION_UP, checkboxX, checkboxY - slop * 8f))
+
+    assertTrue("Parent ScrollView must scroll after vertical swipe starting on a checkbox", scrollView.scrollY > 0)
+    assertFalse("Cancelled checkbox drag must not fire tap callback", tapped)
   }
 
   @Test
@@ -323,14 +380,17 @@ class LongPressSelectionInterceptTest {
     assertFalse("Cancelled link touch must release parent intercept", parent.disallowIntercept)
   }
 
-  private fun findFirstTextView(root: View): TextView {
-    if (root is TextView) return root
+  private fun <T : View> findFirstViewOfType(
+    root: View,
+    type: Class<T>,
+  ): T {
+    if (type.isInstance(root)) return type.cast(root)!!
     if (root is android.view.ViewGroup) {
       for (i in 0 until root.childCount) {
-        runCatching { return findFirstTextView(root.getChildAt(i)) }
+        runCatching { return findFirstViewOfType(root.getChildAt(i), type) }
       }
     }
-    error("No TextView found under $root")
+    error("No ${type.simpleName} found under $root")
   }
 
   private companion object {
