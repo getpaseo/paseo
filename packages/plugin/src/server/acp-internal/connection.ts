@@ -53,6 +53,7 @@ import {
   type ProviderToolCallDetail,
   type ProviderPersistence,
   type ProviderSessionConfig,
+  type ProviderSessionSummary,
   type ProviderSetting,
   type ProviderTimelineItem,
   type ProviderUsage,
@@ -300,15 +301,27 @@ async function listSessions(
   });
   try {
     const selected = await runtime.listSessions({ cwd: input.cwd, limit: input.limit });
+    const transformers = state.options.transformers ?? [];
+    const sessions = await Promise.all(
+      selected.map(async (session) => {
+        let summary: ProviderSessionSummary = {
+          persistence: nativePersistence(session.sessionId),
+          cwd: session.cwd,
+          title: session.title ?? undefined,
+          updatedAt: session.updatedAt ?? undefined,
+        };
+        for (const transformer of transformers) {
+          if (transformer.sessionSummary) {
+            summary = await transformer.sessionSummary(summary);
+          }
+        }
+        return summary;
+      }),
+    );
     state.emit({
       type: "sessions",
       requestId: input.requestId,
-      sessions: selected.map((session) => ({
-        persistence: nativePersistence(session.sessionId),
-        cwd: session.cwd,
-        title: session.title ?? undefined,
-        updatedAt: session.updatedAt ?? undefined,
-      })),
+      sessions,
     });
   } finally {
     await runtime.close();

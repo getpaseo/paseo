@@ -7038,6 +7038,65 @@ describe("ACP tool call rows", () => {
     }
   });
 
+  it("runs sessionSummary transformers in order over listed sessions", async () => {
+    const harness = connectorHarness({
+      capabilities: { sessionCapabilities: { list: {} } },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/list") return false;
+        runtime.respond(request, {
+          sessions: [
+            { sessionId: "s1", cwd: "/repo/My%20Project", title: "First" },
+            { sessionId: "s2", cwd: "/repo/other", title: "Second" },
+          ],
+        });
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "transformed-sessions",
+      label: "Transformed sessions",
+      connector: harness.connector,
+      transformers: [
+        {
+          sessionSummary(summary) {
+            return { ...summary, cwd: summary.cwd.replace("%20", " ") };
+          },
+        },
+        {
+          async sessionSummary(summary) {
+            return { ...summary, description: `cwd:${summary.cwd}` };
+          },
+        },
+      ],
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "list" });
+      const listed = await waitForEvent(events, (event) => event.type === "sessions");
+      expect(listed).toEqual({
+        type: "sessions",
+        requestId: "list",
+        sessions: [
+          {
+            persistence: { version: 1, data: { sessionId: "s1" } },
+            cwd: "/repo/My Project",
+            title: "First",
+            description: "cwd:/repo/My Project",
+          },
+          {
+            persistence: { version: 1, data: { sessionId: "s2" } },
+            cwd: "/repo/other",
+            title: "Second",
+            description: "cwd:/repo/other",
+          },
+        ],
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("resumes the generic ACP adapter's saved Auto Accept toggle in the unattended mode", async () => {
     const harness = connectorHarness({
       configOptions: [

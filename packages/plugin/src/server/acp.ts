@@ -7,6 +7,7 @@ import type {
   ProviderNotice,
   ProviderPersistence,
   ProviderRegistration,
+  ProviderSessionSummary,
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "./provider.js";
@@ -151,6 +152,10 @@ export interface AcpTransformer {
   config?(state: ProviderConfigState, context: AcpContext): ProviderConfigState;
   /** Rewrites each advertised ACP slash command before Paseo sees it. */
   command?(command: ProviderCommand, context: AcpContext): ProviderCommand;
+  /** Rewrites each session summary from session/list before Paseo sees it. */
+  sessionSummary?(
+    summary: ProviderSessionSummary,
+  ): Promise<ProviderSessionSummary> | ProviderSessionSummary;
   notification?(
     notification: { method: string; params: JsonValue },
     context: AcpContext,

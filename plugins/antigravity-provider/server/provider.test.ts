@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAntigravityProvider } from "./provider.js";
@@ -885,4 +886,142 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
   } finally {
     await connection.close();
   }
+});
+
+describe("session listing", () => {
+  function stripFileScheme(directory: string): string {
+    return pathToFileURL(directory).href.replace(/^file:\/\//, "");
+  }
+
+  async function listWithFakeSessions(
+    sessions: ReadonlyArray<{ sessionId: string; cwd: string; title?: string }>,
+  ) {
+    const { launch } = await launchAgent(`
+      const { createInterface } = require("node:readline");
+      const sessions = ${JSON.stringify(sessions)};
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") {
+          send({ id, result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { list: {} } } } });
+        }
+        if (method === "session/list") {
+          send({ id, result: { sessions } });
+        }
+      });
+    `);
+    const connection = await createAntigravityProvider().connect({
+      launch,
+      versions: [1],
+      capabilities: ["session.list"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "list" });
+      await expect
+        .poll(() =>
+          events.find((event) => event.type === "sessions" || event.type === "request.failed"),
+        )
+        .toMatchObject({ type: "sessions" });
+      const listed = events.find((event) => event.type === "sessions");
+      if (listed?.type !== "sessions") throw new Error("Expected a sessions event");
+      return listed.sessions;
+    } finally {
+      await connection.close();
+    }
+  }
+
+  it("decodes percent-encoded and file:// session cwds when the decoded directory exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-antigravity-list-"));
+    directories.push(root);
+    const unicodeDir = path.join(root, "workspace-中文", "project");
+    const spaceDir = path.join(root, "My Project");
+    const percentUnicodeDir = path.join(root, "100% 中文");
+    const encodedLiteralDir = path.join(root, "foo%20bar");
+    const fileUriDir = path.join(root, "URI Folder 中文");
+    await Promise.all([
+      mkdir(unicodeDir, { recursive: true }),
+      mkdir(spaceDir, { recursive: true }),
+      mkdir(percentUnicodeDir, { recursive: true }),
+      mkdir(encodedLiteralDir, { recursive: true }),
+      mkdir(fileUriDir, { recursive: true }),
+    ]);
+
+    const listed = await listWithFakeSessions([
+      { sessionId: "unicode", cwd: stripFileScheme(unicodeDir), title: "Unicode" },
+      { sessionId: "space", cwd: stripFileScheme(spaceDir), title: "Space" },
+      { sessionId: "percent-unicode", cwd: stripFileScheme(percentUnicodeDir) },
+      { sessionId: "encoded-literal", cwd: stripFileScheme(encodedLiteralDir) },
+      { sessionId: "file-uri", cwd: pathToFileURL(fileUriDir).href },
+    ]);
+
+    expect(listed.map((session) => ({ id: session.persistence.data, cwd: session.cwd }))).toEqual([
+      { id: { sessionId: "unicode" }, cwd: unicodeDir },
+      { id: { sessionId: "space" }, cwd: spaceDir },
+      { id: { sessionId: "percent-unicode" }, cwd: percentUnicodeDir },
+      { id: { sessionId: "encoded-literal" }, cwd: encodedLiteralDir },
+      { id: { sessionId: "file-uri" }, cwd: fileUriDir },
+    ]);
+  });
+
+  it("preserves raw cwds for literal percent dirs, malformed encodings, missing dirs, and files", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-antigravity-list-edge-"));
+    directories.push(root);
+    const literalEncodedDir = path.join(root, "foo%20bar");
+    const decodedSiblingDir = path.join(root, "foo bar");
+    const literalPercentDir = path.join(root, "100%done");
+    const decodedFile = path.join(root, "notes file.txt");
+    await Promise.all([
+      mkdir(literalEncodedDir, { recursive: true }),
+      mkdir(decodedSiblingDir, { recursive: true }),
+      mkdir(literalPercentDir, { recursive: true }),
+      writeFile(decodedFile, "not a directory"),
+    ]);
+
+    const missingEncodedCwd = stripFileScheme(path.join(root, "deleted-中文", "project"));
+    const invalidHexCwd = path.join(root, "bad%ZZ");
+    const mixedInvalidCwd = path.join(root, "My%20Project%ZZ");
+    const invalidUtf8Cwd = path.join(root, "%E0%A4%A");
+    const encodedFileCwd = stripFileScheme(decodedFile);
+
+    const listed = await listWithFakeSessions([
+      { sessionId: "literal-encoded", cwd: literalEncodedDir },
+      { sessionId: "literal-percent", cwd: literalPercentDir },
+      { sessionId: "missing", cwd: missingEncodedCwd },
+      { sessionId: "invalid-hex", cwd: invalidHexCwd },
+      { sessionId: "mixed-invalid", cwd: mixedInvalidCwd },
+      { sessionId: "invalid-utf8", cwd: invalidUtf8Cwd },
+      { sessionId: "file-target", cwd: encodedFileCwd },
+    ]);
+
+    expect(listed.map((session) => ({ id: session.persistence.data, cwd: session.cwd }))).toEqual([
+      { id: { sessionId: "literal-encoded" }, cwd: literalEncodedDir },
+      { id: { sessionId: "literal-percent" }, cwd: literalPercentDir },
+      { id: { sessionId: "missing" }, cwd: missingEncodedCwd },
+      { id: { sessionId: "invalid-hex" }, cwd: invalidHexCwd },
+      { id: { sessionId: "mixed-invalid" }, cwd: mixedInvalidCwd },
+      { id: { sessionId: "invalid-utf8" }, cwd: invalidUtf8Cwd },
+      { id: { sessionId: "file-target" }, cwd: encodedFileCwd },
+    ]);
+  });
+
+  it("handles encoded directory names whose percent-encoded form exceeds NAME_MAX", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-antigravity-list-long-"));
+    directories.push(root);
+    // 32 CJK chars = 96 UTF-8 bytes (valid on disk), 288 bytes when percent-encoded (> 255 NAME_MAX).
+    const longUnicodeDir = path.join(root, "中".repeat(32));
+    await mkdir(longUnicodeDir, { recursive: true });
+
+    const listed = await listWithFakeSessions([
+      { sessionId: "long-unicode", cwd: stripFileScheme(longUnicodeDir) },
+    ]);
+
+    expect(listed).toEqual([
+      {
+        persistence: { version: 1, data: { sessionId: "long-unicode" } },
+        cwd: longUnicodeDir,
+      },
+    ]);
+  });
 });
