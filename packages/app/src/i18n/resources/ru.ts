@@ -349,6 +349,7 @@ export const ru: TranslationResources = {
       viewDiagram: "Показать диаграмму",
     },
     actions: {
+      copyQuote: "Копировать цитату",
       copyCode: "Скопировать код",
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",

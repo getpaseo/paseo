@@ -7,12 +7,24 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+#if !TARGET_OS_OSX
+typedef UIButton ENRMHeaderCopyButton;
+#else
+typedef NSButton ENRMHeaderCopyButton;
+#endif
+
 typedef void (^ENRMCodeBlockCopyBlock)(NSString *code, NSString *language);
 typedef void (^ENRMCodeBlockPressBlock)(NSString *code, NSString *language);
 
 @interface ENRMCodeBlockContainerView : RCTUIView
 
 - (instancetype)initWithConfig:(StyleConfig *)config;
+
+// The header band and its copy control. Quotes show the same control, so the band
+// height, hit box, glyph and placement live here for both.
++ (CGFloat)headerCopyBandHeightForConfig:(StyleConfig *)config;
++ (ENRMHeaderCopyButton *)headerCopyButtonForConfig:(StyleConfig *)config target:(id)target action:(SEL)action;
++ (void)layoutHeaderCopyButton:(ENRMHeaderCopyButton *)button width:(CGFloat)width config:(StyleConfig *)config;
 
 - (void)applyCodeBlockNode:(MarkdownASTNode *)node;
 

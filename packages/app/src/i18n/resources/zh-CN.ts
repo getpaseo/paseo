@@ -345,6 +345,7 @@ export const zhCN: TranslationResources = {
       viewDiagram: "查看图表",
     },
     actions: {
+      copyQuote: "复制引用",
       copyCode: "复制代码",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
