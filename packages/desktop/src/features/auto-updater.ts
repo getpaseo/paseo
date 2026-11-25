@@ -188,22 +188,21 @@ export function runElectronQuitAndInstall({
   platform,
   updater,
   nativeUpdater,
-  appEvents,
   isSilent,
   isForceRunAfter,
-  signal,
 }: {
   platform: NodeJS.Platform;
   updater: QuitAndInstallEventSource & {
     quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
   };
   nativeUpdater?: QuitAndInstallEventSource;
-  appEvents?: QuitAndInstallEventSource;
   isSilent: boolean;
   isForceRunAfter: boolean;
-  signal?: AbortSignal;
 }): Promise<AppUpdateInstallLaunchResult> {
-  if (platform !== "darwin" || typeof nativeUpdater?.on !== "function") {
+  // Only await macOS Squirrel preparation for explicit Download / Restart Now
+  // installs (isForceRunAfter === true). Quit-time installs (isForceRunAfter === false)
+  // return immediately so quit-lifecycle owns its separate handoff deadline.
+  if (platform !== "darwin" || !isForceRunAfter || typeof nativeUpdater?.on !== "function") {
     let launchError: unknown = null;
     const captureLaunchError = (error: unknown) => {
       launchError ??= error;
@@ -224,7 +223,7 @@ export function runElectronQuitAndInstall({
 
   // With autoInstallOnAppQuit disabled, electron-updater's MacUpdater starts
   // native Squirrel preparation asynchronously inside quitAndInstall(). Keep
-  // the install promise pending until Squirrel hands off to quit or fails.
+  // the explicit install promise pending until Squirrel hands off to quit or fails.
   return new Promise<AppUpdateInstallLaunchResult>((resolve) => {
     let settled = false;
     const finish = (result: AppUpdateInstallLaunchResult) => {
@@ -234,10 +233,6 @@ export function runElectronQuitAndInstall({
       nativeUpdater.removeListener?.("error", handleError);
       nativeUpdater.removeListener?.("update-not-available", handleNotAvailable);
       nativeUpdater.removeListener?.("before-quit-for-update", handleQuitStarted);
-      if (!isForceRunAfter) {
-        appEvents?.removeListener?.("before-quit", handleQuitStarted);
-      }
-      signal?.removeEventListener("abort", handleAbort);
       resolve(result);
     };
 
@@ -250,23 +245,11 @@ export function runElectronQuitAndInstall({
     const handleQuitStarted = () => {
       finish({ started: true });
     };
-    const handleAbort = () => {
-      finish({ started: false, errorMessage: "Update installation was deferred." });
-    };
-
-    if (signal?.aborted) {
-      handleAbort();
-      return;
-    }
 
     updater.on("error", handleError);
     nativeUpdater.on("error", handleError);
     nativeUpdater.on("update-not-available", handleNotAvailable);
     nativeUpdater.on("before-quit-for-update", handleQuitStarted);
-    if (!isForceRunAfter) {
-      appEvents?.on("before-quit", handleQuitStarted);
-    }
-    signal?.addEventListener("abort", handleAbort, { once: true });
 
     try {
       updater.quitAndInstall(isSilent, isForceRunAfter);
@@ -360,7 +343,6 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     targetVersion,
     isSilent,
     isForceRunAfter,
-    signal,
   }: AppUpdateInstallRequest): Promise<AppUpdateInstallLaunchResult> {
     broadcastDownloadProgress(null);
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
@@ -373,10 +355,8 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       platform: process.platform,
       updater: autoUpdater,
       nativeUpdater: electronAutoUpdater,
-      appEvents: app,
       isSilent,
       isForceRunAfter,
-      signal,
     });
   }
 }

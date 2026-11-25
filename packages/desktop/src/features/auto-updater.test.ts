@@ -241,18 +241,16 @@ describe("checkForAppUpdate", () => {
     consoleError.mockRestore();
   });
 
-  it("waits on macOS until Squirrel either reports an async preparation error or signals quit", async () => {
+  it("waits on macOS explicit installs until Squirrel reports an error or signals quit, while returning immediately on quit-time handoff", async () => {
     const updater = Object.assign(new EventEmitter(), {
       quitAndInstall: vi.fn(),
     });
     const nativeUpdater = new EventEmitter();
-    const appEvents = new EventEmitter();
 
     const failedInstall = runElectronQuitAndInstall({
       platform: "darwin",
       updater,
       nativeUpdater,
-      appEvents,
       isSilent: false,
       isForceRunAfter: true,
     });
@@ -273,24 +271,24 @@ describe("checkForAppUpdate", () => {
       platform: "darwin",
       updater,
       nativeUpdater,
-      appEvents,
       isSilent: false,
       isForceRunAfter: true,
     });
     nativeUpdater.emit("before-quit-for-update");
     await expect(restartInstall).resolves.toEqual({ started: true });
 
-    const quitInstall = runElectronQuitAndInstall({
-      platform: "darwin",
-      updater,
-      nativeUpdater,
-      appEvents,
-      isSilent: true,
-      isForceRunAfter: false,
-    });
-    appEvents.emit("before-quit");
-    await expect(quitInstall).resolves.toEqual({ started: true });
-    expect(appEvents.listenerCount("before-quit")).toBe(0);
+    // Quit-time install (isForceRunAfter: false) returns immediately so
+    // quit-lifecycle owns its separate handoff deadline.
+    await expect(
+      runElectronQuitAndInstall({
+        platform: "darwin",
+        updater,
+        nativeUpdater,
+        isSilent: true,
+        isForceRunAfter: false,
+      }),
+    ).resolves.toEqual({ started: true });
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
   });
 
   it("logs the update handoff with current and selected target versions", () => {

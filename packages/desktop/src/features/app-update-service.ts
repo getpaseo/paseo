@@ -64,7 +64,6 @@ export interface AppUpdateInstallRequest {
   targetVersion: string;
   isSilent: boolean;
   isForceRunAfter: boolean;
-  signal?: AbortSignal;
 }
 
 export interface AppUpdateInstallLaunchResult {
@@ -151,12 +150,10 @@ async function performQuitAndInstall(
     targetVersion,
     onBeforeQuit,
     restart,
-    signal,
   }: {
     targetVersion: string;
     onBeforeQuit?: () => Promise<void>;
     restart: boolean;
-    signal?: AbortSignal;
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
@@ -164,7 +161,6 @@ async function performQuitAndInstall(
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
-    signal,
   });
   if (launch && !launch.started) {
     throw new Error(launch.errorMessage ?? "Failed to launch update installer.");
@@ -586,7 +582,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
-        signal,
       });
 
       return {
