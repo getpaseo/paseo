@@ -23,15 +23,33 @@ const RECONCILIATION_DELAY_MS = 50;
 // pathology, not an ordinary large burst.
 const MAX_CONCURRENT_CLASSIFICATIONS = 32;
 const MAX_QUEUED_CLASSIFICATIONS = 16_384;
+const MAX_WATCH_ATTACH_ATTEMPTS = 3;
+const MAX_DIRECTORY_RESCANS = 3;
 
 // "baseline" establishes coverage of what already exists when the subscription
 // starts, so it reports nothing. "changes" scans topology that appeared while
 // observed, so files found before their directory was covered are creates.
 type ReconcileMode = "baseline" | "changes";
 
+interface DirectoryIdentity {
+  dev: bigint;
+  ino: bigint;
+}
+
+interface WatchedDirectory {
+  watcher: FSWatcher;
+  identity: DirectoryIdentity;
+}
+
 interface DirectorySnapshot {
   directories: Set<string>;
   filesDiscoveredBeforeCoverage: Set<string>;
+}
+
+type DirectoryScanOutcome = "ok" | "aborted" | "ignored" | "replaced";
+
+function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 type WatchDirectory = (
@@ -50,7 +68,7 @@ export function createLinuxBackend(
 }
 
 class LinuxBackend implements ObservationBackend {
-  private readonly watchers = new Map<string, FSWatcher>();
+  private readonly watchers = new Map<string, WatchedDirectory>();
   private readonly classifications = new Set<Promise<void>>();
   private readonly classificationQueue: Array<{ path: string }> = [];
   private readonly pendingScopes = new Set<string>();
@@ -67,16 +85,18 @@ class LinuxBackend implements ObservationBackend {
   ) {}
 
   async start(): Promise<void> {
-    this.watchDirectory(this.host.root);
+    const rootIdentity = await this.statDirectoryIdentity(this.host.root);
+    if (!rootIdentity || !this.host.isActive()) return;
+    this.watchDirectory(this.host.root, rootIdentity);
     await this.enqueue([this.host.root], "baseline");
   }
 
   async updateIgnore(): Promise<void> {
     this.discardIgnoredClassifications();
     const inFlight = [...this.classifications];
-    for (const [directory, watcher] of this.watchers) {
+    for (const [directory, entry] of this.watchers) {
       if (directory !== this.host.root && this.host.isIgnored(directory)) {
-        watcher.close();
+        entry.watcher.close();
         this.watchers.delete(directory);
       }
     }
@@ -88,7 +108,7 @@ class LinuxBackend implements ObservationBackend {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.cancelQueued();
-    for (const watcher of this.watchers.values()) watcher.close();
+    for (const entry of this.watchers.values()) entry.watcher.close();
     this.watchers.clear();
     this.closePromise = this.finishClose();
     return this.closePromise;
@@ -113,11 +133,18 @@ class LinuxBackend implements ObservationBackend {
     await this.reconcileTail;
     this.classificationQueue.length = 0;
     await Promise.allSettled(this.classifications);
-    for (const watcher of this.watchers.values()) watcher.close();
+    for (const entry of this.watchers.values()) entry.watcher.close();
     this.watchers.clear();
   }
 
-  private watchDirectory(directory: string): void {
+  private closeWatcher(directory: string): void {
+    const existing = this.watchers.get(directory);
+    if (!existing) return;
+    existing.watcher.close();
+    this.watchers.delete(directory);
+  }
+
+  private watchDirectory(directory: string, identity: DirectoryIdentity): void {
     if (!this.host.isActive() || this.watchers.has(directory) || this.host.isIgnored(directory)) {
       return;
     }
@@ -136,15 +163,15 @@ class LinuxBackend implements ObservationBackend {
       }
       if (eventType === "rename" || !filename) this.requestReconcile(path);
     });
-    this.attachWatcher(directory, watcher);
+    this.attachWatcher(directory, watcher, identity);
   }
 
-  private attachWatcher(directory: string, watcher: FSWatcher): void {
+  private attachWatcher(directory: string, watcher: FSWatcher, identity: DirectoryIdentity): void {
     watcher.on("error", (error) => {
       if (!this.host.isActive()) return;
       if (this.paths.isExpectedWatchDisappearance(error)) {
         watcher.close();
-        if (this.watchers.get(directory) === watcher) this.watchers.delete(directory);
+        if (this.watchers.get(directory)?.watcher === watcher) this.watchers.delete(directory);
         if (directory === this.host.root) {
           this.host.fail(toError(error));
           return;
@@ -154,7 +181,7 @@ class LinuxBackend implements ObservationBackend {
       }
       this.host.fail(toError(error));
     });
-    this.watchers.set(directory, watcher);
+    this.watchers.set(directory, { watcher, identity });
   }
 
   private requestReconcile(scope: string): void {
@@ -214,22 +241,22 @@ class LinuxBackend implements ObservationBackend {
           this.host.queueEvent("create", path);
         }
       }
-      for (const [directory, watcher] of this.watchers) {
+      for (const [directory, entry] of this.watchers) {
         const disappeared =
           directory !== this.host.root &&
           this.host.isPathInside(scope, directory) &&
           !snapshot.directories.has(directory);
         if (!disappeared) continue;
-        watcher.close();
+        entry.watcher.close();
         this.watchers.delete(directory);
         this.host.queueEvent("delete", directory);
       }
     }
   }
 
-  private watchSnapshotDirectory(directory: string): boolean {
+  private watchSnapshotDirectory(directory: string, identity: DirectoryIdentity): boolean {
     try {
-      this.watchDirectory(directory);
+      this.watchDirectory(directory, identity);
       return true;
     } catch (error) {
       if (!this.paths.isExpectedWatchDisappearance(error) || directory === this.host.root) {
@@ -239,42 +266,92 @@ class LinuxBackend implements ObservationBackend {
     }
   }
 
-  private async readDirectoryForScan(
-    directory: string,
-    needsCoverageDiscovery: boolean,
-  ): Promise<Dirent[] | null> {
-    // Establish inotify coverage before taking the directory snapshot so files
-    // written during readdir() or mid-directory scan yields are never missed.
-    if (needsCoverageDiscovery && !this.watchSnapshotDirectory(directory)) {
-      return null;
-    }
+  private async statDirectoryIdentity(directory: string): Promise<DirectoryIdentity | null> {
     try {
-      return await readdir(directory, { withFileTypes: true });
+      const stats = await stat(directory, { bigint: true });
+      if (!stats.isDirectory()) return null;
+      return { dev: stats.dev, ino: stats.ino };
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
       if (directory === this.host.root && this.host.isActive()) throw error;
-      if (needsCoverageDiscovery) {
-        this.watchers.get(directory)?.close();
-        this.watchers.delete(directory);
-      }
       return null;
     }
   }
 
-  private async scan(scope: string, mode: ReconcileMode): Promise<DirectorySnapshot> {
-    let scopeStats;
-    try {
-      scopeStats = await stat(scope);
-    } catch (error) {
-      if (!isMissingPathError(error) || scope === this.host.root) throw error;
-      return { directories: new Set(), filesDiscoveredBeforeCoverage: new Set() };
+  // Linux inotify watches are pinned to a directory inode, not its path. Verify
+  // that the live path still resolves to the watched (dev, ino) before reusing
+  // a watcher, and verify after attaching a new watch so concurrent swaps are
+  // never left watching a moved-away directory.
+  private async ensureDirectoryWatch(
+    directory: string,
+  ): Promise<{ identity: DirectoryIdentity; discovered: boolean } | null> {
+    for (let attempt = 0; attempt < MAX_WATCH_ATTACH_ATTEMPTS; attempt += 1) {
+      if (!this.host.isActive() || this.host.isIgnored(directory)) return null;
+      const before = await this.statDirectoryIdentity(directory);
+      if (!before || !this.host.isActive() || this.host.isIgnored(directory)) return null;
+      const existing = this.watchers.get(directory);
+      if (existing && sameDirectoryIdentity(existing.identity, before)) {
+        return { identity: before, discovered: false };
+      }
+      if (existing) this.closeWatcher(directory);
+      if (!this.watchSnapshotDirectory(directory, before)) return null;
+      const after = await this.statDirectoryIdentity(directory);
+      if (!after || !this.host.isActive() || this.host.isIgnored(directory)) {
+        this.closeWatcher(directory);
+        return null;
+      }
+      if (sameDirectoryIdentity(before, after)) {
+        return { identity: before, discovered: true };
+      }
+      this.closeWatcher(directory);
     }
-    if (!scopeStats.isDirectory() || !this.host.isActive() || this.host.isIgnored(scope)) {
+    this.requestReconcile(directory);
+    return null;
+  }
+
+  private async readDirectoryForScan(directory: string): Promise<{
+    entries: Dirent[];
+    identity: DirectoryIdentity;
+    discovered: boolean;
+  } | null> {
+    // Establish inotify coverage before taking the directory snapshot so files
+    // written during readdir() or mid-directory scan yields are never missed.
+    const watched = await this.ensureDirectoryWatch(directory);
+    if (!watched) return null;
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      return { entries, identity: watched.identity, discovered: watched.discovered };
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      if (directory === this.host.root && this.host.isActive()) throw error;
+      if (watched.discovered) this.closeWatcher(directory);
+      return null;
+    }
+  }
+
+  private async isDirectoryIdentityCurrent(
+    directory: string,
+    identity: DirectoryIdentity,
+    discovered: boolean,
+  ): Promise<boolean> {
+    const current = await this.statDirectoryIdentity(directory);
+    if (current && sameDirectoryIdentity(current, identity)) return true;
+    this.closeWatcher(directory);
+    if (!current && !discovered && directory !== this.host.root) {
+      this.host.queueEvent("delete", directory);
+    }
+    return false;
+  }
+
+  private async scan(scope: string, mode: ReconcileMode): Promise<DirectorySnapshot> {
+    const scopeIdentity = await this.statDirectoryIdentity(scope);
+    if (!scopeIdentity || !this.host.isActive() || this.host.isIgnored(scope)) {
       return { directories: new Set(), filesDiscoveredBeforeCoverage: new Set() };
     }
     const directories = new Set<string>([scope]);
     const filesDiscoveredBeforeCoverage = new Set<string>();
     const pending = [scope];
+    const rescanAttempts = new Map<string, number>();
     const slice = createScanSliceBudget();
     while (pending.length > 0 && this.host.isActive()) {
       const directory = pending.pop();
@@ -283,9 +360,8 @@ class LinuxBackend implements ObservationBackend {
         directories.delete(directory);
         continue;
       }
-      const needsCoverageDiscovery = !this.watchers.has(directory);
-      const entries = await this.readDirectoryForScan(directory, needsCoverageDiscovery);
-      if (!entries) {
+      const scanned = await this.readDirectoryForScan(directory);
+      if (!scanned) {
         directories.delete(directory);
         continue;
       }
@@ -296,17 +372,30 @@ class LinuxBackend implements ObservationBackend {
         directories.delete(directory);
         continue;
       }
-      const keepScanning = await this.scanDirectoryEntries(
+      const outcome = await this.scanDirectoryEntries({
         directory,
-        entries,
-        mode === "changes" && needsCoverageDiscovery,
+        entries: scanned.entries,
+        identity: scanned.identity,
+        discovered: scanned.discovered,
+        collectDiscoveredFiles: mode === "changes" && scanned.discovered,
         directories,
         filesDiscoveredBeforeCoverage,
         pending,
         slice,
-      );
-      if (!keepScanning) {
+      });
+      if (outcome === "aborted") {
         return { directories, filesDiscoveredBeforeCoverage };
+      }
+      if (outcome === "replaced") {
+        const retries = (rescanAttempts.get(directory) ?? 0) + 1;
+        if (retries <= MAX_DIRECTORY_RESCANS) {
+          rescanAttempts.set(directory, retries);
+          pending.push(directory);
+        } else {
+          directories.delete(directory);
+          this.requestReconcile(directory);
+        }
+        continue;
       }
       if (slice.isExpired()) {
         await slice.yield();
@@ -315,24 +404,40 @@ class LinuxBackend implements ObservationBackend {
     return { directories, filesDiscoveredBeforeCoverage };
   }
 
-  private async scanDirectoryEntries(
-    directory: string,
-    entries: Dirent[],
-    collectDiscoveredFiles: boolean,
-    directories: Set<string>,
-    filesDiscoveredBeforeCoverage: Set<string>,
-    pending: string[],
-    slice: ScanSliceBudget,
-  ): Promise<boolean> {
+  private async scanDirectoryEntries(input: {
+    directory: string;
+    entries: Dirent[];
+    identity: DirectoryIdentity;
+    discovered: boolean;
+    collectDiscoveredFiles: boolean;
+    directories: Set<string>;
+    filesDiscoveredBeforeCoverage: Set<string>;
+    pending: string[];
+    slice: ScanSliceBudget;
+  }): Promise<DirectoryScanOutcome> {
+    const {
+      directory,
+      entries,
+      identity,
+      discovered,
+      collectDiscoveredFiles,
+      directories,
+      filesDiscoveredBeforeCoverage,
+      pending,
+      slice,
+    } = input;
     const childDirectories: string[] = [];
     const childFiles: string[] = [];
     for (const entry of entries) {
       if (slice.shouldYield()) {
         await slice.yield();
-        if (!this.host.isActive()) return false;
+        if (!this.host.isActive()) return "aborted";
         if (this.host.isIgnored(directory)) {
           directories.delete(directory);
-          return true;
+          return "ignored";
+        }
+        if (!(await this.isDirectoryIdentityCurrent(directory, identity, discovered))) {
+          return "replaced";
         }
       }
       const child = resolve(directory, entry.name);
@@ -349,12 +454,16 @@ class LinuxBackend implements ObservationBackend {
       }
       childDirectories.push(child);
     }
+    if (!(await this.isDirectoryIdentityCurrent(directory, identity, discovered))) {
+      return "replaced";
+    }
+    if (!this.host.isActive()) return "aborted";
     for (const file of childFiles) filesDiscoveredBeforeCoverage.add(file);
     for (const child of childDirectories) {
       directories.add(child);
       pending.push(child);
     }
-    return true;
+    return "ok";
   }
 
   private classify(path: string): void {
