@@ -6168,7 +6168,6 @@ describe("deferTurnOnRunningTools", () => {
       );
 
       const childPid = Number((await readFile(pidFile, "utf8")).trim());
-      const startedAt = Date.now();
       await Promise.all([
         connection.send({
           type: "session.interrupt",
@@ -6190,8 +6189,8 @@ describe("deferTurnOnRunningTools", () => {
         (event) => event.type === "request.completed" && event.requestId === "int-2",
       );
 
-      // Both interrupts waited for the 250ms SIGTERM exit, and process is now dead.
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+      // Both interrupts waited for the process to exit. On POSIX it lives 250ms past SIGTERM, so an
+      // interrupt that returned early would find it alive; Windows ends it at once.
       expect(() => process.kill(childPid, 0)).toThrow();
 
       // Canceled turn and session.closed were each emitted exactly once.

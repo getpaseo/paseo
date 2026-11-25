@@ -5,7 +5,11 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const skill = readFileSync(path.join(repository, "skills/paseo-plugin/SKILL.md"), "utf8");
+// A Windows checkout writes CRLF line endings.
+const skill = readFileSync(
+  path.join(repository, "skills/paseo-plugin/SKILL.md"),
+  "utf8",
+).replaceAll("\r\n", "\n");
 const pluginRoot = path.join(repository, "plugin-examples/skill-example");
 
 interface SkillExample {
