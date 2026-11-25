@@ -245,6 +245,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
         kind: "monitor",
         description: describeWatch(forge, url),
         startedAt: watcher.startedAt ?? new Date().toISOString(),
+        countsAsRunning: false,
         stop: async () => {
           await unsubscribe(watcher.agentId, url, watcher);
         },
