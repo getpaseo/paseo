@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../timeline/index.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
@@ -833,20 +834,19 @@ describe("OpenCode v2 session lifecycle", () => {
           { provider: "opencode", cwd: "/tmp/project" },
           launchEnvironment === "with" ? { env: { PASEO_AGENT_ID: "parent" } } : undefined,
         );
-        const store = new ProviderSubagentStore();
+        const store = new ProviderSubagentStore(new AgentTimeline());
         session.subscribe((event) => {
-          if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+          if (event.type === "provider_subagent")
+            void store.apply("parent", "opencode", event.event);
         });
         try {
           for (const info of [child, sibling, grandchild]) sessions.set(info.id, info);
           harness.push({ id: child.id, created: 2, type: "session.created", data: child });
-          const ids = () =>
-            store
-              .list("parent")
-              .map(({ id }) => id)
-              .sort();
+          const ids = async () => (await store.list("parent")).map(({ id }) => id).sort();
           await expect.poll(ids).toEqual([child.id, grandchild.id, sibling.id]);
-          expect(store.list("parent").find(({ id }) => id === child.id)?.status).toBe("running");
+          expect((await store.list("parent")).find(({ id }) => id === child.id)?.status).toBe(
+            "running",
+          );
 
           sessions.delete(child.id);
           harness.environments.length = 0;
