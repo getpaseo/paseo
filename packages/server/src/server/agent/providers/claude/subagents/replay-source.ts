@@ -5,6 +5,7 @@ import { normalizeProviderReplayTimestamp } from "../../../provider-history-time
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { isClaudeInterruptPlaceholderText } from "../interrupt-placeholder.js";
 import { resolveObservedClaudeModelId } from "../models.js";
+import { isClaudeSubagentHandbackToolName } from "../subagent-handback.js";
 import type { ClaudeRestoredSubagent } from "./live-source.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
@@ -147,6 +148,12 @@ export interface ClaudeReplayParentFacts {
    * none: its immediate result only says the child started.
    */
   outcomesByToolCallId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
+  /**
+   * Task id (the child's agentId) -> latest task notification outcome. A SendMessage resume
+   * keeps the task id but reports under the SendMessage tool id, and a notification written after
+   * a lost process has no tool id at all, so only the task id follows the child across resumes.
+   */
+  outcomesByTaskId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
 }
 
 interface ParentLink {
@@ -188,7 +195,10 @@ function resolveParentLink(
       : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
   if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
 
-  const status = parent.outcomesByToolCallId.get(toolCallId)?.status ?? null;
+  const status =
+    parent.outcomesByTaskId.get(subagent.agentId)?.status ??
+    parent.outcomesByToolCallId.get(toolCallId)?.status ??
+    null;
   return { id: toolCallId, toolCallId, status };
 }
 
@@ -306,12 +316,26 @@ function readChildTerminalStatus(
   previous: ProviderSubagentStatus | null,
 ): ProviderSubagentStatus | null {
   if (entry.type === "assistant") {
-    return entry.message?.stop_reason === "end_turn" ? "completed" : null;
+    return entry.message?.stop_reason === "end_turn" || hasSubagentHandback(entry)
+      ? "completed"
+      : null;
   }
   if (entry.type !== "user") return previous;
   const texts = readUserTexts(entry);
   if (texts.length === 0) return previous;
   return texts.some(isClaudeInterruptPlaceholderText) ? "canceled" : null;
+}
+
+/** A child in auto mode ends by handing its report back instead of with an end_turn reply. */
+function hasSubagentHandback(entry: ClaudeReplayEntry): boolean {
+  const content = entry.message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some(
+      (block: { type?: unknown; name?: unknown } | null) =>
+        block?.type === "tool_use" && isClaudeSubagentHandbackToolName(block.name),
+    )
+  );
 }
 
 /** Tool results carry no user text and do not change the child's terminal status. */

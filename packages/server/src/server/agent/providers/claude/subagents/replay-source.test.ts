@@ -24,7 +24,12 @@ const TOOL_USE_ID = "toolu_01DgLoPMW9";
 const AGENT_ID = "a1730a6215e1f5cf6";
 
 function emptyParent(): ClaudeReplayParentFacts {
-  return { toolCalls: new Map(), linksByAgentId: new Map(), outcomesByToolCallId: new Map() };
+  return {
+    toolCalls: new Map(),
+    linksByAgentId: new Map(),
+    outcomesByToolCallId: new Map(),
+    outcomesByTaskId: new Map(),
+  };
 }
 
 function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
@@ -37,6 +42,7 @@ function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
     ]),
     linksByAgentId: new Map(),
     outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: failed ? "failed" : "completed" }]]),
+    outcomesByTaskId: new Map(),
   };
 }
 
@@ -162,6 +168,7 @@ describe("observeReplaySubagents", () => {
               ]),
               linksByAgentId: new Map(),
               outcomesByToolCallId: new Map([[nestedToolUseId, { status: "completed" }]]),
+              outcomesByTaskId: new Map(),
             },
           },
           {
@@ -219,6 +226,7 @@ describe("observeReplaySubagents", () => {
       toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
       linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
       outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: "completed" }]]),
+      outcomesByTaskId: new Map(),
     };
 
     const [declared, ...rest] = (
@@ -309,6 +317,7 @@ describe("observeReplaySubagents", () => {
             toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
             linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
             outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: "failed" }]]),
+            outcomesByTaskId: new Map(),
           },
           convertEntry: () => [],
         })

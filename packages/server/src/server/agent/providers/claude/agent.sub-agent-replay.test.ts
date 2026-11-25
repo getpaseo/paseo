@@ -675,6 +675,86 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
 
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
     });
+
+    test("completes when a SendMessage resume finished it under a new tool id", async () => {
+      // Recorded from Claude Code 2.1.330: a restart cut the child off, Claude reported it stopped
+      // with no tool id, SendMessage resumed it, and its completion names the SendMessage call.
+      const resumeToolUseId = "toolu_resume_send_message";
+      const notification = (status: string, toolUseId?: string) =>
+        JSON.stringify({
+          type: "queue-operation",
+          operation: "enqueue",
+          timestamp: "2026-07-26T06:29:00.000Z",
+          content: [
+            "<task-notification>",
+            `<task-id>${AGENT_ID}</task-id>`,
+            ...(toolUseId ? [`<tool-use-id>${toolUseId}</tool-use-id>`] : []),
+            `<status>${status}</status>`,
+            "<summary>Background task ended</summary>",
+            "</task-notification>",
+          ].join("\n"),
+        });
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          notification("stopped"),
+          parentEntry([
+            {
+              type: "tool_use",
+              id: resumeToolUseId,
+              name: "SendMessage",
+              input: { to: AGENT_ID, message: "Resume the task." },
+            },
+          ]),
+          notification("completed", resumeToolUseId),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "completed",
+      });
+    });
+
+    test("completes from the child's SubagentHandback report", async () => {
+      const handbackId = "toolu_handback";
+      writeSession({
+        parentLines: backgroundLaunch(),
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [
+          JSON.stringify({
+            type: "assistant",
+            isSidechain: true,
+            agentId: AGENT_ID,
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: handbackId,
+                  name: "SubagentHandback",
+                  input: { message: "## Report" },
+                },
+              ],
+              stop_reason: "tool_use",
+            },
+          }),
+          JSON.stringify({
+            type: "user",
+            isSidechain: true,
+            agentId: AGENT_ID,
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: handbackId, content: "delivered" }],
+            },
+          }),
+        ],
+      });
+
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+    });
   });
 
   test("does not replay a skill-spawned subagent the parent never named", async () => {
