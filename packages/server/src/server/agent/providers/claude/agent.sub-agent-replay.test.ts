@@ -744,6 +744,50 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
     });
 
+    test.each([
+      { history: "with the launch result", hasLaunchResult: true, hasStop: false },
+      { history: "after a recorded stop", hasLaunchResult: true, hasStop: true },
+      { history: "with only the launch sidecar", hasLaunchResult: false, hasStop: false },
+    ])("completes a SendMessage-resumed child $history", async ({ hasLaunchResult, hasStop }) => {
+      const launch = hasLaunchResult ? backgroundLaunch() : backgroundLaunch().slice(0, 1);
+      const prior = hasStop
+        ? [
+            taskNotification({
+              status: "stopped",
+              form: "queue-operation",
+              includeToolUseId: false,
+            }),
+          ]
+        : [];
+      const resumeToolId = "toolu_resume";
+      const completion = taskNotification({ status: "completed", form: "queue-operation" }).replace(
+        TOOL_USE_ID,
+        resumeToolId,
+      );
+      writeSession({
+        parentLines: [
+          ...launch,
+          ...prior,
+          parentEntry([
+            {
+              type: "tool_use",
+              id: resumeToolId,
+              name: "SendMessage",
+              input: { to: AGENT_ID, message: "Continue the task." },
+            },
+          ]),
+          completion,
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID, finished: true }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "completed",
+      });
+    });
+
     test("honors a later task-only stopped notification after a tool-linked completion", async () => {
       writeSession({
         parentLines: [

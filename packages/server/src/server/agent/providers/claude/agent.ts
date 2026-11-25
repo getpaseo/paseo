@@ -5935,7 +5935,15 @@ class ClaudeAgentSession implements AgentSession {
   private async ingestPersistedSidechains(
     history: ClaudeReplayHistory,
   ): Promise<ClaudeReplayOwnership> {
-    const parentFacts = await readClaudeReplayParentFacts(history.parentEntries);
+    const sidecarToolCallIdsByTaskId = new Map<string, string>();
+    for (const { agentId, meta } of history.subagents) {
+      const toolCallId = meta?.toolUseId?.trim();
+      if (toolCallId) sidecarToolCallIdsByTaskId.set(agentId, toolCallId);
+    }
+    const parentFacts = await readClaudeReplayParentFacts(
+      history.parentEntries,
+      sidecarToolCallIdsByTaskId,
+    );
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
@@ -5943,7 +5951,10 @@ class ClaudeAgentSession implements AgentSession {
     for (const subagent of history.subagents) {
       subagents.push({
         ...subagent,
-        parentFacts: await readClaudeReplayParentFacts(subagent.entries),
+        parentFacts: await readClaudeReplayParentFacts(
+          subagent.entries,
+          sidecarToolCallIdsByTaskId,
+        ),
       });
     }
     const subagentReplay = await observeReplaySubagents({
@@ -6822,12 +6833,30 @@ function labelReplayedSubagentCard(
  */
 async function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
+  sidecarToolCallIdsByTaskId: ReadonlyMap<string, string>,
 ): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
+  const resumedChildrenByToolCallId = new Map<
+    string,
+    { taskId: string; launchToolCallId: string }
+  >();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
+
+  const resolveLaunchToolCallId = (taskId: string): string | undefined => {
+    const sidecarToolCallId = sidecarToolCallIdsByTaskId.get(taskId);
+    return sidecarToolCallId && toolCalls.has(sidecarToolCallId)
+      ? sidecarToolCallId
+      : linksByAgentId.get(taskId)?.toolCallId;
+  };
+
   for await (const entry of entries) {
-    for (const notificationOutcome of readClaudeReplayNotificationOutcomes(entry, linksByAgentId)) {
+    const notificationOutcomes = readClaudeReplayNotificationOutcomes(
+      entry,
+      linksByAgentId,
+      resumedChildrenByToolCallId,
+    );
+    for (const notificationOutcome of notificationOutcomes) {
       outcomes.set(notificationOutcome.toolCallId, { status: notificationOutcome.status });
     }
     const content = toObjectRecord(entry.message)?.content;
@@ -6836,6 +6865,13 @@ async function readClaudeReplayParentFacts(
       const block = toObjectRecord(value);
       const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
       if (declaration) toolCalls.set(declaration.id, declaration.identity);
+      const resume = readClaudeReplayResume(entry.type, block);
+      if (resume) {
+        const launchToolCallId = resolveLaunchToolCallId(resume.taskId);
+        if (launchToolCallId) {
+          resumedChildrenByToolCallId.set(resume.id, { taskId: resume.taskId, launchToolCallId });
+        }
+      }
       if (
         entry.type !== "user" ||
         block?.type !== "tool_result" ||
@@ -6864,6 +6900,7 @@ async function readClaudeReplayParentFacts(
 function* readClaudeReplayNotificationOutcomes(
   entry: ClaudeHistoryEntry,
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
+  resumedChildrenByToolCallId: ReadonlyMap<string, { taskId: string; launchToolCallId: string }>,
 ): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
   const notification = readTaskNotificationOutcomeFromHistoryRecord(entry);
   if (!notification) return;
@@ -6871,7 +6908,13 @@ function* readClaudeReplayNotificationOutcomes(
   if (!status) return;
 
   if (notification.toolUseId) {
-    yield { toolCallId: notification.toolUseId, status };
+    // A resumed child keeps its task ID, but Claude reports its outcome under the SendMessage call.
+    const resumedChild = resumedChildrenByToolCallId.get(notification.toolUseId);
+    const toolCallId =
+      resumedChild && resumedChild.taskId === notification.taskIds[0]
+        ? resumedChild.launchToolCallId
+        : notification.toolUseId;
+    yield { toolCallId, status };
     return;
   }
   // Stopped tasks can omit tool-use-id; their launch results already link the native IDs.
@@ -6879,6 +6922,22 @@ function* readClaudeReplayNotificationOutcomes(
     const link = linksByAgentId.get(taskId);
     if (link) yield { toolCallId: link.toolCallId, status };
   }
+}
+
+function readClaudeReplayResume(
+  entryType: unknown,
+  block: Record<string, unknown> | undefined,
+): { id: string; taskId: string } | null {
+  if (
+    entryType !== "assistant" ||
+    block?.type !== "tool_use" ||
+    block.name !== "SendMessage" ||
+    typeof block.id !== "string"
+  ) {
+    return null;
+  }
+  const taskId = readNonEmptyString(toObjectRecord(block.input)?.to);
+  return taskId ? { id: block.id, taskId } : null;
 }
 
 function readClaudeReplayTaskDeclaration(
