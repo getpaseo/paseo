@@ -9,7 +9,12 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { AddProjectActions } from "./use-add-project-actions";
 import type { AddProjectFlowState, AddProjectHost, GithubRepositoryChoice } from "./model";
 import { LocationField } from "./location-field";
-import { buildManualGithubRepositoryChoices, checkoutName, joinDirectoryPath } from "./options";
+import {
+  buildManualGithubRepositoryChoices,
+  checkoutName,
+  joinDirectoryPath,
+  MANUAL_CHOICE_PREFIX,
+} from "./options";
 import { ResultList, type ResultRow } from "./result-list";
 import { RESULTS_TEST_ID } from "./result-list-id";
 import { useGithubRepositorySearch } from "./searches";
@@ -34,6 +39,11 @@ function buildCloneChoices(
   const exact = found.filter(isExact);
   if (exact.length === 0) return [...buildManualGithubRepositoryChoices(query), ...found];
   return [...exact, ...found.filter((repository) => !isExact(repository))];
+}
+
+/** A choice built from the typed URL or owner/repo rather than from a search answer. */
+function isTypedChoice(choice: GithubRepositoryChoice | undefined): boolean {
+  return choice?.id.startsWith(MANUAL_CHOICE_PREFIX) === true;
 }
 
 function cloneEmptyText(host: AddProjectHost, query: string): string {
@@ -80,7 +90,11 @@ export function useCloneTab(input: {
       })),
     [choices],
   );
-  const activeIndex = resolveActiveIndex(rows, state.clone.selectedId);
+  // While the search for new text runs, the rows on screen answer the old text. None of them is
+  // picked until the new answer arrives or the user picks one, unless it is the typed URL.
+  const awaitingRows =
+    search.pending && state.clone.selectedId === null && !isTypedChoice(choices[0]);
+  const activeIndex = awaitingRows ? -1 : resolveActiveIndex(rows, state.clone.selectedId);
   const repository = choices[activeIndex] ?? null;
   const location = state.clone.location ?? defaultLocation;
   const destination = repository

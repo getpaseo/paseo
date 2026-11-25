@@ -11,6 +11,9 @@ export function pathBaseName(path: string): string {
   return parts[parts.length - 1] ?? trimmed;
 }
 
+/** Starts the id of every choice built from what the user typed. */
+export const MANUAL_CHOICE_PREFIX = "manual:";
+
 export function buildManualGithubRepositoryChoices(query: string): GithubRepositoryChoice[] {
   const repo = query.trim();
   if (!repo) return [];
@@ -21,7 +24,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
     const remoteName = location ? pathBaseName(location.path).replace(/\.git$/u, "") : repo;
     return [
       {
-        id: `manual:${repo}`,
+        id: `${MANUAL_CHOICE_PREFIX}${repo}`,
         nameWithOwner: identity?.repo ?? remoteName,
         cloneUrl: repo,
         description: "Clone this repository URL",
@@ -34,7 +37,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
   if (!shorthand) return [];
   const nameWithOwner = `${shorthand[1]}/${shorthand[2]}`;
   return (["https", "ssh"] as const).map((cloneProtocol) => ({
-    id: `manual:${cloneProtocol}:${nameWithOwner}`,
+    id: `${MANUAL_CHOICE_PREFIX}${cloneProtocol}:${nameWithOwner}`,
     nameWithOwner,
     cloneUrl: nameWithOwner,
     cloneProtocol,
@@ -43,18 +46,19 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
   }));
 }
 
+/** The folder that holds `path`. A root keeps its separator: `C:\repo` gives `C:\`, not `C:`. */
 export function parentDirectory(path: string): string | null {
   const trimmed = path.replace(/[\\/]+$/, "");
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (index < 0) return null;
-  if (index === 0) return trimmed.slice(0, 1);
-  return trimmed.slice(0, index);
+  const parent = trimmed.slice(0, index);
+  const isRoot = parent === "" || /^[A-Za-z]:$/u.test(parent);
+  return isRoot ? trimmed.slice(0, index + 1) : parent;
 }
 
 export function joinDirectoryPath(parent: string, name: string): string {
-  const trimmedParent = parent.replace(/[\\/]+$/, "");
-  const separator = trimmedParent.includes("\\") && !trimmedParent.includes("/") ? "\\" : "/";
-  return `${trimmedParent}${separator}${name}`;
+  const separator = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent.replace(/[\\/]+$/, "")}${separator}${name}`;
 }
 
 export function buildSuggestedParentDirectories(projectPaths: string[]): string[] {

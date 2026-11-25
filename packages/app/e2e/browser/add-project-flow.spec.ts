@@ -278,6 +278,33 @@ test.describe("Add project sheet", () => {
     }
   });
 
+  test("Enter while a new search runs does not open a row from the previous search", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-stale-"));
+    try {
+      await mkdir(path.join(parentDirectory, "stale-probe-a"));
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      const prefix = path.basename(parentDirectory);
+      await addProjectFlowInput(page).fill(`${prefix}/stale-probe`);
+      const results = page.getByTestId("add-project-flow-results");
+      await expect(results.getByRole("button", { name: /stale-probe-a/ })).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await addProjectFlowInput(page).fill(`${prefix}/no-such-folder`);
+      await page.keyboard.press("Enter");
+      await expect(addProjectFlow(page).getByText("No matching folders")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(addProjectFlow(page)).toBeVisible();
+      await expect(addProjectFlowSubmit(page)).toBeDisabled();
+    } finally {
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("a complete repository URL is cloneable without a GitHub search result", async ({
     page,
   }) => {

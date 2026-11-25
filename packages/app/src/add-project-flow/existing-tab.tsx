@@ -57,7 +57,11 @@ export function useExistingTab(input: {
       }),
     [paths],
   );
-  const activeIndex = resolveActiveIndex(rows, state.existing.selectedId);
+  // While the search for new text runs, the rows on screen answer the old text. None of them is
+  // picked until the new answer arrives or the user picks one, unless it is the typed path.
+  const awaitingRows =
+    search.pending && state.existing.selectedId === null && paths[0]?.kind !== "path";
+  const activeIndex = awaitingRows ? -1 : resolveActiveIndex(rows, state.existing.selectedId);
   const activePath = paths[activeIndex]?.path ?? null;
 
   return useMemo<AddProjectTabView>(() => {

@@ -4,6 +4,7 @@ import type { ResultListNotice, ResultRow } from "./result-list";
 export interface AddProjectTabView {
   /** The rows Up and Down walk; empty for a tab without a list. */
   rows: ResultRow[];
+  /** The picked row, or -1 while the rows on screen answer an older search. */
   activeIndex: number;
   notice: ResultListNotice | null;
   /** Why this host cannot do what the tab offers; the tab's fields are read-only while set. */

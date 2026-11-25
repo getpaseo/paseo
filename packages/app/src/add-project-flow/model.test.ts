@@ -18,6 +18,8 @@ import {
   buildManualGithubRepositoryChoices,
   checkoutName,
   defaultProjectLocation,
+  joinDirectoryPath,
+  parentDirectory,
   validateNewFolderName,
 } from "./options";
 import { resolveActiveIndex } from "./tab-view";
@@ -180,6 +182,17 @@ describe("Add Project options", () => {
     );
     expect(defaultProjectLocation({ remembered: "~/work", projectPaths: ["/code/app"] })).toBe(
       "~/work",
+    );
+  });
+
+  it("keeps a drive or filesystem root when deriving and joining a location", () => {
+    expect(parentDirectory("C:\\repo")).toBe("C:\\");
+    expect(parentDirectory("/repo")).toBe("/");
+    expect(parentDirectory("/code/app")).toBe("/code");
+    expect(joinDirectoryPath("C:\\", "new-project")).toBe("C:\\new-project");
+    expect(joinDirectoryPath("/", "new-project")).toBe("/new-project");
+    expect(defaultProjectLocation({ remembered: undefined, projectPaths: ["C:\\repo"] })).toBe(
+      "C:\\",
     );
   });
 
