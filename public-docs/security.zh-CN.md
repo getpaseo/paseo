@@ -45,7 +45,7 @@ daemon 在接受任何命令之前都要求一次有效的密码学握手。被�
 - 伪造或修改消息：带认证的加密会拒绝被篡改的负载。
 - 重放旧消息：每个 Noise 会话都会混入双方新生成的临时密钥并校验递增计数器。重放、重复或乱序的消息都会关闭连接。
 
-迁移期间，旧版 NaCl `box` 会话默认仍受支持，但不具备防重放保护。等 daemon 和所有客户端都更新后，可在 `config.json` 中将 `daemon.relay.requireProtectedSecurity` 设为 `true`，强制要求 Noise 握手。
+迁移期间，旧版 NaCl `box` 会话默认仍受支持，但不具备防重放保护。等 daemon 和所有客户端都更新后，在 `config.json` 中将 `daemon.relay.requireProtectedSecurity` 设为 `true` 并重启 daemon，强制要求 Noise 握手。
 
 ### 信任模型 {#trust-model}
 

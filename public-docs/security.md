@@ -47,7 +47,7 @@ The daemon requires a valid cryptographic handshake before it accepts any comman
 - Forge or modify messages: authenticated encryption rejects tampered payloads.
 - Replay old messages: each Noise session uses fresh ephemeral keys from both sides and checks message counters. Replayed, duplicated, or reordered messages close the connection.
 
-Legacy NaCl `box` sessions remain supported by default during migration and do not have replay protection. Once both your daemon and clients are updated, set `daemon.relay.requireProtectedSecurity` to `true` in `config.json` to require the Noise handshake.
+Legacy NaCl `box` sessions remain supported by default during migration and do not have replay protection. Once both your daemon and clients are updated, set `daemon.relay.requireProtectedSecurity` to `true` in `config.json` and restart the daemon to require the Noise handshake.
 
 ### Trust model
 
