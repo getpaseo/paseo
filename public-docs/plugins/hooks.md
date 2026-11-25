@@ -505,7 +505,7 @@ target are unaffected.
 
 When a plugin declaring `agent.open.before` starts, stops, or reloads, Paseo reruns only that
 plugin's callback for each open session. The callback gets the request it saw at the session's last
-open, with `reason: "refresh"`. This happens before the session's next agent tool call or prompt.
+open, with `reason: "refresh"` and the agent's current title, workspace, labels, and metadata. This happens before the session's next agent tool call or prompt.
 Callbacks of other plugins do not run.
 
 - The tools the callback returns replace its old tools at once, also during a running turn. The new

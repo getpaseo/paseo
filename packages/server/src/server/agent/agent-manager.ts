@@ -1,4 +1,8 @@
-import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
+import type {
+  AttachedAgentTool,
+  PluginSessionsRuntime,
+  SessionOpenAgentFacts,
+} from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
@@ -1101,7 +1105,19 @@ export class AgentManager {
     if (!this.pluginSessions) return { stale: false };
     return this.pluginSessions.refreshSession(agentId, {
       reservedToolNames: () => this.reservedAgentToolNames(agentId),
+      agentFacts: () => this.pluginOpenAgentFacts(agentId),
     });
+  }
+
+  /** The agent fields a reopen would put in its plugin open request. */
+  private async pluginOpenAgentFacts(agentId: string): Promise<SessionOpenAgentFacts> {
+    const agent = this.requireAgent(agentId);
+    return {
+      workspaceId: agent.workspaceId ?? null,
+      title: await this.resolveInitialPersistedTitle(agentId, agent.config, null),
+      background: agent.background === true,
+      ...agentEntityData(agent),
+    };
   }
 
   /**

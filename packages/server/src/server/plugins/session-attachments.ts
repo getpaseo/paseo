@@ -4,6 +4,7 @@ import type {
   AttachedAgentTool,
   PluginSessionOpenResult,
   PluginSessionRefreshOptions,
+  SessionOpenAgentFacts,
   SessionOpenWireRequest,
 } from "./agent-tools.js";
 
@@ -204,6 +205,7 @@ export class SessionAttachments {
     let previous = attachment.base;
     const contributions: Contribution[] = [];
     const replayed: { contribution: Contribution; plugin: SessionOpenPlugin }[] = [];
+    let facts: SessionOpenAgentFacts | undefined;
     for (const pluginId of pluginIds) {
       const plugin = running.get(pluginId);
       const before = recorded.get(pluginId);
@@ -214,10 +216,11 @@ export class SessionAttachments {
       }
       // Stopped, or no longer declares the callback: the session loses what it contributed.
       if (!plugin) continue;
-      const contribution = await this.replay(
-        plugin,
-        before?.input ?? { ...previous, tools: [], mcpServers: {} },
-      );
+      facts ??= await options.agentFacts();
+      const contribution = await this.replay(plugin, {
+        ...(before?.input ?? { ...previous, tools: [], mcpServers: {} }),
+        ...facts,
+      });
       contributions.push(contribution);
       replayed.push({ contribution, plugin });
       previous = contribution.output;

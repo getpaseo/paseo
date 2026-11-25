@@ -879,6 +879,28 @@ test("after a rejected reopen, a tool name stays with the plugin that had it, ev
   }
 }, 60_000);
 
+const metadataGatedSource = openCounterSource.replace(
+  "opens++;",
+  'opens++;\n    if (request.metadata.tools !== "on") return;',
+);
+
+test("a plugin reload reruns its callback with the agent's current metadata", async () => {
+  const h = await setup(false, metadataGatedSource);
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const a = await h.create();
+    expect(await listedToolNames(await h.mcp(a.id))).not.toContain("other_opens");
+    await manager.setMetadata(a.id, { tools: "on" });
+    await h.client.reloadPlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("other_opens");
+    // The session launched without the tool, so it reopens at the next idle prompt.
+    await sendAndFinish(h, a.id, "after metadata");
+    expect(h.launches).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 const impostorSource = `
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";

@@ -32,9 +32,17 @@ export type PluginSessionOpenResult = SessionOpenWireRequest & {
   mcpServerOwners: Record<string, string>;
 };
 
+/** What an open request says about the agent that can change while its session runs. Plugins cannot change it. */
+export type SessionOpenAgentFacts = Pick<
+  SessionOpenWireRequest,
+  "workspaceId" | "title" | "background" | "labels" | "metadata"
+>;
+
 export interface PluginSessionRefreshOptions {
   /** Tool names a refreshed plugin tool must not take, beyond the tools other plugins attached. */
   reservedToolNames(): Promise<ReadonlySet<string>>;
+  /** The agent as it is now, so a rerun callback sees what a reopen would show it. */
+  agentFacts(): Promise<SessionOpenAgentFacts>;
 }
 
 /** What the agent manager asks of plugins about a session: its open, its attached tools, and their calls. */
