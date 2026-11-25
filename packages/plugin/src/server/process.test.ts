@@ -231,7 +231,8 @@ test.runIf(process.platform === "win32")(
     const directory = await mkdtemp(path.join(os.tmpdir(), "plugin script reader "));
     roots.push(directory);
     const script = path.join(directory, "read.cmd");
-    await writeFile(script, '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5"\r\n');
+    // `set /p` without input exits 1, so the script exits 0 on its own.
+    await writeFile(script, '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5"\r\nexit /b 0\r\n');
     const { stdout } = await execCommand(script, [
       "plain",
       "with space",
