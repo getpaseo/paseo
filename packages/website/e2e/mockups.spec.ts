@@ -191,7 +191,13 @@ test("the plugins scene installs the panel, then changes it on request", async (
   // Installing the plugin swaps the docked panel for the one the agent built.
   await page.clock.runFor(5500);
   await expect(pluginPanel).toBeVisible();
-  await expect(changesPanel).toHaveCount(0);
+  // The old panel stays mounted during the crossfade. Advance its exit after the new panel renders.
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(250);
+      return changesPanel.count();
+    })
+    .toBe(0);
   await expect(failingCheck).toHaveCount(0);
 
   // The second request reloads the plugin and the open panel lists the failing check.
