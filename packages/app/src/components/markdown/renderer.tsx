@@ -25,8 +25,17 @@ import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fen
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
+const WEB_MATH_MD4C_FLAGS = { ...MD4C_FLAGS, latexMath: true };
 // A README is written for its forge, where the lines of a paragraph join into one.
 const EXTERNAL_MD4C_FLAGS = { ...MD4C_FLAGS, hardSoftBreaks: false };
+const EXTERNAL_WEB_MATH_MD4C_FLAGS = { ...EXTERNAL_MD4C_FLAGS, latexMath: true };
+
+function resolveMd4cFlags(external: boolean, hasLatexMath: boolean) {
+  if (external) {
+    return isWeb && hasLatexMath ? EXTERNAL_WEB_MATH_MD4C_FLAGS : EXTERNAL_MD4C_FLAGS;
+  }
+  return isWeb && hasLatexMath ? WEB_MATH_MD4C_FLAGS : MD4C_FLAGS;
+}
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
@@ -108,7 +117,7 @@ const MarkdownPart = memo(function MarkdownPart({
     (environment.client?.readFile
       ? { readFile: environment.client.readFile.bind(environment.client) }
       : undefined);
-  const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(
+  const { markdown, hasLatexMath, imageSources, linkRecognition, linkSource } = useMarkdownSource(
     text,
     {
       workspaceRoot: environment.workspaceRoot,
@@ -166,7 +175,7 @@ const MarkdownPart = memo(function MarkdownPart({
               uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
               selectable={selectable}
-              md4cFlags={external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS}
+              md4cFlags={resolveMd4cFlags(external, hasLatexMath)}
               linkRecognition={linkRecognition}
               enableTaskListItemToggle={false}
               enableLinkPreview={false}

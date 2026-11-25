@@ -50,6 +50,7 @@ export function useMarkdownSource(
     () =>
       prepareMarkdownSource(text, context.workspaceRoot, {
         supportsSvg: isWeb,
+        latexMath: isWeb,
         commandNames,
         forgeReferencePattern,
         external,
@@ -144,6 +145,7 @@ export function useMarkdownSource(
   const pendingImages = new Set(sources.filter((_source, index) => statuses[index] === "pending"));
   return {
     markdown: prepared.render(resolved, unavailableImages, pendingImages),
+    hasLatexMath: prepared.hasLatexMath,
     linkRecognition: prepared.linkRecognition,
     linkSource: prepared.linkSource,
     imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),

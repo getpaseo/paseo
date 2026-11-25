@@ -2,8 +2,13 @@ import MarkdownIt from "markdown-it";
 import { setImmediate } from "node:timers/promises";
 import type { AgentTimelineRow } from "../agent-timeline-store-types.js";
 import { projectTimelineRows } from "../timeline-projection.js";
+import { installLatexMathRule } from "./math.js";
+
+type MarkdownToken = ReturnType<MarkdownIt["parse"]>[number];
 
 const markdown = new MarkdownIt({ html: false });
+installLatexMathRule(markdown);
+
 const PAGE_SIZE = 200;
 interface SearchLocation {
   seq: number;
@@ -16,6 +21,28 @@ interface SearchInput {
   cursor?: number;
 }
 
+function inlineSearchableBlocks(children: readonly MarkdownToken[]): string[] {
+  const blocks: string[] = [];
+  let current = "";
+  for (const child of children) {
+    if (child.type === "math_display") {
+      if (current) {
+        blocks.push(current);
+        current = "";
+      }
+      if (child.content) blocks.push(child.content);
+      continue;
+    }
+    if (child.type === "text" || child.type === "code_inline" || child.type === "math_inline") {
+      current += child.content;
+    } else if (child.type === "softbreak" || child.type === "hardbreak") {
+      current += "\n";
+    }
+  }
+  if (current) blocks.push(current);
+  return blocks;
+}
+
 // Discovery is deliberately approximate. Only the client can verify displayed text, so
 // `count` estimates rendered occurrences and the client replaces it with the rendered
 // count once the message is on screen. Blocks are counted separately, and the Markdown
@@ -25,18 +52,10 @@ interface SearchInput {
 function searchableBlocks(text: string): string[] {
   return markdown
     .parse(text, {})
-    .map((token) => {
-      if (token.type === "inline") {
-        return (token.children ?? [])
-          .map((child) => {
-            if (child.type === "text" || child.type === "code_inline") return child.content;
-            if (child.type === "softbreak" || child.type === "hardbreak") return "\n";
-            return "";
-          })
-          .join("");
-      }
-      if (token.type === "fence" || token.type === "code_block") return token.content;
-      return "";
+    .flatMap((token) => {
+      if (token.type === "inline") return inlineSearchableBlocks(token.children ?? []);
+      if (token.type === "fence" || token.type === "code_block") return [token.content];
+      return [];
     })
     .filter(Boolean);
 }
