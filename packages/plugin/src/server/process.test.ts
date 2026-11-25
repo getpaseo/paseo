@@ -314,3 +314,17 @@ test.runIf(process.platform === "win32")(
     expect(JSON.parse(program.stdout)).toEqual(commandScriptArguments);
   },
 );
+
+// Real cmd.exe: a caller that formats its own cmd.exe line asks Node to pass it verbatim.
+test.runIf(process.platform === "win32")(
+  "spawnProcess passes a caller's verbatim cmd.exe line unchanged on Windows",
+  async () => {
+    const reader = await writeArgumentReader();
+    const child = spawnProcess(
+      process.env.ComSpec ?? "cmd.exe",
+      ["/d", "/s", "/c", `""${process.execPath}" "${reader}" "a b" c"`],
+      { shell: false, windowsVerbatimArguments: true, stdio: "pipe" },
+    );
+    expect(JSON.parse(await readStdout(child))).toEqual(["a b", "c"]);
+  },
+);

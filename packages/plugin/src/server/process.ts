@@ -119,7 +119,9 @@ export function spawnProcess(
     ...spawnOptions,
     env: options?.env,
     shell: invocation.shell,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    // Paseo's own cmd.exe line is verbatim; a direct launch keeps the caller's choice.
+    windowsVerbatimArguments:
+      invocation.windowsVerbatimArguments ?? spawnOptions.windowsVerbatimArguments,
     signal: options?.signal,
     windowsHide: true,
   });
