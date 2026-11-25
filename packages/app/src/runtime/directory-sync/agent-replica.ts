@@ -1,5 +1,6 @@
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { refreshAgentHistoryForDirectoryChanges } from "@/hooks/refresh-agent-history";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import type { Agent } from "@/stores/session-store";
@@ -21,6 +22,10 @@ function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry {
     agent: projectAgentSnapshot(agent),
     project: resolveProjectPlacement({ projectPlacement: agent.projectPlacement, cwd: agent.cwd }),
   };
+}
+
+function isActiveAgent(agent: Agent | undefined): boolean {
+  return agent !== undefined && !agent.archivedAt;
 }
 
 export interface AgentLifecycleToken {
@@ -98,7 +103,9 @@ export class AgentDirectoryReplica {
   }
 
   applyDelta(delta: AgentDirectoryDelta): void {
-    const before = this.members.has(delta.kind === "remove" ? delta.agentId : delta.agent.id);
+    const agentId = delta.kind === "remove" ? delta.agentId : delta.agent.id;
+    const before = this.members.has(agentId);
+    const wasActive = isActiveAgent(this.storeProjection.snapshot().get(agentId));
     const result = this.storeProjection.applyDelta(delta);
     if (delta.kind === "remove") {
       this.members.delete(delta.agentId);
@@ -108,6 +115,10 @@ export class AgentDirectoryReplica {
       if (!before) this.advance(delta.agent.id);
     }
     if (result.stoppedRunning) this.onStoppedRunning(result.agentId);
+    // The active directory adds restored agents and removes archived agents.
+    if (wasActive !== isActiveAgent(result.agent)) {
+      void refreshAgentHistoryForDirectoryChanges(queryClient, this.serverId, new Set([agentId]));
+    }
     this.persist(
       result.agent
         ? [this.agentUpsert(result.agent)]
@@ -150,6 +161,14 @@ export class AgentDirectoryReplica {
       if (previousAgent.turn.phase === "open" && agents.get(agentId)?.turn.phase === "idle") {
         this.onStoppedRunning(agentId);
       }
+    }
+    const changedAgentIds = new Set(
+      [...previous.keys(), ...agents.keys()].filter(
+        (id) => isActiveAgent(previous.get(id)) !== isActiveAgent(agents.get(id)),
+      ),
+    );
+    if (changedAgentIds.size > 0) {
+      void refreshAgentHistoryForDirectoryChanges(queryClient, this.serverId, changedAgentIds);
     }
     if (persist) {
       this.persist([

@@ -68,7 +68,7 @@ export interface AgentHistoryHost {
   client: AgentHistoryClient;
 }
 
-interface AgentHistoryBatchPage {
+export interface AgentHistoryBatchPage {
   agents: AggregatedAgent[];
   pageInfoByServerId: Record<string, FetchAgentHistoryPageInfo>;
   hostErrors: AgentHistoryHostError[];
