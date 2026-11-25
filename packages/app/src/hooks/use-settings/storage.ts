@@ -111,6 +111,7 @@ export interface AppSettings {
   chatDisplay: ChatDisplay;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
+  alwaysOpenExplorerSidebar: boolean;
   sendShortcut: SendShortcut;
   filePanelAssociations: Record<string, string>;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
@@ -169,6 +170,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatDisplay: "collapseTurns",
   chatOutlineEnabled: true,
   vimKeybindings: false,
+  alwaysOpenExplorerSidebar: false,
   sendShortcut: "enter",
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
@@ -277,6 +279,7 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
+    alwaysOpenExplorerSidebar: z.boolean().catch(false),
     sendShortcut: z.enum(["enter", "mod-enter"]).catch("enter"),
     filePanelAssociations: z.record(z.string(), z.string()).catch({}),
     openInSidePane: z
