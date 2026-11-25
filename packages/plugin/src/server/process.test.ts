@@ -54,7 +54,7 @@ test("spawnProcess delivers shell arguments to the real child unchanged", async 
 });
 
 // A launch wrap prepends a Windows script wrapper to the provider launch; spawnProcess runs it
-// through cmd.exe with every argument escaped twice, because the script forwards them with `%*`.
+// through cmd.exe and quotes each argument that the script would read as more than one.
 test("a Windows script launch wrap starts through cmd.exe with each argument quoted", () => {
   const wrapped = [
     "C:\\Program Files\\Sandbox\\run.cmd",
@@ -66,13 +66,7 @@ test("a Windows script launch wrap starts through cmd.exe with each argument quo
   ];
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "win32")).toEqual({
     command: '"C:\\Program Files\\Sandbox\\run.cmd"',
-    args: [
-      '^^^"--profile^^^"',
-      '^^^"work profile^^^"',
-      '^^^"^^^"',
-      '^^^"C:\\tools\\agy.cmd^^^"',
-      '^^^"acp^^^"',
-    ],
+    args: ["--profile", '"work profile"', '""', "C:\\tools\\agy.cmd", "acp"],
     shell: true,
   });
   expect(resolveSpawnInvocation(wrapped[0]!, wrapped.slice(1), undefined, "linux")).toEqual({
@@ -103,7 +97,7 @@ test("a Windows cmd.exe launch refuses an argument with a line break before it s
 // Only cmd.exe reads cmd.exe quoting. A shell the caller names parses the line by its own rules.
 test("a Windows launch quotes for cmd.exe only when cmd.exe parses the command line", () => {
   for (const shell of [true, "cmd.exe", "C:\\Windows\\System32\\CMD.EXE"]) {
-    expect(resolveSpawnInvocation("echo", ["a & b"], shell, "win32").args).toEqual(['^"a ^& b^"']);
+    expect(resolveSpawnInvocation("echo", ["a & b"], shell, "win32").args).toEqual(['"a & b"']);
   }
   for (const shell of ["bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe", "pwsh"]) {
     expect(resolveSpawnInvocation("echo", ["'a & b'", "line\nbreak"], shell, "win32")).toEqual({
@@ -227,6 +221,25 @@ test.runIf(process.platform === "win32")(
     const launcher = await writeCommandScriptLauncher();
     const { stdout } = await execCommand(launcher, commandScriptArguments);
     expect(JSON.parse(stdout)).toEqual(commandScriptArguments);
+  },
+);
+
+// Real cmd.exe: a script that reads `%~1` gets each argument as given, without escapes.
+test.runIf(process.platform === "win32")(
+  "a .cmd script that reads its arguments one by one gets each one as given on Windows",
+  async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "plugin script reader "));
+    roots.push(directory);
+    const script = path.join(directory, "read.cmd");
+    await writeFile(script, '@echo off\r\n<nul set /p "=%~1|%~2|%~3|%~4|%~5"\r\n');
+    const { stdout } = await execCommand(script, [
+      "plain",
+      "with space",
+      "feature&bugfix",
+      "100%",
+      "",
+    ]);
+    expect(stdout).toBe("plain|with space|feature&bugfix|100%|");
   },
 );
 

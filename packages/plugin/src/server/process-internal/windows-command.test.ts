@@ -34,34 +34,47 @@ describe("quoteWindowsCommand", () => {
 });
 
 describe("quoteWindowsArgument", () => {
-  test("quotes the argument and escapes the quotes so cmd.exe sees no quoted region", () => {
-    expect(quoteWindowsArgument("C:\\Program Files\\cli.js", { platform: "win32" })).toBe(
-      '^"C:\\Program Files\\cli.js^"',
+  const windows = { platform: "win32" } as const;
+  const script = { platform: "win32", commandScript: true } as const;
+
+  test("leaves a plain argument as given, for cmd.exe builtins and scripts that read %1", () => {
+    expect(quoteWindowsArgument("hello", windows)).toBe("hello");
+    expect(quoteWindowsArgument("feature/allocator-context", script)).toBe(
+      "feature/allocator-context",
     );
   });
 
-  test("escapes cmd.exe syntax, including a git --format atom", () => {
-    expect(quoteWindowsArgument("a & b|(c)!<d>^", { platform: "win32" })).toBe(
-      '^"a ^& b^|^(c^)^!^<d^>^^^"',
+  test("escapes cmd.exe syntax in an argument without spaces", () => {
+    expect(quoteWindowsArgument("feature&bugfix", windows)).toBe("feature^&bugfix");
+    expect(quoteWindowsArgument("%PATH%", script)).toBe("^%PATH^%");
+    expect(quoteWindowsArgument("--format=%(refname)%09", windows)).toBe(
+      "--format=^%^(refname^)^%09",
     );
-    expect(
-      quoteWindowsArgument("--format=%(refname)%09%(committerdate:unix)", { platform: "win32" }),
-    ).toBe('^"--format=^%^(refname^)^%09^%^(committerdate:unix^)^"');
   });
 
-  test("escapes literal quotes and the backslashes before them for the program", () => {
-    expect(quoteWindowsArgument('say "hi"', { platform: "win32" })).toBe('^"say \\^"hi\\^"^"');
-    expect(quoteWindowsArgument("C:\\dir\\", { platform: "win32" })).toBe('^"C:\\dir\\\\^"');
-  });
-
-  test("keeps an empty argument", () => {
-    expect(quoteWindowsArgument("", { platform: "win32" })).toBe('^"^"');
-  });
-
-  test("escapes twice for a .cmd or .bat script, which reads its arguments again", () => {
-    expect(quoteWindowsArgument("a & b", { platform: "win32", commandScript: true })).toBe(
-      '^^^"a ^^^& b^^^"',
+  test("quotes whitespace and empty arguments, and keeps cmd.exe syntax inside the quotes", () => {
+    expect(quoteWindowsArgument("work profile", windows)).toBe('"work profile"');
+    expect(quoteWindowsArgument("a & b", script)).toBe('"a & b"');
+    expect(quoteWindowsArgument("C:\\path with space\\", windows)).toBe(
+      '"C:\\path with space\\\\"',
     );
+    expect(quoteWindowsArgument("", script)).toBe('""');
+  });
+
+  test("quotes cmd.exe syntax for a script, which reads it again when it forwards %*", () => {
+    expect(quoteWindowsArgument("feature&bugfix", script)).toBe('"feature&bugfix"');
+    expect(quoteWindowsArgument("feature^bugfix", script)).toBe('"feature^bugfix"');
+  });
+
+  test("escapes syntax that literal quotes leave outside a quoted region", () => {
+    expect(quoteWindowsArgument('say "hi"', windows)).toBe('"say \\"hi\\""');
+    expect(quoteWindowsArgument('mixed "a & b" quote', windows)).toBe('"mixed \\"a ^& b\\" quote"');
+    expect(quoteWindowsArgument('mixed "a & b" quote', script)).toBe(
+      '"mixed \\"a ^^^& b\\" quote"',
+    );
+    // One literal quote would leave cmd.exe inside a region, so the closing quote is escaped.
+    expect(quoteWindowsArgument('a"b', windows)).toBe('"a\\"b^"');
+    expect(quoteWindowsArgument('a"b', script)).toBe('"a\\"b^^^"');
   });
 
   test("returns the argument unchanged on non-Windows platforms", () => {
