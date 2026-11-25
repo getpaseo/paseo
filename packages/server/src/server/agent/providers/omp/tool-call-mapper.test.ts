@@ -256,6 +256,55 @@ describe("OMP tool call mapper", () => {
     ).toMatchObject({ type: "fetch", url: "https://example.com/" });
   });
 
+  test("maps web search sources to web results", () => {
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("web_search", { query: "react native layout event" }),
+        parseToolResult({
+          role: "toolResult",
+          toolName: "web_search",
+          content: [
+            {
+              type: "text",
+              text: "[1] LayoutEvent Object Type · React Native\n    https://reactnative.dev/docs/layoutevent",
+            },
+          ],
+          details: {
+            response: {
+              provider: "exa",
+              sources: [
+                {
+                  title: "LayoutEvent Object Type · React Native",
+                  url: "https://reactnative.dev/docs/layoutevent",
+                  author: "N/A",
+                },
+                { title: "View · React Native", url: "https://reactnative.dev/docs/view" },
+                { title: "Duplicate", url: "https://reactnative.dev/docs/view" },
+                { url: "https://example.com/untitled" },
+                { title: "No link" },
+                "not a source",
+              ],
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "react native layout event",
+      toolName: "web_search",
+      content:
+        "[1] LayoutEvent Object Type · React Native\n    https://reactnative.dev/docs/layoutevent",
+      webResults: [
+        {
+          title: "LayoutEvent Object Type · React Native",
+          url: "https://reactnative.dev/docs/layoutevent",
+        },
+        { title: "View · React Native", url: "https://reactnative.dev/docs/view" },
+        { title: "https://example.com/untitled", url: "https://example.com/untitled" },
+      ],
+    });
+  });
+
   test("names virtual device calls from their path on failure and while running", () => {
     expect(mapOmpToolDetail(parseToolArgs("read", { path: "xd://ast_grep" }), null)).toMatchObject({
       type: "plain_text",
