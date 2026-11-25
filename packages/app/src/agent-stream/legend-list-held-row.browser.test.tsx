@@ -90,7 +90,7 @@ function keyExtractor(item: Row) {
   return item.id;
 }
 
-function estimateRowSize(item: Row) {
+function rowHeight(item: Row) {
   return item.height;
 }
 
@@ -289,7 +289,7 @@ it("expands the draw distance of a placed end-anchored list without moving its b
           keyExtractor={keyExtractor}
           estimatedListSize={ESTIMATED_LIST_SIZE}
           recycleItems={false}
-          getEstimatedItemSize={estimateRowSize}
+          getEstimatedItemSize={rowHeight}
           drawDistance={drawDistance}
           alignItemsAtEnd
           initialScrollAtEnd
@@ -334,7 +334,7 @@ it.each([2, 4])("reveals an end-anchored list with a footer %sx the viewport", a
         renderItem={renderRow}
         keyExtractor={keyExtractor}
         estimatedListSize={ESTIMATED_LIST_SIZE}
-        getEstimatedItemSize={estimateRowSize}
+        getEstimatedItemSize={rowHeight}
         drawDistance={50}
         recycleItems={false}
         alignItemsAtEnd
@@ -354,4 +354,57 @@ it.each([2, 4])("reveals an end-anchored list with a footer %sx the viewport", a
   expect(listRef.current?.getState().scroll).toBe(
     rows.length * 40 + footerHeight - VIEWPORT_HEIGHT,
   );
+});
+
+const END_PADDED_CONTENT_STYLE = { paddingBottom: 125 };
+
+it("reveals buffered rows when the scroll view takes over initial end positioning", () => {
+  const rowSize = 40;
+  const rows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+    id: `row-${index}`,
+    height: rowSize,
+  }));
+  const listRef = React.createRef<LegendListRef>();
+  const onReady = vi.fn();
+
+  act(() => {
+    root.render(
+      <LegendList
+        ref={listRef}
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={keyExtractor}
+        estimatedListSize={ESTIMATED_LIST_SIZE}
+        getFixedItemSize={rowHeight}
+        drawDistance={120}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        contentContainerStyle={END_PADDED_CONTENT_STYLE}
+        onReady={onReady}
+        style={LIST_STYLE}
+      />,
+    );
+  });
+  const list = listRef.current;
+  if (!list) throw new Error("The list did not mount");
+  const scroller: unknown = list.getScrollableNode();
+  if (!(scroller instanceof HTMLElement)) throw new Error("The list has no scroll element");
+  const endOffset =
+    rows.length * rowSize + END_PADDED_CONTENT_STYLE.paddingBottom - VIEWPORT_HEIGHT;
+
+  act(() => {
+    // Deliver the scroll view's observed end offset before canceling the list's initial scroll.
+    // Keep both calls in one task so a later layout pass cannot complete the reveal for them.
+    scroller.scrollTop = endOffset;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(onReady).not.toHaveBeenCalled();
+    list.cancelScroll();
+  });
+  const state = list.getState();
+  expect(state.scroll).toBe(endOffset);
+  expect(state.start).toBeNull();
+  expect(state.endBuffered).toBe(rows.length - 1);
+  expect(state.sizeAtIndex(rows.length - 1)).toBe(rowSize);
+  expect(onReady).toHaveBeenCalledTimes(1);
 });
