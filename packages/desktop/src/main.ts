@@ -1059,6 +1059,9 @@ const quitLifecycle = createQuitLifecycle({
     }),
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
+    if (settings.updates.mode !== "automatic") {
+      return false;
+    }
     return installAppUpdateOnQuit({
       currentVersion: app.getVersion(),
       releaseChannel: settings.releaseChannel,

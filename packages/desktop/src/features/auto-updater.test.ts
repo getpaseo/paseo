@@ -4,9 +4,10 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock } = vi.hoisted(() => {
+const { autoUpdaterMock, getAllWindowsMock } = vi.hoisted(() => {
   const handlers = new Map<string, (value: unknown) => void>();
   return {
+    getAllWindowsMock: vi.fn<() => unknown[]>(() => []),
     autoUpdaterMock: {
       handlers,
       logger: {
@@ -29,6 +30,9 @@ vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(),
     isPackaged: true,
+  },
+  BrowserWindow: {
+    getAllWindows: getAllWindowsMock,
   },
 }));
 
@@ -67,6 +71,7 @@ describe("checkForAppUpdate", () => {
     expect(result).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -95,6 +100,104 @@ describe("checkForAppUpdate", () => {
     expect(result.errorMessage).toBe("network down");
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  it("configures electron-updater autoDownload from checkForAppUpdate options", async () => {
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.5" },
+    });
+
+    const result = await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+
+    expect((autoUpdaterMock as unknown as { autoDownload?: boolean }).autoDownload).toBe(false);
+    expect(result).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      latestVersion: "1.2.5",
+    });
+  });
+
+  it("forwards download-progress to window progress bars and renderer events", async () => {
+    const setProgressBar = vi.fn();
+    const send = vi.fn();
+    getAllWindowsMock.mockReturnValue([
+      { isDestroyed: () => false, setProgressBar, webContents: { send } },
+    ]);
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.6" },
+    });
+
+    await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+    autoUpdaterMock.handlers.get("download-progress")?.({
+      percent: 42,
+      transferred: 420,
+      total: 1000,
+      bytesPerSecond: 100,
+    });
+
+    expect(setProgressBar).toHaveBeenCalledWith(0.42);
+    expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
+      version: "1.2.6",
+      percent: 42,
+      transferred: 420,
+      total: 1000,
+      bytesPerSecond: 100,
+    });
+
+    autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.6" });
+    expect(setProgressBar).toHaveBeenLastCalledWith(-1);
+    expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
+    getAllWindowsMock.mockReturnValue([]);
+  });
+
+  it("does not fail update events when setProgressBar throws", async () => {
+    const send = vi.fn();
+    getAllWindowsMock.mockReturnValue([
+      {
+        isDestroyed: () => false,
+        setProgressBar: () => {
+          throw new Error("unsupported desktop environment");
+        },
+        webContents: { send },
+      },
+    ]);
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.7" },
+    });
+
+    await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+    expect(() => {
+      autoUpdaterMock.handlers.get("download-progress")?.({
+        percent: 50,
+        transferred: 50,
+        total: 100,
+        bytesPerSecond: 10,
+      });
+    }).not.toThrow();
+    expect(send).toHaveBeenCalledWith(
+      "paseo:event:app-update-download-progress",
+      expect.objectContaining({ version: "1.2.7", percent: 50 }),
+    );
+    getAllWindowsMock.mockReturnValue([]);
   });
 
   it("logs the update handoff with current and selected target versions", () => {

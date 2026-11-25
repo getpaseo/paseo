@@ -1562,6 +1562,8 @@ export const ru: TranslationResources = {
       status: {
         checking: "Проверка обновлений приложения...",
         installing: "Установка обновления приложения...",
+        downloadingVersionProgress: "Загрузка {{version}}... {{percent}}%",
+        downloadingProgress: "Загрузка обновления приложения... {{percent}}%",
         upToDate: "Установлена последняя версия приложения.",
         upToDateWithLastChecked:
           "Установлена последняя версия приложения. Последняя проверка: {{time}}.",
@@ -1571,6 +1573,15 @@ export const ru: TranslationResources = {
         pendingWithVersion: "Найдено обновление: {{version}}. Загрузка...",
         pendingWithVersionAndLastChecked:
           "Найдено обновление: {{version}}. Загрузка... Последняя проверка в {{time}}.",
+        pendingWithVersionProgress: "Найдено обновление: {{version}}. Загрузка... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Найдено обновление: {{version}}. Загрузка... {{percent}}% Последняя проверка в {{time}}.",
+        downloadAvailableWithVersion: "Доступно обновление: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Доступно обновление: {{version}}. Последняя проверка: {{time}}.",
+        downloadAvailable: "Доступно обновление приложения.",
+        downloadAvailableWithLastChecked:
+          "Доступно обновление приложения. Последняя проверка: {{time}}.",
         availableWithVersion: "Обновление готово: {{version}}",
         availableWithVersionAndLastChecked:
           "Обновление готово: {{version}}. Последняя проверка: {{time}}.",
@@ -1583,14 +1594,21 @@ export const ru: TranslationResources = {
       },
       installError: "Не удалось установить обновление настольного приложения.",
       callout: {
+        downloadingTitle: "Загрузка обновления",
         installingTitle: "Установка обновления",
         failedTitle: "Обновление не выполнено",
         availableTitle: "Доступно обновление",
         genericError: "Что-то пошло не так.",
         whatsNew: "Что нового",
+        downloadingAction: "Загрузка...",
         installingAction: "Установка...",
+        downloadAndRestart: "Скачать",
         installAndRestart: "Установить и перезапустить",
+        downloadingVersionDescription: "Загрузка {{version}}... {{percent}}%",
+        downloadingDescription: "Загрузка обновления... {{percent}}%",
         installingDescription: "Установка и перезапуск...",
+        versionAvailable: "Версия {{version}} доступна для загрузки.",
+        newVersionAvailable: "Новая версия доступна для загрузки.",
         versionReady: "Версия {{version}} готова к установке.",
         newVersionReady: "Новая версия готова к установке.",
         restartWarning:
@@ -2653,9 +2671,28 @@ export const ru: TranslationResources = {
         stable: "Стабильный",
         beta: "Бета",
       },
+      autoUpdate: {
+        label: "Автообновления",
+        options: {
+          automatic: "Авто",
+          notify: "Уведомлять",
+          off: "Выкл.",
+        },
+        descriptions: {
+          automatic: "Проверять и загружать обновления в фоновом режиме",
+          notify: "Проверять обновления, но загружать только по вашему выбору",
+          off: "Не проверять автоматически. Проверять только по нажатию кнопки Проверить",
+        },
+      },
       updates: {
         label: "Обновления приложения",
         readyToInstall: "Версия {{version}} готова к установке",
+        downloadTitle: "Загрузить обновление настольного приложения",
+        downloadMessage: "Это загрузит и установит обновление Paseo на этом компьютере.",
+        downloadConfirm: "Загрузить и установить",
+        download: "Загрузить",
+        downloadTo: "Загрузить {{version}}",
+        downloading: "Загрузка...",
         installTitle: "Установить обновление настольного приложения",
         installMessage: "Это обновит Paseo на этом компьютере.",
         installConfirm: "Установить обновление",

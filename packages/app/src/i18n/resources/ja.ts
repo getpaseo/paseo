@@ -1556,6 +1556,8 @@ export const ja: TranslationResources = {
       status: {
         checking: "アプリの更新を確認中...",
         installing: "アプリの更新をインストール中...",
+        downloadingVersionProgress: "{{version}} をダウンロード中... {{percent}}%",
+        downloadingProgress: "アプリの更新をダウンロード中... {{percent}}%",
         upToDate: "アプリは最新です。",
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
@@ -1563,6 +1565,15 @@ export const ja: TranslationResources = {
         pendingWithVersion: "更新が見つかりました: {{version}}。ダウンロード中...",
         pendingWithVersionAndLastChecked:
           "更新が見つかりました: {{version}}。ダウンロード中... 最終確認: {{time}}。",
+        pendingWithVersionProgress:
+          "更新が見つかりました: {{version}}。ダウンロード中... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "更新が見つかりました: {{version}}。ダウンロード中... {{percent}}% 最終確認: {{time}}。",
+        downloadAvailableWithVersion: "利用可能な更新: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "利用可能な更新: {{version}}。最終確認: {{time}}。",
+        downloadAvailable: "アプリの更新が利用可能です。",
+        downloadAvailableWithLastChecked: "アプリの更新が利用可能です。最終確認: {{time}}。",
         availableWithVersion: "更新の準備ができました: {{version}}",
         availableWithVersionAndLastChecked:
           "更新の準備ができました: {{version}}。最終確認: {{time}}。",
@@ -1574,14 +1585,21 @@ export const ja: TranslationResources = {
       },
       installError: "デスクトップアプリの更新をインストールできません。",
       callout: {
+        downloadingTitle: "更新をダウンロード中",
         installingTitle: "更新をインストール中",
         failedTitle: "更新に失敗しました",
         availableTitle: "更新が利用可能",
         genericError: "問題が発生しました。",
         whatsNew: "新機能",
+        downloadingAction: "ダウンロード中...",
         installingAction: "インストール中...",
+        downloadAndRestart: "ダウンロード",
         installAndRestart: "インストールして再起動",
+        downloadingVersionDescription: "{{version}} をダウンロード中... {{percent}}%",
+        downloadingDescription: "更新をダウンロード中... {{percent}}%",
         installingDescription: "インストールして再起動中...",
+        versionAvailable: "{{version}} をダウンロードできます。",
+        newVersionAvailable: "新しいバージョンをダウンロードできます。",
         versionReady: "{{version}}のインストール準備ができました。",
         newVersionReady: "新しいバージョンのインストール準備ができました。",
         restartWarning:
@@ -2631,9 +2649,28 @@ export const ja: TranslationResources = {
         stable: "安定版",
         beta: "ベータ",
       },
+      autoUpdate: {
+        label: "自動更新",
+        options: {
+          automatic: "自動",
+          notify: "通知のみ",
+          off: "オフ",
+        },
+        descriptions: {
+          automatic: "バックグラウンドで更新を確認してダウンロードします",
+          notify: "更新を確認しますが、選択したときだけダウンロードします",
+          off: "自動で更新を確認しません。「確認」をクリックしたときだけ確認します",
+        },
+      },
       updates: {
         label: "アプリの更新",
         readyToInstall: "インストール準備完了: {{version}}",
+        downloadTitle: "デスクトップの更新をダウンロード",
+        downloadMessage: "このコンピューターにPaseoの更新をダウンロードしてインストールします",
+        downloadConfirm: "ダウンロードしてインストール",
+        download: "ダウンロード",
+        downloadTo: "{{version}}をダウンロード",
+        downloading: "ダウンロード中...",
         installTitle: "デスクトップの更新をインストール",
         installMessage: "このコンピューターのPaseoを更新します",
         installConfirm: "更新をインストール",

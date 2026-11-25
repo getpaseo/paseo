@@ -6,8 +6,13 @@ import { z } from "zod";
 
 import type { AppReleaseChannel } from "../features/auto-updater.js";
 
+export type DesktopUpdateMode = "automatic" | "notify" | "off";
+
 export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
+  updates: {
+    mode: DesktopUpdateMode;
+  };
   notifications: {
     playSound: boolean;
   };
@@ -19,6 +24,7 @@ export interface DesktopSettings {
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
+  updates?: Partial<DesktopSettings["updates"]>;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
@@ -31,6 +37,9 @@ export interface DesktopSettingsStore {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
+  updates: {
+    mode: "automatic",
+  },
   notifications: {
     playSound: true,
   },
@@ -43,6 +52,13 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
 
 const ReleaseChannelSchema = z.enum(["stable", "beta"]);
+const UpdateModeSchema = z.enum(["automatic", "notify", "off"]);
+
+const UpdatesSchema = z
+  .looseObject({
+    mode: UpdateModeSchema.catch(DEFAULT_DESKTOP_SETTINGS.updates.mode),
+  })
+  .catch(() => ({ ...DEFAULT_DESKTOP_SETTINGS.updates }));
 
 const NotificationsSchema = z
   .looseObject({
@@ -60,6 +76,7 @@ const DaemonSchema = z
 const DesktopSettingsSchema = z
   .looseObject({
     releaseChannel: ReleaseChannelSchema.catch(DEFAULT_DESKTOP_SETTINGS.releaseChannel),
+    updates: UpdatesSchema,
     notifications: NotificationsSchema,
     daemon: DaemonSchema,
   })
@@ -95,6 +112,11 @@ function coerceReleaseChannel(value: unknown): AppReleaseChannel | null {
   return result.success ? result.data : null;
 }
 
+function coerceUpdateMode(value: unknown): DesktopUpdateMode | null {
+  const result = UpdateModeSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
 function coerceBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -106,6 +128,7 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 function buildDefaultSettings(): StoredDesktopSettings {
   return {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
+    updates: { ...DEFAULT_DESKTOP_SETTINGS.updates },
     notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
   };
@@ -125,6 +148,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
 function toDesktopSettings(stored: StoredDesktopSettings): DesktopSettings {
   return {
     releaseChannel: stored.releaseChannel,
+    updates: { mode: stored.updates.mode },
     notifications: { playSound: stored.notifications.playSound },
     daemon: {
       manageBuiltInDaemon: stored.daemon.manageBuiltInDaemon,
@@ -142,6 +166,13 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
   const releaseChannel = coerceReleaseChannel(input.releaseChannel);
   if (releaseChannel) {
     patch.releaseChannel = releaseChannel;
+  }
+
+  if (isRecord(input.updates)) {
+    const mode = coerceUpdateMode(input.updates.mode);
+    if (mode) {
+      patch.updates = { mode };
+    }
   }
 
   if (isRecord(input.notifications)) {
@@ -197,6 +228,7 @@ function mergeDesktopSettings(
   return {
     ...current,
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
+    updates: { ...current.updates, ...patch.updates },
     notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
   };

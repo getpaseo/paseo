@@ -541,10 +541,26 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     check_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
+      const settings = await getDesktopSettingsStore().get();
+      const intent = parseAppUpdateCheckIntent(args);
+      const updateMode = settings.updates.mode;
+      if (intent === "automatic" && updateMode === "off") {
+        return {
+          hasUpdate: false,
+          readyToInstall: false,
+          downloading: false,
+          currentVersion,
+          latestVersion: currentVersion,
+          body: null,
+          date: null,
+          errorMessage: null,
+        };
+      }
       return checkForAppUpdate({
         currentVersion,
-        releaseChannel: await resolveRequestedReleaseChannel(args),
-        intent: parseAppUpdateCheckIntent(args),
+        releaseChannel: parseReleaseChannel(args) ?? settings.releaseChannel,
+        intent,
+        autoDownload: updateMode === "automatic",
       });
     },
     install_app_update: async (args) => {

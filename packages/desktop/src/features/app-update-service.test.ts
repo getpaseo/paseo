@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   createAppUpdateService,
+  type AppUpdateDownloadProgress,
   type AppUpdateInstallRequest,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type RuntimeDownloadProgressInfo,
+  type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
 } from "./app-update-service";
 
@@ -26,6 +29,7 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     resolve(): void;
     reject(error: Error): void;
   } | null = null;
+  lastAutoDownload: boolean | null = null;
   checkCount = 0;
   downloadCallCount = 0;
   requestedDownloadVersions: string[] = [];
@@ -35,7 +39,12 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
+    this.lastAutoDownload = input.autoDownload;
     this.gate = input.shouldAdmitUpdate;
+  }
+
+  emitDownloadProgress(progress: RuntimeDownloadProgressInfo): void {
+    this.configuration?.onDownloadProgress(progress);
   }
 
   nextCheck(result: { isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo } | null): void {
@@ -151,13 +160,18 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   }
 }
 
-function createService(input?: { now?: () => number; bucket?: () => Promise<number> }) {
+function createService(input?: {
+  now?: () => number;
+  bucket?: () => Promise<number>;
+  onDownloadProgress?: (progress: AppUpdateDownloadProgress | null) => void;
+}) {
   const runtime = new FakeAppUpdateRuntime();
   const service = createAppUpdateService({
     runtime,
     isPackaged: () => true,
     now: input?.now ?? (() => Date.parse("2026-04-28T12:00:00.000Z")),
     bucket: input?.bucket ?? (async () => 0.99),
+    onDownloadProgress: input?.onDownloadProgress,
   });
   return { runtime, service };
 }
@@ -182,6 +196,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -203,6 +218,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.4",
       body: null,
@@ -331,6 +347,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.5",
       body: null,
@@ -361,6 +378,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.5",
       body: null,
@@ -569,6 +587,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -590,6 +609,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -620,6 +640,7 @@ describe("app update service", () => {
     expect(retryResult).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -649,6 +670,7 @@ describe("app update service", () => {
     expect(automaticResult).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -691,6 +713,7 @@ describe("app update service", () => {
     expect(automaticResult).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -721,6 +744,7 @@ describe("app update service", () => {
     expect(failedPreparation).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.4",
       body: null,
@@ -739,6 +763,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.5",
       body: null,
@@ -802,6 +827,7 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: false,
+      downloading: true,
       currentVersion: "1.2.3",
       latestVersion: "1.2.5",
       body: null,
@@ -834,11 +860,254 @@ describe("app update service", () => {
     expect(result).toEqual({
       hasUpdate: true,
       readyToInstall: true,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.4",
       body: null,
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: null,
+    });
+  });
+
+  it("reports an available update without downloading when autoDownload is false", async () => {
+    const progressEvents: Array<AppUpdateDownloadProgress | null> = [];
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      onDownloadProgress: (progress) => progressEvents.push(progress),
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+
+    expect(runtime.lastAutoDownload).toBe(false);
+    expect(result).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: null,
+    });
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const activeDownload = runtime.beginUpdateDownload(rolledOutUpdate);
+    const installPending = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    await Promise.resolve();
+    runtime.emitDownloadProgress({
+      percent: 45,
+      transferred: 45,
+      total: 100,
+      bytesPerSecond: 10,
+    });
+    activeDownload.resolve();
+    const installResult = await installPending;
+
+    expect(installResult.installed).toBe(true);
+    expect(progressEvents).toContainEqual({
+      version: "1.2.4",
+      percent: 45,
+      transferred: 45,
+      total: 100,
+      bytesPerSecond: 10,
+    });
+    expect(progressEvents[progressEvents.length - 1]).toBeNull();
+  });
+
+  it("allows retrying the same version after a transient download failure in notify/off mode", async () => {
+    const progressEvents: Array<AppUpdateDownloadProgress | null> = [];
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      onDownloadProgress: (progress) => progressEvents.push(progress),
+    });
+
+    // 1. Discover v1.2.4 without auto-downloading.
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const discovered = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+      autoDownload: false,
+    });
+    expect(discovered).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      latestVersion: "1.2.4",
+    });
+
+    // 2. First explicit download fails transiently mid-transfer.
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const failingDownload = runtime.beginUpdateDownload(rolledOutUpdate);
+    const failedInstallPromise = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.downloadCallCount).toBe(1);
+    runtime.emitDownloadProgress({
+      percent: 37,
+      transferred: 37,
+      total: 100,
+      bytesPerSecond: 10,
+    });
+    failingDownload.reject(new Error("ECONNRESET"));
+    const failedInstall = await failedInstallPromise;
+
+    expect(failedInstall).toMatchObject({
+      installed: false,
+      errorMessage: "ECONNRESET",
+    });
+    expect(progressEvents[progressEvents.length - 1]).toBeNull();
+
+    // 3. User retries manual Check for the SAME version (v1.2.4) — must not be stranded on stale error!
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const retryCheck = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+      autoDownload: false,
+    });
+    expect(retryCheck).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      latestVersion: "1.2.4",
+      errorMessage: null,
+    });
+
+    // 4. Second explicit download succeeds and installs cleanly.
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const retryInstall = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    expect(retryInstall.installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
+  });
+
+  it("downloads and installs a newer release if one ships after notify discovery", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const result = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(result.installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+  });
+
+  it("reuses an already-downloaded update when installing manually after switching to notify/off", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(result.installed).toBe(true);
+    expect(runtime.downloadCallCount).toBe(0);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
+  });
+
+  it("transitions cleanly from notify discovery to automatic background download", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const notifyCheck = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+    expect(notifyCheck).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+    });
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const autoCheck = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+    expect(runtime.lastAutoDownload).toBe(true);
+    expect(autoCheck).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: true,
+    });
+  });
+
+  it("clamps NaN and out-of-range download progress values safely", async () => {
+    const progressEvents: Array<AppUpdateDownloadProgress | null> = [];
+    const { runtime, service } = createService({
+      bucket: async () => 0,
+      onDownloadProgress: (progress) => progressEvents.push(progress),
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
+
+    runtime.emitDownloadProgress({
+      percent: Number.NaN,
+      transferred: Number.NaN,
+      total: Number.POSITIVE_INFINITY,
+      bytesPerSecond: Number.NaN,
+    });
+    runtime.emitDownloadProgress({
+      percent: 140,
+      transferred: 200,
+      total: 100,
+      bytesPerSecond: 50,
+    });
+
+    expect(progressEvents).toContainEqual({
+      version: "1.2.4",
+      percent: 0,
+      transferred: 0,
+      total: 0,
+      bytesPerSecond: 0,
+    });
+    expect(progressEvents).toContainEqual({
+      version: "1.2.4",
+      percent: 100,
+      transferred: 200,
+      total: 100,
+      bytesPerSecond: 50,
     });
   });
 });

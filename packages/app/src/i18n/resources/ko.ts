@@ -1547,6 +1547,8 @@ export const ko: TranslationResources = {
       status: {
         checking: "앱 업데이트 확인 중...",
         installing: "앱 업데이트 설치 중...",
+        downloadingVersionProgress: "{{version}} 다운로드 중... {{percent}}%",
+        downloadingProgress: "앱 업데이트 다운로드 중... {{percent}}%",
         upToDate: "앱이 최신 상태입니다.",
         upToDateWithLastChecked: "최신 상태입니다. 마지막 확인: {{time}}.",
         pending: "업데이트가 준비되면 알려드리겠습니다.",
@@ -1555,6 +1557,15 @@ export const ko: TranslationResources = {
         pendingWithVersion: "업데이트 발견: {{version}}. 다운로드 중...",
         pendingWithVersionAndLastChecked:
           "업데이트 발견: {{version}}. 다운로드 중... {{time}}에서 마지막으로 확인했습니다.",
+        pendingWithVersionProgress: "업데이트 발견: {{version}}. 다운로드 중... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "업데이트 발견: {{version}}. 다운로드 중... {{percent}}% {{time}}에서 마지막으로 확인했습니다.",
+        downloadAvailableWithVersion: "사용 가능한 업데이트: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "사용 가능한 업데이트: {{version}}. {{time}}에서 마지막으로 확인했습니다.",
+        downloadAvailable: "사용 가능한 앱 업데이트가 있습니다.",
+        downloadAvailableWithLastChecked:
+          "사용 가능한 앱 업데이트가 있습니다. {{time}}에서 마지막으로 확인했습니다.",
         availableWithVersion: "업데이트 준비됨: {{version}}",
         availableWithVersionAndLastChecked:
           "업데이트 준비됨: {{version}}. {{time}}에서 마지막으로 확인했습니다.",
@@ -1567,14 +1578,21 @@ export const ko: TranslationResources = {
       },
       installError: "데스크톱 앱 업데이트를 설치할 수 없습니다.",
       callout: {
+        downloadingTitle: "업데이트 다운로드 중",
         installingTitle: "업데이트 설치 중",
         failedTitle: "업데이트 실패",
         availableTitle: "업데이트 사용 가능",
         genericError: "문제가 발생했습니다.",
         whatsNew: "새로운 기능",
+        downloadingAction: "다운로드 중...",
         installingAction: "설치 중...",
+        downloadAndRestart: "다운로드",
         installAndRestart: "설치 후 재시작",
+        downloadingVersionDescription: "{{version}} 다운로드 중... {{percent}}%",
+        downloadingDescription: "업데이트 다운로드 중... {{percent}}%",
         installingDescription: "설치 후 재시작 중...",
+        versionAvailable: "{{version}} 버전을 다운로드할 수 있습니다.",
+        newVersionAvailable: "새 버전을 다운로드할 수 있습니다.",
         versionReady: "{{version}} 설치가 준비되었습니다.",
         newVersionReady: "새 버전 설치가 준비되었습니다.",
         restartWarning: "앱을 업그레이드하면 실행 중인 에이전트가 중지되고 터미널 세션이 닫힙니다.",
@@ -2621,9 +2639,28 @@ export const ko: TranslationResources = {
         stable: "안정",
         beta: "베타",
       },
+      autoUpdate: {
+        label: "자동 업데이트",
+        options: {
+          automatic: "자동",
+          notify: "알림만",
+          off: "끄기",
+        },
+        descriptions: {
+          automatic: "백그라운드에서 업데이트를 확인하고 다운로드합니다",
+          notify: "업데이트를 확인하지만 선택할 때만 다운로드합니다",
+          off: "자동으로 확인하지 않습니다. 확인 버튼을 누를 때만 확인합니다",
+        },
+      },
       updates: {
         label: "앱 업데이트",
         readyToInstall: "설치 준비됨: {{version}}",
+        downloadTitle: "데스크톱 업데이트 다운로드",
+        downloadMessage: "이 컴퓨터에 Paseo 업데이트를 다운로드하고 설치합니다",
+        downloadConfirm: "다운로드 및 설치",
+        download: "다운로드",
+        downloadTo: "{{version}} 다운로드",
+        downloading: "다운로드 중...",
         installTitle: "데스크톱 업데이트 설치",
         installMessage: "이 컴퓨터의 Paseo를 업데이트합니다",
         installConfirm: "업데이트 설치",

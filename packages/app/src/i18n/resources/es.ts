@@ -1578,6 +1578,8 @@ export const es: TranslationResources = {
       status: {
         checking: "Buscando actualizaciones de la aplicación...",
         installing: "Instalando actualización de la aplicación...",
+        downloadingVersionProgress: "Descargando {{version}}... {{percent}}%",
+        downloadingProgress: "Descargando actualización de la aplicación... {{percent}}%",
         upToDate: "La aplicación está actualizada.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Le avisaremos cuando la actualización esté lista.",
@@ -1586,6 +1588,16 @@ export const es: TranslationResources = {
         pendingWithVersion: "Actualización encontrada: {{version}}. Descargando...",
         pendingWithVersionAndLastChecked:
           "Actualización encontrada: {{version}}. Descargando... Última comprobación a las {{time}}.",
+        pendingWithVersionProgress:
+          "Actualización encontrada: {{version}}. Descargando... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Actualización encontrada: {{version}}. Descargando... {{percent}}% Última comprobación a las {{time}}.",
+        downloadAvailableWithVersion: "Actualización disponible: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Actualización disponible: {{version}}. Última comprobación a las {{time}}.",
+        downloadAvailable: "Hay una actualización de la aplicación disponible.",
+        downloadAvailableWithLastChecked:
+          "Hay una actualización de la aplicación disponible. Última comprobación a las {{time}}.",
         availableWithVersion: "Actualización lista:{{version}}",
         availableWithVersionAndLastChecked:
           "Actualización lista:{{version}}. Última comprobación a las {{time}}.",
@@ -1598,14 +1610,21 @@ export const es: TranslationResources = {
       },
       installError: "No se puede instalar la actualización de la aplicación de escritorio.",
       callout: {
+        downloadingTitle: "Descargando actualización",
         installingTitle: "Instalando actualización",
         failedTitle: "La actualización falló",
         availableTitle: "Actualización disponible",
         genericError: "Algo salió mal.",
         whatsNew: "Qué hay de nuevo",
+        downloadingAction: "Descargando...",
         installingAction: "Instalando...",
+        downloadAndRestart: "Descargar",
         installAndRestart: "Instalar y reiniciar",
+        downloadingVersionDescription: "Descargando {{version}}... {{percent}}%",
+        downloadingDescription: "Descargando actualización... {{percent}}%",
         installingDescription: "Instalando y reiniciando...",
+        versionAvailable: "{{version}} está disponible para descargar.",
+        newVersionAvailable: "Una nueva versión está disponible para descargar.",
         versionReady: "{{version}}está listo para instalar.",
         newVersionReady: "Una nueva versión está lista para instalar.",
         restartWarning:
@@ -2664,9 +2683,28 @@ export const es: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Actualizaciones automáticas",
+        options: {
+          automatic: "Auto",
+          notify: "Notificar",
+          off: "Desactivado",
+        },
+        descriptions: {
+          automatic: "Buscar y descargar actualizaciones en segundo plano",
+          notify: "Buscar actualizaciones, pero descargar solo cuando lo elijas",
+          off: "No buscar automáticamente. Solo buscar al hacer clic en Comprobar",
+        },
+      },
       updates: {
         label: "Actualizaciones de aplicaciones",
         readyToInstall: "Listo para instalar:{{version}}",
+        downloadTitle: "Descargar actualización de escritorio",
+        downloadMessage: "Esto descarga e instala la actualización de Paseo en esta computadora.",
+        downloadConfirm: "Descargar e instalar",
+        download: "Descargar",
+        downloadTo: "Descargar {{version}}",
+        downloading: "Descargando...",
         installTitle: "Instalar actualización de escritorio",
         installMessage: "Esto actualizaPaseoen esta computadora.",
         installConfirm: "Instalar actualización",

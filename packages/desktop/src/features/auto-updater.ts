@@ -1,17 +1,19 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
   createAppUpdateService,
   type AppUpdateCheckResult,
+  type AppUpdateDownloadProgress,
   type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type RuntimeDownloadProgressInfo,
   type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
 } from "./app-update-service.js";
@@ -30,6 +32,7 @@ export {
   type AppReleaseChannel,
   type AppUpdateCheckIntent,
   type AppUpdateCheckResult,
+  type AppUpdateDownloadProgress,
   type AppUpdateInstallResult,
 };
 
@@ -140,11 +143,42 @@ export function shouldInstallAppUpdateOnQuit(input: {
   return !(input.platform === "linux" && input.isAppImage);
 }
 
+const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT = "paseo:event:app-update-download-progress";
+
+function resolveProgressBarValue(progress: AppUpdateDownloadProgress | null): number {
+  if (progress === null) return -1;
+  if (!Number.isFinite(progress.percent)) return 0;
+  return Math.max(0, Math.min(1, progress.percent / 100));
+}
+
+function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): void {
+  if (typeof BrowserWindow?.getAllWindows !== "function") {
+    return;
+  }
+
+  const normalizedBar = resolveProgressBarValue(progress);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.setProgressBar(normalizedBar);
+    } catch {
+      // Progress bar support is optional across desktop environments.
+    }
+    try {
+      win.webContents.send(APP_UPDATE_DOWNLOAD_PROGRESS_EVENT, progress);
+    } catch {
+      // Window may be tearing down during quitAndInstall.
+    }
+  }
+}
+
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
+  private configuration: AppUpdateRuntimeConfiguration | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
-    autoUpdater.autoDownload = true;
+    this.configuration = input;
+    autoUpdater.autoDownload = input.autoDownload;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
     // Electron's built-in handler would install an older download without checking
@@ -155,7 +189,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     autoUpdater.allowDowngrade = false;
     autoUpdater.isUserWithinRollout = async (info) => {
       try {
-        return await input.shouldAdmitUpdate(info as RuntimeUpdateInfo);
+        return await (this.configuration?.shouldAdmitUpdate(info as RuntimeUpdateInfo) ?? true);
       } catch {
         return true;
       }
@@ -179,16 +213,19 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     autoUpdater.on("update-available", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
       updateLifecycleLog.updateAvailable(updateInfo.version);
-      input.onUpdateAvailable(updateInfo);
+      this.configuration?.onUpdateAvailable(updateInfo);
+    });
+    autoUpdater.on("download-progress", (progress) => {
+      this.configuration?.onDownloadProgress(progress as RuntimeDownloadProgressInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
       updateLifecycleLog.updateDownloaded(updateInfo.version);
-      input.onUpdateDownloaded(updateInfo);
+      this.configuration?.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
-      input.onError(error);
+      this.configuration?.onError(error);
     });
   }
 
@@ -212,6 +249,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
+    broadcastDownloadProgress(null);
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
       targetVersion,
@@ -227,6 +265,7 @@ const appUpdateService = createAppUpdateService({
   isPackaged: () => app.isPackaged,
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  onDownloadProgress: broadcastDownloadProgress,
   reportCheckError: (error) => {
     console.error("[auto-updater] Failed to check for updates:", error);
   },
@@ -246,16 +285,19 @@ export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
   intent,
+  autoDownload = true,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
+  autoDownload?: boolean;
 }): Promise<AppUpdateCheckResult> {
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
     currentVersion,
     releaseChannel,
     intent,
+    autoDownload,
   });
   updateLifecycleLog.checkCompleted({
     currentVersion,

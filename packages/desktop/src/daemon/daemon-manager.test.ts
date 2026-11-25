@@ -15,12 +15,20 @@ import {
 const mocks = vi.hoisted(() => ({
   paseoHome: "",
   settings: {
-    releaseChannel: "stable",
+    releaseChannel: "stable" as "stable" | "beta",
+    updates: {
+      mode: "automatic" as "automatic" | "notify" | "off",
+    },
+    notifications: {
+      playSound: true,
+    },
     daemon: {
       manageBuiltInDaemon: true,
       keepRunningAfterQuit: true,
     },
   },
+  checkForAppUpdate: vi.fn(),
+  downloadAndInstallUpdate: vi.fn(),
   runExternalCliJsonCommand: vi.fn(),
   runExternalCliTextCommand: vi.fn(),
   createNodeEntrypointInvocation: vi.fn(() => ({
@@ -41,6 +49,7 @@ vi.mock("electron", () => ({
     getVersion: vi.fn(() => "1.2.3"),
     isPackaged: true,
   },
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
   ipcMain: { handle: vi.fn() },
   powerMonitor: { getSystemIdleTime: vi.fn(() => 0) },
 }));
@@ -79,6 +88,12 @@ vi.mock("./runtime-paths.js", () => ({
   })),
 }));
 
+vi.mock("../features/auto-updater.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  checkForAppUpdate: mocks.checkForAppUpdate,
+  downloadAndInstallUpdate: mocks.downloadAndInstallUpdate,
+}));
+
 vi.mock("./cli/external.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   runExternalCliJsonCommand: mocks.runExternalCliJsonCommand,
@@ -93,6 +108,8 @@ describe("daemon-manager commands", () => {
     mocks.paseoHome = path.join(fixtureRoot, "home");
     mocks.appLogPath = path.join(fixtureRoot, "main.log");
     mocks.settings = DEFAULT_DESKTOP_SETTINGS;
+    mocks.checkForAppUpdate.mockReset();
+    mocks.downloadAndInstallUpdate.mockReset();
     mocks.runExternalCliJsonCommand.mockReset();
     mocks.runExternalCliTextCommand.mockReset();
     mocks.createNodeEntrypointInvocation.mockReset();
@@ -181,6 +198,69 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "remote:6799" })).toBeNull();
     writeFileSync(lockPath, JSON.stringify({ ...lock, desktopManaged: false }));
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
+  });
+
+  it("blocks automatic update checks when updates.mode is off", async () => {
+    mocks.settings = {
+      ...DEFAULT_DESKTOP_SETTINGS,
+      updates: { mode: "off" },
+    };
+
+    const result = await createDaemonCommandHandlers().check_app_update({
+      intent: "automatic",
+    });
+
+    expect(mocks.checkForAppUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      downloading: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+  });
+
+  it("checks without auto-downloading when updates.mode is notify or manual in off mode", async () => {
+    mocks.checkForAppUpdate.mockResolvedValue({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+
+    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "notify" } };
+    await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
+    expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+
+    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "off" } };
+    await createDaemonCommandHandlers().check_app_update({ intent: "manual" });
+    expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+      autoDownload: false,
+    });
+
+    mocks.settings = { ...DEFAULT_DESKTOP_SETTINGS, updates: { mode: "automatic" } };
+    await createDaemonCommandHandlers().check_app_update({ intent: "automatic" });
+    expect(mocks.checkForAppUpdate).toHaveBeenLastCalledWith({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: true,
+    });
   });
 });
 

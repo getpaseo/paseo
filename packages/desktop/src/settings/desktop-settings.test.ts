@@ -81,6 +81,7 @@ describe("desktop-settings", () => {
 
     expect(settings).toEqual({
       releaseChannel: "stable",
+      updates: { mode: "automatic" },
       notifications: { playSound: true },
       daemon: {
         manageBuiltInDaemon: true,
@@ -97,12 +98,14 @@ describe("desktop-settings", () => {
     await store.get();
     const next = await store.patch({
       releaseChannel: "beta",
+      updates: { mode: "notify" },
       daemon: { keepRunningAfterQuit: false },
     });
     const files = await readdir(userDataPath);
 
     expect(next).toEqual({
       releaseChannel: "beta",
+      updates: { mode: "notify" },
       notifications: { playSound: true },
       daemon: {
         manageBuiltInDaemon: true,
@@ -110,6 +113,32 @@ describe("desktop-settings", () => {
       },
     });
     expect(files).toEqual(["desktop-settings.json"]);
+  });
+
+  it("defaults updates.mode to automatic and persists explicit choices across restarts", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: {
+          releaseChannel: "stable",
+          updates: { mode: "invalid" },
+        },
+        migrations: {
+          legacyRendererSettingsImported: true,
+          daemonStopOnQuitDefaultApplied: true,
+        },
+      }),
+    );
+
+    const defaulted = await createDesktopSettingsStore({ userDataPath }).get();
+    expect(defaulted.updates.mode).toBe("automatic");
+
+    await createDesktopSettingsStore({ userDataPath }).patch({ updates: { mode: "off" } });
+    const persisted = await createDesktopSettingsStore({ userDataPath }).get();
+    expect(persisted.updates.mode).toBe("off");
   });
 
   it("defaults notification sounds on for existing settings documents", async () => {
@@ -270,6 +299,7 @@ describe("desktop-settings", () => {
 
     expect(migrated).toEqual({
       releaseChannel: "beta",
+      updates: { mode: "automatic" },
       notifications: { playSound: true },
       daemon: {
         manageBuiltInDaemon: false,
@@ -315,6 +345,7 @@ describe("desktop-settings", () => {
     expect(persisted.settings.releaseChannel).toBe("beta");
     expect(next).toEqual({
       releaseChannel: "beta",
+      updates: { mode: "automatic" },
       notifications: { playSound: false },
       daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: false },
     });
