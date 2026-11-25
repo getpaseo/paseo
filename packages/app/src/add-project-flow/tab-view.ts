@@ -6,6 +6,8 @@ export interface AddProjectTabView {
   rows: ResultRow[];
   activeIndex: number;
   notice: ResultListNotice | null;
+  /** Why this host cannot do what the tab offers; the tab's fields are read-only while set. */
+  unavailable: string | null;
   primary: {
     label: string;
     /** Absent when there is nothing to commit yet. */
@@ -13,8 +15,11 @@ export interface AddProjectTabView {
   };
 }
 
-/** Clamps a stored selection to the rows that arrived for it. */
-export function clampActiveIndex(activeIndex: number, rowCount: number): number {
-  if (rowCount === 0) return 0;
-  return Math.min(Math.max(activeIndex, 0), rowCount - 1);
+/** Where the picked row sits in `rows`; the first row when nothing listed is picked. */
+export function resolveActiveIndex(
+  rows: readonly { id: string }[],
+  selectedId: string | null,
+): number {
+  const index = selectedId === null ? -1 : rows.findIndex((row) => row.id === selectedId);
+  return Math.max(index, 0);
 }

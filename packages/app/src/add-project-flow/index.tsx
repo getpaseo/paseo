@@ -33,8 +33,8 @@ import {
   openAddProjectFlow,
   resolveAddProjectKey,
   selectAddProjectHost,
+  selectAddProjectRow,
   selectAddProjectTab,
-  setAddProjectActiveIndex,
   setAddProjectLocation,
   setAddProjectQuery,
   setNewFolderName,
@@ -52,35 +52,49 @@ const SNAP_POINTS = ["90%"];
 const DESKTOP_HEIGHT = 560;
 
 // Compact drops the segment icons so the three labels fit a phone's width.
+const TABS: {
+  value: AddProjectTab;
+  label: string;
+  key: string;
+  icon: SegmentedControlOption<AddProjectTab>["icon"];
+}[] = [
+  {
+    value: "existing",
+    label: "Existing",
+    key: "1",
+    icon: ({ color, size }) => <Folder color={color} size={size} />,
+  },
+  {
+    value: "clone",
+    label: "Clone",
+    key: "2",
+    icon: ({ color, size }) => <GitHubIcon color={color} size={size} />,
+  },
+  {
+    value: "new-folder",
+    label: "New folder",
+    key: "3",
+    icon: ({ color, size }) => <FolderPlus color={color} size={size} />,
+  },
+];
+
+/** `lockedTo` is the tab a running submission belongs to; the others are disabled until it ends. */
 function buildTabOptions(
   isMac: boolean,
   withIcons: boolean,
+  lockedTo: AddProjectTab | null,
 ): SegmentedControlOption<AddProjectTab>[] {
   const os = isMac ? "mac" : "non-mac";
-  const options: SegmentedControlOption<AddProjectTab>[] = [
-    {
-      value: "existing",
-      label: "Existing",
-      icon: ({ color, size }) => <Folder color={color} size={size} />,
-      tooltip: formatShortcut(["mod", "1"], os),
-      testID: "add-project-flow-tab-existing",
-    },
-    {
-      value: "clone",
-      label: "Clone",
-      icon: ({ color, size }) => <GitHubIcon color={color} size={size} />,
-      tooltip: formatShortcut(["mod", "2"], os),
-      testID: "add-project-flow-tab-clone",
-    },
-    {
-      value: "new-folder",
-      label: "New folder",
-      icon: ({ color, size }) => <FolderPlus color={color} size={size} />,
-      tooltip: formatShortcut(["mod", "3"], os),
-      testID: "add-project-flow-tab-new-folder",
-    },
-  ];
-  return withIcons ? options : options.map(({ icon: _icon, ...option }) => option);
+  return TABS.map(
+    (tab): SegmentedControlOption<AddProjectTab> => ({
+      value: tab.value,
+      label: tab.label,
+      icon: withIcons ? tab.icon : undefined,
+      tooltip: formatShortcut(["mod", tab.key], os),
+      testID: `add-project-flow-tab-${tab.value}`,
+      disabled: lockedTo !== null && tab.value !== lockedTo,
+    }),
+  );
 }
 
 interface AddProjectFlowProps {
@@ -142,10 +156,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     (query: string) => setState((current) => setAddProjectQuery(current, query)),
     [],
   );
-  const selectRow = useCallback(
-    (index: number) => setState((current) => setAddProjectActiveIndex(current, index)),
-    [],
-  );
   const changeLocation = useCallback(
     (location: string) => setState((current) => setAddProjectLocation(current, location)),
     [],
@@ -160,6 +170,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   viewRef.current = view;
   const hasHostRef = useRef(host !== null);
   hasHostRef.current = host !== null;
+  /** Picks the row at `index` of the current tab's list, remembered by its id. */
+  const selectRow = useCallback((index: number) => {
+    const row = viewRef.current.rows[index];
+    if (row) setState((current) => selectAddProjectRow(current, row.id));
+  }, []);
   const keyboard = useMemo<SheetKeyboard>(
     () => ({
       keys: ADD_PROJECT_KEYS,
@@ -188,7 +203,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [isMac, selectRow, selectTab],
   );
 
-  const tabOptions = useMemo(() => buildTabOptions(isMac, !isCompact), [isCompact, isMac]);
+  const lockedTab = submitting ? state.tab : null;
+  const tabOptions = useMemo(
+    () => buildTabOptions(isMac, !isCompact, lockedTab),
+    [isCompact, isMac, lockedTab],
+  );
   const header = useMemo(
     () => ({
       title: "Add project",
@@ -221,7 +240,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         onPress={view.primary.submit ?? undefined}
         disabled={!view.primary.submit}
         loading={submitting}
-        style={isCompact ? styles.primaryCompact : undefined}
+        style={isCompact ? styles.primaryCompact : styles.primary}
         testID="add-project-flow-submit"
       >
         {view.primary.label}
@@ -413,8 +432,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "column",
     alignItems: "stretch",
   },
+  // The message wraps beside the button; the button keeps its width.
   failure: {
     flexShrink: 1,
+    minWidth: 0,
     color: theme.colors.statusDanger,
     fontSize: theme.fontSize.sm,
   },
@@ -432,7 +453,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
+  primary: {
+    flexShrink: 0,
+  },
   primaryCompact: {
+    flexShrink: 0,
     alignSelf: "stretch",
   },
   noHosts: {

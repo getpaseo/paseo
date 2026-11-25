@@ -246,6 +246,38 @@ test.describe("Add project sheet", () => {
     }
   });
 
+  test("Enter on a focused result adds that folder, not the one picked before", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-focus-"));
+    const firstPath = path.join(parentDirectory, "focus-probe-a");
+    const secondPath = path.join(parentDirectory, "focus-probe-b");
+    let projectId: string | null = null;
+    try {
+      await Promise.all([mkdir(firstPath), mkdir(secondPath)]);
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await addProjectFlowInput(page).fill(`${path.basename(parentDirectory)}/focus-probe`);
+      const results = page.getByTestId("add-project-flow-results");
+      await expect(results.getByRole("button", { name: /focus-probe-/ })).toHaveCount(2, {
+        timeout: 30_000,
+      });
+
+      await results.getByRole("button", { name: /focus-probe-b/ }).focus();
+      await page.keyboard.press("Enter");
+      projectId = await expectOpenedProject(page, "focus-probe-b");
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName: "focus-probe-b",
+        projectPath: secondPath,
+      });
+    } finally {
+      if (projectId) await removeCreatedProject(secondPath, projectId);
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("a complete repository URL is cloneable without a GitHub search result", async ({
     page,
   }) => {

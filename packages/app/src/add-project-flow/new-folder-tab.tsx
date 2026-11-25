@@ -12,8 +12,6 @@ import type { AddProjectTabView } from "./tab-view";
 export interface NewFolderTabView extends AddProjectTabView {
   location: string;
   destination: string;
-  /** Why this host cannot create folders, if it cannot. */
-  unavailable: string | null;
   /** Why the typed name cannot be a folder; null while empty or valid. */
   nameError: string | null;
 }

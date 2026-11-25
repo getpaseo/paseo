@@ -23,7 +23,11 @@ export type AddProjectTab = (typeof ADD_PROJECT_TABS)[number];
 
 interface ListDraft {
   query: string;
-  activeIndex: number;
+  /**
+   * The row the user picked, by id, so it stays picked when a search refresh reorders the rows.
+   * `null`, or an id no longer listed, means the first row.
+   */
+  selectedId: string | null;
 }
 
 /** `location: null` means the default parent directory for the current host. */
@@ -70,8 +74,8 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
     hosts: input.hosts,
     hostId: pickHostId(input.hosts, input.preferredHostId),
     tab: "existing",
-    existing: { query: "", activeIndex: 0 },
-    clone: { query: "", activeIndex: 0, location: null },
+    existing: { query: "", selectedId: null },
+    clone: { query: "", selectedId: null, location: null },
     newFolder: { name: "", location: null },
     submission: IDLE,
   };
@@ -104,8 +108,8 @@ function withHost(state: AddProjectFlowState, hostId: string | null): AddProject
   return {
     ...state,
     hostId,
-    existing: { ...state.existing, activeIndex: 0 },
-    clone: { ...state.clone, activeIndex: 0, location: null },
+    existing: { ...state.existing, selectedId: null },
+    clone: { ...state.clone, selectedId: null, location: null },
     newFolder: { ...state.newFolder, location: null },
     submission: IDLE,
   };
@@ -131,10 +135,10 @@ export function selectAddProjectTab(
 /** Sets the search text of the current list tab. */
 export function setAddProjectQuery(state: AddProjectFlowState, query: string): AddProjectFlowState {
   if (state.tab === "existing") {
-    return { ...state, existing: { query, activeIndex: 0 }, submission: IDLE };
+    return { ...state, existing: { query, selectedId: null }, submission: IDLE };
   }
   if (state.tab === "clone") {
-    return { ...state, clone: { ...state.clone, query, activeIndex: 0 }, submission: IDLE };
+    return { ...state, clone: { ...state.clone, query, selectedId: null }, submission: IDLE };
   }
   return state;
 }
@@ -157,12 +161,19 @@ export function setAddProjectLocation(
   return state;
 }
 
-export function setAddProjectActiveIndex(
+export function selectAddProjectRow(
   state: AddProjectFlowState,
-  activeIndex: number,
+  selectedId: string,
 ): AddProjectFlowState {
-  if (state.tab === "existing") return { ...state, existing: { ...state.existing, activeIndex } };
-  if (state.tab === "clone") return { ...state, clone: { ...state.clone, activeIndex } };
+  // The row being added stays put until its submission ends; choosing another clears the
+  // failure of the last one.
+  if (isAddProjectSubmitting(state)) return state;
+  if (state.tab === "existing") {
+    return { ...state, existing: { ...state.existing, selectedId }, submission: IDLE };
+  }
+  if (state.tab === "clone") {
+    return { ...state, clone: { ...state.clone, selectedId }, submission: IDLE };
+  }
   return state;
 }
 

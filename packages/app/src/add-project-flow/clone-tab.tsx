@@ -9,11 +9,11 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { AddProjectActions } from "./use-add-project-actions";
 import type { AddProjectFlowState, AddProjectHost, GithubRepositoryChoice } from "./model";
 import { LocationField } from "./location-field";
-import { buildManualGithubRepositoryChoices, joinDirectoryPath, pathBaseName } from "./options";
+import { buildManualGithubRepositoryChoices, checkoutName, joinDirectoryPath } from "./options";
 import { ResultList, type ResultRow } from "./result-list";
 import { RESULTS_TEST_ID } from "./result-list-id";
 import { useGithubRepositorySearch } from "./searches";
-import { clampActiveIndex, type AddProjectTabView } from "./tab-view";
+import { resolveActiveIndex, type AddProjectTabView } from "./tab-view";
 
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -45,6 +45,8 @@ export interface CloneTabView extends AddProjectTabView {
   location: string;
   destination: string;
 }
+
+const CLONE_UNAVAILABLE = "Update the host to clone projects";
 
 export function useCloneTab(input: {
   state: AddProjectFlowState;
@@ -78,16 +80,17 @@ export function useCloneTab(input: {
       })),
     [choices],
   );
-  const activeIndex = clampActiveIndex(state.clone.activeIndex, rows.length);
+  const activeIndex = resolveActiveIndex(rows, state.clone.selectedId);
   const repository = choices[activeIndex] ?? null;
   const location = state.clone.location ?? defaultLocation;
   const destination = repository
-    ? joinDirectoryPath(location, pathBaseName(repository.nameWithOwner))
+    ? joinDirectoryPath(location, checkoutName(repository.nameWithOwner))
     : location;
 
   return useMemo<CloneTabView>(() => {
+    const unavailable = host && canClone ? null : CLONE_UNAVAILABLE;
     let notice: AddProjectTabView["notice"] = null;
-    if (!host || !canClone) notice = { kind: "empty", text: "Update the host to clone projects" };
+    if (!host || unavailable) notice = { kind: "empty", text: CLONE_UNAVAILABLE };
     else if (search.error) notice = { kind: "error", text: search.error };
     else if (search.pending) notice = { kind: "pending", text: "Searching..." };
     else notice = { kind: "empty", text: cloneEmptyText(host, query) };
@@ -95,6 +98,7 @@ export function useCloneTab(input: {
       rows,
       activeIndex,
       notice,
+      unavailable,
       location,
       destination,
       primary: {
@@ -139,6 +143,7 @@ export function CloneTab({
   onSelectRow: (index: number) => void;
   onLocationChange: (location: string) => void;
 }) {
+  const editable = !disabled && !view.unavailable;
   return (
     <View style={styles.body}>
       <FormTextInput
@@ -152,7 +157,7 @@ export function CloneTab({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="go"
-        editable={!disabled}
+        editable={editable}
         testID="add-project-flow-input"
       />
       <ResultList
@@ -169,7 +174,7 @@ export function CloneTab({
         destination={view.destination}
         recommendedPaths={recommendedPaths}
         onChange={onLocationChange}
-        disabled={disabled}
+        disabled={!editable}
         testID="add-project-flow-location"
       />
     </View>

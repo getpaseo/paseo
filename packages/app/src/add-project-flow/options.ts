@@ -73,12 +73,24 @@ export function buildSuggestedParentDirectories(projectPaths: string[]): string[
   return [...new Set(values)];
 }
 
-/** Where a new folder or clone goes when the user has not picked a location on this host. */
+/**
+ * Where a new folder or clone goes when the user has not picked a location on this host: the last
+ * one used, else the parent of a recent project, else home. Only folders known to exist qualify;
+ * guesses like `~/dev` stay suggestions in the Location picker.
+ */
 export function defaultProjectLocation(input: {
   remembered: string | undefined;
   projectPaths: string[];
 }): string {
-  return input.remembered ?? buildSuggestedParentDirectories(input.projectPaths)[0] ?? "~";
+  const projectParent = input.projectPaths
+    .map(parentDirectory)
+    .find((parent): parent is string => parent !== null);
+  return input.remembered ?? projectParent ?? "~";
+}
+
+/** The folder a clone of `nameWithOwner` checks out into; the host drops a trailing `.git`. */
+export function checkoutName(nameWithOwner: string): string {
+  return pathBaseName(nameWithOwner).replace(/\.git$/u, "");
 }
 
 export function validateNewFolderName(name: string): string | null {

@@ -304,9 +304,10 @@ const formInputStyles = StyleSheet.create((theme) => {
     controlDisabled: {
       ...geometry.controlDisabled,
     },
+    // Matches the inline error under the field (docs/design.md, Errors).
     controlInvalid: {
-      borderColor: theme.colors.statusDanger,
-      outlineColor: theme.colors.statusDanger,
+      borderColor: theme.colors.palette.red[300],
+      outlineColor: theme.colors.palette.red[300],
     },
     input: {
       flex: 1,

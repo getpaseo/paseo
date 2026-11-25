@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { router } from "expo-router";
 import type { WorkspaceProjectDescriptorPayload } from "@getpaseo/protocol/messages";
 import { pickDirectory } from "@/desktop/pick-directory";
@@ -29,6 +29,11 @@ export interface AddProjectActions {
   createFolder: (name: string, location: string) => void;
 }
 
+/** What a submission's work reports: the project to open, or why it failed. */
+type SubmissionOutcome =
+  | { ok: true; project: WorkspaceProjectDescriptorPayload }
+  | { ok: false; error: string };
+
 /**
  * The three ways a project gets added. Each one records its progress and failure in the flow
  * state and, on success, closes the flow and opens a new workspace for the project.
@@ -44,62 +49,74 @@ export function useAddProjectActions(input: {
   const cloneGithubProject = useCloneGithubProject(hostId);
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const rememberLocation = useAddProjectFlowStore((store) => store.rememberLocation);
-  const inFlightRef = useRef(false);
+  // The running submission, if any. It belongs to the open sheet and the host it started on:
+  // closing the sheet or losing that host abandons it, so a late result neither navigates nor
+  // blocks the next submission.
+  const submissionRef = useRef<symbol | null>(null);
+  useEffect(
+    () => () => {
+      submissionRef.current = null;
+    },
+    [hostId],
+  );
 
-  const openNewWorkspace = useCallback(
-    (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
+  /** Runs one submission at a time and opens a new workspace for the project it adds. */
+  const run = useCallback(
+    async (serverId: string, work: () => Promise<SubmissionOutcome>, fallbackError: string) => {
+      if (submissionRef.current) return;
+      const submission = Symbol("add-project-submission");
+      submissionRef.current = submission;
+      const isCurrent = () => submissionRef.current === submission;
+      setState(startAddProjectSubmission);
+      let outcome: SubmissionOutcome;
+      try {
+        outcome = await work();
+      } catch (error) {
+        const message = error instanceof Error && error.message ? error.message : fallbackError;
+        outcome = { ok: false, error: message };
+      }
+      if (!isCurrent()) return;
+      submissionRef.current = null;
+      if (!outcome.ok) {
+        setState((state) => failAddProjectSubmission(state, outcome.error));
+        return;
+      }
       onClose();
       usePanelStore.getState().showMobileAgent();
       router.push(
         buildNewWorkspaceRoute({
           serverId,
-          projectId: project.projectId,
-          sourceDirectory: project.projectRootPath,
-          displayName: project.projectDisplayName,
+          projectId: outcome.project.projectId,
+          sourceDirectory: outcome.project.projectRootPath,
+          displayName: outcome.project.projectDisplayName,
         }),
       );
     },
-    [onClose],
-  );
-
-  /** Runs one submission at a time; a thrown error or returned message becomes the failure. */
-  const run = useCallback(
-    async (work: () => Promise<string | null>, fallbackError: string) => {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      setState(startAddProjectSubmission);
-      try {
-        const failure = await work();
-        if (failure) setState((state) => failAddProjectSubmission(state, failure));
-      } catch (error) {
-        const message = error instanceof Error && error.message ? error.message : fallbackError;
-        setState((state) => failAddProjectSubmission(state, message));
-      } finally {
-        inFlightRef.current = false;
-      }
-    },
-    [setState],
+    [onClose, setState],
   );
 
   const openFolder = useCallback(
     (path: string) => {
       if (!hostId) return;
-      void run(async () => {
-        const result = await openProject(path);
-        if (result.ok) {
-          openNewWorkspace(hostId, result.project);
-          return null;
-        }
-        return getOpenProjectFailureReason(result) === "directory_not_found"
-          ? "Folder not found"
-          : "Unable to add project";
-      }, "Unable to add project");
+      void run(
+        hostId,
+        async () => {
+          const result = await openProject(path);
+          if (result.ok) return { ok: true, project: result.project };
+          if (getOpenProjectFailureReason(result) === "directory_not_found") {
+            return { ok: false, error: "Folder not found" };
+          }
+          return { ok: false, error: result.error ?? "Unable to add project" };
+        },
+        "Unable to add project",
+      );
     },
-    [hostId, openNewWorkspace, openProject, run],
+    [hostId, openProject, run],
   );
 
+  // The desktop folder dialog is modal to the window, so nothing else can start while it is open.
   const browse = useCallback(() => {
-    if (!hostId || inFlightRef.current) return;
+    if (!hostId || submissionRef.current) return;
     void (async () => {
       try {
         const path = await pickDirectory();
@@ -113,43 +130,52 @@ export function useAddProjectActions(input: {
   const clone = useCallback(
     (repository: GithubRepositoryChoice, location: string) => {
       if (!hostId) return;
-      void run(async () => {
-        const result = await cloneGithubProject(
-          repository.cloneUrl,
-          location,
-          repository.cloneProtocol,
-        );
-        if (!result.ok) return result.error ?? "Unable to clone project";
-        rememberLocation(hostId, location);
-        openNewWorkspace(hostId, result.project);
-        return null;
-      }, "Unable to clone project");
+      void run(
+        hostId,
+        async () => {
+          const result = await cloneGithubProject(
+            repository.cloneUrl,
+            location,
+            repository.cloneProtocol,
+          );
+          if (!result.ok) return { ok: false, error: result.error ?? "Unable to clone project" };
+          rememberLocation(hostId, location);
+          return { ok: true, project: result.project };
+        },
+        "Unable to clone project",
+      );
     },
-    [cloneGithubProject, hostId, openNewWorkspace, rememberLocation, run],
+    [cloneGithubProject, hostId, rememberLocation, run],
   );
 
   const createFolder = useCallback(
     (name: string, location: string) => {
-      if (!hostId || !client) return;
-      void run(async () => {
-        const payload = await client.createProjectDirectory({
-          parentPath: location,
-          name: name.trim(),
-        });
-        if (payload.error || !payload.project) return payload.error ?? "Unable to create folder";
-        registerProjectDescriptor({
-          serverId: hostId,
-          project: payload.project,
-          upsertProject: (serverId, project) =>
-            getHostRuntimeStore().acceptProjectSnapshot(serverId, project),
-          setHasHydratedWorkspaces,
-        });
-        rememberLocation(hostId, location);
-        openNewWorkspace(hostId, payload.project);
-        return null;
-      }, "Unable to create folder");
+      if (!hostId) return;
+      void run(
+        hostId,
+        async () => {
+          if (!client) return { ok: false, error: "Unable to create folder" };
+          const payload = await client.createProjectDirectory({
+            parentPath: location,
+            name: name.trim(),
+          });
+          if (payload.error || !payload.project) {
+            return { ok: false, error: payload.error ?? "Unable to create folder" };
+          }
+          registerProjectDescriptor({
+            serverId: hostId,
+            project: payload.project,
+            upsertProject: (serverId, project) =>
+              getHostRuntimeStore().acceptProjectSnapshot(serverId, project),
+            setHasHydratedWorkspaces,
+          });
+          rememberLocation(hostId, location);
+          return { ok: true, project: payload.project };
+        },
+        "Unable to create folder",
+      );
     },
-    [client, hostId, openNewWorkspace, rememberLocation, run, setHasHydratedWorkspaces],
+    [client, hostId, rememberLocation, run, setHasHydratedWorkspaces],
   );
 
   return { openFolder, browse, clone, createFolder };

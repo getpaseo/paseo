@@ -14,7 +14,7 @@ import { pathBaseName } from "./options";
 import { ResultList, type ResultRow } from "./result-list";
 import { RESULTS_TEST_ID } from "./result-list-id";
 import { useDirectorySearch } from "./searches";
-import { clampActiveIndex, type AddProjectTabView } from "./tab-view";
+import { resolveActiveIndex, type AddProjectTabView } from "./tab-view";
 
 const ThemedSearch = withUnistyles(Search);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -32,7 +32,8 @@ export function useExistingTab(input: {
   const search = useDirectorySearch({
     hostId: state.hostId,
     query,
-    enabled: state.tab === "existing" && canAddProject,
+    // The host answers a blank query with nothing, so only search once there is text.
+    enabled: state.tab === "existing" && canAddProject && query.trim().length > 0,
   });
 
   const paths = useMemo(
@@ -56,12 +57,13 @@ export function useExistingTab(input: {
       }),
     [paths],
   );
-  const activeIndex = clampActiveIndex(state.existing.activeIndex, rows.length);
+  const activeIndex = resolveActiveIndex(rows, state.existing.selectedId);
   const activePath = paths[activeIndex]?.path ?? null;
 
   return useMemo<AddProjectTabView>(() => {
+    const unavailable = canAddProject ? null : "Update the host to add projects";
     let notice: AddProjectTabView["notice"] = null;
-    if (!canAddProject) notice = { kind: "empty", text: "Update the host to add projects" };
+    if (unavailable) notice = { kind: "empty", text: unavailable };
     else if (search.error) notice = { kind: "error", text: search.error };
     else if (search.pending) notice = { kind: "pending", text: "Searching..." };
     else notice = { kind: "empty", text: query.trim() ? "No matching folders" : "No folders yet" };
@@ -69,6 +71,7 @@ export function useExistingTab(input: {
       rows,
       activeIndex,
       notice,
+      unavailable,
       primary: {
         label: "Open project",
         submit: activePath ? () => actions.openFolder(activePath) : null,
@@ -97,6 +100,7 @@ export function ExistingTab({
   onSelectRow: (index: number) => void;
   onBrowse: () => void;
 }) {
+  const editable = !disabled && !view.unavailable;
   return (
     <View style={styles.body}>
       <View style={styles.searchRow}>
@@ -112,7 +116,7 @@ export function ExistingTab({
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="go"
-            editable={!disabled}
+            editable={editable}
             testID="add-project-flow-input"
           />
         </View>
@@ -121,7 +125,7 @@ export function ExistingTab({
             variant="secondary"
             leftIcon={FolderOpen}
             onPress={onBrowse}
-            disabled={disabled}
+            disabled={!editable}
             testID="add-project-flow-browse"
           >
             Browse

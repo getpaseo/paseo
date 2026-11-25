@@ -5,8 +5,8 @@ const ACTIVATES_ON_ENTER =
 
 /**
  * Whether the focused element handles Enter itself, such as the Close button, a tab, or the
- * Location field. Result rows are buttons too, but Enter on a row runs the primary action, the
- * same as Enter in the search field.
+ * Location field. Result rows are buttons too, but focusing a row picks it, so Enter on a row
+ * runs the primary action for that row.
  */
 export function focusedControlOwnsEnter(): boolean {
   const active = document.activeElement;

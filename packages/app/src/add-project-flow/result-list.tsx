@@ -95,6 +95,8 @@ function ResultRowView({
       accessibilityState={accessibilityState}
       disabled={disabled}
       onPress={handlePress}
+      // Tabbing to a row picks it, so Enter commits the row that has focus.
+      onFocus={handlePress}
       style={style}
       highlightStyle={styles.rowActive}
       testID={row.testID}
@@ -119,8 +121,8 @@ function ResultRowView({
 }
 
 /**
- * A card of choices with one active row. Arrow keys and taps move the active row; the sheet's
- * primary action commits it. The list keeps the active row scrolled into view.
+ * A card of choices with one active row. Arrow keys, taps, and keyboard focus move the active
+ * row; the sheet's primary action commits it. The list keeps the active row scrolled into view.
  */
 export function ResultList({
   rows,

@@ -89,7 +89,7 @@ export function LocationField({
         remoteSearch
         onSearchQueryChange={setQuery}
         searchPlaceholder="Search folders or enter a path"
-        emptyText={search.pending ? "Searching..." : "No matching folders"}
+        emptyText={search.error ?? (search.pending ? "Searching..." : "No matching folders")}
         title="Location"
         open={open}
         onOpenChange={handleOpenChange}

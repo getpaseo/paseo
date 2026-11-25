@@ -6,15 +6,21 @@ import {
   openAddProjectFlow,
   resolveAddProjectKey,
   selectAddProjectHost,
+  selectAddProjectRow,
   selectAddProjectTab,
-  setAddProjectActiveIndex,
   setAddProjectLocation,
   setAddProjectQuery,
   setNewFolderName,
   startAddProjectSubmission,
   type AddProjectHost,
 } from "./model";
-import { buildManualGithubRepositoryChoices, validateNewFolderName } from "./options";
+import {
+  buildManualGithubRepositoryChoices,
+  checkoutName,
+  defaultProjectLocation,
+  validateNewFolderName,
+} from "./options";
+import { resolveActiveIndex } from "./tab-view";
 
 const HOST: AddProjectHost = {
   serverId: "host-1",
@@ -59,7 +65,7 @@ describe("Add Project flow", () => {
   it("switching host keeps typed input but drops host-specific locations and selection", () => {
     let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
     state = setAddProjectQuery(state, "paseo");
-    state = setAddProjectActiveIndex(state, 3);
+    state = selectAddProjectRow(state, "/code/paseo");
     state = selectAddProjectTab(state, "new-folder");
     state = setNewFolderName(state, "acme-api");
     state = setAddProjectLocation(state, "~/work");
@@ -67,7 +73,7 @@ describe("Add Project flow", () => {
     state = selectAddProjectHost(state, "host-2");
 
     expect(state.hostId).toBe("host-2");
-    expect(state.existing).toEqual({ query: "paseo", activeIndex: 0 });
+    expect(state.existing).toEqual({ query: "paseo", selectedId: null });
     expect(state.newFolder).toEqual({ name: "acme-api", location: null });
   });
 
@@ -78,6 +84,7 @@ describe("Add Project flow", () => {
 
     expect(selectAddProjectTab(state, "existing").tab).toBe("clone");
     expect(selectAddProjectHost(state, "host-2").hostId).toBe("host-1");
+    expect(selectAddProjectRow(state, "acme/app")).toBe(state);
     expect(startAddProjectSubmission(state)).toBe(state);
 
     state = failAddProjectSubmission(state, "Unable to clone project");
@@ -89,12 +96,13 @@ describe("Add Project flow", () => {
     expect(selectAddProjectTab(state, "existing").submission).toEqual({ status: "idle" });
   });
 
-  it("clears a failure once the user edits the input", () => {
+  it("clears a failure once the user edits the input or picks another row", () => {
     let state = openAddProjectFlow({ hosts: [HOST] });
     state = startAddProjectSubmission(state);
     state = failAddProjectSubmission(state, "Directory not found");
 
     expect(setAddProjectQuery(state, "~/dev").submission).toEqual({ status: "idle" });
+    expect(selectAddProjectRow(state, "/code/app").submission).toEqual({ status: "idle" });
   });
 
   it("keeps the current host when the host list refreshes, and recovers when it disconnects", () => {
@@ -106,6 +114,13 @@ describe("Add Project flow", () => {
     expect(applyAvailableAddProjectHosts(openAddProjectFlow({ hosts: [] }), [REMOTE]).hostId).toBe(
       "host-2",
     );
+  });
+
+  it("keeps the picked row picked when a refresh reorders the rows", () => {
+    const rows = [{ id: "/code/beta" }, { id: "/code/alpha" }];
+    expect(resolveActiveIndex(rows, "/code/alpha")).toBe(1);
+    expect(resolveActiveIndex(rows, null)).toBe(0);
+    expect(resolveActiveIndex(rows, "/code/gone")).toBe(0);
   });
 
   it("wraps keyboard selection at both ends", () => {
@@ -156,6 +171,21 @@ describe("Add Project options", () => {
       expect.objectContaining({ cloneProtocol: "ssh", cloneUrl: "getpaseo/paseo" }),
     ]);
     expect(buildManualGithubRepositoryChoices("paseo")).toEqual([]);
+  });
+
+  it("defaults the location to a folder that exists", () => {
+    expect(defaultProjectLocation({ remembered: undefined, projectPaths: [] })).toBe("~");
+    expect(defaultProjectLocation({ remembered: undefined, projectPaths: ["/code/app"] })).toBe(
+      "/code",
+    );
+    expect(defaultProjectLocation({ remembered: "~/work", projectPaths: ["/code/app"] })).toBe(
+      "~/work",
+    );
+  });
+
+  it("names the checkout the way the host does", () => {
+    expect(checkoutName("acme/app.git")).toBe("app");
+    expect(checkoutName("acme/app")).toBe("app");
   });
 
   it("rejects folder names that are empty or leave the location", () => {
