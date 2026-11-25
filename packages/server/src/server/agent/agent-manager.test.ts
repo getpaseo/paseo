@@ -6942,6 +6942,52 @@ test("a turn ends even when the timeline fails to record how it ended", async ()
   await runningAgain;
 });
 
+test("a run's caller hears how its turn ended even when the timeline fails to record it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-run-record-failure-"));
+  const turnId = "failing-run";
+  class HeldTurnSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      setTimeout(() => this.pushEvent({ type: "turn_started", provider: "codex", turnId }), 0);
+      return { turnId };
+    }
+  }
+  const session = new HeldTurnSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const backend = new DeferredTimelineBackend();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    timeline: new AgentTimeline(backend),
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  const run = manager.runAgent(agent.id, "hello");
+  await running;
+  await manager.flush();
+  // The turn's error message is the write that fails.
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  backend.failNextAppend = true;
+  session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId,
+    error: "Selected model is at capacity.",
+  });
+  await expect(run).rejects.toThrow("Selected model is at capacity.");
+  await failed;
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
