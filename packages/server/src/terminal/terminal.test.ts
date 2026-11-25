@@ -1,3 +1,4 @@
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import { readTerminalState } from "./test-utils/terminal-state.js";
@@ -9,7 +10,6 @@ import {
   assertTerminalCommandCanStart,
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
-  resolveDefaultTerminalShell,
   resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,

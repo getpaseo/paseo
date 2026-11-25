@@ -1,9 +1,11 @@
 import type { PluginLifecycle } from "../server/plugins/lifecycle/index.js";
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import type { DaemonTerminalManager } from "./worker-terminal-manager.js";
 
 /**
  * Runs plugins' `terminal.create.before` hooks for every terminal the daemon creates, before the
- * worker starts it. Terminals adopted after a daemon restart aren't created again, so the hook
+ * worker starts it. A selected wrap becomes the terminal's program here, so the worker protocol
+ * does not change. Terminals adopted after a daemon restart aren't created again, so the hook
  * doesn't run for them.
  */
 export function withTerminalCreateHook(
@@ -13,21 +15,25 @@ export function withTerminalCreateHook(
   return {
     ...manager,
     async createTerminal({ origin, ...options }) {
+      const args = options.args ?? [];
       const request = await lifecycle.before("terminal.create.before", {
         workspaceId: options.workspaceId,
         cwd: options.cwd,
         source: origin?.source ?? "client",
         name: options.name ?? null,
+        command: options.command ?? null,
+        args,
         input: origin?.input ?? null,
-        ...(options.command ? { command: options.command } : {}),
-        args: options.args ?? [],
         env: options.env ?? {},
       });
+      if (!request.wrap) return manager.createTerminal({ ...options, env: request.env });
+      const [executable, ...wrapArgs] = request.wrap;
+      const command = options.command ?? resolveDefaultTerminalShell({ env: options.baseEnv });
       return manager.createTerminal({
         ...options,
-        command: request.command,
-        args: request.args,
         env: request.env,
+        command: executable,
+        args: [...wrapArgs, command, ...args],
       });
     },
   };

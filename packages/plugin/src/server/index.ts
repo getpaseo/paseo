@@ -23,6 +23,7 @@ export type {
   PluginHookWorkspace,
   PluginHookWorktree,
   PluginWorktreeCreateRequest,
+  PluginLaunchWrap,
   PluginTerminalCreateRequest,
   PluginCommandRunRequest,
   PluginHookAgent,

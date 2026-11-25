@@ -94,6 +94,10 @@ const worktreeRequestSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const launchWrapSchema = z
+  .tuple([z.string().refine(isAbsolute, "wrap executable must be an absolute path")], z.string())
+  .optional();
+
 const beforeSchemas = {
   "worktree.create.before": worktreeRequestSchema,
   "agent.create.before": CreateAgentRequestMessageSchema.pick({
@@ -122,12 +126,7 @@ const beforeSchemas = {
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
-      wrap: z
-        .tuple(
-          [z.string().refine(isAbsolute, "agent.open.before wrap executable must be absolute")],
-          z.string(),
-        )
-        .optional(),
+      wrap: launchWrapSchema,
     })
     .strict(),
   "workspace.create.before": WorkspaceCreateRequestSchema.omit({
@@ -140,10 +139,11 @@ const beforeSchemas = {
       cwd: z.string(),
       source: z.enum(["client", "agent", "script", "worktree"]),
       name: z.string().nullable(),
-      input: z.string().nullable(),
-      command: z.string().min(1).optional(),
+      command: z.string().nullable(),
       args: z.array(z.string()),
+      input: z.string().nullable(),
       env: z.record(z.string(), z.string()),
+      wrap: launchWrapSchema,
     })
     .strict(),
   "command.run.before": z
@@ -151,8 +151,9 @@ const beforeSchemas = {
       workspaceId: z.string().nullable(),
       cwd: z.string(),
       purpose: z.enum(["setup", "teardown"]),
-      command: z.string().min(1),
+      command: z.string(),
       env: z.record(z.string(), z.string()),
+      wrap: launchWrapSchema,
     })
     .strict(),
 };
@@ -160,12 +161,12 @@ const beforeSchemas = {
 // Request fields a hook reads but can't change, with the error a changed one gets.
 const readOnlyRequestFields = {
   "terminal.create.before": {
-    fields: ["workspaceId", "cwd", "source", "name", "input"],
-    message: "terminal.create.before hooks can only change command, args, and env",
+    fields: ["workspaceId", "cwd", "source", "name", "command", "args", "input"],
+    message: "terminal.create.before hooks can only change env and wrap",
   },
   "command.run.before": {
-    fields: ["workspaceId", "cwd", "purpose"],
-    message: "command.run.before hooks can only change command and env",
+    fields: ["workspaceId", "cwd", "purpose", "command"],
+    message: "command.run.before hooks can only change env and wrap",
   },
 } as const;
 
@@ -176,6 +177,24 @@ function assertReadOnlyFields(name: string, input: unknown, result: unknown): vo
   const next = result as Record<string, unknown>;
   if (fields.some((field) => !isDeepStrictEqual(previous[field], next[field])))
     throw new Error(message);
+}
+
+type LaunchWrap = z.infer<typeof launchWrapSchema>;
+
+/**
+ * One wrap per operation: the first hook that selects a wrap owns it. A later hook may omit it or
+ * repeat it; a different wrap fails, so two sandboxes never silently stack or replace each other.
+ */
+function keepSelectedWrap(name: string, previous: LaunchWrap, next: LaunchWrap): LaunchWrap {
+  if (previous && next && !isDeepStrictEqual(previous, next)) {
+    throw new Error(`${name} hooks cannot change a wrap an earlier hook selected`);
+  }
+  return previous ?? next;
+}
+
+function withWrap<Result extends object>(result: Result, wrap: LaunchWrap): Result {
+  const { wrap: _replaced, ...rest } = result as Result & { wrap?: LaunchWrap };
+  return (wrap ? { ...rest, wrap } : rest) as Result;
 }
 
 const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
@@ -333,14 +352,8 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
         "agent.open.before hooks can only change env, tools, mcpServers, appendSystemPrompt, and wrap",
       );
     }
-    // One wrap per open: a later hook may omit or repeat it, never replace it.
-    if (previous.wrap && next.wrap && !isDeepStrictEqual(previous.wrap, next.wrap)) {
-      throw new Error("agent.open.before hooks cannot change a wrap an earlier hook selected");
-    }
-    const wrap = previous.wrap ?? next.wrap;
     return {
-      ...result,
-      ...(wrap ? { wrap } : {}),
+      ...withWrap(result, keepSelectedWrap(name, previous.wrap, next.wrap)),
       background: previous.background,
       metadata: previous.metadata,
       ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined
@@ -370,7 +383,13 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     // Omitted means unchanged; an explicit {} still replaces.
     return { ...result, metadata: next.metadata ?? previous.metadata };
   }
-  assertReadOnlyFields(name, input, result);
+  if (name === "terminal.create.before" || name === "command.run.before") {
+    assertReadOnlyFields(name, input, result);
+    const schema = beforeSchemas[name as "terminal.create.before" | "command.run.before"];
+    const previous = schema.parse(input);
+    const next = schema.parse(result);
+    return withWrap(result, keepSelectedWrap(name, previous.wrap, next.wrap));
+  }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);

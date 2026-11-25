@@ -9,6 +9,6 @@ export function commandRunHook(
   if (!lifecycle) return undefined;
   return async ({ command, env }) => {
     const request = await lifecycle.before("command.run.before", { ...scope, command, env });
-    return { command: request.command, env: request.env };
+    return { env: request.env, ...(request.wrap ? { wrap: request.wrap } : {}) };
   };
 }

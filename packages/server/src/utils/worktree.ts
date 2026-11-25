@@ -1,4 +1,3 @@
-import { execFile } from "child_process";
 import { promisify } from "util";
 import { constants as fsConstants, type Dirent, realpath } from "fs";
 import { copyFile, mkdir, readdir, rm, stat } from "fs/promises";
@@ -7,9 +6,11 @@ import net from "node:net";
 import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import pLimit from "p-limit";
+import { execCommand } from "@getpaseo/plugin/server";
 import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
+  type StringCommandShellInvocation,
 } from "./string-command-shell.js";
 import { readPaseoConfig } from "./paseo-config-file.js";
 export {
@@ -55,7 +56,6 @@ import type { PluginWorktreeManagerRuntime } from "../server/plugins/runtime.js"
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
-const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -146,22 +146,39 @@ export interface WorktreeLifecycleCommand {
   env: Record<string, string>;
 }
 
+/** How a lifecycle command runs after plugins saw it: its environment and an optional wrap. */
+export interface PreparedWorktreeLifecycleCommand {
+  env: Record<string, string>;
+  wrap?: readonly [string, ...string[]];
+}
+
 /** Lets plugins wrap or refuse a lifecycle command before it runs; see `command.run.before`. */
 export type PrepareWorktreeLifecycleCommand = (
   command: WorktreeLifecycleCommand,
-) => Promise<WorktreeLifecycleCommand>;
+) => Promise<PreparedWorktreeLifecycleCommand>;
 
 async function prepareLifecycleCommand(
   prepare: PrepareWorktreeLifecycleCommand | undefined,
   command: WorktreeLifecycleCommand,
   fail: (message: string) => Error,
-): Promise<WorktreeLifecycleCommand> {
-  if (!prepare) return command;
+): Promise<PreparedWorktreeLifecycleCommand> {
+  if (!prepare) return { env: command.env };
   try {
     return await prepare(command);
   } catch (error) {
     throw fail(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** The shell invocation for a `paseo.json` command, started behind a plugin's wrap when set. */
+function lifecycleCommandInvocation(
+  command: string,
+  wrap: PreparedWorktreeLifecycleCommand["wrap"],
+): StringCommandShellInvocation {
+  const invocation = buildStringCommandShellInvocation({ command });
+  if (!wrap) return invocation;
+  const [executable, ...wrapArgs] = wrap;
+  return { shell: executable, args: [...wrapArgs, invocation.shell, ...invocation.args] };
 }
 
 export class WorktreeSetupError extends Error {
@@ -469,14 +486,16 @@ export function processCarriageReturns(text: string): string {
 
 async function execSetupCommand(
   command: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: { cwd: string; env: NodeJS.ProcessEnv; wrap: PreparedWorktreeLifecycleCommand["wrap"] },
 ): Promise<WorktreeSetupCommandResult> {
   const startedAt = Date.now();
-  const shellInvocation = buildStringCommandShellInvocation({ command });
+  const shellInvocation = lifecycleCommandInvocation(command, options.wrap);
   try {
-    const { stdout, stderr } = await execFileAsync(shellInvocation.shell, shellInvocation.args, {
+    // execCommand starts a Windows `.cmd` or `.bat` wrap through cmd.exe; anything else has no shell.
+    const { stdout, stderr } = await execCommand(shellInvocation.shell, shellInvocation.args, {
       cwd: options.cwd,
       env: options.env,
+      shell: false,
     });
     return {
       command,
@@ -501,6 +520,7 @@ async function execSetupCommand(
 
 async function execSetupCommandStreamed(options: {
   command: string;
+  wrap: PreparedWorktreeLifecycleCommand["wrap"];
   cwd: string;
   env: NodeJS.ProcessEnv;
   index: number;
@@ -580,7 +600,7 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const shellInvocation = buildStringCommandShellInvocation({ command: options.command });
+    const shellInvocation = lifecycleCommandInvocation(options.command, options.wrap);
     const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
       cwd: options.cwd,
       env: options.env,
@@ -719,23 +739,20 @@ export async function runWorktreeSetupCommands(options: {
     }));
 
   const results: WorktreeSetupCommandResult[] = [];
-  for (const [index, configured] of setupCommands.entries()) {
+  for (const [index, cmd] of setupCommands.entries()) {
     const prepared = await prepareLifecycleCommand(
       options.prepareCommand,
-      { command: configured, env: { ...runtimeEnv } },
+      { command: cmd, env: { ...runtimeEnv } },
       (message) =>
-        new WorktreeSetupError(
-          `Worktree setup command refused: ${configured}\n${message}`,
-          results,
-        ),
+        new WorktreeSetupError(`Worktree setup command refused: ${cmd}\n${message}`, results),
     );
-    const cmd = prepared.command;
     const setupEnv = createStringCommandShellEnv(
       createExternalProcessEnv(process.env, prepared.env),
     );
     const result = options.onEvent
       ? await execSetupCommandStreamed({
           command: cmd,
+          wrap: prepared.wrap,
           cwd: options.worktreePath,
           env: setupEnv,
           index: index + 1,
@@ -746,6 +763,7 @@ export async function runWorktreeSetupCommands(options: {
       : await execSetupCommand(cmd, {
           cwd: options.worktreePath,
           env: setupEnv,
+          wrap: prepared.wrap,
         });
     results.push(result);
 
@@ -849,19 +867,16 @@ export async function runWorktreeTeardownCommands(options: {
   const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const [index, configured] of teardownCommands.entries()) {
+  for (const [index, cmd] of teardownCommands.entries()) {
     const prepared = await prepareLifecycleCommand(
       options.prepareCommand,
-      { command: configured, env: { ...runtimeEnv } },
+      { command: cmd, env: { ...runtimeEnv } },
       (message) =>
-        new WorktreeTeardownError(
-          `Worktree teardown command refused: ${configured}\n${message}`,
-          results,
-        ),
+        new WorktreeTeardownError(`Worktree teardown command refused: ${cmd}\n${message}`, results),
     );
-    const cmd = prepared.command;
     const result = await execSetupCommandStreamed({
       command: cmd,
+      wrap: prepared.wrap,
       cwd: teardownCwd,
       env: createStringCommandShellEnv(createExternalProcessEnv(process.env, prepared.env)),
       index: index + 1,

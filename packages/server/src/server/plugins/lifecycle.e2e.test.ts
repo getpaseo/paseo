@@ -630,10 +630,24 @@ test("plugins wrap or refuse terminals and worktree setup and teardown commands"
   const repository = path.join(root, "repository");
   const pluginDirectory = path.join(root, "plugin");
   const hookLog = path.join(root, "hooks.jsonl");
+  const launchLog = path.join(root, "launches.jsonl");
+  const launcher = path.join(root, "launcher.cjs");
+  // The sandbox stand-in: records the argv after its own two, marks the environment, runs the rest.
+  await writeFile(
+    launcher,
+    `const { appendFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const [log, tag, command, ...args] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify({ tag, command, args }) + "\\n");
+const child = spawn(command, args, { stdio: "inherit", env: { ...process.env, WRAPPED: tag } });
+for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(signal, () => child.kill(signal));
+child.on("exit", (code) => process.exit(code ?? 1));
+`,
+  );
   // Node one-liners read the environment the same way under bash, PowerShell, and cmd.exe.
-  const setupCommand = `node -e "require('fs').writeFileSync('setup.txt', 'setup:' + process.env.HOOK_MARK)"`;
-  const teardownCommand = `node -e "require('fs').writeFileSync(require('path').join(process.env.PASEO_SOURCE_CHECKOUT_PATH, '..', 'teardown.txt'), 'teardown:' + process.env.HOOK_MARK)"`;
-  const scriptCommand = `node -e "console.log('script:' + process.env.HOOK_MARK)"`;
+  const setupCommand = `node -e "require('fs').writeFileSync('setup.txt', 'setup:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
+  const teardownCommand = `node -e "require('fs').writeFileSync(require('path').join(process.env.PASEO_SOURCE_CHECKOUT_PATH, '..', 'teardown.txt'), 'teardown:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
+  const scriptCommand = `node -e "console.log('script:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
   execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
   await writeFile(
     path.join(repository, "paseo.json"),
@@ -665,21 +679,24 @@ test("plugins wrap or refuse terminals and worktree setup and teardown commands"
     `
 import { appendFile } from "node:fs/promises";
 const log = (entry) => appendFile(${JSON.stringify(hookLog)}, JSON.stringify(entry) + "\\n");
+const wrap = (tag) => [${JSON.stringify(process.execPath)}, ${JSON.stringify(launcher)}, ${JSON.stringify(launchLog)}, tag];
 export default function contribute(server) {
   server.addHook("terminal.create.before", async ({ request }) => {
     await log({ hook: "terminal", request });
     if (request.name === "Refused") throw new Error("terminals named Refused stay closed");
-    if (request.source === "script") return { ...request, env: { ...request.env, HOOK_MARK: "hooked" } };
     return {
       ...request,
-      command: process.execPath,
-      args: ["-e", "console.log('wrapped:' + process.env.HOOK_MARK); setInterval(() => {}, 1000)"],
       env: { ...request.env, HOOK_MARK: request.source + ":" + request.workspaceId },
+      wrap: wrap("terminal"),
     };
   });
   server.addHook("command.run.before", async ({ request }) => {
     await log({ hook: "command", request });
-    return { ...request, env: { ...request.env, HOOK_MARK: request.purpose + "-hooked" } };
+    return {
+      ...request,
+      env: { ...request.env, HOOK_MARK: request.purpose + "-hooked" },
+      wrap: wrap(request.purpose),
+    };
   });
   return () => {};
 }
@@ -701,23 +718,32 @@ export default function contribute(server) {
     const workspaceId = created.workspace!.id;
     const worktree = created.workspace!.workspaceDirectory;
 
-    // Setup runs after creation, with the hook's environment.
+    // Setup runs after creation, behind the wrap, with the hook's environment.
     await expect
       .poll(() => readFile(path.join(worktree, "setup.txt"), "utf8").catch(() => ""), {
         timeout: 30_000,
       })
-      .toBe("setup:setup-hooked");
+      .toBe("setup:setup-hooked:setup");
 
-    const wrapped = await sdk.terminals.create({ workspaceId, name: "Wrapped" });
+    const program = [
+      "-e",
+      "console.log('program:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED); setInterval(() => {}, 1000)",
+    ];
+    const wrapped = await sdk.terminals.create({
+      workspaceId,
+      name: "Wrapped",
+      command: process.execPath,
+      args: program,
+    });
     await expect
       .poll(async () => (await wrapped.capture({ stripAnsi: true })).lines.join("\n"))
-      .toContain(`wrapped:client:${workspaceId}`);
+      .toContain(`program:client:${workspaceId}:terminal`);
 
     await expect(sdk.terminals.create({ workspaceId, name: "Refused" })).rejects.toThrow(
       "Plugin terminal-hooks terminal.create.before failed: terminals named Refused stay closed",
     );
 
-    // A script's command is typed into a default shell, which the hook gave its environment.
+    // A script's command is typed into a default shell, and that shell runs behind the wrap.
     await client.startWorkspaceScript(workspaceId, "greet");
     await expect
       .poll(async () => {
@@ -727,37 +753,41 @@ export default function contribute(server) {
         if (!script) return "";
         return (await sdk.terminals.ref(script.id).capture({ stripAnsi: true })).lines.join("\n");
       })
-      .toContain("script:hooked");
+      .toContain(`script:script:${workspaceId}:terminal`);
 
     await client.archiveWorkspace(workspaceId);
     await expect
       .poll(() => readFile(path.join(root, "teardown.txt"), "utf8").catch(() => ""), {
         timeout: 30_000,
       })
-      .toBe("teardown:teardown-hooked");
+      .toBe("teardown:teardown-hooked:teardown");
 
-    const entries = (await readFile(hookLog, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const readJsonLines = async (file: string) =>
+      (await readFile(file, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const entries = await readJsonLines(hookLog);
     expect(entries.filter((entry) => entry.hook === "command")).toEqual([
       {
         hook: "command",
-        request: expect.objectContaining({
+        request: {
           workspaceId,
           cwd: worktree,
           purpose: "setup",
           command: setupCommand,
-        }),
+          env: expect.any(Object),
+        },
       },
       {
         hook: "command",
-        request: expect.objectContaining({
+        request: {
           workspaceId,
           cwd: worktree,
           purpose: "teardown",
           command: teardownCommand,
-        }),
+          env: expect.any(Object),
+        },
       },
     ]);
     expect(entries.filter((entry) => entry.hook === "terminal")).toEqual([
@@ -768,8 +798,9 @@ export default function contribute(server) {
           cwd: worktree,
           source: "client",
           name: "Wrapped",
+          command: process.execPath,
+          args: program,
           input: null,
-          args: [],
           env: {},
         },
       },
@@ -783,10 +814,22 @@ export default function contribute(server) {
           workspaceId,
           source: "script",
           name: "greet",
+          command: null,
           input: scriptCommand,
         }),
       },
     ]);
+    // Paseo appended what it would have run: the shell for a command, the program, the default shell.
+    const launches = await readJsonLines(launchLog);
+    expect(launches.map(({ tag, command }) => ({ tag, command }))).toEqual([
+      { tag: "setup", command: expect.any(String) },
+      { tag: "terminal", command: process.execPath },
+      { tag: "terminal", command: expect.any(String) },
+      { tag: "teardown", command: expect.any(String) },
+    ]);
+    expect(launches[0].args.at(-1)).toBe(setupCommand);
+    expect(launches[1].args).toEqual(program);
+    expect(launches[3].args.at(-1)).toBe(teardownCommand);
   } finally {
     await sdk.close();
     await client.close();

@@ -392,7 +392,7 @@ describe("lifecycle hook SDK types", () => {
   it("infers payloads and replacement requests and requires async handlers and new names", () => {
     expect(
       typeErrors(`
-      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult, PluginLaunchWrap } from "@getpaseo/plugin/server";
       import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
@@ -438,19 +438,27 @@ describe("lifecycle hook SDK types", () => {
         server.addHook("terminal.create.before", async ({ request }) => {
           const source: "client" | "agent" | "script" | "worktree" = request.source;
           const input: string | null = request.input;
+          const program: string | null = request.command;
           // @ts-expect-error The terminal's workspace is read-only.
           request.workspaceId = "wks_other";
-          // @ts-expect-error The terminal's directory is read-only.
-          request.cwd = "/other";
-          return { ...request, command: "/usr/bin/wrapper", args: [request.command ?? "sh"], env: { A: "1" } };
+          // @ts-expect-error The terminal's program is read-only; return a wrap instead.
+          request.command = "/usr/bin/other";
+          const wrap: PluginLaunchWrap = ["/usr/bin/sandbox", "--workspace", request.workspaceId];
+          return { ...request, env: { A: "1" }, wrap };
         });
         server.addHook("command.run.before", async ({ request }) => {
           const workspace: string | null = request.workspaceId;
           const purpose: "setup" | "teardown" = request.purpose;
           // @ts-expect-error A command's purpose is read-only.
           request.purpose = "setup";
-          return { ...request, command: "wrapper " + request.command };
+          // @ts-expect-error The configured command is read-only; return a wrap instead.
+          request.command = "wrapper " + request.command;
+          return { ...request, wrap: ["/usr/bin/sandbox"] };
         });
+        server.addHook("agent.open.before", async ({ request }) => ({
+          ...request,
+          wrap: ["/usr/bin/sandbox", "--workspace", request.workspaceId ?? "none"],
+        }));
         server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
           const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;

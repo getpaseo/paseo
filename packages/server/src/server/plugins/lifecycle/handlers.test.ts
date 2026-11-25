@@ -458,8 +458,8 @@ test.each<[string, OpenHookResult[], string]>([
     [withWrap("/usr/local/bin/sandbox"), withWrap("/usr/local/bin/other")],
     "cannot change a wrap",
   ],
-  ["the executable is relative", [withWrap("sandbox")], "must be absolute"],
-  ["the executable is empty", [withWrap("")], "must be absolute"],
+  ["the executable is relative", [withWrap("sandbox")], "must be an absolute path"],
+  ["the executable is empty", [withWrap("")], "must be an absolute path"],
 ])("a session-open wrap fails the open when %s", async (_case, results, message) => {
   await expect(invokeOpen(results)).rejects.toThrow(message);
 });
@@ -480,47 +480,109 @@ test("a history open keeps the wrap while tools and MCP servers are stripped", a
   expect(history).not.toHaveProperty("appendSystemPrompt");
 });
 
-test("terminal and command hooks can change only what Paseo runs", async () => {
-  const terminal = {
-    workspaceId: "wks_a",
-    cwd: "/work/a",
-    source: "client" as const,
-    name: "Shell",
-    input: null,
-    args: [],
-    env: {},
-  };
+const terminalRequest = {
+  workspaceId: "wks_a",
+  cwd: "/work/a",
+  source: "client" as const,
+  name: "Shell",
+  command: null,
+  args: [],
+  input: null,
+  env: {},
+};
+const commandRequest = {
+  workspaceId: null,
+  cwd: "/work/a",
+  purpose: "teardown" as const,
+  command: "make clean && rm -rf build",
+  env: {},
+};
+
+test("terminal and command hooks can change env and wrap", async () => {
   await expect(
-    validateBeforeResult("terminal.create.before", terminal, {
-      ...terminal,
-      command: "/usr/bin/wrapper",
-      args: ["--workspace", "wks_a"],
+    validateBeforeResult("terminal.create.before", terminalRequest, {
+      ...terminalRequest,
       env: { WRAPPED: "1" },
+      wrap: ["/usr/bin/sandbox", "--workspace", "wks_a"],
     }),
   ).resolves.toEqual({
-    ...terminal,
-    command: "/usr/bin/wrapper",
-    args: ["--workspace", "wks_a"],
+    ...terminalRequest,
     env: { WRAPPED: "1" },
+    wrap: ["/usr/bin/sandbox", "--workspace", "wks_a"],
   });
   await expect(
-    validateBeforeResult("terminal.create.before", terminal, { ...terminal, cwd: "/elsewhere" }),
-  ).rejects.toThrow("terminal.create.before hooks can only change command, args, and env");
-
-  const command = {
-    workspaceId: null,
-    cwd: "/work/a",
-    purpose: "teardown" as const,
-    command: "make clean",
-    env: {},
-  };
-  await expect(
-    validateBeforeResult("command.run.before", command, { ...command, command: "wrap make clean" }),
-  ).resolves.toMatchObject({ command: "wrap make clean" });
-  await expect(
-    validateBeforeResult("command.run.before", command, { ...command, purpose: "setup" }),
-  ).rejects.toThrow("command.run.before hooks can only change command and env");
+    validateBeforeResult("command.run.before", commandRequest, {
+      ...commandRequest,
+      wrap: ["/usr/bin/sandbox"],
+    }),
+  ).resolves.toMatchObject({ command: "make clean && rm -rf build", wrap: ["/usr/bin/sandbox"] });
 });
+
+test.each<[string, "terminal.create.before" | "command.run.before", object, object, string]>([
+  [
+    "a terminal's directory",
+    "terminal.create.before",
+    terminalRequest,
+    { cwd: "/elsewhere" },
+    "terminal.create.before hooks can only change env and wrap",
+  ],
+  [
+    "a terminal's program",
+    "terminal.create.before",
+    terminalRequest,
+    { command: "/usr/bin/sandbox" },
+    "terminal.create.before hooks can only change env and wrap",
+  ],
+  [
+    "a command's text",
+    "command.run.before",
+    commandRequest,
+    { command: "sandbox make clean" },
+    "command.run.before hooks can only change env and wrap",
+  ],
+  [
+    "a command's purpose",
+    "command.run.before",
+    commandRequest,
+    { purpose: "setup" },
+    "command.run.before hooks can only change env and wrap",
+  ],
+  [
+    "a relative wrap",
+    "command.run.before",
+    commandRequest,
+    { wrap: ["sandbox"] },
+    "wrap executable must be an absolute path",
+  ],
+])("a hook cannot change %s", async (_case, name, request, change, message) => {
+  await expect(
+    validateBeforeResult(name, request as never, { ...request, ...change }),
+  ).rejects.toThrow(message);
+});
+
+test.each(["terminal.create.before", "command.run.before"] as const)(
+  "%s keeps the first wrap and rejects a different one",
+  async (name) => {
+    const initial = name === "terminal.create.before" ? terminalRequest : commandRequest;
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.addHook(
+      name,
+      async ({ request }) => ({ ...request, wrap: ["/usr/bin/sandbox"] }) as never,
+    );
+    hooks.addHook(name, async ({ request }) => {
+      const { wrap: _omitted, ...rest } = request as typeof request & { wrap?: unknown };
+      return { ...rest, env: { LATER: "1" } } as never;
+    });
+    await expect(hooks.invoke("first", name, initial, paseo)).resolves.toMatchObject({
+      wrap: ["/usr/bin/sandbox"],
+      env: { LATER: "1" },
+    });
+    hooks.addHook(name, async ({ request }) => ({ ...request, wrap: ["/usr/bin/other"] }) as never);
+    await expect(hooks.invoke("second", name, initial, paseo)).rejects.toThrow(
+      `${name} hooks cannot change a wrap an earlier hook selected`,
+    );
+  },
+);
 
 test("agent creation hooks keep the workspace, including from plugins that omit it", async () => {
   const request = {

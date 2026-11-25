@@ -69,9 +69,14 @@ export type PluginWorktreeCreateRequest = {
 );
 
 /**
- * A terminal Paseo is about to create in a workspace. `command` is absent for the default shell.
- * Paseo types `input` into a `script` or `worktree` terminal once its shell starts.
+ * A launcher Paseo starts a process behind: the process runs as `[...wrap, command, ...args]`.
+ * The executable is an absolute path on the daemon host. Each element is one argument; no shell
+ * parses them, except that Windows runs a `.cmd` or `.bat` executable through cmd.exe. A later
+ * hook may omit the wrap or return the same one; a different wrap fails the operation.
  */
+export type PluginLaunchWrap = readonly [executable: string, ...args: string[]];
+
+/** A terminal Paseo is about to create in a workspace. */
 export interface PluginTerminalCreateRequest {
   readonly workspaceId: string;
   readonly cwd: string;
@@ -81,10 +86,15 @@ export interface PluginTerminalCreateRequest {
    */
   readonly source: "client" | "agent" | "script" | "worktree";
   readonly name: string | null;
+  /** The program the terminal starts, or `null` for the user's default shell. */
+  readonly command: string | null;
+  readonly args: readonly string[];
+  /** What Paseo types into the shell once it starts: the command of a script or worktree terminal. */
   readonly input: string | null;
-  command?: string;
-  args: string[];
+  /** Environment overrides for the terminal; excludes the daemon's inherited environment. */
   env: Record<string, string>;
+  /** Start the terminal as `[...wrap, command, ...args]`; with no `command`, the default shell. */
+  wrap?: PluginLaunchWrap;
 }
 
 /** A `paseo.json` worktree setup or teardown command Paseo is about to run. */
@@ -93,9 +103,12 @@ export interface PluginCommandRunRequest {
   readonly workspaceId: string | null;
   readonly cwd: string;
   readonly purpose: "setup" | "teardown";
-  /** A shell command: Paseo runs it with `bash -c`, or PowerShell or `cmd.exe` on Windows. */
-  command: string;
+  /** The command as written in `paseo.json`. Paseo runs it through a shell. */
+  readonly command: string;
+  /** Environment overrides for the command; excludes the daemon's inherited environment. */
   env: Record<string, string>;
+  /** Start the command's shell as `[...wrap, shell, ...shellArgs]`. */
+  wrap?: PluginLaunchWrap;
 }
 
 export interface PluginHookAgent {
@@ -129,12 +142,11 @@ export interface PluginSessionOpenRequest {
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
   /**
-   * Run the provider's harness as `[...wrap, command, ...args]`. The executable must be an absolute
-   * path. Set it only for a provider whose snapshot entry has `launchWrap: true`: any other provider
-   * fails the open. A later hook may omit it or return the same value; a different value fails the
-   * open. Not saved on the agent.
+   * Start the provider's harness as `[...wrap, command, ...args]`. Only a provider whose snapshot
+   * entry has `launchWrap: true` applies it; any other provider fails the open. Not saved on the
+   * agent.
    */
-  wrap?: readonly [executable: string, ...args: string[]];
+  wrap?: PluginLaunchWrap;
 }
 
 export type PluginTurnOutcome =

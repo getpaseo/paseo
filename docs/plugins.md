@@ -525,6 +525,15 @@ change requests; `remove` and `restore` fall back to built-in Git when the plugi
 
 `terminal.create.before` runs in `withTerminalCreateHook`, which wraps the daemon's one terminal manager, so every creation path is covered and adopted terminals are not; callers pass an `origin` to name the source. `command.run.before` runs inside the setup and teardown runners through `commandRunHook`. Setup and archive dependencies take `lifecycle` as a required field so a new caller cannot skip the hook by omission; pass `null` only where no plugins run.
 
+Both hooks change only `env` and a [launch wrap](#launch-wrap); `keepSelectedWrap` in the lifecycle
+module applies the one-wrap rule to all three wrap hooks. The terminal wrap becomes the terminal's
+`command` and `args` in `withTerminalCreateHook`, so the terminal worker protocol does not change and
+no previous-version adapter is needed. A default-shell terminal resolves the shell there through
+`default-terminal-shell.ts`, which stays apart from `terminal.ts` so the daemon does not load node-pty.
+The wrapped shell starts without Paseo's shell integration, which is why a wrapped script does not
+report command completion. A setup or teardown wrap goes in front of the
+`buildStringCommandShellInvocation` argv.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.

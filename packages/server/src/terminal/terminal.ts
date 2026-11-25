@@ -35,6 +35,7 @@ import {
 import type { TerminalReplayOptions, TerminalReplayMetadata } from "./terminal-replay.js";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 
 const require = createRequire(import.meta.url);
@@ -261,19 +262,6 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
   if (!options.force) {
     nodePtySpawnHelperChecked = true;
   }
-}
-
-export function resolveDefaultTerminalShell(
-  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
-): string {
-  const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-
-  if (platform === "win32") {
-    return env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-  }
-
-  return env.SHELL || "/bin/sh";
 }
 
 export interface ResolvedTerminalCommand {
