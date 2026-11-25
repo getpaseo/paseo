@@ -55,7 +55,7 @@ paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 
 ### 在 Paseo 桌面端启用中继 {#enable-relay-from-paseo-desktop}
 
-1. 打开 **设置 → 你的主机 → 配对设备**。
+1. 打开 **设置 → 你的主机 → 设备 → 中继**。
 2. 选择 **启用中继**。
 3. 用手机上的 Paseo 扫描二维码，或者复制配对链接并粘贴到手机应用中。
 

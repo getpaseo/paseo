@@ -57,7 +57,7 @@ Relay is disabled until you enable it.
 
 ### Enable relay from Paseo Desktop
 
-1. Open **Settings → your host → Pair a device**.
+1. Open **Settings → your host → Devices → Relay**.
 2. Select **Enable relay**.
 3. Scan the QR code with Paseo on your phone, or copy the pairing link and paste it into the phone app.
 
