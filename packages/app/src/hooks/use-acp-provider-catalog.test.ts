@@ -70,6 +70,15 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
 
+  it("offers Qoder CLI CN through its pinned public ACP package", () => {
+    expect(findProvider("qoder-cn")).toMatchObject({
+      title: "Qoder CLI CN",
+      version: "1.1.98",
+      command: ["npx", "-y", "@qodercn-ai/qoderclicn@1.1.98", "--acp"],
+    });
+    expect(findProvider("qoder-cn").iconSvg).toContain("<svg");
+  });
+
   it("offers Hoplite through its local ACP bridge with the Hoplite mark", () => {
     expect(findProvider("hoplite")).toMatchObject({
       title: "Hoplite",

@@ -70,6 +70,7 @@ Entries that launch through `npx` or `uvx` need only that tool on your daemon ho
 - [Nova](https://www.compassap.ai/portfolio/nova.html), Compass AI's software engineer.
 - [Poolside](https://docs.poolside.ai/cli/pool), Poolside's coding agent.
 - [Qoder](https://qoder.com), agentic coding assistant.
+- [Qoder CLI CN](https://qoder.com.cn), China edition of Qoder's agentic coding assistant.
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/overview), Alibaba's Qwen coding assistant.
 - [siGit Code](https://github.com/getsigit/sigit), local-first coding agent with optional on-device LLM.
 - [Stakpak](https://stakpak.dev/), Rust-based DevOps agent.

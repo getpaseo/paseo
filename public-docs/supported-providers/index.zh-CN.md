@@ -68,6 +68,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 - [Nova](https://www.compassap.ai/portfolio/nova.html)：Compass AI 的软件工程师。
 - [Poolside](https://docs.poolside.ai/cli/pool)：Poolside 的编程 Agent。
 - [Qoder](https://qoder.com)：Agent 式编程助手。
+- [Qoder CLI CN](https://qoder.com.cn)：Qoder 的国内版 Agent 式编程助手。
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/overview)：阿里巴巴的通义千问编程助手。
 - [siGit Code](https://github.com/getsigit/sigit)：本地优先的编程 Agent，可选使用设备端 LLM。
 - [Stakpak](https://stakpak.dev/)：基于 Rust 的 DevOps Agent。
