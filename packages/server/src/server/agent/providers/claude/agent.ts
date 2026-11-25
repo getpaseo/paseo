@@ -1867,7 +1867,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
+    options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
     // Leave time to deliver the provider error before the client RPC expires at 60 seconds.
     const deadline = AbortSignal.timeout(45_000);

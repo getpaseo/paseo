@@ -586,6 +586,8 @@ export interface AgentSlashCommand {
 }
 
 export interface ListImportableSessionsOptions {
+  /** Aborts provider work when the caller stops waiting for a listing. */
+  signal?: AbortSignal;
   providerOptions?: ProviderOptions;
   limit?: number;
   /** Optional case-insensitive descriptor search text. */
