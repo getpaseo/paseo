@@ -465,7 +465,7 @@ in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` 
 gets that 0 and draws over the navigation bar.
 
 - A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
-  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+  `SheetVisibleFrame` (used by `CompactSheetBody` and `ComboboxSheetFrame`) and `MenuSheetScrollView`.
 - An RN `Modal` passes the call site's context straight through, so wrap its content in
   `WindowSafeArea` from `@/window-layout` and read the inset below that. It provides the insets of
   the whole window, published by `WindowLayoutProvider`. Do not put a `SafeAreaProvider` inside the
