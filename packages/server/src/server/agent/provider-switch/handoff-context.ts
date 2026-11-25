@@ -176,7 +176,7 @@ export function buildProviderSwitchHandoff(input: {
 }
 
 export function promptHasChatHistoryAttachment(prompt: AgentPromptInput): boolean {
-  if (typeof prompt === "string") return false;
+  if (!Array.isArray(prompt)) return false;
   return prompt.some(
     (block) =>
       block.type === "text" && "contextKind" in block && block.contextKind === "chat_history",
@@ -191,11 +191,15 @@ export function prependHandoffAttachment(
   if (typeof prompt === "string") {
     return [attachment, { type: "text", text: prompt }];
   }
+  if (!Array.isArray(prompt)) {
+    return prompt;
+  }
   return [attachment, ...prompt];
 }
 
 export function renderProviderPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") return prompt;
+  if (!Array.isArray(prompt)) return "";
   return prompt
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
     .join("\n\n")

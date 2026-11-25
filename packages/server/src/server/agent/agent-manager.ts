@@ -184,6 +184,9 @@ function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
   }
+  if (!Array.isArray(prompt)) {
+    return "";
+  }
   return prompt
     .flatMap((block) => (block.type === "text" && !("mimeType" in block) ? [block.text] : []))
     .join("\n")
@@ -5067,7 +5070,6 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
-    await this.reconcilePendingProviderSwitch(agentId);
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       agent = await this.ensureInteractiveSession(agentId);
@@ -5080,6 +5082,8 @@ export class AgentManager {
     // Opening the rewind checks its target is active, before a running turn is canceled for it.
     let intent: TimelineRewindIntent | null = null;
     try {
+      await this.reconcilePendingProviderSwitch(agentId);
+      agent = this.requireSessionAgent(agentId);
       if (mode !== "files") await this.settleOpenRewind(agent, { judge: false });
       providerMessageId = await this.resolveRewindTarget(agentId, messageId);
       if (mode !== "files") intent = await this.timeline.beginRewind(scope, messageId);
