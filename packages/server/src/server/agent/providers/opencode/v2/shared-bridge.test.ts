@@ -511,12 +511,16 @@ test("a shared plugin gives each session its own MCP tools behind OpenCode's per
     });
     expect(await contextFor("b")).toEqual({
       hub_marker: { description: "Return B", input: { type: "object" } },
-      local_env: { description: "User env" },
+      local_env: { description: "User env", input: { type: "object" } },
       native: {},
     });
     expect(await contextFor("other")).toEqual({
-      local_env: { description: "User env" },
+      local_env: { description: "User env", input: { type: "object" } },
       native: {},
+    });
+    // OpenCode validates input against the registration, so it accepts both tools' input.
+    expect(installed.get("local_env")).toMatchObject({
+      input: { type: "object", additionalProperties: true },
     });
     // A descendant uses its root's servers and instructions from its first request, and is
     // adopted once.

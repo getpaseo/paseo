@@ -56,7 +56,8 @@ async function startFixture(mode: Mode, options: { userHub?: boolean } = {}): Pr
   bridge.setManifestCatalog({ tools: new Map() });
   await bridge.start();
   const userHub = options.userHub
-    ? await HttpMcpFixture.start({ token: "user-token", marker: "USER_OK" })
+    ? // Its `marker` requires an input that the agents' `marker` does not have.
+      await HttpMcpFixture.start({ token: "user-token", marker: "USER_OK", requiredInput: "value" })
     : undefined;
   const service = await ScriptedOpenCodeService.start({
     ...(userHub

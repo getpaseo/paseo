@@ -84,14 +84,15 @@ export async function registerSharedBridge(context) {
     if (registrations.has(key)) return;
     const registration = await context.tool.transform((editor) => {
       // The user's own OpenCode configuration can register a tool with the same name. Sessions
-      // that do not have a Paseo MCP tool of that name keep that tool.
+      // that do not have a Paseo MCP tool of that name keep that tool. OpenCode validates input
+      // against the registered schema, so it stays permissive for both tools.
       const native = editor.get?.(name);
       if (native) natives.set(name, native);
       else natives.delete(name);
       editor.add({
         name,
-        description: native?.description ?? `MCP tool ${name} provided by Paseo`,
-        input: native?.input ?? { type: "object", additionalProperties: true },
+        description: `MCP tool ${name} provided by Paseo`,
+        input: { type: "object", additionalProperties: true },
         options: { codemode: false },
         async execute(input, call) {
           const scope = await find(call.sessionID);
@@ -292,8 +293,11 @@ export async function registerSharedBridge(context) {
     for (const name of Object.keys(input.tools)) {
       if (definitions.has(mcpKey(name))) {
         const own = mcpTools.get(name);
+        const native = natives.get(name);
         if (own) input.tools[name] = { description: own.description, input: own.inputSchema };
-        else if (!natives.has(name)) delete input.tools[name];
+        else if (native)
+          input.tools[name] = { description: native.description, input: native.input };
+        else delete input.tools[name];
         continue;
       }
       if (name.startsWith("paseo_") && name !== STRUCTURED_OUTPUT_TOOL && !allowed.has(name))

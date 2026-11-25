@@ -1,18 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 
 interface HttpMcpOptions {
   token: string;
   /** Tool `marker` returns this text and advertises it in its description. */
   marker: string;
   instructions?: string;
+  /** Tool `marker` requires a string argument with this name. */
+  requiredInput?: string;
   /** Accepts each session DELETE and never answers it, like an unresponsive server. */
   holdTermination?: boolean;
+  /** Accepts the client's `notifications/initialized` and never answers it. */
+  holdInitialized?: boolean;
 }
 
 /** An authenticated Streamable HTTP MCP server, shaped like Hub's execution endpoint. */
@@ -20,6 +25,8 @@ export class HttpMcpFixture {
   private readonly transports = new Map<string, StreamableHTTPServerTransport>();
   /** Session DELETE requests left unanswered because of `holdTermination`. */
   heldTerminations = 0;
+  /** Sessions that a client initialized, including expired ones. */
+  initializedSessions = 0;
   private constructor(
     private readonly server: Server,
     readonly url: string,
@@ -27,7 +34,7 @@ export class HttpMcpFixture {
 
   static async start(options: HttpMcpOptions): Promise<HttpMcpFixture> {
     let fixture!: HttpMcpFixture;
-    const server = createServer((request, response) => {
+    const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${options.token}`) {
         response.writeHead(401).end();
         return;
@@ -36,16 +43,21 @@ export class HttpMcpFixture {
         fixture.heldTerminations += 1;
         return;
       }
+      const body = request.method === "POST" ? await readJson(request) : undefined;
+      if (options.holdInitialized && isMethod(body, "notifications/initialized")) return;
       const id = request.headers["mcp-session-id"];
-      const existing = typeof id === "string" ? fixture.transports.get(id) : undefined;
-      if (existing) {
-        void existing.handleRequest(request, response);
+      if (typeof id === "string") {
+        const existing = fixture.transports.get(id);
+        // The protocol answers an unknown session with 404, so the client starts a new one.
+        if (existing) void existing.handleRequest(request, response, body);
+        else response.writeHead(404).end();
         return;
       }
       const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sessionId) => {
           fixture.transports.set(sessionId, transport);
+          fixture.initializedSessions += 1;
         },
         // A client ends its session with DELETE when it closes the connection.
         onsessionclosed: (sessionId) => {
@@ -58,10 +70,13 @@ export class HttpMcpFixture {
       );
       mcp.registerTool(
         "marker",
-        { description: `Return ${options.marker}`, inputSchema: {} },
+        {
+          description: `Return ${options.marker}`,
+          inputSchema: options.requiredInput ? { [options.requiredInput]: z.string() } : {},
+        },
         async () => ({ content: [{ type: "text", text: options.marker }] }),
       );
-      void mcp.connect(transport).then(() => transport.handleRequest(request, response));
+      void mcp.connect(transport).then(() => transport.handleRequest(request, response, body));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     fixture = new HttpMcpFixture(
@@ -69,6 +84,11 @@ export class HttpMcpFixture {
       `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`,
     );
     return fixture;
+  }
+
+  /** Forgets every session, as a server does when it restarts. */
+  expireSessions(): void {
+    this.transports.clear();
   }
 
   /** MCP client sessions that have not been terminated. */
@@ -81,6 +101,16 @@ export class HttpMcpFixture {
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function isMethod(body: unknown, method: string): boolean {
+  return typeof body === "object" && body !== null && "method" in body && body.method === method;
 }
 
 /**

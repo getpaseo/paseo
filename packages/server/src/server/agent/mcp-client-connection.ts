@@ -1,7 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerConfig } from "./agent-sdk-types.js";
 import type { PaseoToolResult } from "./tools/types.js";
@@ -37,56 +40,126 @@ export interface ConnectMcpServerInput {
 }
 
 export async function connectMcpServer(input: ConnectMcpServerInput): Promise<McpClientConnection> {
+  const { client, tools } = await openClient(input);
+  return createConnection(input, client, tools);
+}
+
+async function openClient(
+  input: ConnectMcpServerInput,
+): Promise<{ client: Client; tools: McpClientTool[] }> {
   const client = new Client({ name: input.clientName, version: "1.0.0" });
   try {
-    await client.connect(createTransport(input), { timeout: SERVER_TIMEOUT_MS });
-    const listed = await client.listTools(undefined, { timeout: SERVER_TIMEOUT_MS });
-    return createConnection(client, listed.tools);
+    // The SDK times out only the `initialize` request, not the `initialized` notification after it.
+    return await withDeadline(
+      (async () => {
+        await client.connect(createTransport(input));
+        const listed = await client.listTools();
+        return { client, tools: listed.tools };
+      })(),
+      SERVER_TIMEOUT_MS,
+      () => new Error(`MCP server did not connect within ${SERVER_TIMEOUT_MS / 1000} seconds`),
+    );
   } catch (error) {
+    // Closing the client also aborts its pending requests.
     await client.close().catch(() => undefined);
     throw error;
   }
 }
 
-function createConnection(client: Client, tools: readonly McpClientTool[]): McpClientConnection {
+function createConnection(
+  input: ConnectMcpServerInput,
+  initial: Client,
+  tools: readonly McpClientTool[],
+): McpClientConnection {
+  let client = initial;
+  let renewing: Promise<Client> | undefined;
   let closed: Promise<void> | undefined;
+  // A stateful HTTP server forgets a session when it restarts or expires it, and answers 404.
+  // The protocol then asks the client to start a new session.
+  function renew(stale: Client): Promise<Client> {
+    if (client !== stale) return Promise.resolve(client);
+    renewing ??= openClient(input)
+      .then(async (next) => {
+        if (closed) {
+          await terminate(next.client);
+          throw new Error("MCP connection closed while it reconnected");
+        }
+        client = next.client;
+        void terminate(stale);
+        return client;
+      })
+      .finally(() => {
+        renewing = undefined;
+      });
+    return renewing;
+  }
+  async function call(
+    target: Client,
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) {
+    const raw = await target.callTool({ name, arguments: args }, undefined, { signal });
+    const result = CallToolResultSchema.parse(raw);
+    return {
+      content: result.content.map((item) => ({ ...item })),
+      ...(result.structuredContent !== undefined
+        ? { structuredContent: result.structuredContent }
+        : {}),
+      ...(result.isError !== undefined ? { isError: result.isError } : {}),
+    };
+  }
   return {
     tools,
-    instructions: client.getInstructions(),
+    instructions: initial.getInstructions(),
     async callTool(name, args, signal) {
       if (closed) throw new Error(`MCP tool ${name} is unavailable after its connection closed`);
-      const raw = await client.callTool({ name, arguments: args }, undefined, { signal });
-      const result = CallToolResultSchema.parse(raw);
-      return {
-        content: result.content.map((item) => ({ ...item })),
-        ...(result.structuredContent !== undefined
-          ? { structuredContent: result.structuredContent }
-          : {}),
-        ...(result.isError !== undefined ? { isError: result.isError } : {}),
-      };
+      const target = client;
+      try {
+        return await call(target, name, args, signal);
+      } catch (error) {
+        if (!isExpiredSession(error)) throw error;
+        return await call(await renew(target), name, args, signal);
+      }
     },
     close() {
-      closed ??= terminate(client);
+      // A reconnect that is still running closes its own client once it sees `closed`.
+      closed ??= (renewing ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => terminate(client));
       return closed;
     },
   };
+}
+
+function isExpiredSession(error: unknown): boolean {
+  return error instanceof StreamableHTTPError && error.code === 404;
 }
 
 async function terminate(client: Client): Promise<void> {
   // A stateful HTTP server keeps the session until the client ends it explicitly. Closing the
   // client aborts a termination request that the server does not answer in time.
   if (client.transport instanceof StreamableHTTPClientTransport)
-    await withDeadline(client.transport.terminateSession(), TERMINATE_TIMEOUT_MS);
+    await withDeadline(
+      client.transport.terminateSession(),
+      TERMINATE_TIMEOUT_MS,
+      () => new Error("MCP session termination timed out"),
+    ).catch(() => undefined);
   await client.close().catch(() => undefined);
 }
 
-async function withDeadline(operation: Promise<void>, ms: number): Promise<void> {
+/** Settles with the operation, or rejects with `timeout()` when `ms` passes first. */
+async function withDeadline<T>(
+  operation: Promise<T>,
+  ms: number,
+  timeout: () => unknown,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms);
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(timeout()), ms);
   });
   try {
-    await Promise.race([operation.catch(() => undefined), deadline]);
+    return await Promise.race([operation, deadline]);
   } finally {
     clearTimeout(timer);
   }
