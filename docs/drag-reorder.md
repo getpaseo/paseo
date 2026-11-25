@@ -9,14 +9,14 @@ A list the user can reorder renders through `DraggableList` from `@/components/d
 
 ## The scroll view must host the drag
 
-On native, the hold calls `drag()`, which calls `useContentDrag().setActive(true)` on the nearest scroll view. That scroll view stops scrolling until the drag ends. If no scroll view up the tree hosts content drags, `setActive` does nothing. The page scroll then takes the touch as soon as the finger moves past the touch slop, before the list's own pan activates. The row never moves, and the page scrolls instead.
+On native, the hold calls `drag()`, which calls `useContentDrag().setActive(true)` from `@/components/ui/content-drag` on the nearest scroll view. That scroll view stops scrolling until the drag ends. If no scroll view up the tree hosts content drags, `setActive` does nothing. The page scroll then takes the touch as soon as the finger moves past the touch slop, before the list's own pan activates. The row never moves, and the page scrolls instead.
 
 These scroll views host content drags:
 
 - `ScrollView` from `@/components/ui/scroll-view`, inside and outside a sheet.
 - `PageLayout`, for a settings page or any other full page.
 
-If you put a reorderable list in another scroll view, such as a third-party keyboard-aware one, wrap it with `withContentDrag` from `@/components/ui/scroll-view`. `packages/app/src/components/page-layout/index.tsx` shows the pattern. A plain `ScrollView` from `react-native` breaks the drag.
+If you put a reorderable list in another scroll view, such as a third-party keyboard-aware one, wrap it with `withContentDrag` from `@/components/ui/content-drag`. `packages/app/src/components/page-layout/index.tsx` shows the pattern. A plain `ScrollView` from `react-native` breaks the drag.
 
 Inside a sheet, the `ScrollView` also registers the drag gesture with the sheet, so the sheet's pan-to-close waits for it.
 

@@ -66,12 +66,16 @@ function heightOf(testID: string): number {
   return element(testID).getBoundingClientRect().height;
 }
 
-function titleFontSize(rowTestID: string, label: string): number {
-  const title = [...element(rowTestID).querySelectorAll("div")].find(
-    (node) => node.textContent === label && node.children.length === 0,
+function textNode(rowTestID: string, text: string): HTMLElement {
+  const found = [...element(rowTestID).querySelectorAll("div")].find(
+    (node) => node.textContent === text && node.children.length === 0,
   );
-  if (!title) throw new Error(`No title ${label}`);
-  return Number.parseFloat(getComputedStyle(title).fontSize);
+  if (!found) throw new Error(`No text ${text}`);
+  return found;
+}
+
+function titleFontSize(rowTestID: string, label: string): number {
+  return Number.parseFloat(getComputedStyle(textNode(rowTestID, label)).fontSize);
 }
 
 describe("settings row density", () => {
@@ -123,5 +127,29 @@ describe("settings row density", () => {
     );
 
     expect(heightOf("long-summary-toggle")).toBe(heightOf("text-row"));
+  });
+
+  it("keeps a short summary beside the chevron on a wide card", () => {
+    container = document.createElement("div");
+    container.style.width = "680px";
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <SettingsCard>
+          <SettingsDetailRow
+            label="Speech to text"
+            summary="Local"
+            onPress={openNothing}
+            testID="short-summary"
+          />
+        </SettingsCard>,
+      ),
+    );
+
+    const row = element("short-summary").getBoundingClientRect();
+    const summary = textNode("short-summary", "Local").getBoundingClientRect();
+    // The summary's margin, the chevron and the row's padding: about 40px.
+    expect(row.right - summary.right).toBeLessThan(48);
   });
 });

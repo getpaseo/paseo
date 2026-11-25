@@ -8,7 +8,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { PressHighlight } from "@/components/ui/press-highlight";
-import { withContentDrag } from "@/components/ui/scroll-view";
+import { withContentDrag } from "@/components/ui/content-drag";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 

@@ -241,12 +241,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The label keeps its one-line width and takes the free space; the summary truncates in what is
   // left. Any shrink, even a fraction of a pixel, would wrap the label, so it does not shrink. The
-  // cap lets a long label wrap before it pushes the chevron off the row.
+  // cap lets a long label wrap before it pushes the chevron off the row. Past the cap, the auto
+  // margin takes the rest of the row, so the control, summary and chevron stay together at the end.
   labelContent: {
     flexGrow: 1,
     flexShrink: 0,
     maxWidth: "75%",
-    marginRight: theme.spacing[3],
+    paddingRight: theme.spacing[3],
+    marginRight: "auto",
   },
   labelTrailing: {
     flexDirection: "row",
