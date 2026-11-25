@@ -2463,6 +2463,87 @@ export class AgentManager {
     await this.prepareAgentForClosure(existingLive, "provider switched");
   }
 
+  private async ensureSwitchedAgentLiveForRetry(
+    agentId: string,
+    existingLive: ActiveManagedAgent | null,
+    storedRecord: StoredAgentRecord | null,
+  ): Promise<ManagedAgent> {
+    if (existingLive) {
+      return { ...existingLive };
+    }
+    if (!storedRecord) {
+      throw new AgentNotFoundError(agentId);
+    }
+    if (storedRecord.persistence) {
+      return await this.resumeAgentFromPersistenceInternal(
+        toPersistenceHandle(storedRecord.persistence),
+        toResumeConfigFromStored(storedRecord),
+        agentId,
+        toResumeOptionsFromStored(storedRecord),
+      );
+    }
+    return await this.createAgentInternal(
+      toResumeConfigFromStored(storedRecord),
+      agentId,
+      {
+        labels: storedRecord.labels,
+        metadata: storedRecord.metadata,
+        workspaceId: storedRecord.workspaceId,
+        owner: storedRecord.owner,
+        background: storedRecord.background,
+        env: storedRecord.launchEnv,
+      },
+      { history: "keep" },
+    );
+  }
+
+  private async tryResumeCommittedEmptySegmentSwitch(
+    agentId: string,
+    scope: TimelineScope,
+    input: SwitchAgentProviderInput,
+    existingLive: ActiveManagedAgent | null,
+    storedRecord: StoredAgentRecord | null,
+    source: { fromProvider: AgentProvider; persistedTitle: string | null; cwd: string },
+  ): Promise<SwitchAgentProviderResult | null> {
+    const activeHead = await this.timeline.describe(scope);
+    if (!activeHead || activeHead.activeSegmentStartSeq <= 0) {
+      return null;
+    }
+    const activeTail = await this.timeline.fetch(scope, {
+      direction: "tail",
+      limit: HANDOFF_TAIL_LIMIT,
+      wholeTurns: true,
+    });
+    const hasPromptInSegment = activeTail.rows.some(
+      (row) => row.seq > activeHead.activeSegmentStartSeq && row.item.type === "user_message",
+    );
+    if (hasPromptInSegment) {
+      return null;
+    }
+    const agent = await this.ensureSwitchedAgentLiveForRetry(agentId, existingLive, storedRecord);
+    const markerRow = activeTail.rows.find(
+      (row) => row.seq === activeHead.activeSegmentStartSeq && row.item.type === "provider_switch",
+    );
+    const fromProvider =
+      markerRow?.item.type === "provider_switch"
+        ? markerRow.item.fromProvider
+        : source.fromProvider;
+    const handoff = buildProviderSwitchHandoff({
+      rows: activeTail.rows.filter((row) => row.seq < activeHead.activeSegmentStartSeq),
+      hasOlder: activeTail.hasOlder,
+      fromProvider,
+      toProvider: input.toProvider,
+      agentTitle: source.persistedTitle,
+      cwd: source.cwd,
+    });
+    return {
+      agent,
+      handoffPrompt: prependHandoffAttachment(input.prompt, handoff.attachment),
+      markerSeq: activeHead.activeSegmentStartSeq,
+      context: handoff.summary,
+    };
+  }
+
   private async switchAgentProviderUnlocked(
     agentId: string,
     input: SwitchAgentProviderInput,
@@ -2475,6 +2556,17 @@ export class AgentManager {
     const existingLive = await this.ensureSourceAgentReadyForSwitch(agentId, scope, storedRecord);
     const source = await this.extractSwitchSourceContext(agentId, existingLive, storedRecord);
     if (input.toProvider === source.fromProvider) {
+      const resumed = await this.tryResumeCommittedEmptySegmentSwitch(
+        agentId,
+        scope,
+        input,
+        existingLive,
+        storedRecord,
+        source,
+      );
+      if (resumed) {
+        return resumed;
+      }
       throw new Error(`Agent ${agentId} is already using provider '${input.toProvider}'`);
     }
 

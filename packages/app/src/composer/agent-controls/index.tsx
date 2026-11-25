@@ -1189,9 +1189,10 @@ export const AgentControls = memo(function AgentControls({
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
 
-  const effectiveProvider = activeStagedSwitch?.provider ?? agent?.provider;
-  const effectiveProviderRef = useRef<AgentProvider | null>(effectiveProvider ?? null);
-  effectiveProviderRef.current = effectiveProvider ?? null;
+  const stagedProvider = activeStagedSwitch ? activeStagedSwitch.provider : null;
+  const effectiveProvider = stagedProvider ?? agent?.provider;
+  const stagedProviderRef = useRef<AgentProvider | null>(stagedProvider);
+  stagedProviderRef.current = stagedProvider;
 
   const snapshotSelectedEntry = useMemo(
     () => resolveProviderSnapshotEntry(snapshotEntries, effectiveProvider),
@@ -1299,10 +1300,7 @@ export const AgentControls = memo(function AgentControls({
   const commandCenterModes = toCommandCenterModes(modeControl);
   const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
 
-  const getStagedProvider = useCallback(
-    () => (activeStagedSwitch ? effectiveProviderRef.current : null),
-    [activeStagedSwitch],
-  );
+  const getStagedProvider = useCallback(() => stagedProviderRef.current, []);
   const stagedDraftOptions = useDraftProviderOptions(
     buildStagedDraftOptionsParams({
       serverId,

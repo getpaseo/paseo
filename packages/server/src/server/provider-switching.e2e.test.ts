@@ -302,4 +302,77 @@ describe("Provider switching WebSocket RPC, receipts, and capability gating", ()
     expect(switchErr.agent?.provider).toBe("claude");
     expect(switchErr.agent?.id).toBe(agent.id);
   });
+
+  it("delivers the original switch request after a restart between switch commit and dispatch, and keeps archived switched chats archived when resuming a prior native handle", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-provider-switch-recovery-e2e-"));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+
+    const claude = new E2EFakeClient("claude");
+    const codex = new E2EFakeClient("codex", true);
+    daemon = await createTestPaseoDaemon({
+      agentClients: { claude, codex },
+    });
+
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const clientConn = await connectClient(url);
+
+    // 1. Create Claude chat and save its native persistence handle.
+    const created = await clientConn.client.createAgent({ provider: "claude", cwd });
+    await clientConn.client.sendMessage(created.id, "First Claude turn", undefined, {
+      messageId: "msg-r1",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const storedBefore = await daemon.daemon.agentStorage.get(created.id);
+    expect(storedBefore?.persistence).toBeTruthy();
+    const savedClaudeHandle = storedBefore!.persistence!;
+
+    // 2. Simulate switch committed to SQLite + storage BEFORE MessageReceipts wrote pending / before dispatch,
+    //    followed by daemon closing the live agent (restart boundary).
+    await daemon.daemon.agentManager.switchAgentProvider(created.id, {
+      toProvider: "codex",
+      prompt: "Deliver after restart",
+      messageId: "msg-r-sw",
+    });
+    await daemon.daemon.agentManager.closeAgent(created.id);
+
+    // Client replays the EXACT SAME switchAgentProvider request after restart -> must succeed
+    // without "already using provider" and without adding a second provider_switch marker!
+    const replayed = await clientConn.client.switchAgentProvider(created.id, {
+      provider: "codex",
+      text: "Deliver after restart",
+      messageId: "msg-r-sw",
+    });
+    expect(replayed.agent?.provider).toBe("codex");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const timeline = await clientConn.client.fetchAgentTimeline(created.id, {
+      direction: "tail",
+      limit: 50,
+    });
+    expect(timeline.entries.filter((e) => e.item.type === "provider_switch")).toHaveLength(1);
+    expect(
+      timeline.entries.some(
+        (e) => e.item.type === "user_message" && e.item.text === "Deliver after restart",
+      ),
+    ).toBe(true);
+
+    // 3. Archive the switched Codex chat, then resume the saved prior Claude handle ->
+    //    must NOT unarchive the separate Codex chat!
+    await clientConn.client.archiveAgent(created.id);
+    const archivedBeforeResume = await daemon.daemon.agentStorage.get(created.id);
+    expect(archivedBeforeResume?.archivedAt).toBeTruthy();
+
+    const resumedClaude = await clientConn.client.resumeAgent(
+      {
+        provider: savedClaudeHandle.provider,
+        sessionId: savedClaudeHandle.sessionId,
+      },
+      { cwd },
+    );
+    expect(resumedClaude.id).not.toBe(created.id);
+    expect(resumedClaude.provider).toBe("claude");
+
+    const codexRecordAfterResume = await daemon.daemon.agentStorage.get(created.id);
+    expect(codexRecordAfterResume?.archivedAt).toBeTruthy();
+  });
 });

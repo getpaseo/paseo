@@ -344,14 +344,18 @@ describe("AgentManager provider switching", () => {
     );
     expect(codexPrompt?.providerPromptText).toContain("<chat-history-summary>");
 
-    // previousSessions tracks Claude's handle and listByProviderSession finds the agent
+    // previousSessions tracks Claude's handle: resume lookup ignores it, import lookup finds it
     const stored = await storage.get(agentId);
     expect(stored?.provider).toBe("codex");
     expect(stored?.previousSessions).toEqual([
       expect.objectContaining({ provider: "claude", sessionId: "claude-sess-1" }),
     ]);
-    const foundByOldSession = await storage.listByProviderSession("claude", "claude-sess-1");
-    expect(foundByOldSession.map((r) => r.id)).toEqual([agentId]);
+    const foundForResume = await storage.listByProviderSession("claude", "claude-sess-1");
+    expect(foundForResume).toEqual([]);
+    const foundForImport = await storage.listByProviderSession("claude", "claude-sess-1", {
+      includePreviousSessions: true,
+    });
+    expect(foundForImport.map((r) => r.id)).toEqual([agentId]);
   });
 
   it("keeps the original session live and leaves no switch marker when target creation fails", async () => {

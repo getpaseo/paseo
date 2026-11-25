@@ -345,15 +345,17 @@ export class AgentStorage {
   async listByProviderSession(
     provider: string,
     providerHandleId: string,
+    options?: { includePreviousSessions?: boolean },
   ): Promise<StoredAgentRecord[]> {
     await this.load();
+    const includePrevious = options?.includePreviousSessions === true;
     const matchesHandle = (handle: StoredPersistenceHandle | null | undefined) =>
       handle?.provider === provider &&
       (handle.sessionId === providerHandleId || handle.nativeHandle === providerHandleId);
     return Array.from(this.cache.values()).filter(
       (record) =>
         matchesHandle(record.persistence) ||
-        (record.previousSessions?.some(matchesHandle) ?? false),
+        (includePrevious && (record.previousSessions?.some(matchesHandle) ?? false)),
     );
   }
 

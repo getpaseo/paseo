@@ -236,6 +236,14 @@ test.describe.serial("Provider switching in chat", () => {
           model: "e2e-fast-stream",
           modeId: "load-test",
         });
+        // Editing a staged provider option must keep all staged option controls visible.
+        const conciseToggle = page.getByRole("button", { name: /Concise responses/i }).first();
+        const voiceSelect = page.getByRole("button", { name: /Voice/i }).first();
+        await expect(conciseToggle).toBeVisible();
+        await expect(voiceSelect).toBeVisible();
+        await conciseToggle.click();
+        await expect(conciseToggle).toBeVisible();
+        await expect(voiceSelect).toBeVisible();
         await expectNoHorizontalOverflow(page);
         await captureQaScreenshot(page, "desktop-staged-switch.png");
 
