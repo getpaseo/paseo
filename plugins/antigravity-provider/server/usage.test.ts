@@ -99,7 +99,8 @@ it("uses compact group and period shorthands when multiple groups are reported",
         { id: 'gemini-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 0.8 }
       ] },
       { name: 'Claude and GPT models', buckets: [
-        { id: '3p-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 1 }
+        { id: '3p-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 1 },
+        { id: '3p-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 1 }
       ] }
     ] } } }));
   `,
@@ -107,16 +108,19 @@ it("uses compact group and period shorthands when multiple groups are reported",
   const launch = { command: process.execPath, args: [cli, "acp"], env: { HOME: directory } };
   const source = new Usage().registration();
   const [account] = await source.discover({ kind: "global", launch });
-  expect(await source.fetch(account!.input)).toMatchObject({
+  const report = await source.fetch(account!.input);
+  // agy lists weekly before 5h in each group; the 5h window comes first, like Claude and Codex.
+  expect(report).toMatchObject({
     status: "available",
     windows: [
+      { id: "gemini-5h", label: "Gemini · 5h", shortLabel: "Gemini 5h" },
       {
         id: "gemini-weekly",
         label: "Gemini · Weekly",
         shortLabel: "Gemini wk",
         durationSeconds: 604_800,
       },
-      { id: "gemini-5h", label: "Gemini · 5h", shortLabel: "Gemini 5h" },
+      { id: "3p-5h", label: "Claude and GPT · 5h", shortLabel: "Claude and GPT 5h" },
       { id: "3p-weekly", label: "Claude and GPT · Weekly", shortLabel: "Claude and GPT wk" },
     ],
   });

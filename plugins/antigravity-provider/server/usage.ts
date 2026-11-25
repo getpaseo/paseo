@@ -72,6 +72,12 @@ function windowDurationSeconds(window: string): number | undefined {
   }
 }
 
+/** agy lists each group's weekly bucket before its 5h one; show the shorter window first, like Claude and Codex. */
+function byWindowDuration<T extends { window: string }>(buckets: readonly T[]): T[] {
+  const duration = (bucket: T) => windowDurationSeconds(bucket.window) ?? Number.MAX_SAFE_INTEGER;
+  return [...buckets].sort((a, b) => duration(a) - duration(b));
+}
+
 function formatGroupLabel(name: string): string {
   return name
     .trim()
@@ -134,7 +140,7 @@ export class Usage {
         const includeGroup = groups.length > 1;
         const windows = groups.flatMap((group) => {
           const groupLabel = formatGroupLabel(group.name);
-          return group.buckets.flatMap((bucket) => {
+          return byWindowDuration(group.buckets).flatMap((bucket) => {
             if (!bucket.disabled && bucket.remaining_fraction == null) return [];
             const used = bucket.disabled ? null : (1 - bucket.remaining_fraction!) * 100;
             return [
